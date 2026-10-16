@@ -254,13 +254,37 @@ async def e2q_items(ctx):
             if not matched:
                 candidates = await ctx.extract_items(enquiry.get("body") or "")
                 matched, unmatched = intent.match_candidates(candidates, products)
+        # A price the request itself states ("20 car washes at ₦15,000 each") is the owner's: it prices a line whose
+        # catalogue item has no price yet, and a line not in the catalogue (QA, 16 Oct). Never a guess.
+        stated = intent.price_in_request(enquiry.get("body") or "")
+        if not matched and not unmatched:
+            # Nothing read from the request by the readers above: its one plain line ("20 car washes at ₦15,000 each"),
+            # the catalogue item it names when there is one.
+            line = intent.line_in_request(enquiry.get("body") or "")
+            if line:
+                hit = intent.catalogue_item_named(line["name"], products)
+                (matched if hit else unmatched).append({**line, **({"product_id": hit["id"], "name": hit["name"]} if hit else {})})
+        lines = matched + unmatched
+        if stated and len(lines) == 1 and not lines[0].get("unit_price"):
+            lines[0]["unit_price"] = stated
+        still = []
         for m in matched:
             p = by_id.get(str(m["product_id"]))
             if p and p["unit_price"] > 0:
                 priced.append({"product_id": p["id"], "name": p["name"], "quantity": m["quantity"], "unit_price": p["unit_price"],
                                "unit_cost": p["unit_cost"], "price_source": "catalogue", "provenance": m.get("provenance")})
+            elif m.get("unit_price"):
+                priced.append({"product_id": (p or {}).get("id"), "name": m["name"], "quantity": m["quantity"], "unit_price": float(m["unit_price"]),
+                               "unit_cost": (p or {}).get("unit_cost", 0), "price_source": "user_confirmed", "provenance": "said_in_request"})
             else:
-                unmatched.append({"name": m["name"], "quantity": m["quantity"]})
+                still.append({"name": m["name"], "quantity": m["quantity"]})
+        for u in unmatched:
+            if u.get("unit_price") and str(u.get("name") or "").strip():
+                priced.append({"product_id": None, "name": str(u["name"]).strip(), "quantity": u["quantity"], "unit_price": float(u["unit_price"]),
+                               "unit_cost": 0, "price_source": "user_confirmed", "provenance": "said_in_request"})
+            else:
+                still.append(u)
+        unmatched = still
 
     if not priced or unmatched:
         # Never invent a price or a line item: ask (s15.3, AC-08).
@@ -869,9 +893,9 @@ async def scenario_run(ctx):
         conc = bz.concentration(data, alert)
         share = next((t["share_pct"] for t in conc["top_customers"] if t["customer"] == r["customer"]), None)
         cash = bz.cash_position(data, today)
-        owed = sum(bz.invoice_outstanding(i) for i in (data.get("financials") or {}).get("invoices") or []
-                   if isinstance(i, dict) and str(i.get("customer_name") or "").strip().lower() == r["customer"].lower()
-                   and bz.status_of(i) not in ("paid", "cancelled", "void", "voided", "draft"))
+        owed = bz.total_of(data, [i for i in (data.get("financials") or {}).get("invoices") or []
+                                  if isinstance(i, dict) and str(i.get("customer_name") or "").strip().lower() == r["customer"].lower()
+                                  and bz.status_of(i) not in ("paid", "cancelled", "void", "voided", "draft")], lambda i: bz.invoice_outstanding(i))["value"]
         net = r["monthly_net_after"]
         text = (f"If you lost {r['customer']}"
                 + (f" ({share:g}% of all your revenue, against your {alert:g}% alert level)" if share is not None else "")

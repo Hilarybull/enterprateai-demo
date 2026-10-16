@@ -288,7 +288,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
     conc = bz.concentration(data, alert_pct)
     overdue = bz.overdue_invoices(data, today)
     cash = bz.cash_position(data, today)
-    overdue_total = sum(bz.invoice_outstanding(i) for i in overdue)
+    overdue_total = bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))
 
     if overdue:
         nxt = {"text": "Your receivables are slipping past terms. I'm preparing reminders for your approval.",
@@ -325,7 +325,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
 
     return [
         {"key": "next_step", "title": "Recommended Next Step", "tone": "brand", **nxt,
-         "detail": f"{len(overdue)} overdue · {fmt_money(overdue_total, cur)}" if overdue else None},
+         "detail": f"{len(overdue)} overdue · {bz.fmt_total(overdue_total, cur)}" if overdue else None},
         {"key": "risk", "title": "Fragility / Risk Alert", "tone": "rose", "text": risk_text,
          "cta": {"label": "View risk details", "capability": "risk_concentration"}, "more": {"capability": "risk_concentration"}},
         {"key": "scenario", "title": "Suggested Scenario", "tone": "indigo",
@@ -450,8 +450,8 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                             "action": {"capability": "risk_concentration", "source_reference": "risk:concentration"}})
     if bz.eligible_for_reminder(data, policy, now) and not any(r["workflow_key"] == "payment_followup" and r["status"] not in RUN_TERMINAL for r in runs):
         due = bz.eligible_for_reminder(data, policy, now)
-        owed = sum(bz.invoice_outstanding(i) for i in due)
-        what = f"{len(due)} overdue invoice{'s' if len(due) != 1 else ''} ({fmt_money(owed, bz.currency_of(data))} outstanding)"
+        owed = bz.total_of(data, due, lambda i: bz.invoice_outstanding(i))
+        what = f"{len(due)} overdue invoice{'s' if len(due) != 1 else ''} ({bz.fmt_total(owed, bz.currency_of(data))} outstanding)"
         if doing and can("payment_followup"):
             suggestions.append({"key": "followup", "icon": "chat", "text": f"{what}: I'm preparing the reminder{'s' if len(due) != 1 else ''} for your approval.",
                                 "action": {"to": "/agent?tab=needs_approval"}})

@@ -1,3 +1,4 @@
+import { currencySign } from "../lib/format";
 import { refusalMessage } from "../lib/entitlement";
 import { STREAMED_DOCS, streamBlueprint } from "../lib/blueprintStream";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1482,10 +1483,11 @@ export default function BlueprintPage() {
   // ── Blueprint chart helpers ──────────────────────────────────────────────
   function _bpFmt(v) {
     if (v == null || isNaN(v)) return "";
-    if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
-    if (v >= 1e6) return `£${(v / 1e6).toFixed(1)}M`;
-    if (v >= 1e3) return `£${(v / 1e3).toFixed(0)}K`;
-    return `£${Math.round(v).toLocaleString()}`;
+    const sign = currencySign(String(useWorkspaceStore.getState().currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || useWorkspaceStore.getState().currency || "GBP");
+    if (v >= 1e9) return `${sign}${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `${sign}${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `${sign}${(v / 1e3).toFixed(0)}K`;
+    return `${sign}${Math.round(v).toLocaleString()}`;
   }
 
   function _bpParseCurrency(s) {
@@ -3149,7 +3151,7 @@ export default function BlueprintPage() {
                   const planCost = Number(aMap.monthly_costs) || 0;
                   const planMargin = Number(aMap.gross_margin_pct) || 0;
                   const actualMargin = actualRev != null && actualRev > 0 ? ((actualRev - (actualCost || 0)) / actualRev) * 100 : null;
-                  const fmtCur = v => v != null ? `£${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                  const fmtCur = v => v != null ? `${currencySign(String(useWorkspaceStore.getState().currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || useWorkspaceStore.getState().currency || "GBP")}${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
                   const fmtPct = v => v != null ? `${Number(v).toFixed(1)}%` : null;
                   const customerTarget = Number(aMap.active_customers_target) || 0;
                   const revGap = planRev > 0 && actualRev != null ? planRev - actualRev : null;

@@ -606,9 +606,14 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     setCheckProblem(null);
     try {
       if (!(await flush())) { setCheckProblem("Save your changes first: some answers need correcting."); return; }
-      await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey());
+      const again = Boolean(latest.current.subject?.latest_assessment || a);
+      const ran = await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey());
       await load();
       if (!opts?.quiet) setTab("results");
+      // Said when it is done (the owner's QA, 15 Oct): where the case stands now, in one line.
+      const r = ran?.result || ran || {};
+      const where = typeof r.score === "number" ? `${Math.round(r.score)}/100` : r.classification === "insufficient_evidence" ? "Not enough evidence to score yet" : "";
+      window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: again ? "Checked again" : "Checked", message: where ? `${where}. The results are up to date.` : "The results are up to date." } }));
     } catch (e) {
       const err = readinessError(e, "The check couldn't be completed. Nothing was changed; you can run it again.");
       setCheckProblem(err.message);
@@ -657,7 +662,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             {can[`${feature}.edit`] && archived && <Btn kind="primary" onClick={() => changeStatus("reactivate")}>Reactivate</Btn>}
             {feature === "launch" && subject.status === "cancelled" && can["launch.decide"] && <Btn kind="primary" onClick={() => changeStatus("reopen")}>Reopen</Btn>}
             {can[`${feature}.assess`] && !archived && subject.status !== "cancelled" && (
-              <Btn kind="primary" disabled={checking} onClick={check}>{checking && <ButtonSpinner />}{checking ? "Checking…" : a ? "Run the check again" : "Run the check"}</Btn>
+              <Btn kind="primary" disabled={checking} onClick={check}>{checking && <ButtonSpinner />}{checking ? (a ? "Checking again…" : "Checking…") : a ? "Run the check again" : "Run the check"}</Btn>
             )}
           </>
         )}

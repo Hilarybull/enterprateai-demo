@@ -102,6 +102,9 @@ def _clean_assistant_answer(text: str) -> str:
 
     cleaned = "\n".join(lines).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    # No em or en dashes in what the owner reads (the owner's rule): a range becomes "to", a clause break a comma.
+    cleaned = re.sub(r"(\d)\s*[\u2013\u2014]\s*(\d)", r"\1 to \2", cleaned)
+    cleaned = re.sub(r"\s*[\u2013\u2014]\s*", ", ", cleaned)
     return cleaned
 
 
@@ -294,6 +297,10 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         "recording, changing anything). If the message asks for something to be done, reply with only [ACTION:<task>] using one "
         f"of these tasks: {', '.join(_TASK_NAMES())}; or [ACTION:none] if none of them does it. "
         "Do not claim knowledge about EnterprateAI beyond the supplied workspace data. "
+        "Every amount is shown in its own document's currency (the currency field on that invoice, quotation, receipt or "
+        "contract), never in the workspace currency unless that is the document's own: an invoice made in GBP is always in £. "
+        "Never add amounts in different currencies together; give each currency's total on its own. "
+        "When you say how many of something there are, count exactly the ones you list and say that number. "
         "When your answer finds a gap the owner can close with one of the tasks (an offering on the profile but not in the "
         "catalogue, a customer with no email, an invoice not sent, a plan with no price), end with one short question that "
         "proposes that next step in plain words, for example \"Do you want me to add AI Automation Service to your catalogue, "

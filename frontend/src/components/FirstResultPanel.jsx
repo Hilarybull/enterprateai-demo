@@ -50,7 +50,10 @@ export function FirstResultDrawer({ result, open, onClose, onPremium = null, ini
         className="absolute inset-y-0 right-0 flex w-full flex-col overflow-y-auto bg-white shadow-2xl outline-none sm:w-[480px] dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
           <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{result.headline}</p>
-          <button type="button" onClick={onClose} className="text-[13px] font-semibold text-slate-500 hover:text-slate-700">Close</button>
+          <span className="flex items-center gap-3">
+            {openOf(result)?.to && <a href={openOf(result).to} data-open-full-page className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>}
+            <button type="button" onClick={onClose} className="text-[13px] font-semibold text-slate-500 hover:text-slate-700">Close</button>
+          </span>
         </div>
         <div className="p-4">
           <FirstValueCard result={result} onPremium={onPremium} initialServed={initialServed} onDismiss={onDismiss} className="border-0 p-0 shadow-none sm:p-0" />

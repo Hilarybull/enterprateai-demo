@@ -284,12 +284,45 @@ def match_candidates(candidates: list[dict], products: list[dict]) -> tuple[list
         cname = str(c.get("name") or "").strip().lower()
         hit = next((p for p in products if str(p.get("name") or "").strip().lower() == cname), None) \
             or next((p for p in products if cname and (cname in str(p.get("name") or "").lower() or str(p.get("name") or "").lower() in cname)), None)
+        said = said_price(c.get("unit_price"))      # the price the request itself states, kept with the line
         if hit:
             if not any(m["product_id"] == hit.get("id") for m in matched):
-                matched.append({"product_id": hit.get("id"), "name": hit["name"], "quantity": int(c.get("quantity") or 1), "provenance": "llm_extraction"})
+                matched.append({"product_id": hit.get("id"), "name": hit["name"], "quantity": int(c.get("quantity") or 1), "provenance": "llm_extraction",
+                                **({"unit_price": said} if said else {})})
         else:
-            unmatched.append({"name": c.get("name"), "quantity": int(c.get("quantity") or 1)})
+            unmatched.append({"name": c.get("name"), "quantity": int(c.get("quantity") or 1), **({"unit_price": said} if said else {})})
     return matched, unmatched
+
+
+def said_price(value) -> float | None:
+    try:
+        n = float(str(value).replace(",", "").strip().lstrip("£$€₦"))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+_EACH_PRICE = re.compile(r"\b(\d{1,5})\s+([a-z][\w\s-]{1,40}?)\s+(?:at|@|for)\s+[£$€₦]?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:each|apiece|a piece|per\s+\w+)?", re.I)
+
+
+def price_in_request(text: str) -> float | None:
+    """"20 car washes at ₦15,000 each": 15000, the unit price the request states (only when it names one line)."""
+    found = _EACH_PRICE.findall(text or "")
+    if len(found) != 1:
+        return None
+    _qty, _name, num, k = found[0]
+    n = said_price(num)
+    return n * 1000 if n and k else n
+
+
+def line_in_request(text: str) -> dict | None:
+    """"20 car washes at ₦15,000 each": {"name": "car washes", "quantity": 20, "unit_price": 15000}, only for one plain line."""
+    found = _EACH_PRICE.findall(text or "")
+    if len(found) != 1:
+        return None
+    qty, name, num, k = found[0]
+    n = said_price(num)
+    return {"name": name.strip(), "quantity": int(qty), "unit_price": n * 1000 if n and k else n} if n else None
 
 
 _LINE_SPLIT = re.compile(r"\s*(?:\n+|;|,|\s+and\s+(?=\d)|\s+plus\s+)\s*", re.I)

@@ -3,7 +3,7 @@ import { pipelineCounts } from "../lib/pipelineCounts";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { alertDialog } from "../lib/dialog";
-import { formatCurrency, newRecordId, todayLocal } from "../lib/format";
+import { currencySign, formatCurrency, newRecordId, todayLocal } from "../lib/format";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useLocation } from "react-router-dom";
@@ -17,13 +17,6 @@ import FinancialOverviewCards from "../components/FinancialOverviewCards";
 import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
 import { InboxTab, ActivityTab, RequestsTab } from "./ProposalsPage";
 import { useProposalStore } from "../store/proposal";
-
-function fmtMoney(n) {
-  if (n == null || isNaN(n)) return "£0";
-  const abs = Math.abs(n);
-  const pre = n < 0 ? "-£" : "£";
-  return `${pre}${abs.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
 
 function fmtDate(s) {
   if (!s) return "—";
@@ -553,7 +546,7 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  const sym = wsCurrency === "USD" ? "$" : wsCurrency === "EUR" ? "€" : "£";
+  const sym = currencySign(String(wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || wsCurrency || "GBP");
   const subtotal = prices.reduce((s, p) => s + (Number(p.unit_price) || 0) * (Number(p.quantity) || 1), 0);
 
   async function handleRespond() {
@@ -1829,6 +1822,22 @@ export default function BusinessOperationsPage() {
   const [shareToast, setShareToast] = useState("");
   const [fxRates, setFxRates] = useState({}); // { "USD": 0.79, ... } — rate TO workspace currency
   const [reportRange, setReportRange] = useState("6m");
+  // The currencies the documents are in besides the workspace's (each document keeps its own): converted into the
+  // workspace currency for totals at today's rate, or, with no rate yet, left out and named (the owner's QA, 16 Oct).
+  const fx = useMemo(() => {
+    const isoOf = (c) => (String(c || "").match(/\(([A-Z]{3})\)/)?.[1] || String(c || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+    const ws = isoOf(wsCurrency) || "GBP";
+    const other = [...new Set([...invoices, ...expenses, ...quotes, ...contracts].map((d) => isoOf(d?.currency)).filter((c) => c && c !== ws))];
+    return { ws, converted: other.filter((c) => fxRates[c] != null), missing: other.filter((c) => fxRates[c] == null) };
+  }, [invoices, expenses, quotes, contracts, fxRates, wsCurrency]);
+  // KPI tiles: totals in the workspace currency (never a hard-coded £), "≈" when other currencies were converted into them.
+  const fmtMoney = (n) => {
+    const v = Number(n || 0);
+    let shown;
+    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currency: fx.ws, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(v); }
+    catch { shown = formatCurrency(v, fx.ws); }
+    return `${fx.converted.length ? "≈ " : ""}${shown}`;
+  };
   const [showRangeMenu, setShowRangeMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -1839,7 +1848,7 @@ export default function BusinessOperationsPage() {
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").toUpperCase()).slice(0, 3);
       if (!iso || iso === wsIso) return num;
       const rate = fxRates[iso];
-      return rate != null ? num * rate : num;
+      return rate != null ? num * rate : 0;
     }
     const rawAmt = r => Number(r?.total_amount || r?.amount || r?.price || 0);
     const invDate = inv => {
@@ -2011,7 +2020,7 @@ export default function BusinessOperationsPage() {
       const wsIso = _wsIso();
       if (fromIso === wsIso) return num;
       const rate = fxRates[fromIso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;
     }
     function receivedAmt(i) {
       if (i.payments && i.payments.length > 0) return i.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -2104,11 +2113,29 @@ export default function BusinessOperationsPage() {
       const fromIso = _resolveIso(overrideCurrency);
       const wsIso = _wsIso();
       if (fromIso && fromIso !== wsIso && fxRates[fromIso] != null) {
-        const converted = formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso);
-        return `${converted} (${formatCurrency(num, fromIso)})`;
+        // Its own currency first; the conversion after it, marked approximate (the owner's QA, 16 Oct).
+        return `${formatCurrency(num, fromIso)} (≈ ${formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso)})`;
       }
+      return formatCurrency(num, fromIso || wsCurrency || "GBP");
     }
-    return formatCurrency(num, overrideCurrency || wsCurrency || "GBP");
+    // A total in the workspace currency: "≈" when other currencies were converted into it.
+    return `${fx.converted.length ? "≈ " : ""}${formatCurrency(num, wsCurrency || "GBP")}`;
+  }
+
+  /** A list's amount cell: the document's own currency, and under it, small and grey, "≈ ₦…" in the workspace currency. */
+  function AmountCell({ value, currency }) {
+    const num = Number(value || 0);
+    const fromIso = _resolveIso(currency) || _wsIso();
+    const ws = _wsIso();
+    const rate = fromIso === ws ? 1 : fxRates[fromIso];
+    return (
+      <span className="whitespace-nowrap" data-amount-cell>
+        <span className="block font-medium text-slate-800">{formatCurrency(num, fromIso)}</span>
+        {fromIso !== ws && (rate != null
+          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}</span>
+          : <span className="block text-[11px] text-slate-400" data-amount-converted>No {ws} rate yet</span>)}
+      </span>
+    );
   }
 
   function toWsConverted(amount, cur) {
@@ -2117,7 +2144,7 @@ export default function BusinessOperationsPage() {
     const ws = _wsIso();
     if (!fromIso || fromIso === ws) return num;
     const rate = fxRates[fromIso];
-    return rate != null ? num * rate : num;
+    return rate != null ? num * rate : 0;
   }
   function receivedAmt(i) {
     if (i.payments && i.payments.length > 0) return i.payments.reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -2711,6 +2738,13 @@ export default function BusinessOperationsPage() {
         </SkeletonRegion>
       )}
       <div className={`mt-4 space-y-4 ${loading ? "hidden" : ""}`}>
+        {(fx.converted.length > 0 || fx.missing.length > 0) && (
+          <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-500 dark:border-slate-800 dark:bg-slate-900" data-converted-note>
+            {fx.converted.length > 0 && <>≈ Totals include {fx.converted.join(", ")} amounts converted to {fx.ws} at today's rate. </>}
+            {fx.missing.length > 0 && <>Not counted in totals yet: {fx.missing.join(", ")} amounts (no rate yet). </>}
+            Each document keeps its own currency.
+          </p>
+        )}
 
         {/* ===== OVERVIEW ===== */}
         {activeTab === "Overview" && guarded("Overview", () => (
@@ -2820,7 +2854,7 @@ export default function BusinessOperationsPage() {
                     Customer: q.customer_name || q.recipient || "—",
                     Type: <span className="capitalize">{q.type || "Quotation"}</span>,
                     Reference: quoteRefMap.get(q.id) || "—",
-                    Value: (q.total_amount || q.amount) ? `£${Number(q.total_amount || q.amount).toLocaleString()}` : "—",
+                    Value: (q.total_amount || q.amount) ? formatCurrency(Number(q.total_amount || q.amount), q.currency || fx.ws) : "—",
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Updated: fmtDate(q.updated_at || q.created_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
@@ -2845,7 +2879,7 @@ export default function BusinessOperationsPage() {
                     Customer: q.customer_name || q.recipient || "—",
                     Reference: quoteRefMap.get(q.id) || "—",
                     Description: q.description || q.title || "—",
-                    Amount: formatMoney(Number(q.total_amount || q.amount || 0), q.currency),
+                    Amount: <AmountCell value={Number(q.total_amount || q.amount || 0)} currency={q.currency} />,
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
@@ -2923,7 +2957,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -2976,7 +3010,7 @@ export default function BusinessOperationsPage() {
                       "Receipt #": p.receipt?.number || "—",
                       Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                       "Invoice #": invoiceRefMap.get(inv.id) || "—",
-                      Amount: formatMoney(Number(p.amount || 0), inv.currency),
+                      Amount: <AmountCell value={Number(p.amount || 0)} currency={inv.currency} />,
                       "Date Paid": fmtDay(p.paid_at),
                       Receipt: <StatusPill status={p.receipt?.sent_at ? "Sent" : p.receipt?.number ? "Issued" : "Not issued"} />,
                       Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", inv, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", inv) }, ...agentInvoiceItems(inv), { label: "Share Receipt", onClick: () => setShareItem({ record: inv, type: "invoice", receiptMode: true }) }]} />,
@@ -3176,7 +3210,7 @@ export default function BusinessOperationsPage() {
                     Party: c.party_name || c.vendor_name || c.customer_name || "—",
                     "Contract Type": <StatusPill status={c.party_type === "customer" ? "Customer" : c.party_type === "vendor" ? "Vendor" : "—"} />,
                     Reference: contractRefMap.get(c.id) || "—",
-                    Value: (c.price || c.amount || c.value) ? `£${Number(c.price || c.amount || c.value).toLocaleString()}` : "—",
+                    Value: (c.price || c.amount || c.value) ? formatCurrency(Number(c.price || c.amount || c.value), c.currency || fx.ws) : "—",
                     "End Date": c.end_date ? new Date(c.end_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—",
                     Status: <StatusPill status={c.status || "Active"} />,
                     Source: c.source || "Manual",
@@ -3294,7 +3328,7 @@ export default function BusinessOperationsPage() {
                     Type: <StatusPill status={t._t} />,
                     Party: t._party,
                     Reference: (!isUuidLike(t.reference) && t.reference) ? t.reference : "—",
-                    Amount: formatMoney(Number(t.total_amount || t.amount || 0), t.currency),
+                    Amount: <AmountCell value={Number(t.total_amount || t.amount || 0)} currency={t.currency} />,
                     Date: fmtDate(t.date || t.created_at),
                     Status: <StatusPill status={t.status || "Pending"} paymentType={t.payment_type} />,
                     "Linked Record": t._linked,
@@ -3319,7 +3353,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.party_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -3360,7 +3394,7 @@ export default function BusinessOperationsPage() {
                     Vendor: e.vendor_name || e.party_name || "—",
                     Reference: e.reference || e.id?.slice(0, 8) || "—",
                     Description: e.description || e.title || "—",
-                    Amount: formatMoney(Number(e.total_amount || e.amount || e.price || 0), e.currency),
+                    Amount: <AmountCell value={Number(e.total_amount || e.amount || e.price || 0)} currency={e.currency} />,
                     Status: <StatusPill status={e.status || "Pending"} />,
                     Date: fmtDate(e.date || e.created_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", e) }, { label: "Edit", onClick: () => openEdit("expense", e) }, ...(e.status !== "paid" ? [{ label: "Mark as Paid", onClick: () => markAsPaid("expense", e.id) }] : []), { label: "Delete", tone: "danger", onClick: () => deleteItem("expense", e.id) }]} />,
@@ -3375,7 +3409,7 @@ export default function BusinessOperationsPage() {
                 rows={invoices.filter(i => i.status === "paid" || i.status === "partial").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
                   Party: r.customer_name || r.party_name || "—",
                   Reference: r.reference || r.id?.slice(0, 8) || "—",
-                  Amount: formatMoney(receivedAmt(r), r.currency),
+                  Amount: <AmountCell value={receivedAmt(r)} currency={r.currency} />,
                   Date: fmtDate(r.paid_at || r.date || r.created_at),
                   Status: <StatusPill status={r.status || "paid"} />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }]} />,
@@ -3389,7 +3423,7 @@ export default function BusinessOperationsPage() {
                 rows={expenses.filter(e => e.status === "paid").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(p => ({
                   Party: p.vendor_name || p.supplier_name || p.party_name || "—",
                   Reference: p.reference || p.id?.slice(0, 8) || "—",
-                  Amount: formatMoney(Number(p.total_amount || p.amount || 0), p.currency),
+                  Amount: <AmountCell value={Number(p.total_amount || p.amount || 0)} currency={p.currency} />,
                   Date: fmtDate(p.paid_at || p.date || p.created_at),
                   Status: <StatusPill status="paid" />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", p) }]} />,
@@ -3592,7 +3626,7 @@ export default function BusinessOperationsPage() {
                   ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 20).map(r => ({
                     Type: <StatusPill status={r._t} />,
                     Party: r._party,
-                    Amount: formatMoney(r._amt, r._cur),
+                    Amount: <AmountCell value={r._amt} currency={r._cur} />,
                     Date: fmtDate(r.date),
                     Status: <StatusPill status={r.status || "Pending"} paymentType={r._paymentType} />,
                   }))}

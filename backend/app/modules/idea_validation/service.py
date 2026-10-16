@@ -1263,6 +1263,13 @@ async def update_workspace(
             merged[k] = {**merged[k], **{kk: vv for kk, vv in v.items() if vv not in (None, "", [], {}) or kk not in merged[k]}}
         else:
             merged[k] = v
+    # Documents keep the currency they were made in (the owner's QA, 16 Oct): one saved without its own currency gets the
+    # workspace's as it was before this save, so a currency change in the same or a later save never relabels it.
+    try:
+        from app.modules.agent import business as _bz
+        _bz.stamp_document_currencies(merged, _bz.currency_of(ws.data or {}))
+    except Exception:      # noqa: BLE001 - the save goes ahead; the next one stamps them
+        logger.info("document currencies not stamped for %s", workspace_id, exc_info=True)
 
     ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
 

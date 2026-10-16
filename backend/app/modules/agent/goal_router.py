@@ -1068,6 +1068,13 @@ def _read_said(said: str, goal_key: str, read: dict) -> dict:
         for k in ("description", "sell"):
             if k in keys and (not read.get(k) or len(str(read[k])) > 80):
                 read[k] = idea[:1].upper() + idea[1:]
+    # The goal's own reader, the same one the chat uses (P1.10): its plain readings fill what is still empty (a launch's stage,
+    # kind, customer, evidence, price and cost; a funding goal's stage, route and timing).
+    for k, v in goals.extract(said, goal_key).items():
+        # A launch sentence is the launch reader's: what it reads wins ("office workers", not "office workers in Abuja in
+        # January 2027"); for other goals it only fills what is empty.
+        if (k in keys or k.endswith("_per")) and v not in (None, "") and (goal_key == "launch" or read.get(k) in (None, "")):
+            read[k] = v
     return read
 
 

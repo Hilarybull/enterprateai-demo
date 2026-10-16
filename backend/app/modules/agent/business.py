@@ -478,6 +478,77 @@ def currency_of(data: dict) -> str:
     return m.group(1) if m else "GBP"
 
 
+DOCUMENT_LISTS = ("invoices", "quotes", "quotations", "receipts", "contracts", "credit_notes", "purchase_orders", "proposals")
+
+
+def doc_currency(doc: dict | None, default: str | None = None) -> str:
+    """A document's own currency, kept for ever (the owner's QA, 16 Oct): what it was created in, never the workspace's
+    current one. Only a document that never had one falls back to the default."""
+    import re
+    cur = str((doc or {}).get("currency") or "").strip().upper()
+    m = re.match(r"^([A-Z]{3})$", cur) or re.search(r"\(([A-Z]{3})\)", cur)
+    return m.group(1) if m else (default or "GBP")
+
+
+def fx_rate(data: dict, code: str) -> float | None:
+    """The stored rate from one currency to the workspace's (data["fx_rates"], refreshed daily by fx.ensure); 1 for the same
+    currency; None when no rate is stored yet."""
+    base = currency_of(data)
+    if not code or code == base:
+        return 1.0
+    snap = data.get("fx_rates") or {}
+    if snap.get("base") != base:
+        return None
+    r = (snap.get("rates") or {}).get(code)
+    return float(r) if r else None
+
+
+def in_base(data: dict, doc: dict, amount: float) -> float | None:
+    """A document's amount in the workspace currency, at the stored rate; None when its rate is not known yet."""
+    r = fx_rate(data, doc_currency(doc, currency_of(data)))
+    return money(float(amount or 0) * r) if r is not None else None
+
+
+def total_of(data: dict, docs: list[dict], amount) -> dict:
+    """A total across documents in the workspace currency (the owner's QA, 16 Oct): each converted at the stored rate and
+    date, marked converted when any was; one whose rate is not known is left out and named, never added as if it were."""
+    base = currency_of(data)
+    value, converted, missing = 0.0, False, {}
+    for d in docs:
+        a = float(amount(d) or 0)
+        if not a:
+            continue
+        cur = doc_currency(d, base)
+        v = in_base(data, d, a)
+        if v is None:
+            missing[cur] = money(missing.get(cur, 0) + a)
+            continue
+        value += v
+        converted = converted or cur != base
+    return {"value": money(value), "converted": converted, "missing": missing, "rate_date": (data.get("fx_rates") or {}).get("date") if converted else None}
+
+
+def fmt_total(t: dict, currency: str) -> str:
+    """"£3,045.00", or "≈ ₦6,420,000" when other currencies were converted into it, with what could not be converted."""
+    from app.modules.agent.documents import fmt_money as _fmt
+    shown = ("≈ " if t.get("converted") else "") + _fmt(t["value"], currency)
+    left = [_fmt(v, c) for c, v in (t.get("missing") or {}).items()]
+    return shown + (f" (plus {' and '.join(left)} not converted yet)" if left else "")
+
+
+def stamp_document_currencies(data: dict, currency: str) -> int:
+    """Before the workspace currency changes: every document with no currency of its own gets the one it was made in (the
+    workspace's until now), so the change never relabels it. Returns how many were stamped."""
+    f = data.get("financials") if isinstance(data.get("financials"), dict) else {}
+    n = 0
+    for key in DOCUMENT_LISTS:
+        for d in f.get(key) or []:
+            if isinstance(d, dict) and not str(d.get("currency") or "").strip():
+                d["currency"] = currency
+                n += 1
+    return n
+
+
 def company_of(data: dict) -> dict:
     """The seller, from the workspace profile. No placeholders: a missing name or email means
     "ask before sending" (see tools._sender)."""
@@ -515,7 +586,9 @@ def revenue_by_customer(data: dict, since: date | None = None) -> dict[str, floa
         if since and d and d < since:
             continue
         name = str(inv.get("customer_name") or inv.get("recipient") or "Unknown").strip() or "Unknown"
-        out[name] = money(out.get(name, 0) + invoice_total(inv))
+        v = in_base(data, inv, invoice_total(inv))      # in the workspace currency; a document with no rate yet is left out
+        if v is not None:
+            out[name] = money(out.get(name, 0) + v)
     return out
 
 
@@ -542,14 +615,14 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
     f = data.get("financials") or {}
     invs = [i for i in f.get("invoices") or [] if not i.get("archived")]
     exps = [e for e in f.get("expenses") or [] if not e.get("archived")]
-    cash_in = sum(invoice_received(i) for i in invs if status_of(i) == "paid")
+    cash_in = sum(in_base(data, i, invoice_received(i)) or 0 for i in invs if status_of(i) == "paid")
     paid_exps = [e for e in exps if status_of(e) == "paid"]
     cash_out = sum(money(e.get("price") or e.get("total_amount")) for e in paid_exps)
     cos = 0.0
     for i in invs:
         if status_of(i) == "paid":
             total = invoice_total(i)
-            cos += money(i.get("cost_of_sales")) * (invoice_received(i) / total if total else 1)
+            cos += (in_base(data, i, money(i.get("cost_of_sales"))) or 0) * (invoice_received(i) / total if total else 1)
     cash = money(cash_in - cash_out - cos)
     # Burn = average monthly paid expenses over the last 3 months with any activity.
     since = today - timedelta(days=92)

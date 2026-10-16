@@ -72,7 +72,10 @@ function QuestionPanel({ run, onClose, onDone }) {
       <aside role="dialog" aria-modal="true" aria-label={titleOf(run)} className="absolute inset-y-0 right-0 flex w-full flex-col overflow-y-auto bg-white p-5 shadow-2xl sm:w-[480px] dark:bg-slate-900">
         <div className="flex items-start justify-between gap-3">
           <p className="text-base font-bold text-slate-900 dark:text-slate-100">{titleOf(run)}</p>
-          <button type="button" onClick={onClose} className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
+          <span className="flex shrink-0 items-center gap-3">
+            <a href={`/agent/runs/${run.id}`} data-open-full-page className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>
+            <button type="button" onClick={onClose} className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
+          </span>
         </div>
         <div className="mt-3">
           <QuestionForm question={run.pending_question.question} fields={run.pending_question.fields} submitting={busy}

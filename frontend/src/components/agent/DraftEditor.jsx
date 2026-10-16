@@ -559,7 +559,12 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
         className="m-drawer max-h-full w-full max-w-[720px] overflow-y-auto rounded-bl-2xl max-sm:h-full max-sm:rounded-none border-b border-l border-slate-200 bg-slate-50 p-4 shadow-2xl sm:p-5 dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{editing && pending ? "Edit draft" : done ? "Done" : "Needs your approval"}</h2>
-          <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          <span className="flex items-center gap-3">
+            {/* The whole task on its own page: every step, the history, the document (P1.11). */}
+            <a href={`/agent/runs/${runId}`} onClick={(e) => { if (onOpenTask) { e.preventDefault(); onOpenTask(runId); } }} data-open-full-page
+              className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>
+            <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          </span>
         </div>
         {failed ? <LoadError what="this document" detail={failed} onRetry={() => setAttempt((n) => n + 1)} />
           : !data ? <SkeletonRegion label="this document" className="space-y-4"><SkeletonText lines={3} /><SkeletonTable rows={3} cols={4} /></SkeletonRegion>

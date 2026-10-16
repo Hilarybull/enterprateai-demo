@@ -176,6 +176,8 @@ def fill(data: dict, answers: dict, goal: str, *, currency: str | None = None, n
             continue      # set (or cleared, or undone) by the owner by hand: theirs, never filled again
         if _blank(have):
             if field == "currency":
+                from app.modules.agent import business as _bz
+                _bz.stamp_document_currencies(data, _bz.currency_of(data))      # documents keep the currency they were made in
                 settings["currency"] = value
             else:
                 p[field] = value

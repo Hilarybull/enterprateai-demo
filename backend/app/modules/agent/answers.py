@@ -72,7 +72,7 @@ def _facts(data: dict, policy: dict, today: date) -> dict[str, Any]:
         "alert_pct": alert_pct,
         "conc": bz.concentration(data, alert_pct),
         "overdue": overdue,
-        "overdue_total": sum(bz.invoice_outstanding(i) for i in overdue),
+        "overdue_total": bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i)),      # in the workspace currency, converted where needed
         "oldest_days": oldest,
         "cash": bz.cash_position(data, today),
     }
@@ -92,7 +92,7 @@ def _evidence(f: dict) -> list[dict]:
         ev.append({"label": "Revenue recorded", "value": "None yet"})
     if f["overdue"]:
         oldest = f" (oldest {f['oldest_days']} days)" if f["oldest_days"] is not None else ""
-        ev.append({"label": "Overdue invoices", "value": f"{len(f['overdue'])} · {fmt_money(f['overdue_total'], cur)}{oldest}"})
+        ev.append({"label": "Overdue invoices", "value": f"{len(f['overdue'])} · {bz.fmt_total(f['overdue_total'], cur)}{oldest}"})
     else:
         ev.append({"label": "Overdue invoices", "value": "None"})
     runway = f" · {cash['runway_months']:g} months of runway" if cash["runway_months"] is not None else ""
@@ -123,7 +123,7 @@ def _risks(f: dict) -> list[dict]:
         n = len(f["overdue"])
         oldest = f", the oldest by {f['oldest_days']} days" if f["oldest_days"] else ""
         out.append({"key": "overdue", "text": f"late payment: {n} invoice{'s are' if n != 1 else ' is'} overdue "
-                                              f"({fmt_money(f['overdue_total'], cur)}){oldest}",
+                                              f"({bz.fmt_total(f['overdue_total'], cur)}){oldest}",
                     "action": {"label": "Prepare payment follow-ups", "capability": "payment_followup"}})
     return out
 
@@ -160,7 +160,7 @@ def answer_question(text: str, data: dict, policy: dict, today: date) -> dict | 
         if f["overdue"]:
             names = ", ".join(sorted({str(i.get("customer_name") or "a customer") for i in f["overdue"]})[:3])
             message = (f"{len(f['overdue'])} invoice{'s are' if len(f['overdue']) != 1 else ' is'} overdue, "
-                       f"{fmt_money(f['overdue_total'], cur)} in total, from {names}.")
+                       f"{bz.fmt_total(f['overdue_total'], cur)} in total, from {names}.")
             actions = [{"label": "Prepare payment follow-ups", "capability": "payment_followup"}]
         else:
             message = "Nothing is overdue. Every issued invoice is either paid or still within its payment terms."

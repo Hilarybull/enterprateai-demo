@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
-import { useWorkspaceStore } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { getAgentSummary } from "../lib/agent";
 import BusinessAssistant from "./BusinessAssistant";
 import WorkspaceCompletion from "./WorkspaceCompletion";
@@ -700,10 +700,7 @@ export default function Layout() {
         setDraftIdeaValidation(ws?.data?.draft_idea_validation ?? null);
         if (!acceptedServiceEntry?.payload) setDraftServiceIdea(ws?.data?.draft_service_idea ?? null);
         if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
-        const currency =
-          ws?.data?.idea_validation?.context?.currency ||
-          ws?.data?.business_profile?.currency ||
-          ws?.data?.business_context?.currency;
+        const currency = workspaceCurrencyOf(ws?.data);
         if (currency) setCurrency(currency);
         refreshWorkspaceData(); // signal data-dependent pages (e.g. Dashboard) to re-fetch
       } catch (e) {
@@ -926,7 +923,7 @@ export default function Layout() {
                         setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
                         setDecisionStatus(ws.data?.decision_status || null);
                         setServiceDecisionStatus(ws.data?.service_decision_status || null);
-                        setCurrency(ws.data?.currency || "GBP");
+                        setCurrency(workspaceCurrencyOf(ws.data) || "GBP");
                         clearMemberMode();
                         invalidateWorkspaceCache();
                         window.dispatchEvent(new Event("ea:workspace:refresh"));

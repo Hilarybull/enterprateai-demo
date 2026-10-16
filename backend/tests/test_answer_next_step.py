@@ -19,3 +19,17 @@ def test_nothing_is_proposed_off_topic_or_when_everything_is_listed():
     assert next_step("How is my cash this month?", "Your cash is fine.", PROFILE, "B1") is None
     listed = {**PROFILE, "catalogue": {"products": [{"name": "ai automation service"}, {"name": "Chatbot setup"}]}}
     assert catalogue_gaps(listed) == [] and next_step("What services do I have?", "Two.", listed, "B1") is None
+
+
+def test_written_answers_never_carry_em_or_en_dashes():
+    from app.modules.business_assistant.service import _clean_assistant_answer
+    out = _clean_assistant_answer("one for Aftred is overdue — but it was sent. Pages 3–5.")
+    assert out == "one for Aftred is overdue, but it was sent. Pages 3 to 5." and "—" not in out and "–" not in out
+
+
+def test_task_summaries_shown_to_the_owner_carry_no_dashes():
+    from app.modules.agent.router import _public_run
+    out = _public_run({"id": "r1", "workflow_key": "idea_validation", "status": "succeeded", "state": {},
+                       "summary": "First step: Problem Discovery Interviews (15–20 interviews, 14 days) — then test.", "next_action": "Book 3–5 calls"})
+    assert out["summary"] == "First step: Problem Discovery Interviews (15 to 20 interviews, 14 days), then test."
+    assert out["next_action"] == "Book 3 to 5 calls"

@@ -11,10 +11,16 @@ export function formatCurrency(n, currency = "GBP", locale = undefined) {
   if (typeof n !== "number" || Number.isNaN(n)) return "—";
   const cur = _isoCode(currency);
   try {
-    return new Intl.NumberFormat(locale, { style: "currency", currency: cur }).format(n);
+    // The currency's own sign ("₦50,000.00", "$315.00"), never "NGN 50,000.00" or "US$315.00" (the owner's QA, 16 Oct).
+    return new Intl.NumberFormat(locale, { style: "currency", currency: cur, currencyDisplay: "narrowSymbol" }).format(n);
   } catch {
     return new Intl.NumberFormat(locale, { style: "currency", currency: "GBP" }).format(n);
   }
+}
+
+/** "£" for GBP, "₦" for NGN, "$" for USD…: the sign the app's money format puts before a figure. */
+export function currencySign(currency = "GBP") {
+  return formatCurrency(0, currency || "GBP").replace(/[\d.,\s-]/g, "") || String(currency || "");
 }
 
 export function formatPercent(n) {

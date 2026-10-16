@@ -1,3 +1,4 @@
+import { formatCurrency } from "../lib/format";
 import { refusalMessage } from "../lib/entitlement";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -592,7 +593,7 @@ export default function BusinessPlanPage() {
                         {aMap.products_services.map((p, i) => {
                           const name = typeof p === "string" ? p : (p?.name || "");
                           const price = typeof p === "object"
-                            ? (p?.price_label || (p?.unit_price != null ? `£${Number(p.unit_price).toLocaleString()}` : null) || (p?.base_price != null ? `£${Number(p.base_price).toLocaleString()}` : null))
+                            ? (p?.price_label || (p?.unit_price != null ? formatCurrency(Number(p.unit_price), p?.currency || useWorkspaceStore.getState().currency || "GBP") : null) || (p?.base_price != null ? formatCurrency(Number(p.base_price), p?.currency || useWorkspaceStore.getState().currency || "GBP") : null))
                             : null;
                           return (
                             <div key={i} className="flex items-center justify-between gap-2 text-xs">

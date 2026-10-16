@@ -2,7 +2,7 @@
 // through every tab. A build can't catch a missing identifier inside markup; this does.
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import BusinessOperationsPage, { ASSIGNING, LIVE_REFRESH_MS, menuPlacement } from "./BusinessOperationsPage";
 import { AGENT_CHANGED_EVENT, approveAction } from "../lib/agent";
@@ -434,5 +434,34 @@ describe("ErrorBoundary", () => {
     );
     expect(screen.getByText("Still here")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toMatch(/Sales section couldn't be displayed/);
+  });
+});
+
+describe("money in the workspace currency (QA, 16 Oct)", () => {
+  it("with the workspace in NGN, each invoice shows its own currency first and every total is ≈ ₦ with the note", async () => {
+    const ngn = { ...workspace, data: { ...workspace.data, settings: { currency: "NGN" }, financials: { ...workspace.data.financials, invoices: [
+      { id: "m1", reference: "INV-1131026", customer_name: "Mark", status: "sent", currency: "USD", total_amount: 315, due_date: day(5).slice(0, 10), created_at: day(-1) },
+      { id: "e1", reference: "INV-1151026", customer_name: "Ebe", status: "sent", currency: "GBP", total_amount: 2730, due_date: day(5).slice(0, 10), created_at: day(-1) },
+      { id: "n1", reference: "INV-9", customer_name: "Ada", status: "sent", currency: "NGN", total_amount: 50000, due_date: day(5).slice(0, 10), created_at: day(-1) }] } } };
+    served = ngn;
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      const rate = /from_currency=USD/.test(path) ? 1500 : /from_currency=GBP/.test(path) ? 2000 : 1;
+      const body = /\/validation\//.test(path) ? served : /currency-rate/.test(path) ? { rate } : {};
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "Alchemy Test", currency: "NGN", wsDoc: ngn });
+    await act(async () => { mount("/operations?tab=Sales"); });
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: "Invoices" })[0]); });
+    await waitFor(() => expect([...document.querySelectorAll("[data-amount-converted]")].some((c) => c.textContent.startsWith("≈"))).toBe(true));
+    const cells = [...document.querySelectorAll("[data-amount-cell]")].map((c) => c.textContent);
+    expect(cells.some((t) => t.startsWith("$315.00") && t.includes("≈ ₦472,500.00"))).toBe(true);      // its own first, the conversion after
+    expect(cells.some((t) => t.startsWith("£2,730.00") && t.includes("≈ ₦5,460,000.00"))).toBe(true);
+    expect(cells.some((t) => t === "₦50,000.00")).toBe(true);      // already in the workspace currency: one amount
+    expect(document.body.textContent).not.toMatch(/£237|\(\$315\.00\)/);
+    expect(document.querySelector("[data-converted-note]").textContent).toContain("≈ Totals include");
+    expect(document.querySelector("[data-converted-note]").textContent).toContain("converted to NGN at today's rate");
+    const tiles = [...document.querySelectorAll("p, span, div")].map((n) => n.textContent).filter((t) => /^≈ ₦/.test(t || ""));
+    expect(tiles.length).toBeGreaterThan(0);      // KPI totals in ≈ ₦, never a £ base
   });
 });

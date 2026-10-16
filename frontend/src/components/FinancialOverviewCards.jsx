@@ -55,7 +55,7 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
       const from = cur ? isoOf(cur) : "";
       if (!from || from === wsIso) return num;
       const rate = fxRates[from];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
 
     const active = invoices.filter((i) => !i.archived);

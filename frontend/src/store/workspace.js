@@ -175,3 +175,10 @@ export function workspaceStatusOf(state) {
   if (state.workspaceId) return "ready";
   return !state.workspaceCheckedOnce || state.workspaceChecks > 0 ? "checking" : "none";
 }
+
+/** The workspace currency as the server reads it (settings.currency first), so every page totals in the same one
+ *  (the owner's QA, 16 Oct: Business Operations kept a GBP base after the workspace moved to NGN). */
+export function workspaceCurrencyOf(data) {
+  const d = data || {};
+  return d.settings?.currency || d.idea_validation?.context?.currency || d.business_profile?.currency || d.business_context?.currency || d.currency || null;
+}

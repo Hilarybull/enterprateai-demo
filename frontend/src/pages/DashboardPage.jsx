@@ -365,6 +365,11 @@ export default function DashboardPage() {
     [acceptedValidation, snapshot]
   );
 
+  const wsCurrencyCode = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
+  // The other currencies the documents are in (each keeps its own): the totals convert them, and say so.
+  const otherCurrencies = useMemo(() => [...new Set([...(snapshot?.invoices || []), ...(snapshot?.expenses || [])]
+    .map((d) => (String(d?.currency || "").match(/\(([A-Z]{3})\)/)?.[1] || String(d?.currency || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase())
+    .filter((c) => c && c !== wsCurrencyCode))], [snapshot, wsCurrencyCode]);
   const snapshotKpis = useMemo(() => {
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
     const toWs = (amount, cur) => {
@@ -372,7 +377,7 @@ export default function DashboardPage() {
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
       const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     const rawAmt = r => Number(r?.total_amount || r?.subtotal_amount || 0);
 
@@ -428,7 +433,7 @@ export default function DashboardPage() {
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso2) return num;
       const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     // Use stable status-stamp dates — updated_at is refreshed by server on every fetch
     // Paid: payments[last].paid_at → direct paid_at stamp → issue_date fallback
@@ -475,7 +480,7 @@ export default function DashboardPage() {
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
       const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     return buildKpiTrends({ invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey });
   }, [snapshot, fxRates, currency, rangeKey]);
@@ -501,7 +506,7 @@ export default function DashboardPage() {
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
       const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     return kpiBreakdown({ kind: openKpi.kind, invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey,
       refs: invoiceNumbers(snapshot.invoices), risks: Array.isArray(agentSummary?.risks) ? agentSummary.risks : null });
@@ -785,6 +790,12 @@ export default function DashboardPage() {
           <h2 className="text-[15px] font-semibold text-slate-700 dark:text-slate-200">
             {stageFigures ? "Key Figures for Your Stage" : <>Current Financial Performance &amp; Health</>}
           </h2>
+          {otherCurrencies.length > 0 && (
+            // Documents keep their own currency; these totals include them converted at today's rate (the owner's QA, 16 Oct).
+            <p className="w-full text-[12px] text-slate-500 sm:order-last" data-converted-note>
+              ≈ Includes {otherCurrencies.join(", ")} amounts converted to {wsCurrencyCode} at today's rate. Each document keeps its own currency.
+            </p>
+          )}
           <div className={`relative ${hasTrendTiles ? "" : "hidden"}`}>
             <button type="button" onClick={() => setRangeOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={rangeOpen}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">

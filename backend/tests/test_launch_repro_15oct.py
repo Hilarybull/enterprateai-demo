@@ -58,3 +58,11 @@ def test_an_existing_plan_for_another_offering_defaults_to_a_new_one_and_the_new
     assert states["offer"] == "met" and states["cash"] == states["delivery"] == states["prerequisites"] == "unknown"      # unknown never passes
     assert result["score"] < 100 and result["evidence_coverage"] < 100
     assert any(a["label"] == "Add 'Car wash subscription · ₦15,000 a month' to your catalogue" for a in result["free_next_actions"])
+
+
+def test_the_in_app_quick_check_reads_the_sentence_as_the_chat_does():
+    from app.modules.agent.goal_router import _read_said
+    read = _read_said(MSG, "launch", {})
+    assert {k: read.get(k) for k in ("sell", "customer", "where", "stage", "kind", "evidence", "price", "cost")} == {
+        "sell": "car wash subscription", "customer": "office workers", "where": "Abuja", "stage": "testing", "kind": "service",
+        "evidence": "10 customers tried it", "price": 15000.0, "cost": 6000.0}

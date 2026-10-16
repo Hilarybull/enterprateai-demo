@@ -163,13 +163,20 @@ def credits_of(run: dict) -> int:
 
 def _public_run(run: dict) -> dict:
     """User-facing view of a run. Internal working state is not exposed (s18.3)."""
+    from app.shared.copy_rules import no_dashes
+    out = _public_run_body(run, no_dashes)
+    out["next_action"] = no_dashes(out.get("next_action"))
+    return out
+
+
+def _public_run_body(run: dict, no_dashes) -> dict:
     state = run.get("state") or {}
     return {
         **{k: run.get(k) for k in ("id", "business_id", "workflow_key", "workflow_version", "capability", "family", "title",
                                    "status", "substatus", "reason_code", "goal", "source_channel", "source_reference",
                                    "recommendation_id", "current_step", "summary", "next_action", "pending_question",
                                    "error", "created_at", "updated_at", "completed_at", "requester_id")},
-        "summary": _what_happened(run),
+        "summary": no_dashes(_what_happened(run)),      # the owner's rule: no em or en dashes in what they read
         "step": _step_of(run),
         "bucket": summary_mod.bucket_of(run),
         "retrying": run.get("status") == "failed" and summary_mod.bucket_of(run) == "active",      # the Agent is trying again itself
@@ -951,10 +958,29 @@ def _document_kinds() -> list[dict]:
             + [{"key": k, "label": l} for k, (l, _part) in _PREPARED_KINDS.items()])
 
 
+async def _rates_refreshed(business_id: str) -> bool:
+    """True when today's exchange rates were just stored (documents in other currencies than the workspace's): the totals
+    are worked out again in them. At most once a day per workspace; never a reason for a page to fail."""
+    try:
+        from app.modules.agent import fx
+        orch = get_orchestrator()
+        data = await orch.rt.business.load(business_id) or {}
+        before = (data.get("fx_rates") or {}).get("date")
+        if not fx.currencies_used(data):
+            return False
+        after = await fx.ensure(orch, business_id, data)
+        return bool(after and after.get("date") != before)
+    except Exception:      # noqa: BLE001
+        logger.info("rates not refreshed for %s", business_id, exc_info=True)
+        return False
+
+
 @router.get("/businesses/{business_id}/agent/summary")
 async def agent_summary(business_id: str, user=Depends(get_current_user)):
     try:
         s = await summary_mod.build_summary(get_orchestrator(), user["id"], business_id, user.get("email"))
+        if await _rates_refreshed(business_id):      # documents in other currencies: today's rates first, then the totals
+            s = await summary_mod.build_summary(get_orchestrator(), user["id"], business_id, user.get("email"))
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:
@@ -1060,6 +1086,10 @@ async def adaptive_dashboard(business_id: str, preview_pathway: str | None = Que
         d = await dash.build_dashboard(get_orchestrator(), user["id"], business_id, user.get("email"),
                                        preview_pathway=None if production else preview_pathway,
                                        preview_stage=None if production else preview_stage)
+        if await _rates_refreshed(business_id):      # access is checked: today's rates stored, then the totals in them
+            d = await dash.build_dashboard(get_orchestrator(), user["id"], business_id, user.get("email"),
+                                           preview_pathway=None if production else preview_pathway,
+                                           preview_stage=None if production else preview_stage)
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:

@@ -919,6 +919,13 @@ class Orchestrator:
             # the Business Assistant to answer conversationally.
             if req.raw_input:
                 data = await self.visible_data(req.business_id)
+                if answers.topic_of(req.raw_input):
+                    # A total across documents in other currencies is converted at today's stored rate, said as converted.
+                    from app.modules.agent import fx
+                    if fx.currencies_used(data):
+                        rates = await fx.ensure(self, req.business_id)
+                        if rates:
+                            data = {**data, "fx_rates": rates}
                 answer = answers.answer_question(req.raw_input, data, policy, self.rt.clock().date())
                 if answer:
                     return {"kind": "answer", **answer}

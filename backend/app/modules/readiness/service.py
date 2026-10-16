@@ -1258,6 +1258,27 @@ class ReadinessService:
 
     async def request_assessment(self, user_id: str, business_id: str, subject_type: str, subject_id: str, *, revision: int | None = None,
                                  idempotency_key: str | None = None, email: str | None = None) -> dict:
+        """The check, with each record read once for the whole run (a write forgets its table's reads): a check again read
+        the workspace four times and every other table twice."""
+        from app.core.supabase import read_cache
+        with read_cache():
+            async def nothing() -> None:
+                return None
+            # What the check reads, fetched side by side first (each later read is then served from the cache).
+            await asyncio.gather(
+                self._policy_of(business_id) if self._policy_of else nothing(), self.business.record(business_id),
+                self.store.get("subjects", str(subject_id)),
+                self.store.list("assessments", business_id, subject_id=subject_id, limit=4),
+                self.store.list("actions", business_id, subject_id=subject_id, limit=300),
+                self.store.list("evidence", business_id, limit=500),
+                self.store.list("artifacts", business_id, subject_id=subject_id),
+                self.store.list("forecasts", business_id, limit=100),
+                return_exceptions=True)
+            return await self._request_assessment(user_id, business_id, subject_type, subject_id, revision=revision,
+                                                  idempotency_key=idempotency_key, email=email)
+
+    async def _request_assessment(self, user_id: str, business_id: str, subject_type: str, subject_id: str, *, revision: int | None = None,
+                                  idempotency_key: str | None = None, email: str | None = None) -> dict:
         """Run the check. One logical run per idempotency key: a retry returns the same run.
         The input snapshot is saved before anything is calculated."""
         ctx = await self._ctx(user_id, business_id, email)
@@ -1434,6 +1455,8 @@ class ReadinessService:
         check that found it resolved. Dismissed actions stay dismissed."""
         gaps = {g["code"]: g for g in run["data"]["result"]["gaps"]}
         existing = {a["key"]: a for a in await self.store.list("actions", row["business_id"], subject_id=row["id"], limit=300) if a.get("key")}
+        # Each action's save is its own row: saved side by side, not one after another (a check again took 3s on these alone).
+        saves: list = []
         for code, gap in gaps.items():
             fields = {k: gap.get(k) for k in ("title", "why", "priority_reason", "evidence_required", "group", "criterion", "section", "tool", "weight", "order", "also")}
             fields["assessment_id"] = run["id"]
@@ -1458,7 +1481,9 @@ class ReadinessService:
                 patch["status"] = "open"
                 data["reopened_at"] = ctx["today"].isoformat()
                 data["resolved_by_assessment_id"] = None
-            await self.store.update("actions", current["id"], patch, bump=False)
+            saves.append(self.store.update("actions", current["id"], patch, bump=False))
+        if saves:
+            await asyncio.gather(*saves)
         covered = {c: g["code"] for g in gaps.values() for c in g.get("also") or []}
         for code, current in existing.items():
             if code not in gaps and current.get("status") in rules.UNRESOLVED_ACTION_STATES and (current["data"] or {}).get("kind") == "gap":

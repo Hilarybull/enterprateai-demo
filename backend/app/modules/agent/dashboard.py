@@ -541,11 +541,13 @@ def financial_summary(data: dict, policy: dict, now: datetime) -> dict:
     cash = bz.cash_position(data, today)
     overdue = bz.overdue_invoices(data, today)
     invoices = _invoices(data)
-    receivable = sum(bz.invoice_outstanding(i) for i in invoices if bz.status_of(i) not in ("", "draft") and not bz.invoice_hold(i))
+    receivable_t = bz.total_of(data, [i for i in invoices if bz.status_of(i) not in ("", "draft") and not bz.invoice_hold(i)], lambda i: bz.invoice_outstanding(i))
+    receivable = receivable_t["value"]
     return {
         "currency": bz.currency_of(data), "cash": cash["cash"], "monthly_burn": cash["monthly_burn"],
         "runway_months": cash["runway_months"], "receivables": bz.money(receivable),
-        "overdue_count": len(overdue), "overdue_total": bz.money(sum(bz.invoice_outstanding(i) for i in overdue)),
+        "overdue_count": len(overdue), "overdue_total": bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))["value"],
+        "converted": bool(receivable_t["converted"] or bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))["converted"]), "fx_date": (data.get("fx_rates") or {}).get("date"),
         "has_records": bool(invoices or _financials(data).get("expenses")),
     }
 
@@ -1139,7 +1141,7 @@ def registration_status(data: dict) -> dict:
             "subject": name or "Your business"}
 
 
-def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: str | None, cur: str) -> tuple[str, dict | None]:
+def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: str | None, cur: str, data: dict | None = None) -> tuple[str, dict | None]:
     """What the Agent has done about the overdue invoices, in one sentence, and where the owner is
     needed (an approval, or a question only they can answer). Never a task for the owner to start."""
     from app.modules.agent import autostart
@@ -1151,7 +1153,7 @@ def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: s
              or (r.get("status") == "running" and any(f.get("key") == "customer_email" for f in (r.get("pending_question") or {}).get("fields") or []))]
     # Drafts in Needs Approval with no address yet (the owner's QA, 15 Oct): approvals, said as needing an email.
     flagged = [r for r in ready if (r.get("state") or {}).get("email_needed")]
-    total = fmt_money(bz.money(sum(bz.invoice_outstanding(i) for i in overdue)), cur)
+    total = bz.fmt_total(bz.total_of(data or {"settings": {"currency": cur}}, overdue, lambda i: bz.invoice_outstanding(i)), cur)
     head = f"{len(overdue)} overdue ({total})."
     said, cta = [], None
     if ready:
@@ -1191,7 +1193,8 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
     conc = bz.concentration(data, alert_pct)
     cash = bz.cash_position(data, today)
     overdue = bz.overdue_invoices(data, today)
-    overdue_total = bz.money(sum(bz.invoice_outstanding(i) for i in overdue))
+    overdue_t = bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))
+    overdue_total = overdue_t["value"]
     labels = invoice_labels(data) if overdue else {}
     fin = _financials(data)
     has_invoices = bool(fin.get("invoices"))
@@ -1313,10 +1316,10 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
 
     if "next_step" in families:
         if overdue:      # unpaid invoices past their due date matter at every stage
-            status_text, status_cta = followup_status(overdue, runs or [], policy, plan, cur)
+            status_text, status_cta = followup_status(overdue, runs or [], policy, plan, cur, data)
             cards.append(_card(
                 "next_step", 2, "brand", status_text,
-                severity="medium", detail=f"{len(overdue)} overdue · {fmt_money(overdue_total, cur)}",
+                severity="medium", detail=f"{len(overdue)} overdue · {bz.fmt_total(overdue_t, cur)}",
                 cta=status_cta,      # only where the owner is needed: an approval, or an answer
                 why="Invoices are past their due date and still unpaid.",
                 evidence=[_ev(invoice_label(i, labels),
