@@ -13,20 +13,22 @@ import PublicFooter from "../components/public/PublicFooter";
 import TestimonialCards from "../components/public/TestimonialCards";
 
 
+// The plans as sold (the pricing PDF, 19 Oct 2026), the same words as the pricing page (lib/plans.js).
 const PLANS = [
   {
     name: "Explorer", monthly: 0, annual: 0, free: true,
-    creditsCaption: "50 Credits",
-    desc: "For Exploring",
-    features: ["Basic Idea Validation", "AI Business Plan Generator", "Invoices, Receipts, Contracts, Expense Tracker", "Receive and Request for Quotations", "Products, Customers, Vendors", "Business Registration Guide, Verification", "1 Marketplace listing"],
+    creditsCaption: "£0 forever",
+    desc: "Start simple. For new businesses getting organised",
+    ctaLabel: "Get started free",
+    features: ["50 welcome AI credits (valid 60 days)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
     highlight: false,
   },
   {
-    name: "Starter", tier: "Insight", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
-    desc: "For solo founders and new service businesses that want more planning, proposals, simulations, and intelligence",
-    ctaLabel: "Get Started - 500 credits/mo",
-    features: ["Everything on the Explorer Plan", "Comprehensive Idea Validation", "AI Business Proposals Generator", "AI Sales Letters Generator", "Manage, Receive and Request for Proposals, Quotations", "4 Scenario simulations", "Fragility Index", "Adaptive Scenario Intelligence", "Multiple marketplace listings"],
-    highlight: true, badge: "Best Value",
+    name: "Starter", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
+    desc: "Plan, launch and grow. For founders and solo businesses",
+    ctaLabel: "Choose Starter",
+    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "Scenario Simulations", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
+    highlight: false,
   },
   {
     name: "Decision Engine",
@@ -34,10 +36,10 @@ const PLANS = [
     annual: 49.17,
     annualSaving: 118,
     free: false,
-    desc: "For teams that need deeper AI support, live-plan intelligence, and multi-user decision making",
-    ctaLabel: "Get Started - 2000 credits/mo",
-    features: ["Everything on the Starter Plan", "3rd Party Integrations", "Live Business Plan Intelligence", "Multiple Scenario Simulations"],
-    highlight: false,
+    desc: "Decide with confidence. For growing businesses and teams",
+    ctaLabel: "Choose Decision Engine",
+    features: ["Everything in Starter", "2,000 pooled AI credits / month", "AI Agent access (credit-based)", "3 user seats included", "Extra seat: £15/mo (+250 AI credits)", "Live & Adaptive Business Plan Intelligence", "Access to RFP Leads", "Third-Party Integrations", "Unlimited Marketplace Listings", "AI-Powered Decision Recommendations"],
+    highlight: true, badge: "Most Popular",
   },
 ];
 
@@ -755,7 +757,10 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-10 text-center">
             <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Pricing</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Start free. Upgrade when your business needs more intelligence.</h2>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Choose the right plan for your business.</h2>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
+              From getting started to making smarter decisions and supporting more businesses.
+            </p>
             <div className="mt-6 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
               <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition ${annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>

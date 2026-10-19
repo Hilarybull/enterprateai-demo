@@ -1,69 +1,80 @@
+import { isPlatformModuleGranted } from "./permissions";
+
 export const BILLING = { monthly: "monthly", annual: "annual" };
 
+// The plans as sold (EnterprateAI_Pricing_Plans_AI_Agent_Final.pdf, 19 Oct 2026): names, lines, prices and features word for word.
 export const PLANS = [
   {
     key: "explorer",
     label: "Explorer",
-    tagline: "No card needed",
+    headline: "Start simple.",
+    tagline: "For new businesses getting organised",
     monthlyPrice: 0,
     annualPrice: 0,
     annualSaving: 0,
-    cta: "Start Free",
+    cta: "Get started free",
     ctaStyle: "solid",
     features: [
-      "50 one-time credits",
+      "50 welcome AI credits (valid 60 days)",
+      "AI Agent access (credit-based)",
+      "1 user seat",
+      "Invoices, Quotes, Receipts & Contracts",
+      "Expense, Customer & Product Records",
+      "1 Marketplace Listing",
       "Basic Idea Validation",
-      "AI Business Plan Generator",
-      "Invoices, Receipts, Contracts, Expense Tracker",
-      "Receive and Request for Quotations",
-      "Products, Customers, Vendors",
-      "Business Registration Guide, Verification",
-      "1 Marketplace listing",
     ],
   },
   {
     key: "starter_insight",
     label: "Starter",
-    tier: "Insight",
-    tagline: "Solo founders & new service businesses",
+    headline: "Plan, launch and grow.",
+    tagline: "For founders and solo businesses",
     monthlyPrice: 19,
     annualPrice: 15.83,
     annualTotal: 190,
     annualSaving: 38,
-    cta: "Subscribe",
+    cta: "Choose Starter",
     ctaStyle: "outline",
     features: [
-      "500 monthly credits",
-      "Everything on the Explorer Plan",
-      "Comprehensive Idea Validation",
-      "AI Business Proposals Generator",
-      "AI Sales Letters Generator",
-      "Manage, Receive and Request for Proposals, Quotations",
-      "4 Scenario simulations",
-      "Fragility Index",
-      "Adaptive Scenario Intelligence",
-      "Multiple marketplace listings",
-      "1 user",
+      "Everything in Explorer",
+      "500 AI credits each month",
+      "AI Agent access (credit-based)",
+      "1 user seat",
+      "AI Business Plan Generator",
+      "Product/Service Launch Readiness",
+      "AI-Powered Funding Readiness",
+      "Proposals & Sales Letters Generator",
+      "Pricing & Customer Growth Insights",
+      "Up to 10 Marketplace Listings*",
+      "Scenario Simulations",
+      "Request for Proposal",
+      "RFQ-to-Quote Workflow",
+      "AI-Powered Decision Recommendations",
     ],
   },
   {
     key: "decision_engine",
     label: "Decision Engine",
-    tagline: "Micro-businesses ready to scale decisions",
+    headline: "Decide with confidence.",
+    tagline: "For growing businesses and teams",
     monthlyPrice: 59,
     annualPrice: 49.17,
     annualTotal: 590,
     annualSaving: 118,
     badge: "Most Popular",
-    cta: "Subscribe",
+    cta: "Choose Decision Engine",
     ctaStyle: "solid",
     features: [
-      "2,000 monthly credits",
-      "Everything on the Starter Plan",
-      "3rd Party Integrations",
-      "Live Business Plan Intelligence",
-      "Multiple Scenario Simulations",
-      "3 users included",
+      "Everything in Starter",
+      "2,000 pooled AI credits / month",
+      "AI Agent access (credit-based)",
+      "3 user seats included",
+      "Extra seat: £15/mo (+250 AI credits)",
+      "Live & Adaptive Business Plan Intelligence",
+      "Access to RFP Leads",
+      "Third-Party Integrations",
+      "Unlimited Marketplace Listings",
+      "AI-Powered Decision Recommendations",
     ],
   },
   // {
@@ -131,9 +142,9 @@ export const PLAN_MODULE_ACCESS = {
   // Starter: everything on Explorer + proposals.
   starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
   // Decision Engine: everything on Starter + integrations and Live Business Plan Intelligence.
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan"],
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
@@ -141,6 +152,7 @@ export const MODULE_MIN_PLAN = {
   simulation: "explorer",
   integrations: "decision_engine",
   live_plan: "decision_engine",
+  funding_pack: "decision_engine",      // preparing the funding pack (the owner, 16 Oct)
   proposals: "starter_insight",
 };
 
@@ -179,6 +191,12 @@ export function planHasModuleAccess(planKey, moduleKey, status) {
     : (normalised ?? "explorer");
   const allowed = PLAN_MODULE_ACCESS[effectivePlan] ?? PLAN_MODULE_ACCESS.explorer;
   return allowed.includes(moduleKey);
+}
+
+/** The funding pack is included from Decision Engine (the owner, 16 Oct); an admin grant of "funding_pack" opens it too. */
+export function hasFundingPack(subscription, platformGrants) {
+  return planHasModuleAccess(subscription?.plan_key ?? "explorer", "funding_pack", subscription?.status ?? "trial")
+    || isPlatformModuleGranted("funding_pack", platformGrants);
 }
 
 export function getPlan(key) {
