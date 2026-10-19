@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { PLANS, BILLING, formatPrice, accessLabel, normalisePlanKey } from "../lib/plans";
 import { apiRequest } from "../api/client";
@@ -7,7 +7,7 @@ import logoUrl from "../enterprate-logo.png";
 
 const SUPPORT_EMAIL = "support@enterprate.ai";
 
-// ── Card brand logos ──────────────────────────────────────────────────────────
+// â”€â”€ Card brand logos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function VisaLogo({ active }) {
   return (
@@ -79,7 +79,7 @@ function VerveLogo({ active }) {
   );
 }
 
-// ── Checkout — redirects to Stripe's own hosted Checkout page ─────────────────
+// â”€â”€ Checkout — redirects to Stripe's own hosted Checkout page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Card details are entered on checkout.stripe.com, never on this site.
 
 function CheckoutFallback({ plan, billing }) {
@@ -152,7 +152,7 @@ function CheckoutFallback({ plan, billing }) {
   );
 }
 
-// ── Check icon ────────────────────────────────────────────────────────────────
+// â”€â”€ Check icon â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function CheckIcon({ tone = "slate" }) {
   const toneClass = {
@@ -187,12 +187,12 @@ const PLAN_ACCENT = {
   },
 };
 
-// ── Payment options modal ─────────────────────────────────────────────────────
+// â”€â”€ Payment options modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PaymentModal({ plan, billing, onClose }) {
   const [method, setMethod] = useState(null); // null | 'card'
 
-  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
+  const price = plan.monthlyPrice;
   const billingLabel =
     billing === BILLING.annual
       ? `£${plan.annualTotal}/yr (£${price}/mo, billed annually)`
@@ -250,7 +250,7 @@ function PaymentModal({ plan, billing, onClose }) {
             Choose a payment method
           </p>
 
-          {/* ── Card ── */}
+          {/* â”€â”€ Card â”€â”€ */}
           <div
             className={
               "rounded-xl border transition " +
@@ -338,7 +338,7 @@ function PaymentModal({ plan, billing, onClose }) {
   );
 }
 
-// ── Add-on card ───────────────────────────────────────────────────────────────
+// â”€â”€ Add-on card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function AddonCard({ addon, mode, token }) {
   const navigate = useNavigate();
@@ -423,11 +423,11 @@ function AddonCard({ addon, mode, token }) {
 }
 
 
-// ── Plan card ─────────────────────────────────────────────────────────────────
+// â”€â”€ Plan card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function PlanCard({ plan, billing, onAction, currentPlanKey, agentTasks = null }) {
+function PlanCard({ plan, billing, onAction, currentPlanKey }) {
   const isPopular = !!plan.badge;
-  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
+  const price = plan.monthlyPrice;
   const isFree = plan.monthlyPrice === 0;
   const isCurrent = plan.key === currentPlanKey;
   const accent = PLAN_ACCENT[plan.key] || PLAN_ACCENT.explorer;
@@ -484,7 +484,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey, agentTasks = null }
         </div>
         {isFree ? (
           <p className="mt-1 text-[13px] font-medium text-emerald-600 dark:text-emerald-400">
-            No credit card required
+            £0 forever
           </p>
         ) : billing === BILLING.annual && plan.annualSaving > 0 ? (
           <p className="mt-1 text-[13px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -506,17 +506,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey, agentTasks = null }
             </span>
           </li>
         ))}
-        {/* From the plan map on the server: exactly what the Agent will and won't do on this plan. */}
-        {agentTasks?.adds?.length > 0 && (
-          <li className="flex items-start gap-2.5" data-agent-tasks={plan.key}>
-            <CheckIcon tone={accent.tone} />
-            <span className="text-[13px] text-slate-600 dark:text-slate-300">
-              <span className="font-semibold text-slate-800 dark:text-slate-100">{plan.key === "explorer" ? "Agent tasks, paid for in AI Credits: " : "More Agent tasks: "}</span>
-              {agentTasks.adds.join(", ")}
-              {typeof agentTasks.quotas?.scenario_help === "number" && agentTasks.quotas.scenario_help > 0 ? ` (${agentTasks.quotas.scenario_help} scenario simulations a month)` : ""}
-            </span>
-          </li>
-        )}
+
       </ul>
 
       {isCurrent ? (
@@ -528,7 +518,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey, agentTasks = null }
           type="button"
           onClick={() => onAction(plan)}
           className={
-            "w-full rounded-xl py-2.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-brand-300 " +
+            "w-full rounded-xl py-2.5 text-[11px] font-bold uppercase tracking-widest transition focus:outline-none focus:ring-2 focus:ring-brand-300 " +
             (plan.ctaStyle === "solid"
               ? "bg-brand-600 text-white hover:bg-brand-700 shadow-sm"
               : isPopular
@@ -544,7 +534,7 @@ function PlanCard({ plan, billing, onAction, currentPlanKey, agentTasks = null }
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
+// â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function fmtPeriodDate(iso) {
   if (!iso) return null;
@@ -557,14 +547,7 @@ export default function PricingPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const subscription = useAuthStore((s) => s.subscription);
-  const [billing, setBilling] = useState(BILLING.monthly);
-  // Which Agent tasks each plan includes, from the server's plan map (the same one the Agent checks before it starts anything).
-  const [agentTasks, setAgentTasks] = useState(null);
-  useEffect(() => {
-    let live = true;
-    apiRequest("/plans/agent-tasks", "GET").then((res) => { if (live && res?.plans) setAgentTasks(res.plans); }).catch(() => {});
-    return () => { live = false; };
-  }, []);
+  const [billing] = useState(BILLING.monthly);
   const [activeModal, setActiveModal] = useState(null);
 
   // Deep link from the marketplace "Get featured" button.
@@ -630,93 +613,11 @@ export default function PricingPage() {
             From getting started to making smarter decisions and supporting more businesses.
           </p>
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-brand-600 hover:underline">Claim your business</a>
-          </p>
 
-          <div className="mt-8 inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {[
-              { value: BILLING.monthly, label: "Monthly" },
-              { value: BILLING.annual, label: "Annual" },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setBilling(opt.value)}
-                className={
-                  "relative rounded-xl px-5 py-2 text-sm font-semibold transition " +
-                  (billing === opt.value
-                    ? "bg-brand-600 text-white shadow"
-                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100")
-                }
-              >
-                {opt.label}
-                {opt.value === BILLING.annual && (
-                  <span
-                    className={
-                      "ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide " +
-                      (billing === BILLING.annual
-                        ? "bg-white/25 text-white"
-                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400")
-                    }
-                  >
-                    Save up to £118
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          </p>
         </div>
 
-        {/* Active paid subscription summary */}
-        {token && subscription?.status === "active" && subscription.plan_key !== "free_trial" && (() => {
-          const activePlan = PLANS.find(p => p.key === normalisePlanKey(subscription.plan_key));
-          if (!activePlan) return null;
-          const periodStart = fmtPeriodDate(subscription.current_period_start);
-          const periodEnd = fmtPeriodDate(subscription.current_period_end);
-          const isAnnual = subscription.billing_period === "annual";
-          return (
-            <div className="mt-10 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-800 dark:bg-emerald-900/10">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                    <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400">Active Subscription</span>
-                  </div>
-                  <h3 className="mt-1 text-xl font-extrabold text-slate-900 dark:text-slate-100">
-                    {activePlan.label}{activePlan.tier ? ` · ${activePlan.tier}` : ""}
-                  </h3>
-                  <p className="mt-0.5 text-[13px] text-slate-500 dark:text-slate-400">{activePlan.tagline}</p>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-extrabold text-slate-900 dark:text-slate-100">
-                    {isAnnual ? `£${activePlan.annualTotal}/yr` : `£${activePlan.monthlyPrice}/mo`}
-                  </div>
-                  <div className="mt-0.5 text-[12px] font-medium text-slate-500 dark:text-slate-400">
-                    {isAnnual ? "Billed annually" : "Billed monthly"}
-                  </div>
-                  {periodStart && periodEnd && (
-                    <div className="mt-1 text-[12px] text-emerald-700 dark:text-emerald-400">
-                      {periodStart} → {periodEnd}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="mt-5 border-t border-emerald-200 pt-4 dark:border-emerald-800">
-                <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Included features</p>
-                <ul className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
-                  {activePlan.features.map(f => (
-                    <li key={f} className="flex items-start gap-2 text-[13px] text-slate-700 dark:text-slate-300">
-                      <svg className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M20 6L9 17l-5-5" />
-                      </svg>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          );
-        })()}
+
 
         <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 mx-auto max-w-2xl sm:max-w-none">
           {PLANS.map((plan) => (
@@ -726,25 +627,11 @@ export default function PricingPage() {
               billing={billing}
               onAction={handleAction}
               currentPlanKey={currentPlanKey}
-              agentTasks={agentTasks?.[plan.key] || null}
+
             />
           ))}
         </div>
 
-        <div className="mt-8 flex items-center justify-center gap-2 text-[13px] text-slate-400 dark:text-slate-500">
-          <svg
-            className="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          Visa · Mastercard · Verve · Cancel anytime · Payments by{" "}
-          <span className="font-bold tracking-tight text-[#635bff]">Stripe</span>
-        </div>
 
         <div className="mt-12 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -810,7 +697,7 @@ export default function PricingPage() {
           </div>
         </div>
 
-        {/* ── Marketplace Add-ons ── */}
+        {/* â”€â”€ Marketplace Add-ons â”€â”€ */}
         <div id="addons" className="mt-12 scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-1 flex items-center gap-2">
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
@@ -882,3 +769,10 @@ export default function PricingPage() {
     </div>
   );
 }
+
+
+
+
+
+
+
