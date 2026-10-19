@@ -1,4 +1,4 @@
-import { AgentAvatar, GoalLauncherView, GoalTaskCard, TaskCardShell, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
+﻿import { AgentAvatar, GoalLauncherView, GoalTaskCard, TaskCardShell, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
 import AgentDemo from "../components/AgentDemo";
 import { DEMO_REQUEST, DEMO_SCENES, DEMO_VIDEO_URL } from "../config/agentDemo";
 import { firstNameOf, getGreeting, greetingAt } from "../lib/greeting";
@@ -183,7 +183,6 @@ export default function LandingPage() {
     window.addEventListener("resize", place);
     return () => { clearTimeout(settle); watch?.disconnect(); window.removeEventListener("resize", place); };
   }, []);
-  const [annualBilling, setAnnualBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [featuresOpen, setFeaturesOpen] = useState(false);
   const [articlesOpen, setArticlesOpen] = useState(false);
@@ -378,7 +377,7 @@ export default function LandingPage() {
       {showExitPopup && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
           <div className="relative w-full max-w-md rounded-2xl bg-white p-6 sm:p-8 shadow-2xl">
-            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="absolute right-4 top-4 text-slate-400 hover:text-slate-600">✕</button>
+            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="absolute right-4 top-4 text-slate-400 hover:text-slate-600">×</button>
             <div className="mb-1 flex items-center gap-2"><span className="text-2xl">👋</span><span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Before you go</span></div>
             <h3 className="mt-2 text-xl font-bold text-slate-900">Get started for free</h3>
             <p className="mt-2 text-sm text-slate-500">EnterprateAI gives you the business intelligence tools to validate ideas, run scenario simulations, and make smarter decisions — completely free to start.</p>
@@ -388,8 +387,7 @@ export default function LandingPage() {
               ))}
             </ul>
             <button type="button" onClick={() => goToApp()} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</button>
-            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
-            <p className="mt-3 text-center text-xs text-slate-400">Free plan · No credit card required</p>
+            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
           </div>
         </div>
       )}
@@ -761,12 +759,6 @@ export default function LandingPage() {
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
               From getting started to making smarter decisions and supporting more businesses.
             </p>
-            <div className="mt-6 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
-              <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
-              <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition ${annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>
-                Annual <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Save 17%</span>
-              </button>
-            </div>
           </div>
           <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch [&>*:last-child]:sm:col-span-2 [&>*:last-child]:sm:mx-auto [&>*:last-child]:sm:w-full [&>*:last-child]:sm:max-w-sm [&>*:last-child]:lg:col-span-1 [&>*:last-child]:lg:mx-0 [&>*:last-child]:lg:max-w-none">
             {PLANS.map(plan => (
@@ -779,13 +771,13 @@ export default function LandingPage() {
                   {plan.free ? (
                     <><span className="text-4xl font-extrabold text-slate-900">£0</span></>
                   ) : (
-                    <><span className="text-4xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
+                    <><span className="text-4xl font-extrabold text-slate-900">£{plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
                   )}
                 </div>
-                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
+                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : "Billed monthly"}</p>
                 {plan.desc && <p className="mt-3 text-center text-xs text-slate-500">{plan.desc}</p>}
-                <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
-                  {plan.free ? "Start Free" : plan.ctaLabel}
+                <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-[11px] font-bold uppercase tracking-widest transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
+                  {plan.ctaLabel}
                 </button>
                 <ul className="mt-5 flex-1 space-y-2.5">
                   {plan.features.map(f => (
@@ -795,7 +787,7 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-          <p className="mt-6 text-center text-xs text-slate-400">Prices exclude VAT where applicable. Cancel anytime.</p>
+
         </div>
       </section>
 
@@ -937,3 +929,12 @@ export default function LandingPage() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
