@@ -624,11 +624,10 @@ export default function PricingPage() {
       <main className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6">
         <div className="text-center">
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
-            Simple, transparent pricing
+            Choose the right plan for your business
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-base text-slate-500 dark:text-slate-400">
-            Start free on the Explorer plan. No credit card required. Upgrade when
-            you're ready.
+            From getting started to making smarter decisions and supporting more businesses.
           </p>
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
             Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-brand-600 hover:underline">Claim your business</a>

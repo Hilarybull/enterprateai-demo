@@ -1,4 +1,4 @@
-import { AgentAvatar, AgentSteps, GoalLauncherView, GoalTaskCard, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
+import { AgentAvatar, GoalLauncherView, GoalTaskCard, TaskCardShell, focusLauncher, prefillLauncher, trackGoal, useGoalFlow } from "../components/GoalLauncher";
 import AgentDemo from "../components/AgentDemo";
 import { DEMO_REQUEST, DEMO_SCENES, DEMO_VIDEO_URL } from "../config/agentDemo";
 import { firstNameOf, getGreeting, greetingAt } from "../lib/greeting";
@@ -8,22 +8,27 @@ import { Link, useNavigate } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import PublicHeader from "../components/public/PublicHeader";
+import PublicFooter from "../components/public/PublicFooter";
+import TestimonialCards from "../components/public/TestimonialCards";
 
 
+// The plans as sold (the pricing PDF, 19 Oct 2026), the same words as the pricing page (lib/plans.js).
 const PLANS = [
   {
     name: "Explorer", monthly: 0, annual: 0, free: true,
-    creditsCaption: "50 Credits",
-    desc: "For Exploring",
-    features: ["Basic Idea Validation", "AI Business Plan Generator", "Invoices, Receipts, Contracts, Expense Tracker", "Receive and Request for Quotations", "Products, Customers, Vendors", "Business Registration Guide, Verification", "1 Marketplace listing"],
+    creditsCaption: "£0 forever",
+    desc: "Start simple. For new businesses getting organised",
+    ctaLabel: "Get started free",
+    features: ["50 welcome AI credits (valid 60 days)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
     highlight: false,
   },
   {
-    name: "Starter", tier: "Insight", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
-    desc: "For solo founders and new service businesses that want more planning, proposals, simulations, and intelligence",
-    ctaLabel: "Get Started - 500 credits/mo",
-    features: ["Everything on the Explorer Plan", "Comprehensive Idea Validation", "AI Business Proposals Generator", "AI Sales Letters Generator", "Manage, Receive and Request for Proposals, Quotations", "4 Scenario simulations", "Fragility Index", "Adaptive Scenario Intelligence", "Multiple marketplace listings"],
-    highlight: true, badge: "Best Value",
+    name: "Starter", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
+    desc: "Plan, launch and grow. For founders and solo businesses",
+    ctaLabel: "Choose Starter",
+    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "Scenario Simulations", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
+    highlight: false,
   },
   {
     name: "Decision Engine",
@@ -31,10 +36,10 @@ const PLANS = [
     annual: 49.17,
     annualSaving: 118,
     free: false,
-    desc: "For teams that need deeper AI support, live-plan intelligence, and multi-user decision making",
-    ctaLabel: "Get Started - 2000 credits/mo",
-    features: ["Everything on the Starter Plan", "3rd Party Integrations", "Live Business Plan Intelligence", "Multiple Scenario Simulations"],
-    highlight: false,
+    desc: "Decide with confidence. For growing businesses and teams",
+    ctaLabel: "Choose Decision Engine",
+    features: ["Everything in Starter", "2,000 pooled AI credits / month", "AI Agent access (credit-based)", "3 user seats included", "Extra seat: £15/mo (+250 AI credits)", "Live & Adaptive Business Plan Intelligence", "Access to RFP Leads", "Third-Party Integrations", "Unlimited Marketplace Listings", "AI-Powered Decision Recommendations"],
+    highlight: true, badge: "Most Popular",
   },
 ];
 
@@ -157,6 +162,27 @@ function RecentActivity({ running }) {
 
 export default function LandingPage() {
   const goalFlow = useGoalFlow();      // the goal started in the hero: the launcher on the left, its task card on the right
+  // From 1024px the preview's box (and so the task card that takes its place) starts level with the Agent card's top.
+  const heroRight = useRef(null);
+  const heroStage = useRef(null);
+  const [stageTop, setStageTop] = useState(0);
+  useEffect(() => {
+    const place = () => {
+      const right = heroRight.current;
+      const launcher = document.querySelector("[data-hero-copy] [data-goal-launcher]");
+      const wide = typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches;
+      if (!right || !launcher || !wide) { setStageTop(0); return; }
+      const top = Math.max(0, Math.round(launcher.getBoundingClientRect().top - right.getBoundingClientRect().top));
+      setStageTop((had) => (Math.abs(had - top) > 1 ? top : had));
+    };
+    place();
+    const settle = setTimeout(place, 900);      // again once the entrance animations have finished moving things
+    const watch = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
+    const grid = document.querySelector("[data-hero-grid]");
+    if (watch && grid) watch.observe(grid);
+    window.addEventListener("resize", place);
+    return () => { clearTimeout(settle); watch?.disconnect(); window.removeEventListener("resize", place); };
+  }, []);
   const [annualBilling, setAnnualBilling] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [featuresOpen, setFeaturesOpen] = useState(false);
@@ -369,188 +395,11 @@ export default function LandingPage() {
       )}
 
       {/* NAV */}
-      <nav data-scrolled={scrolled} className={`fixed top-0 left-0 right-0 z-50 border-b transition-colors duration-200 ${scrolled ? "border-slate-200 bg-white/85 shadow-sm backdrop-blur-md" : "border-transparent bg-white/95 backdrop-blur"}`}>
-        {/* 8px shorter once the page has moved; the spacer below keeps its height, so nothing under the nav jumps. */}
-        <div className={`m-nav-inner mx-auto flex max-w-[1600px] items-center px-4 sm:px-6 ${scrolled ? "py-2" : "py-3"}`}>
-          <a href="#hero" className="shrink-0 mr-6"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></a>
-          <ul className="hidden flex-1 items-center justify-center gap-3 xl:gap-4 xl:flex">
-            {/* Features mega-dropdown */}
-            <li ref={featuresRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setFeaturesOpen(v => !v)}
-                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
-              >
-                Features
-                <svg className={`h-3.5 w-3.5 transition-transform ${featuresOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              {featuresOpen && (
-                <div className="absolute left-0 top-full z-50 mt-3 w-[680px] rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
-                  <div className="grid grid-cols-4 gap-0 p-6">
-                    {[
-                      {
-                        heading: "Plan & Prepare", desc: "Validate ideas and create business documents faster.",
-                        items: [
-                          { label: "Idea Validation", path: "/validation" },
-                          { label: "One-Click Business Plan Generator", path: "/blueprint?doc=business_plan" },
-                          { label: "One-Click Business Proposal Generator", path: "/blueprint?doc=client_proposal" },
-                          { label: "One-Click Sales Letter Generator", path: "/blueprint?doc=sales_letter" },
-                        ],
-                      },
-                      {
-                        heading: "Operate & Manage", desc: "Create invoices, quotations, receipts, expenses, and contracts.",
-                        items: [
-                          { label: "Free Business Essentials", path: "/essentials" },
-                          { label: "Free Invoice Generator", path: "/operations?tab=Sales&sub=Invoices" },
-                          { label: "Free Quotation Generator", path: "/operations?tab=Sales&sub=Quotations" },
-                          { label: "Free Receipt Generator", path: "/operations?tab=Sales&sub=Receipts" },
-                          { label: "Expense Tracking", path: "/operations?tab=Transactions" },
-                          { label: "Contract Management", path: "/operations?tab=Contracts" },
-                        ],
-                      },
-                      {
-                        heading: "Sell & Grow", desc: "Launch to marketplace and increase visibility.",
-                        items: [
-                          { label: "One-Click Marketplace Listing", path: "/marketplace" },
-                          { label: "RFQ to Quotation", path: "/operations?tab=Sales&sub=Quotations" },
-                          { label: "Marketplace Visibility", path: "/marketplace" },
-                          { label: "Already listed? Claim your business", path: "/marketplace?find=1" },
-                        ],
-                      },
-                      {
-                        heading: "Decision Intelligence", desc: "Simulate decisions and get business recommendations.",
-                        items: [
-                          { label: "Business Scenario Simulation", path: "/simulation" },
-                          { label: "Business Intelligence Recommendations", path: "/simulation" },
-                          { label: "Fragility Index", path: "/simulation" },
-                          { label: "Adaptive Scenario Intelligence", path: "/simulation" },
-                        ],
-                      },
-                    ].map((col) => (
-                      <div key={col.heading} className="px-3 first:pl-0 last:pr-0 border-r border-slate-100 last:border-r-0">
-                        <p className="text-[11px] font-bold uppercase tracking-wider text-brand-600">{col.heading}</p>
-                        <p className="mt-0.5 mb-3 text-[11px] text-slate-400 leading-snug">{col.desc}</p>
-                        <ul className="space-y-2">
-                          {col.items.map((item) => (
-                            <li key={item.label}>
-                              <button type="button" onClick={() => goToFeature(item.path)} className="block text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition leading-snug">{item.label}</button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </li>
-            {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
-              <li key={href}><a href={href} className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">{label}</a></li>
-            ))}
-            {/* Articles dropdown */}
-            <li ref={articlesRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setArticlesOpen(v => !v)}
-                className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600"
-              >
-                Articles
-                <svg className={`h-3.5 w-3.5 transition-transform ${articlesOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="currentColor"><path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
-              {articlesOpen && (
-                <div className="absolute left-1/2 top-full z-50 mt-3 w-[480px] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
-                  <div className="p-5">
-                    <button
-                      type="button"
-                      onClick={() => { setArticlesOpen(false); navigate("/blog"); }}
-                      className="mb-4 flex w-full items-start justify-between rounded-xl bg-brand-50 px-4 py-3 text-left hover:bg-brand-100 transition"
-                    >
-                      <div>
-                        <p className="text-sm font-bold text-brand-700">Articles Hub</p>
-                        <p className="mt-0.5 text-[11px] text-slate-500 leading-snug max-w-[300px]">Insights to help small businesses plan, operate, sell, reduce risk, and grow with intelligence.</p>
-                      </div>
-                      <span className="text-brand-500 text-lg">→</span>
-                    </button>
-                    {blogCategories.length > 0 ? (
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                        {blogCategories.map((cat) => (
-                          <button
-                            key={cat.id}
-                            type="button"
-                            onClick={() => { setArticlesOpen(false); navigate(`/blog?category=${cat.slug}`); }}
-                            className="text-left text-[12.5px] text-slate-600 hover:text-brand-600 transition py-0.5"
-                          >
-                            {cat.name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-[12px] text-slate-400">No categories yet.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </li>
-            <li>
-              <Link to="/research" className="whitespace-nowrap text-sm font-medium text-slate-600 transition hover:text-brand-600">R&amp;D</Link>
-            </li>
-          </ul>
-          {/* Below 1280px the links are in the menu, so this group (the menu button) is pushed to the far right. */}
-          <div className="ml-auto flex shrink-0 items-center gap-3 xl:ml-6" data-nav-right>
-            <Link to="/login" className="hidden whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-900 xl:block">Sign in</Link>
-            <Link to="/book-demo" className="hidden whitespace-nowrap rounded-xl border border-brand-600 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-50 xl:block">Book a Demo</Link>
-            <button type="button" onClick={focusLauncher} data-try-agent className="hidden whitespace-nowrap rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 xl:block">
-              Try the Agent
-            </button>
-            <button type="button" onClick={() => setMobileMenuOpen(v => !v)} className="ml-1 flex h-9 w-9 flex-col items-center justify-center gap-1.5 xl:hidden" aria-label="Menu">
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "translate-y-2 rotate-45" : ""}`} />
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "opacity-0" : ""}`} />
-              <span className={`block h-0.5 w-5 bg-slate-700 transition-all ${mobileMenuOpen ? "-translate-y-2 -rotate-45" : ""}`} />
-            </button>
-          </div>
-        </div>
-        {mobileMenuOpen && (
-          <div className="border-t border-slate-100 bg-white px-4 pb-4 xl:hidden">
-            <ul className="mt-3 flex flex-col gap-3">
-              {[["#how-it-works", "How it works"], ["#activities", "Use cases"], ["#testimonials", "Testimonials"], ["#pricing", "Pricing"]].map(([href, label]) => (
-                <li key={href}><a href={href} onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">{label}</a></li>
-              ))}
-              <li><Link to="/blog" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Articles</Link></li>
-              <li><Link to="/research" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">R&amp;D</Link></li>
-              <li><Link to="/login" className="block text-sm font-medium text-slate-700">Sign in</Link></li>
-              <li><Link to="/book-demo" onClick={() => setMobileMenuOpen(false)} className="block rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white text-center">Book a Demo</Link></li>
-            </ul>
-            <div className="mt-4 border-t border-slate-100 pt-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Features</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                {[
-                  { label: "Idea Validation", path: "/validation" },
-                  { label: "Business Plan", path: "/blueprint?doc=business_plan" },
-                  { label: "Business Proposal", path: "/blueprint?doc=client_proposal" },
-                  { label: "Sales Letter", path: "/blueprint?doc=sales_letter" },
-                  { label: "Free Business Essentials", path: "/essentials" },
-                  { label: "Invoice Generator", path: "/operations?tab=Sales&sub=Invoices" },
-                  { label: "Quotation Generator", path: "/operations?tab=Sales&sub=Quotations" },
-                  { label: "Receipt Generator", path: "/operations?tab=Sales&sub=Receipts" },
-                  { label: "Expense Tracking", path: "/operations?tab=Transactions" },
-                  { label: "Contract Management", path: "/operations?tab=Contracts" },
-                  { label: "Marketplace Listing", path: "/marketplace" },
-                  { label: "RFQ to Quotation", path: "/operations?tab=Sales&sub=Quotations" },
-                  { label: "Scenario Simulation", path: "/simulation" },
-                  { label: "BI Recommendations", path: "/simulation" },
-                  { label: "Fragility Index", path: "/simulation" },
-                ].map(f => (
-                  <button key={f.label} type="button" onClick={() => { setMobileMenuOpen(false); goToFeature(f.path); }} className="py-0.5 text-left text-xs text-slate-600 hover:text-brand-600">{f.label}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </nav>
-
-      <div className="h-[61px]" />
+      {/* The site's header (QA F): every item is a page; Features and Articles also open a menu. */}
+      <PublicHeader onTryIt={focusLauncher} />
 
       {/* HERO */}
-      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-hidden bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 sm:pb-8 sm:pt-8">
+      <section id="hero" ref={heroRef} data-m-idle={!heroSeen || !pageVisible} className="relative overflow-clip bg-gradient-to-b from-brand-50/70 via-white to-white pb-6 pt-6 [overflow-anchor:none] sm:pb-8 sm:pt-8">
         <div className="pointer-events-none absolute inset-0">
           <div className="m-drift absolute -right-16 top-0 h-[520px] w-[520px] rounded-full bg-gradient-to-br from-purple-300/60 to-brand-300/50 blur-2xl sm:h-[620px] sm:w-[620px]" />
           <div className="absolute right-10 top-14 hidden h-64 w-64 opacity-80 lg:block" style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
@@ -565,21 +414,26 @@ export default function LandingPage() {
               </h1>
               <p {...enter("fadeUp", 2)} className="mt-2 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
               {/* The way in: say what you want done, pick a business goal, or start a task (PRD-GO-001). The card is as wide as the text column. */}
-              <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onWatch={watchDemo} onTouch={demo ? () => closeDemo(false) : null} /></div>
+              <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onTouch={demo ? () => closeDemo(false) : null} /></div>
               {/* 768 to 1023px: the goal opens right here, under the launcher. (Wider, it is in the right column; narrower, a sheet.) */}
-              {goalFlow.session && <GoalTaskCard flow={goalFlow} placement="below" />}
+              {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
             </div>
 
             {/* The right column. It always holds the product preview's space, so opening a goal never changes the hero's height:
                 the task card is laid over that space (from 1024px), or opens as a full-screen sheet (below it). */}
-            <div {...enter("slideInRight", 0, 150)} className="relative min-w-0 lg:flex lg:flex-col lg:justify-end lg:self-stretch" data-hero-right>
-            {goalFlow.session && <GoalTaskCard flow={goalFlow} />}
-            {/* While the request is being read: the Agent's steps, over the preview. The task card takes this place as soon as there is a task. */}
-            {goalFlow.busy && !goalFlow.session && (
-              <div className="absolute inset-x-6 top-16 z-10 hidden lg:block" data-m="scaleIn"><AgentSteps done={0} /></div>
+            <div {...enter("slideInRight", 0, 150)} ref={heroRight} className="relative min-w-0 lg:self-stretch" data-hero-right>
+            {/* The preview's own box, level with the Agent card's top (from 1024px). The task card takes exactly this box: the
+                same top and the same height as the preview, so nothing moves when it opens or closes; the two crossfade. */}
+            <div className="relative" ref={heroStage} style={stageTop ? { marginTop: stageTop } : undefined} data-hero-stage>
+            {/* Keyed by the task: a new or resumed task never shows another one's thread. */}
+            {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
+            {/* While the first question is on its way (or a saved task is fetched on reload): the card's own shell, with the
+                Agent typing in its first bubble. */}
+            {(goalFlow.busy || goalFlow.resuming) && !goalFlow.session && (
+              <TaskCardShell title={goalFlow.pending || "Picking up where you left off"} className="absolute inset-y-0 left-6 right-0 z-10 hidden lg:flex" />
             )}
             {/* Hidden on a phone; below the copy at 80% width on a tablet; the right column from 1024px. */}
-            <div aria-hidden="true" className={`relative isolate mx-auto hidden w-4/5 items-center gap-3 md:flex lg:w-full lg:pl-6 ${goalFlow.session ? "lg:invisible" : ""}`} data-hero-preview>
+            <div aria-hidden="true" className={`relative isolate mx-auto hidden w-4/5 items-center gap-3 transition-opacity duration-200 md:flex lg:w-full lg:pl-6 ${goalFlow.session || goalFlow.busy || goalFlow.resuming ? "lg:pointer-events-none lg:opacity-0" : ""}`} data-hero-preview>
               {/* Below 1024px the dot grid travels with the image, so it is never behind the headline. */}
               <div className="absolute -right-6 -top-8 -z-10 h-56 w-56 opacity-80 lg:hidden" data-hero-dots style={{ backgroundImage: "radial-gradient(circle, #A5B4FC 2px, transparent 2px)", backgroundSize: "18px 18px" }} />
               <div data-hero-mock className={`relative flex-1 lg:max-xl:scale-95 ${demo === "inline" ? "" : "m-float lg:rotate-1"}`}>
@@ -599,7 +453,7 @@ export default function LandingPage() {
                   <div className="flex-1 p-3">
                     {/* No name, real or made up, whoever is looking: only the time of day, from the visitor's own clock. */}
                     <p className="min-w-[8.5rem] text-sm font-bold text-slate-900" data-mock-greeting>{greeting}</p>
-                    <p className="text-[11px] text-slate-400">Here's what your Agent did today.</p>
+                    <p className="text-[11px] text-slate-400">Here's what happened today.</p>
                     <div className="mt-2.5 grid grid-cols-2 gap-2">
                       {[
                         { t: "Idea Validation", d: "Test insights before you invest.", c: "bg-rose-50 text-rose-500", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
@@ -633,6 +487,7 @@ export default function LandingPage() {
               <Annotation className="w-28 shrink-0 text-left" color="text-brand-500" rotate="-rotate-3" arrow="left" showFrom="lg">
                 Smarter<br />decisions.<br />Brighter<br />tomorrow.
               </Annotation>
+            </div>
             </div>
             </div>
           </div>
@@ -828,6 +683,10 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+      {/* What customers say, from the same content file as /testimonials (only consented, active entries). */}
+      <section aria-label="What customers say" className="py-2 sm:py-3" data-home-testimonials>
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6"><TestimonialCards compact /></div>
+      </section>
 
       {/* HOW IT WORKS — 3 simple steps */}
       <section id="how-it-works" className="bg-white py-6 sm:py-8">
@@ -836,7 +695,7 @@ export default function LandingPage() {
           <div className="grid gap-6 sm:grid-cols-3">
             {[
               { n: "1", title: DEMO_SCENES[0].title, body: "Say what you need in your own words: an invoice, a quotation, a plan, or a question about your business.", c: "bg-brand-600" },
-              { n: "2", title: DEMO_SCENES[1].title, body: "The Agent reads your records, asks only for what is missing, and prepares the document or the answer.", c: "bg-brand-600" },
+              { n: "2", title: DEMO_SCENES[1].title, body: "It reads your records, asks only for what is missing, and prepares the document or the answer.", c: "bg-brand-600" },
               { n: "3", title: DEMO_SCENES[2].title, body: "It waits for your say-so. Nothing is sent, and nothing leaves your business, until you approve it.", c: "bg-purple-600" },
             ].map((s, i, arr) => (
               <div key={s.n} className="relative flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -898,7 +757,10 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mb-10 text-center">
             <span className="text-xs font-semibold uppercase tracking-widest text-brand-600">Pricing</span>
-            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Start free. Upgrade when your business needs more intelligence.</h2>
+            <h2 className="mt-3 text-2xl font-extrabold text-slate-900 sm:text-3xl">Choose the right plan for your business.</h2>
+            <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
+              From getting started to making smarter decisions and supporting more businesses.
+            </p>
             <div className="mt-6 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button type="button" onClick={() => setAnnualBilling(false)} className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
               <button type="button" onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition ${annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>
@@ -997,51 +859,7 @@ export default function LandingPage() {
       </button>
 
       {/* FOOTER */}
-      <footer className="bg-white py-8 border-t border-slate-100">
-        <div className="mx-auto max-w-[1600px] px-4 sm:px-6">
-          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-          <div className="grid flex-1 gap-8 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto" />
-              <p className="mt-3 max-w-[220px] text-sm leading-relaxed text-slate-500">AI-native Business Decision Intelligence for ambitious founders and businesses.</p>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Product</h4>
-              <ul className="mt-4 space-y-2">
-                <li><a href="#hero" className="text-sm text-slate-500 hover:text-brand-600 transition">Features</a></li>
-                <li><a href="#pricing" className="text-sm text-slate-500 hover:text-brand-600 transition">Pricing</a></li>
-                <li><button type="button" onClick={() => goToFeature("/integrations")} className="text-sm text-slate-500 hover:text-brand-600 transition">Integrations</button></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Solutions</h4>
-              <ul className="mt-4 space-y-2">
-                <li><a href="#activities" className="text-sm text-slate-500 hover:text-brand-600 transition">For Startups</a></li>
-                <li><Link to="/essentials" className="text-sm text-slate-500 hover:text-brand-600 transition">For Small Businesses</Link></li>
-                <li><a href="#how-it-works" className="text-sm text-slate-500 hover:text-brand-600 transition">For Growth</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Resources</h4>
-              <ul className="mt-4 space-y-2">
-                <li><Link to="/blog" className="text-sm text-slate-500 hover:text-brand-600 transition">Articles</Link></li>
-                <li><Link to="/research" className="text-sm text-slate-500 hover:text-brand-600 transition">Guides</Link></li>
-                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Help Centre</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Company</h4>
-              <ul className="mt-4 space-y-2">
-                <li><Link to="/legal/privacy" className="text-sm text-slate-500 hover:text-brand-600 transition">Privacy Policy</Link></li>
-                <li><Link to="/legal/terms" className="text-sm text-slate-500 hover:text-brand-600 transition">Terms of Service</Link></li>
-                <li><a href="mailto:support@enterpate.ai" className="text-sm text-slate-500 hover:text-brand-600 transition">Contact</a></li>
-              </ul>
-            </div>
-          </div>
-          <p className="shrink-0 text-xs text-slate-400 lg:pb-1">© {new Date().getFullYear()} EnterprateAI. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
+      <PublicFooter />
 
       {/* Book a Demo modal */}
       {bookingOpen && (
