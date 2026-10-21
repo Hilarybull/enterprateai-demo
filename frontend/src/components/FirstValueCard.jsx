@@ -455,7 +455,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
   const fetched = useResearchRun(workspaceId, runGiven ? null : edited || given);
   const [runNow, setRunNow] = useState(null);
   const [detail, setDetail] = useState(null);      // the full review of the run just made here, folded
-  const [detailOpen, setDetailOpen] = useState(false);      // the run as the last adopt left it (its drafts still open, or none)
+  const [detailOpen, setDetailOpen] = useState(false);
   // the newest run this card has seen: the one just made here, else the page's, else the result's own
   const run = (runNow && (!(runGiven || fetched) || runNow.id === (runGiven || fetched)?.id || runNow.created_at >= ((runGiven || fetched)?.created_at || "")) ? runNow : null) || runGiven || fetched;
   const prices = useStepPrices((edited || given)?._session, edited || given);      // each step's own price, shown on its button
@@ -598,7 +598,8 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
         } finally { inFlight.current = false; setWorking(false); }
       }} />
       {served?.research && !detail && served.render}
-      {(detail || run?.items?.length > 0) && (
+      {/* Not on the case page (the owner, 21 Oct: "no need"): its research summary has every finding. Elsewhere, folded here. */}
+      {!embedded && (detail || run?.items?.length > 0) && (
         <div className="mt-3" data-research-detail>
           <button type="button" onClick={() => setDetailOpen((v) => !v)} aria-expanded={detailOpen} data-research-detail-toggle
             className="text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline">{detailOpen ? "Hide the detail" : "Review every finding in detail"}</button>

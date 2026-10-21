@@ -214,6 +214,8 @@ _PROBABILITY = re.compile(r"\b\d{1,3}\s?%\s*(chance|likelihood|probability)|\b(l
 PLACEHOLDER = {"", "other", "others", "not specified", "n/a", "na", "none", "unknown", "general"}
 SIGNS = {"GBP": "£", "USD": "$", "EUR": "€", "NGN": "₦"}      # by currency code; any other code is written before the figure
 # "Nothing was found" is a gap to ask about, never a finding to adopt or to charge for.
+NOT_SAID = re.compile(r"\b(?:no|not|none)\b[^.]{0,80}\b(?:described|provided|given|stated|mentioned|available|known|specified)\b"
+                      r"[^.]{0,40}\b(?:in|from) the (?:available |provided )?(?:information|facts|pages|sources|details|data)\b", re.I)
 _NOTHING_FOUND = re.compile(r"\b(?:was|were) (?:not )?found in the (?:pages|results|sources)\b|\bno\b.{0,80}\b(?:was|were) found\b|\bnothing\b.{0,40}\bfound\b"
                             r"|\bnot found\b|\bcould(?:n't| not) find\b|\bno (?:specific |relevant )?(?:information|data|evidence|figures?|results?) (?:is |was |were )?(?:found|available)\b"
                             r"|\bno\b[^.]{0,80}?\b(?:found|identified|located)\b|\bdid(?: not|n't) find\b"
@@ -1420,7 +1422,7 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
                 out[k] = rows
             continue
         text = " ".join(str(v or "").split())
-        if text and text.lower() not in ("null", "none", "unknown", "n/a"):
+        if text and text.lower() not in ("null", "none", "unknown", "n/a") and not NOT_SAID.search(text) and not _NOTHING_FOUND.search(text):
             out[k] = text[:600]
     return out
 

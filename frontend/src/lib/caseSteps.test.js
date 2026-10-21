@@ -42,3 +42,24 @@ describe("the case's own next steps", () => {
     expect(sectionCounts(subject).map((x) => x.text)).toEqual(["Funding goal 6 of 7", "Finances 4 of 5"]);
   });
 });
+
+describe("the Agent's forecast", () => {
+  it("asks to confirm it once it is complete, and not after", () => {
+    const drafted = { ...subject, data: { ...subject.data, purpose_milestone_id: "m1", use_of_funds: subject.data.use_of_funds.map((a) => ({ ...a, period: "2026-12" })),
+      team: { responsibilities: [{ id: "r1", area: "Delivery", owner: "Ada" }], no_gaps: true } },
+    forecast: { data: { ...subject.forecast.data, drafted_by: "Agent", confirmed_at: null } } };
+    expect(caseSteps(drafted).steps.map((s) => s.key)).toEqual(["forecast.confirm"]);
+    expect(caseSteps({ ...drafted, forecast: { data: { ...drafted.forecast.data, confirmed_at: "2026-10-21" } } }).steps).toEqual([]);
+  });
+});
+
+describe("each step opens its own field, and the counts agree", () => {
+  it("links to the field and treats a non-answer as blank", () => {
+    const s = { ...subject, data: { ...subject.data, market: { ...subject.data.market, acquisition_approach: "No acquisition channels or first steps are described in the available information." } } };
+    const steps = caseSteps(s, { max: 50 }).steps;
+    expect(steps.find((x) => x.key === "uof.period").to).toBe("/funding/c1?tab=answers&section=finances&field=use_of_funds");
+    expect(steps.find((x) => x.key === "market.approach").to).toContain("field=market.acquisition_approach");
+    expect(sectionCounts({ ...s, sections: [{ key: "finances", title: "Finances and use of funds", answered: 5, total: 5 }] }, steps))
+      .toEqual([{ key: "finances", done: false, text: "Finances: 1 to fix" }]);
+  });
+});

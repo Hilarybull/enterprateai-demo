@@ -335,10 +335,24 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
       )}
       {problem && !(draft && draft.kind === "question") && <p role="alert" className="text-[12px] text-rose-700">{problem}</p>}
       {/* While the Agent's drafts wait, no "I'll do it": the draft is the way (the owner's QA, 21 Oct). */}
-      <div className="mt-auto pt-1" data-step-actions>
+      <div className="mt-auto flex flex-wrap items-center gap-3 pt-1" data-step-actions>
+        {step.run && <StepRun run={step.run} />}
         {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-mine>Fill it in</a>}
       </div>
     </li>
+  );
+}
+
+/** A step done with one press on its card ("Confirm forecast"), then the case is read again. */
+function StepRun({ run }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <button type="button" disabled={busy} onClick={async () => { setBusy(true); setProblem(""); try { await run.go(); } catch { setProblem("That didn't go through. Try again."); } finally { setBusy(false); } }}
+        className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-70" data-step-run>{busy ? "Saving…" : run.label}</button>
+      {problem && <span role="alert" className="text-[12px] text-rose-700">{problem}</span>}
+    </span>
   );
 }
 

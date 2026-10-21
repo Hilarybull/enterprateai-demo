@@ -20,7 +20,7 @@ import { confirmDialog } from "../lib/dialog";
 import {
   CLASSIFICATION, FEATURES, LIFECYCLE, createSubject, dateLabel, getPath, getSubject, listSubjects, moneyLabel, newKey, readinessError, runAssessment,
   keepPrevious, setPath, setSubjectStatus, updateSubject,
-  staleReason,
+  saveForecast, staleReason,
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
@@ -561,11 +561,11 @@ function Setup({ businessId, feature, subject, data, errors, onField, onChanged,
       <Panel className="min-w-0" title={`${index + 1}. ${section.title}`} id={`section-${section.key}`}
         actions={filledFrom(section, data) ? <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11.5px] font-semibold text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-200" data-from-chat>{filledFrom(section, data)}</span> : null}>
         <div className="space-y-4">
-          {section.fields.map((f) => <Field key={f.key} field={f} data={data} errors={errors} disabled={disabled} evidence={subject.evidence} onChange={onField} idBase={section.key} />)}
+          {section.fields.map((f) => <div key={f.key} data-field={f.key}><Field field={f} data={data} errors={errors} disabled={disabled} evidence={subject.evidence} onChange={onField} idBase={section.key} /></div>)}
           {section.forecast && (
             <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
               <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">{feature === "funding" ? "12-month cash forecast" : "Cash projection"}</h3>
-              <ForecastEditor businessId={businessId} feature={feature} subject={subject} evidence={subject.evidence} onSaved={onChanged} disabled={disabled} />
+              <div data-forecast-editor><ForecastEditor businessId={businessId} feature={feature} subject={subject} evidence={subject.evidence} onSaved={onChanged} disabled={disabled} /></div>
             </div>
           )}
           {section.evidence && (
@@ -718,7 +718,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   }, [businessId, subjectId]);
   // The steps from the case itself, worked out again on every change to it (no wait for a check).
   const ownSteps = useMemo(() => caseSteps(subject, { max: 50, currency: subject?.data?.currency || subject?.forecast?.data?.currency }), [subject]);
-  const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps } : overview), [overview, ownSteps]);
+  const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
+    ...st, run: { label: "Confirm forecast", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); } } } : st)) } : overview),
+  [overview, ownSteps, subject, businessId, feature, load]);
   useEffect(() => { loadOverview(); }, [loadOverview, revision]);
   const runId = params.get("run") || overview?.research?.run_id;
   useEffect(() => {
@@ -750,6 +752,19 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
     } finally { setAgainBusy(false); }
   };
+  // "Fill it in" on a step: the very field, in view and focused (the owner's QA, 21 Oct).
+  const wantedField = params.get("field");
+  useEffect(() => {
+    if (tab !== "answers" || !wantedField || !subject) return undefined;
+    const t = setTimeout(() => {
+      const el = wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`);
+      if (!el) return;
+      el.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      const input = [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select");
+      input?.focus?.({ preventScroll: true });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [tab, wantedField, subject?.id, openSection]);      // eslint-disable-line react-hooks/exhaustive-deps
   // Advanced holds Evidence, Research, Materials and the full check: an old address opens it at that part.
   useEffect(() => {
     if (tab !== "advanced" || asked === "advanced" || !subject) return;
@@ -921,7 +936,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             {(subject.sections || []).length > 0 && (
               // "Funding goal 6 of 7 · Finances 4 of 5 …" (the owner's brief, 21 Oct)
               <div className="flex flex-wrap gap-2" data-section-counts>
-                {sectionCounts(subject).map((x) => (
+                {sectionCounts(subject, ownSteps?.steps || []).map((x) => (
                   <button key={x.key} type="button" onClick={() => openSectionAt(x.key)}
                     className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${x.done ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-300" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}>
                     {x.done && <span aria-hidden="true" className="mr-1">✓</span>}{x.text}</button>

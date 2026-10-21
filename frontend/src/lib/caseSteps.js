@@ -4,7 +4,16 @@
 // left out: they are not the owner's to act on.
 import { getCurrencySymbol } from "./currencies";
 
-const blank = (v) => v === null || v === undefined || (typeof v === "string" && !v.trim()) || (Array.isArray(v) && !v.length);
+// A non-answer ("No acquisition channels are described in the available information") is blank too.
+const NOT_SAID = /\b(?:no|not|none)\b[^.]{0,80}\b(?:described|provided|given|stated|mentioned|available|known|specified|found)\b/i;
+const blank = (v) => v === null || v === undefined || (typeof v === "string" && (!v.trim() || NOT_SAID.test(v))) || (Array.isArray(v) && !v.length);
+// The field each step is about, so "Fill it in" opens on it.
+const FIELD = [["uof", "use_of_funds"], ["goal.amount", "target_amount"], ["goal.date", "receipt_date"], ["goal.confirm", "receipt_date"],
+  ["goal.purpose", "purpose"], ["goal.milestone", "milestones"], ["goal.link", "purpose_milestone_id"], ["market.segment", "market.target_segment"],
+  ["market.diff", "market.differentiation"], ["market.approach", "market.acquisition_approach"], ["market.owner", "market.acquisition_owner"],
+  ["market.cost", "market.acquisition_cost"], ["market.milestone", "market.acquisition_milestone_id"], ["economics", "economics.price"],
+  ["team.gap", "team.gaps"], ["team", "team.responsibilities"], ["risk", "risks"], ["forecast", "forecast"]];
+const fieldOf = (key) => (FIELD.find(([k]) => key === k || key.startsWith(`${k}.`) || key.startsWith(k)) || [])[1];
 const num = (v) => { const n = Number(String(v ?? "").replace(/,/g, "")); return blank(v) || !Number.isFinite(n) ? null : n; };
 const get = (o, path) => path.split(".").reduce((x, k) => (x == null ? x : x[k]), o);
 const rows = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === "object") : []);
@@ -16,12 +25,12 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
   const sign = getCurrencySymbol(s.currency || currency || "") || "";
   const money = (n) => `${sign}${Number(n).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
   const base = subject.id ? `/funding/${subject.id}` : "/funding";
-  const at = (section) => `${base}?tab=answers&section=${section}`;
+  const at = (section, key) => `${base}?tab=answers&section=${section}${fieldOf(key) ? `&field=${encodeURIComponent(fieldOf(key))}` : ""}`;
   const checks = {};
   for (const c of subject.assessment?.result?.criteria || []) for (const ch of c.checks || []) checks[ch.code] = ch.state;
   const passed = (code) => checks[code] === "passed";
   const out = [];
-  const add = (key, title, why, section, to = null) => out.push({ key, kind: "unknown", badge: "To do", title, why, to: to || at(section), field: true });
+  const add = (key, title, why, section, to = null) => out.push({ key, section, kind: "unknown", badge: "To do", title, why, to: to || at(section, key), field: true });
 
   const milestones = rows(s.milestones);
   const measurable = (id) => milestones.some((m) => m.id === id && !blank(m.measure) && !blank(m.target));
@@ -36,6 +45,11 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
     const empty = months.filter((m) => blank(m.receipts) || blank(m.payments));
     if (blank(f.opening_cash)) add("forecast.opening", "Add the cash you start your forecast with", "Every month of the forecast builds on it.", "finances");
     if (empty.length) add("forecast.months", `Fill ${empty.length} ${empty.length === 1 ? "month" : "months"} of your cash forecast`, "Each month needs its money in and out.", "finances");
+    else if (!blank(f.opening_cash) && f.drafted_by === "Agent" && !f.confirmed_at) {
+      // The Agent's forecast counts once the owner has checked it (the owner's QA, 21 Oct: the pack waited on it unsaid).
+      add("forecast.confirm", "Check and confirm the forecast I drafted", "It counts once you confirm it. Change any month first if you need to.", "finances");
+      out[out.length - 1].confirmForecast = true;
+    }
     else if (!blank(f.opening_cash) && !passed("C3.B")) {
       const said = new Set(rows(f.assumptions).filter((a) => !blank(a.text) && !blank(a.source)).map((a) => a.applies_to));
       const lacking = ["receipts", "payments"].filter((l) => !said.has(l));
@@ -101,6 +115,12 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
 }
 
 /** "Funding goal 6 of 7 · Finances 4 of 5 …": each section's answered count, from the case. */
-export function sectionCounts(subject) {
-  return (subject?.sections || []).map((x) => ({ key: x.key, text: `${String(x.title).replace(/ and .*$/, "")} ${x.answered} of ${x.total}`, done: x.answered >= x.total }));
+export function sectionCounts(subject, steps = []) {
+  // Never a tick beside a section that still has a step (the owner's QA, 21 Oct: "Finances 5 of 5" with three months missing).
+  return (subject?.sections || []).map((x) => {
+    const open = steps.filter((s) => s.section === x.key).length;
+    const name = String(x.title).replace(/ and .*$/, "");
+    return { key: x.key, done: x.answered >= x.total && !open,
+      text: x.answered >= x.total && open ? `${name}: ${open} to fix` : `${name} ${x.answered} of ${x.total}` };
+  });
 }

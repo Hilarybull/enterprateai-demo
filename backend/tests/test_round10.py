@@ -84,7 +84,10 @@ def test_the_agent_drafts_what_is_still_blank_and_never_another_offerings_words(
 
     async def go():
         svc._draft_blanks_later("u1", rules.FUNDING, row, {"data": data, "today": date(2026, 10, 21), "now": "2026-10-21T10:00:00Z"})
-        await asyncio.sleep(0.05)
+        for _ in range(100):      # drafted in the background: waited for, up to 5 s
+            if (svc.store.row.get("data") or {}).get("market"):
+                break
+            await asyncio.sleep(0.05)
     asyncio.run(go())
     case = svc.store.row["data"]
     assert case["market"]["acquisition_approach"].startswith("Leaflets")

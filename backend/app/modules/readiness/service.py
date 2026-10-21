@@ -679,7 +679,17 @@ class ReadinessService:
         was = case.get("provenance") or {}
         stale = [p for p in ("market.acquisition_owner", "team.responsibilities", "market.target_segment", "market.differentiation")
                  if isinstance(was.get(p), dict) and str(was[p].get("value")) == str(engine.get(case, p)) and not self._still_fits(p, engine.get(case, p), data)]
-        if not fills and not stale:
+        from app.modules.agent import research as _rs
+        # "No acquisition channels are described in the available information" (the owner's QA, 21 Oct): a non-answer the
+        # Agent wrote is not an answer; cleared, so it is drafted again.
+        stale += [p for p in ("purpose", "market.target_segment", "market.differentiation", "market.acquisition_approach", "market.acquisition_owner",
+                              "market.acquisition_cost", "traction.summary") if p not in stale and isinstance(engine.get(case, p), str)
+                  and (_rs.NOT_SAID.search(engine.get(case, p)) or _rs._NOTHING_FOUND.search(engine.get(case, p)))]
+        # Each spending line's month: the month the funding arrives, when none is given (the owner's QA, 21 Oct)
+        arrives = str(case.get("receipt_date") or "")[:7]
+        months = [i for i, a in enumerate(case.get("use_of_funds") or []) if isinstance(a, dict) and not str(a.get("period") or "").strip()] \
+            if len(arrives) == 7 and arrives[4] == "-" else []
+        if not fills and not stale and not months:
             return None
         import copy
         out = copy.deepcopy(case)
@@ -688,6 +698,12 @@ class ReadinessService:
             out.get("provenance", {}).pop(path, None)
         for path, value in fills.items():
             _set(out, path, value)
+        for i in months:
+            out["use_of_funds"][i]["period"] = arrives
+        if months:
+            prov = {**prov, "use_of_funds.period": {"source": "Suggested by the Agent: the month the funding arrives. Change it if the money is spent later.",
+                                                     "as_of": today.isoformat()}}
+            fills = {**fills, "use_of_funds.period": arrives}
         out["provenance"] = {**(out.get("provenance") or {}), **{p: prov[p] for p in fills}}
         out["filled_from_records"] = sorted(done | set(fills))
         return out
@@ -818,6 +834,11 @@ class ReadinessService:
             try:
                 f = await self._forecast_of(row)
                 rolled = self.roll_actuals((f or {}).get("data") or {}, ctx["data"], ctx["today"]) if f else None
+                fd = rolled or ((f or {}).get("data") or {})
+                if f and fd.get("drafted_by") == "Agent" and not fd.get("confirmed_at") and fd.get("opening_cash") in (None, ""):
+                    opening = self._opening_of(None, ctx)
+                    if opening["opening_cash"] is not None:
+                        rolled = {**fd, **opening}
                 if rolled is not None:
                     await self.store.update("forecasts", f["id"], {"data": rolled, "updated_at": ctx["now"]}, bump=False)
             except Exception:      # noqa: BLE001 - the forecast shows as it is; rolled forward next time
@@ -1458,8 +1479,29 @@ class ReadinessService:
         return {"currency": cur, "start_month": months[0]["month"], "months": months, "assumptions": notes, "asks": asks,
                 # so a typical month answered on the page gives its payments too: sales = revenue / price
                 "figures": {k: v for k, v in (("price", price), ("cost", cost), ("fixed_costs", fixed)) if isinstance(v, (int, float))},
-                "opening_cash": None if cash is None else _plain(cash), "opening_cash_as_of": ctx["today"].isoformat() if cash is not None else None,
+                **ReadinessService._opening_of(cash, ctx),
                 "from": "Filled in by the Agent from your workspace and research"}
+
+    @staticmethod
+    def _opening_of(cash: float | None, ctx: dict) -> dict:
+        """The forecast's opening cash: the cash the owner gave, else what the records show came in less what went out (the
+        owner's QA, 21 Oct: the forecast stayed incomplete for want of it). None when neither is known."""
+        if cash is None:
+            cash = ReadinessService.records_cash(ctx["data"], ctx["today"])
+        return {"opening_cash": None if cash is None else f"{cash:.2f}".rstrip("0").rstrip("."), "opening_cash_as_of": ctx["today"].isoformat() if cash is not None else None}
+
+    @staticmethod
+    def records_cash(data: dict, today: date) -> float | None:
+        """Money received on the invoices less the expenses paid, in the workspace currency, from Business Operations. None
+        with nothing on record."""
+        fin = data.get("financials") or {}
+        got = [float(bz.in_base(data, inv, bz.invoice_received(inv)) or 0) for inv in fin.get("invoices") or []
+               if isinstance(inv, dict) and not inv.get("archived") and bz.invoice_received(inv) > 0]
+        spent = [float(bz.in_base(data, e, bz.money(e.get("price") or e.get("total_amount") or e.get("amount"))) or 0) for e in fin.get("expenses") or []
+                 if isinstance(e, dict) and not e.get("archived") and bz.status_of(e) in ("paid", "")]
+        net = round(sum(got) - sum(spent))
+        # Below zero is not a bank balance (the expenses may have been paid from elsewhere): asked instead.
+        return net if (got or spent) and net > 0 else None
 
     def _public_forecast(self, f: dict, row: dict, ctx: dict, evidence: list[dict] | None = None) -> dict:
         data = f["data"] or {}
