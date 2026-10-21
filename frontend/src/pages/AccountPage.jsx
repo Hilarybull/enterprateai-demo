@@ -381,7 +381,9 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const [customCity, setCustomCity] = useState(_initCity === "Other" ? (p.city || "") : "");
   const cityOptions = country && country !== "Other" ? (COUNTRY_CITIES[country] || []) : [];
   const [stateOrRegion, setStateOrRegion] = useState(p.state_or_region || "");
-  const [contactEmail, setContactEmail] = useState(p.email || "");
+  // The sign-up email is the default contact email (the owner's QA, 16 Oct): shown here when the profile has none, saved with the form.
+  const signedUpWith = useAuthStore((st) => st.email);
+  const [contactEmail, setContactEmail] = useState(p.email || (signedUpWith && signedUpWith !== "demo" ? signedUpWith : ""));
   const [phone, setPhone] = useState(p.phone_number || "");
   const [website, setWebsite] = useState(p.website || "");
   const [regNumber, setRegNumber] = useState(p.registration_number || "");
@@ -462,7 +464,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
     setSaving(true);
     try {
       const resp = await apiRequest("/workspace/profile", "POST", { workspace_id: workspaceId, profile, seen: p });
-      onSaved(resp.profile);
+      onSaved(resp.profile, resp);
     } catch (err) {
       setMsg({ type: "error", text: err?.message || "Failed to save workspace profile." });
     } finally {
@@ -849,6 +851,40 @@ function AgentFilled({ workspaceId, profile, onChanged }) {
   );
 }
 
+/** After a rename: "Update the sender on 3 unsent drafts?" Nothing changes until Update them; sent documents never do. */
+export function RenamedDrafts({ workspaceId, renamed, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState("");
+  const n = renamed.drafts.length;
+  const refs = renamed.drafts.map((d) => d.reference).filter(Boolean);
+  const update = async () => {
+    setBusy(true);
+    try {
+      const res = await apiRequest(`/businesses/${workspaceId}/drafts/refresh-sender`, "POST", { approval_ids: renamed.drafts.map((d) => d.id) });
+      setSaid(res?.message || "Updated.");
+    } catch { setSaid("That didn't go through. Nothing was changed. Try again."); }
+    finally { setBusy(false); }
+  };
+  if (said) {
+    return (
+      <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900" data-renamed-drafts>
+        <span>{said}</span>
+        <button type="button" onClick={onDone} className="text-[12.5px] font-semibold underline">Close</button>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-renamed-drafts>
+      <p className="font-semibold">You renamed this workspace from {renamed.from} to {renamed.to}.</p>
+      <p className="mt-0.5">{n} unsent draft{n === 1 ? "" : "s"} still show{n === 1 ? "s" : ""} {renamed.from} as the sender{refs.length ? ` (${refs.join(", ")})` : ""}. Update {n === 1 ? "it" : "them"} to {renamed.to}? Sent documents are not changed.</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" disabled={busy} onClick={update} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{busy ? "Updating…" : `Update ${n === 1 ? "it" : "them"}`}</button>
+        <button type="button" disabled={busy} onClick={onDone} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-amber-900 hover:bg-amber-100">Leave {n === 1 ? "it" : "them"}</button>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceTab({ workspaceId }) {
   const setWorkspaceCompanyName = useWorkspaceStore((s) => s.setWorkspaceCompanyName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
@@ -856,6 +892,7 @@ function WorkspaceTab({ workspaceId }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [renamed, setRenamed] = useState(null);      // {from, to, drafts}: the question after a rename
 
   useEffect(() => {
     if (!workspaceId) { setLoading(false); return; }
@@ -938,7 +975,9 @@ function WorkspaceTab({ workspaceId }) {
       <WorkspaceEditForm
         workspaceId={workspaceId}
         initialData={p}
-        onSaved={(newProfile) => {
+        onSaved={(newProfile, resp) => {
+          // Renamed with drafts still showing the old name: asked about, never changed unasked (the owner's QA, 16 Oct).
+          if (resp?.unsent_drafts?.length) setRenamed({ from: resp.renamed_from, to: newProfile.company_name, drafts: resp.unsent_drafts });
           setWs((prev) => ({ ...(prev || {}), workspace_profile: newProfile }));
           setWorkspaceCompanyName(newProfile.company_name || null);
           setWorkspaceLogo(newProfile.logo_data_url || null);
@@ -952,6 +991,7 @@ function WorkspaceTab({ workspaceId }) {
 
   return (
     <>
+    {renamed && <RenamedDrafts workspaceId={workspaceId} renamed={renamed} onDone={() => setRenamed(null)} />}
     <AgentFilled workspaceId={workspaceId} profile={p} onChanged={() => window.dispatchEvent(new CustomEvent("ea:workspace:refresh"))} />
     {/* A Marketplace profile that may be this business: asked again whenever the company number or website changes. */}
     <SavedBusinessMatch businessId={workspaceId} companyNumber={p.registration_number || ""} website={p.website || ""} />

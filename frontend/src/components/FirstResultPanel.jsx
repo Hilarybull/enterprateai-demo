@@ -3,7 +3,12 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
-import FirstValueCard, { EditAnswers, PremiumConfirm, actionsOf, latestOf, openOf, useFreeActions } from "./FirstValueCard";
+import FirstValueCard, { PremiumConfirm, fetchFirstValue, latestOf, openOf, useFreeActions } from "./FirstValueCard";
+import { FoundForYou, NextSteps, PackLine, SavedNotice, StatusLine, stepsOf, useResearchRun, useStepPrices } from "./ResultSummary";
+import { premiumFlow } from "./ResearchReview";
+import WhatNext from "./WhatNext";
+import { hasFundingPack } from "../lib/plans";
+import { useAuthStore } from "../store/auth";
 import { trackGoal } from "./GoalLauncher";
 
 // The first result inside the Agent card (dark Agent styling, PRD 12.2), above the Agent's four action cards (which stay):
@@ -16,11 +21,6 @@ const BAND_TONE = { Strong: "bg-emerald-50 text-emerald-700 ring-emerald-200", F
   Weak: "bg-rose-50 text-rose-700 ring-rose-200", "Not ready yet": "bg-rose-50 text-rose-700 ring-rose-200", "Not ready": "bg-rose-50 text-rose-700 ring-rose-200",
   Ready: "bg-emerald-50 text-emerald-700 ring-emerald-200", "Conditionally ready": "bg-amber-50 text-amber-700 ring-amber-200",
   "Insufficient evidence": "bg-slate-50 text-slate-600 ring-slate-200" };
-// Short names for the buttons on the panel (the drawer keeps the full ones).
-const SHORT = { "Save the price in your catalogue": "Save price to catalogue", "Add it to your catalogue": "Add to catalogue",
-"Set up your Marketplace profile": "Set up Marketplace profile" };
-const outline = "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 max-md:w-full dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
-
 /** The gaps in the states the drawer shows them: failed, early evidence, not known yet (one group named by its count alone). */
 export function gapsLine(gaps) {
   const groups = [["failed", gaps?.failed || []], ["with early evidence", gaps?.early || []], ["not known yet", gaps?.unknown || []]].filter(([, list]) => list.length);
@@ -120,7 +120,7 @@ export function keepingScroll(fn) {
   return out;
 }
 
-export default function FirstResultPanel({ firstResult, pinned = null }) {
+export default function FirstResultPanel({ firstResult }) {
   const { result, premium, dismiss: dismissNow, saveForLater: saveNow } = firstResult;
   const dismiss = () => keepingScroll(dismissNow);
   const saveForLater = () => keepingScroll(saveNow);
@@ -134,6 +134,9 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
   const [researching, setResearching] = useState(false);
   const busy = useRef(false);
   const { act, done, priceModal } = useFreeActions(result, { onSaved: saveForLater, setServed });
+  const workspaceId = useWorkspaceStore((st) => st.workspaceId);
+  const run = useResearchRun(workspaceId, result);      // the Agent's drafts for the steps, and its findings
+  const prices = useStepPrices(result?._session || firstResult.sessionId, result);
   if (!result) return null;
   // The same snapshot as the drawer: the latest check when there is one (with the first result as "Earlier"), else the first result.
   const latest = latestOf(result);
@@ -141,54 +144,40 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
   const named = latest.full || latest.unscoredCheck;      // the case it is about, scored or not yet
   const kindWord = named?.kind === "funding" ? "Funding readiness" : named?.kind === "launch" ? "Launch readiness" : "";
   const heading = named?.title ? `${kindWord || result.headline} · ${named.title}` : result.headline;
-  const coverage = Math.max(0, Math.min(100, Number(latest.coverage) || 0));
-  const numbers = latest.full ? `Latest check: ${latest.score}${latest.full.as_of ? ` · ${latest.source.split(" · ").pop()}` : ""}` : (result.key_numbers || []).join(" · ");
-  const gapText = latest.full ? `${latest.earlier}${typeof latest.full.blocker_count === "number" ? ` · ${latest.full.blocker_count} blocker${latest.full.blocker_count === 1 ? "" : "s"} in the full check` : ""}` : gapsLine(result.gaps);
-  // The main button follows the research (the owner's QA, 15 Oct): none yet, its price first; findings waiting, "Review
-  // findings (5)"; adopted, the pack is the next step and the research is never offered again unless the answers change.
   const rs = result.research || { state: "none" };
-  const workspaceId = useWorkspaceStore((st) => st.workspaceId);
-  const all = actionsOf(result).filter((a) => !a.save);
-  const pack = all.find((a) => /funding pack/i.test(a.label || ""));
-  const primary = rs.state === "none" ? result.premium_next_action
-    : rs.state === "review" ? { label: `Review findings (${rs.findings || 0})`, review: rs.run_id }
-    : (pack || null);
-  const refresh = rs.state === "stale" ? { label: `Refresh research · up to ${rs.max} credits` } : null;
-  const others = all.filter((a) => a !== primary);
 
   // Review-type work opens on its own page (the case's Research section), never in the side panel (the owner's QA, 15 Oct).
   const reviewPage = (runId) => {
     const a = result?.assessment?.assessment_id ? result.assessment : null;
     const base = result?.assessment_type === "launch_readiness_initial" ? (a?.initiative_id ? `/launch/${a.initiative_id}` : "/launch")
       : (a?.case_id ? `/funding/${a.case_id}` : "/funding");
-    return `${base}?tab=research${runId ? `&run=${encodeURIComponent(runId)}` : ""}#review`;
+    return `${base}${runId ? `?run=${encodeURIComponent(runId)}` : ""}`;
   };
   async function openReview(runId) { navigate(reviewPage(runId)); }
 
-  async function startPremium() {
-    if (busy.current || !primary) return;
-    if (primary.review) { await openReview(primary.review); return; }
-    if (primary.to) { navigate(primary.to); return; }
+  // One step's research ("Do it for me · 10 credits"), or every step's ("Do all for me"): the plan first, then its price
+  // in the spending modal (focus on "Not now"), unless it is free. Nothing starts from typing.
+  async function startStep(only) {
     trackGoal("first_value_premium_clicked", { where: "app" });
-    // The plan first, then the credits (PRD 4.1): an ineligible owner sees the gate; an eligible one the cost, in the drawer.
     if (result.premium_gate && result.premium_gate.allowed === false) { setGate(result.premium_gate); return; }
-    if (!premium) { const open = openOf(result); if (open) navigate(open.to); return; }
-    await runPremium();
+    const sid = result._session || firstResult.sessionId;
+    if (only && !sid) return;
+    await runPremium(only ? premiumFlow({ base: `/task-sessions/${sid}/premium`, body: { only: [only] }, onAdopted: firstResult.onAdopted }) : premium);
   }
-  async function runPremium() {
-    if (busy.current || !premium) return;
+  async function runPremium(flow = premium) {
+    if (busy.current || !flow) return;
     busy.current = true;
     setWorking(true);
+    setAsk({ confirm: { pending: true } });      // the modal at once, its price filling in (the owner's QA, 21 Oct)
     try {
-      const out = await premium();
+      const out = await flow();
+      if (!out?.confirm) setAsk(null);
       if (out?.gate) setGate(out.gate);
-      else if (out?.confirm) setAsk(out);      // its price and Start, in a modal (F-2)
+      else if (out?.confirm) setAsk((was) => (was ? out : null));      // its price and Start, in a modal (F-2); closed meanwhile, it stays closed
       else if (out?.research) navigate(reviewPage(out.research.id));      // the same research again: opened on its page, free
       else if (out) { setServed(out); setDetails(true); }
     } finally { busy.current = false; setWorking(false); }
   }
-  // "Refresh research · up to 60 credits": the answers changed, or the last research is over 30 days old.
-  const startRefresh = () => runPremium();
   async function research() {
     if (!ask || busy.current) return;
     busy.current = true;
@@ -197,7 +186,12 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
       const next = await ask.start();
       setAsk(null);
       if (next?.gate) setGate(next.gate);
-      else if (next?.research) navigate(reviewPage(next.research.id));      // the findings, reviewed on the case page
+      else if (next?.research) {
+        // Its drafts in this card's step cards at once (the owner's QA, 21 Oct: no reload, no other page, one result).
+        const r = (await fetchFirstValue(result._session || firstResult.sessionId).catch(() => null))?.result;
+        if (r) firstResult.setResult?.((had) => ({ ...r, premium_gate: had?.premium_gate }));
+        else navigate(reviewPage(next.research.id));
+      }
       else if (next) { setServed(next); setDetails(true); }
     } finally { busy.current = false; setResearching(false); }
   }
@@ -208,57 +202,34 @@ export default function FirstResultPanel({ firstResult, pinned = null }) {
     <div className={`grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out ${closing ? "mt-0 grid-rows-[0fr] opacity-0" : "mt-4 grid-rows-[1fr] opacity-100"}`} data-first-result-wrap>
       <div className="min-h-0 overflow-hidden">
         <div className="relative rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100" data-first-result-panel data-band={latest.band}>
-          {pinned && (
-            // Pinned too: one card, the pin in its corner. Unpinning keeps this card.
-            <button type="button" aria-label="Unpin" title="Pinned to your dashboard. Unpin" onClick={pinned.onUnpin} data-result-pin
-              className="absolute right-10 top-2 flex h-8 w-8 items-center justify-center rounded-full text-brand-600 hover:bg-slate-100 hover:text-slate-700">
-              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" stroke="currentColor" strokeWidth={2}><path d="M12 17v5M9 3h6l-1 7 3 3H7l3-3z" /></svg>
-            </button>
-          )}
           <button type="button" aria-label="Dismiss" onClick={fold} data-result-dismiss
             className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
-          {/* Row 1: the result, its band, and how much of the evidence is known (its own figure, never folded into the band). */}
-          <div className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 ${pinned ? "pr-[4.5rem]" : "pr-9"} max-md:flex-col max-md:items-start`}>
-            <p className="min-w-0 truncate text-[15px] font-semibold" title={heading} data-result-title>{heading}</p>
-            {latest.band && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${BAND_TONE[latest.band] || BAND_TONE["Insufficient evidence"]}`} data-result-band>{latest.band}</span>}
-            <span className="flex shrink-0 items-center gap-2 text-[12px] text-slate-500 md:ml-auto" data-result-coverage title={`Evidence coverage ${coverage}%`}>
-              <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200"><span className="block h-full rounded-full bg-brand-500" style={{ width: `${coverage}%` }} /></span>
-              {coverage}% evidence
-            </span>
+          {/* The same pattern as the result page (the owner's brief, 17 Oct): the case's name, one score and one sentence,
+              three next steps, three findings, the pack, then the links. Engine detail is on the full page. */}
+          <div className="min-w-0 pr-9">
+            {named?.title && kindWord && <p className="text-[12px] text-slate-500" data-result-eyebrow>{kindWord}</p>}
+            <p className="text-[15px] font-semibold leading-5 text-slate-900 line-clamp-2 break-words dark:text-slate-100" title={heading} data-result-title>{named?.title || result.headline}</p>
+            <div className="mt-1"><StatusLine result={result} latest={latest} /></div>
+            {rs.state === "adopted" && <SavedNotice className="mt-2" />}
+            {result.assessment_type === "funding_readiness_initial" && (result._session || firstResult.sessionId) && rs.state === "adopted" && (
+              <WhatNext sessionId={result._session || firstResult.sessionId} businessId={workspaceId} act={act}
+                onChanged={async () => { const r = (await fetchFirstValue(result._session || firstResult.sessionId).catch(() => null))?.result; if (r) firstResult.setResult?.((had) => ({ ...r, premium_gate: had?.premium_gate })); return r; }} />
+            )}
           </div>
-          {/* Row 2: three key numbers on one line (two at most at 1024; stacked on a phone). */}
-          {numbers && <p className="mt-2 truncate text-[14px] font-medium text-slate-800 dark:text-slate-100 lg:max-xl:line-clamp-2 lg:max-xl:whitespace-normal max-md:whitespace-normal" title={numbers} data-result-numbers>{numbers}</p>}
-          {/* Row 3: the gaps, failed apart from not known yet. */}
-          <p className="mt-1 truncate text-[12.5px] text-slate-500 max-md:whitespace-normal" title={gapText} data-result-gaps>{gapText}</p>
-          {/* P1.13: one verdict for a funding check, each blocker a link to fix it, and what the score means. */}
-          {latest.full?.kind === "funding" && (
-            <div className="mt-1.5 text-[13px] text-slate-800 dark:text-slate-100" data-funding-verdict>
-              {latest.full.classification === "ready" ? <p className="font-semibold">Ready to approach funders</p> : (
-                <p><span className="font-semibold">Not ready to approach funders yet</span>
-                  {(latest.full.top_blockers || []).length > 0 && <>: {(latest.full.top_blockers || []).map((b, n) => (
-                    <span key={b.code}>{n > 0 && ", "}<a href={b.to} onClick={(e) => { e.preventDefault(); navigate(b.to); }} className="text-brand-700 underline underline-offset-2 hover:text-brand-800" data-blocker-link>{b.label}</a></span>
-                  ))}</>}</p>
-              )}
-              <p className="mt-0.5 text-[12px] text-slate-500" data-funding-disclaimer>This shows how prepared you are, not whether funding will be given.</p>
+          {rs.state !== "adopted" && <NextSteps result={result} run={run} prices={prices} readyToggle={false} working={working} businessId={workspaceId}
+            onApplied={async () => { const r = (await fetchFirstValue(result._session || firstResult.sessionId).catch(() => null))?.result; if (r) firstResult.setResult?.((had) => ({ ...r, premium_gate: had?.premium_gate })); return r; }} onReview={rs.run_id ? () => openReview(rs.run_id) : null} onDoIt={result.premium_next_action ? startStep : null}
+            onAnswered={(res) => { if (res?.result) firstResult.setResult?.((had) => ({ ...res.result, _edit: res.edit || had?._edit, _session: res.session_id || had?._session, premium_gate: had?.premium_gate })); }} />}
+          <FoundForYou businessId={workspaceId} result={result} run={run} onSeeAll={rs.run_id ? () => openReview(rs.run_id) : null} />
+          <PackLine result={result} locked={!hasFundingPack(useAuthStore.getState().subscription, useAuthStore.getState().platformGrants)} businessId={workspaceId} onCreate={act} />
+          {/* One link only (the owner's brief, 20 Oct): the steps carry their own buttons, the pack its one, and the answers
+              are edited on the full page. Everything is saved as it goes. */}
+          {openOf(result) && (
+            <div className="mt-6 flex flex-wrap items-center gap-2" data-result-actions>
+              <a href={openOf(result).to} onClick={(e) => { e.preventDefault(); navigate(openOf(result).to); }} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-result-open>Open full page</a>
             </div>
           )}
-          {/* Every action is a button: the primary one solid, the rest outlined, wrapping onto a second line when needed. */}
-          <div className="mt-3 flex flex-wrap items-center gap-2 max-md:flex-col max-md:items-stretch" data-result-actions>
-            {primary && (
-              <button type="button" onClick={startPremium} disabled={working} aria-busy={working} data-result-primary
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-500 disabled:opacity-70 max-md:w-full">
-                {working && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-                {working ? "Working on it…" : primary.label}
-              </button>
-            )}
-            {refresh && <button type="button" onClick={startRefresh} className={outline} data-result-refresh>{refresh.label}</button>}
-            {others.map((a) => <button key={a.label} type="button" onClick={() => act(a)} className={outline} title={a.label}>{SHORT[a.label] || a.label}</button>)}
-            <button type="button" onClick={saveForLater} className={outline} data-result-save>Save for later</button>
-            {/* Edit and run again, right here (the owner's QA, 15 Oct). */}
-            <EditAnswers result={result} onUpdated={(r) => firstResult.setResult?.((had) => ({ ...r, premium_gate: had?.premium_gate }))} />
-          </div>
           {done && <p role="status" className={`mt-2 text-[12px] ${done.error ? "text-rose-700" : "text-emerald-700"}`}>{done.error || done.text}</p>}
         </div>
       </div>

@@ -1436,6 +1436,14 @@ export default function ResultsPage() {
           <p className="mt-1 text-sm text-slate-500">Product / service viability report and analysis.</p>
         </div>
 
+        {validation?.insufficient && (
+          // Not scored, said as that (the owner's QA, 21 Oct: an unscored run showed as 0, "Risky")
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-not-scored>
+            <p className="font-semibold">Not scored yet.</p>
+            <p className="mt-0.5">Still needed: {(validation.gaps || []).join(", ") || "a few figures"}. Fill them in and run it again for a score.</p>
+            <a href="/validation" className="mt-2 inline-flex rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">Fill in the missing figures</a>
+          </div>
+        )}
         {/* ── Disclaimer ── */}
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <span className="font-semibold">AI output disclaimer: </span>
@@ -2087,6 +2095,14 @@ export default function ResultsPage() {
         <p className="mt-1 text-sm text-slate-500">Validation report and recommended next steps.</p>
       </div>
 
+      {validation?.insufficient && (
+        // Not scored, said as that (the owner's QA, 21 Oct: an unscored run showed as 0, "Risky")
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-not-scored>
+          <p className="font-semibold">Not scored yet.</p>
+          <p className="mt-0.5">Still needed: {(validation.gaps || []).join(", ") || "a few figures"}. Fill them in and run it again for a score.</p>
+          <a href="/validation" className="mt-2 inline-flex rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">Fill in the missing figures</a>
+        </div>
+        )}
       {/* ── Disclaimer ── */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         <span className="font-semibold">AI output disclaimer: </span>
@@ -2670,14 +2686,16 @@ export default function ResultsPage() {
                   <div className={`absolute -inset-3 rounded-full blur-xl opacity-15 transition-all duration-700 group-hover:opacity-30 ${
                     risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"
                   }`} />
-                  <CircularScore score={score} tone={risk.tone} size={148} strokeWidth={12} />
+                  {validation?.insufficient
+                    ? <div className="flex h-[148px] w-[148px] items-center justify-center rounded-full border-[12px] border-slate-100 text-[15px] font-bold text-slate-500" data-score-none>Not scored</div>
+                    : <CircularScore score={score} tone={risk.tone} size={148} strokeWidth={12} />}
                 </div>
                 <div className="mt-5">
                   <div className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-1.5">Overall Verdict</div>
                   <div className={`text-2xl font-black tracking-tight leading-none ${
                     risk.tone === "danger" ? "text-rose-600" :
                     risk.tone === "warn"   ? "text-amber-600" : "text-emerald-600"
-                  }`}>{classification}</div>
+                  }`}>{validation?.insufficient ? "Not scored yet" : classification}</div>
                   <p className="mt-2 text-xs font-semibold text-slate-500 max-w-[200px] mx-auto leading-relaxed">
                     {validation?.market_research?.viability_score?.summary || risk.subtitle}
                   </p>

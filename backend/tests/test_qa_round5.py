@@ -56,10 +56,16 @@ def test_a_profile_with_its_business_email_is_used_and_nothing_is_asked():
     assert company["email"] == "hello@sparkle.test"
 
 
-def test_missing_it_is_suggested_from_the_profile_not_from_the_sign_in():
-    assert _asked({"contact_email": "bookings@sparkle.test"})["business_email"]["default"] == "bookings@sparkle.test"
-    assert "default" not in _asked({})["business_email"]                      # nothing on the profile: nothing assumed
-    assert _asked({"contact_email": SIGN_IN})["business_email"]["default"] == SIGN_IN      # the same address on the profile: offered
+def test_the_default_contact_email_is_the_profiles_other_address_then_the_sign_up_email():
+    """The owner's rule (16 Oct, replacing QA P5-3): the sign-up email is the default contact email; an address the
+    business keeps on its profile comes first. Asked only when there is neither."""
+    sender = lambda profile, tc=None: tools._sender(tc or _tc(), {"workspace_profile": {"company_name": "Sparkle Cleaning", **profile}})      # noqa: E731
+    assert sender({"contact_email": "bookings@sparkle.test"})["email"] == "bookings@sparkle.test"
+    assert sender({})["email"] == SIGN_IN                                     # nothing on the profile: the sign-up email
+    nobody = SimpleNamespace(run={"state": {"answers": {}}, "requester_id": "system"}, actor=SimpleNamespace(email=None, user_id="system"))
+    with pytest.raises(tools.NeedsInformation) as e:
+        sender({}, nobody)
+    assert [f["key"] for f in e.value.fields] == ["business_email"]
 
 
 @pytest.mark.parametrize("said, goal", [("i need funding readiness", "need_funding"), ("check my launch readiness", "launch")])

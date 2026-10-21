@@ -28,8 +28,7 @@ def test_the_chat_asks_nothing_more_in_naira_with_one_clean_line(world):  # noqa
     assert s["goal_key"] == "launch" and s["missing"] == [] and s["currency"] == "NGN"
     assert s["progress"] == {"answered": 6, "total": 6}      # PRD 8.1: six questions, where and when one of them
     line = s["turns"][-1]["content"]
-    assert line.startswith("Got it: a car wash subscription (a service, at testing stage) for office workers in Abuja, launching January 2027, "
-                           "at ₦15,000 a month, costing ₦6,000 per customer, and 10 customers tried it.")
+    assert line == "Here's what I'll use:"      # one line before the recap (the owner's QA, 21 Oct) (the owner's brief, 17 Oct): never a recap or findings
     assert not re.search("[–—]", line) and "£" not in line
 
 

@@ -21,17 +21,19 @@ import FirstValueCard from "./FirstValueCard";
 import ResearchReview from "./ResearchReview";
 
 afterEach(() => { cleanup(); calls.length = 0; });
-const adopted = { assessment_type: "funding_readiness_initial", headline: "Initial Funding Preparation", score: 52, evidence_coverage: 70, currency_sign: "£",
+const adopted = { assessment_type: "funding_readiness_initial", headline: "Funding readiness", score: 52, evidence_coverage: 70, currency_sign: "£",
   strengths: [], blockers: [], metrics: [], premium_next_action: null, adopted: { version: 3 },
   free_next_actions: [{ label: "Draft my funding pack", capability: "funding_pack_draft" },
     { label: "Write a business plan", capability: "business_plan_draft", params: { answers: { description: "AI adoption framework" } } }] };
 
 describe("the result's next steps", () => {
-  it("after adopting: says so, offers the funding pack first, and never the research again", () => {
+  it("after adopting: says so, offers the funding pack once, and never the research again", () => {
     render(<MemoryRouter><FirstValueCard result={adopted} /></MemoryRouter>);
-    expect(document.querySelector("[data-fv-adopted]").textContent).toContain("version 3");
+    // No version labels on the main view (the owner's brief, 17 Oct); History keeps them.
+    expect(document.querySelector("[data-fv-adopted]")).toBeNull();
     expect(document.querySelector("[data-fv-premium]")).toBeNull();
-    expect(screen.getAllByRole("button").map((b) => b.textContent)[0]).toBe("Draft my funding pack");
+    // One pack button (the owner's QA, 21 Oct): the pack line's, never a second in the footer.
+    expect([...document.querySelectorAll("[data-fv-actions] button")].some((b) => /funding pack/i.test(b.textContent))).toBe(false);
   });
 
   it("a task button starts the task with what the check was told", async () => {

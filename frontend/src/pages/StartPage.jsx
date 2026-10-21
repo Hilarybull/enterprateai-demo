@@ -48,6 +48,44 @@ const WORKING_ON = { price_offer: "Working on your price", need_funding: "Workin
   create_quotation: "Working on your quotation", prepare_proposal: "Working on your proposal", create_business_plan: "Working on your business plan",
   business_risks: "Working on your business risks", cash_flow: "Working on your cash flow", grow: "Working on your growth" };
 
+const CHECKING = { need_funding: "Checking what funders ask for", launch: "Checking what a launch needs", test_idea: "Checking the idea",
+  price_offer: "Checking your price", more_customers: "Checking what wins customers" };
+const SIGN = { GBP: "£", NGN: "₦", USD: "$", EUR: "€", GHS: "GH₵", KES: "KSh " };
+const NAME = { GBP: "pounds", NGN: "naira", USD: "US dollars", EUR: "euros", GHS: "cedis", KES: "shillings" };
+const amount = (code, n) => `${SIGN[code] || `${code} `}${Number(n).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
+
+/** Figures given in the chat's currency, for a workspace in another (the owner's QA, 20 Oct): asked once, never relabelled. */
+function CurrencyChoice({ q, sessionId, onSettled }) {
+  const [busy, setBusy] = useState("");
+  const [problem, setProblem] = useState("");
+  const [[key, said]] = Object.entries(q.figures);
+  const choose = async (choice) => {
+    setBusy(choice);
+    setProblem("");
+    try { onSettled(await apiRequest(`/task-sessions/${sessionId}/currency`, "POST", { choice })); }
+    catch (e) { setProblem(String(e?.message || "").replace(/^HTTP \d+:\s*/, "") || "That didn't go through. Try again."); }
+    finally { setBusy(""); }
+  };
+  return (
+    <section className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900" data-currency-choice data-figure={key}>
+      <h2 className="text-[16px] font-semibold text-slate-900 dark:text-slate-100">You said {amount(q.shown, said)}. Your workspace uses {NAME[q.workspace] || q.workspace}.</h2>
+      <p className="mt-1 text-[14px] text-slate-600 dark:text-slate-300">Which did you mean?</p>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <button type="button" disabled={Boolean(busy)} onClick={() => choose("keep")} data-currency-keep
+          className="rounded-xl bg-brand-600 px-4 py-2 text-[14px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+          {/* Kept as given, never converted (the owner's brief, 20 Oct). */}
+          {busy === "keep" ? "Saving…" : `Keep ${amount(q.shown, said)}, in ${NAME[q.shown] || q.shown}`}
+        </button>
+        <button type="button" disabled={Boolean(busy)} onClick={() => choose("meant")} data-currency-meant
+          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-[14px] font-semibold text-slate-700 hover:border-brand-300 disabled:opacity-60">
+          {busy === "meant" ? "Saving…" : `I meant ${amount(q.workspace, said)}`}
+        </button>
+      </div>
+      {problem && <p role="alert" className="mt-2 text-[12.5px] text-rose-700">{problem}</p>}
+    </section>
+  );
+}
+
 export default function StartPage({ framed = false }) {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -64,6 +102,14 @@ export default function StartPage({ framed = false }) {
   const signedIn = useSignedIn();
   const asking = useRef(false);      // the Replace or Update question is up: a late quick result never covers it
 
+  // A funding or launch result opens on its own case page (the owner, 21 Oct: "just open the result in the full page"),
+  // never a copy of it here with "Open full page".
+  useEffect(() => {
+    if (stage !== "result" || !result) return;
+    const a = result.assessment || {};
+    const to = a.kind === "funding" && a.case_id ? `/funding/${a.case_id}?tab=overview` : a.kind === "launch" && a.initiative_id ? `/launch/${a.initiative_id}?tab=overview` : null;
+    if (to) navigate(to, { replace: true });
+  }, [stage, result, navigate]);
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
@@ -90,7 +136,11 @@ export default function StartPage({ framed = false }) {
       // (it was skipped there, so the case kept the old need and showed the old research).
       asking.current = Boolean(done.next === "choose" && done.choose);
       if (done.next === "choose" && done.choose) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); setStage("choose"); return; }
-      if (shown) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); return; }
+      if (shown) {
+        setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
+        if (/^\/(funding|launch)\/[^/?]+/.test(String(done.handoff?.to || "")) && !notStarted(done.handoff)) navigate(done.handoff.to, { replace: true });
+        return;
+      }
       setSession(done);
       if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
       if (notStarted(done.handoff)) {
@@ -145,7 +195,8 @@ export default function StartPage({ framed = false }) {
         navigate(`/resume/${sessionId}`, { replace: true });
         return;
       }
-      if (resumed.missing?.length) setStage("details");
+      if (resumed.currency_question) setStage("currency");      // "You said £10,000; your workspace uses naira": asked once
+      else if (resumed.missing?.length) setStage("details");
       else await prepare(resumed);
     } catch (e) {
       setProblem(e?.status === 403 ? "This task was started from another account." : "Your task couldn't be picked up just now. Nothing was lost.");
@@ -163,7 +214,20 @@ export default function StartPage({ framed = false }) {
       const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", {}, { timeoutMs: 15000 });
       setSession(attached);
       // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.
-      if (attached.handoff?.to && !notStarted(attached.handoff)) return navigate(attached.handoff.to, { replace: true });
+      if (attached.handoff?.to && !notStarted(attached.handoff)) {
+        // A refresh while the result (and its review) is on screen: the same result again, never thrown to the case page
+        // (the owner's QA, 17 Oct). With no result to show, on to where the task was handed.
+        try {
+          const fv = await fetchFirstValue(sessionId);
+          if (fv?.result) {
+            if (attached.business_id) useWorkspaceStore.getState().setWorkspaceId(attached.business_id);
+            setResult(fv.result);
+            setStage("result");
+            return undefined;
+          }
+        } catch { /* on to the hand-off */ }
+        return navigate(attached.handoff.to, { replace: true });
+      }
       // Someone with a business already carries straight on. A new account is asked one thing: what the business is called (optional).
       const existing = attached.business_id ? { id: attached.business_id } : await apiRequestCached("/validation/me").catch(() => null);
       if (existing?.id) return resume();
@@ -183,25 +247,35 @@ export default function StartPage({ framed = false }) {
   }, [begin]);
 
   const goal = session?.goal_label || session?.resolution?.original_goal;
+  const [writing, setWriting] = useState(false);
+  useEffect(() => {
+    if (stage !== "preparing") { setWriting(false); return undefined; }
+    const t = setTimeout(() => setWriting(true), 1800);
+    return () => clearTimeout(t);
+  }, [stage]);
   // Signed in already: nothing to confirm, the first step is done from the start (the owner's QA, 15 Oct).
   const saved = Boolean(session?.authenticated) || signedIn;
+  // Three steps at most, about the work, never "Signed in" (the owner's brief, 20 Oct).
+  const checking = CHECKING[session?.goal_key] || "Working it out";
+  const working = stage === "preparing";
   const steps = [
-    { key: "saved", n: 1, label: signedIn ? "Signed in" : saved ? "Email confirmed" : "Confirming email", state: saved ? "done" : stage === "loading" ? "active" : "todo" },
-    { key: "workspace", n: 2, label: workspace ? "Business ready" : "Getting your business ready",
-      state: workspace ? "done" : saved && (stage === "name" || stage === "loading" || busy) ? "active" : "todo" },
-    // Named for the work being done ("Checking your funding readiness…"), not the visitor's words.
-    { key: "prepare", n: 3, label: `${session?.preparing_label || "Preparing your task"}${stage === "preparing" ? "…" : ""}`,
-      state: stage === "preparing" ? "active" : workspace && (stage === "details" || stage === "choose") ? "active" : "todo" },
+    { key: "read", n: 1, label: "Reading your answers", state: working || stage === "choose" || stage === "currency" ? "done" : "active" },
+    { key: "check", n: 2, label: checking, state: working ? (writing ? "done" : "active") : "todo" },
+    { key: "write", n: 3, label: "Writing your next steps", state: working && writing ? "active" : "todo" },
   ];
   const Frame = framed ? "div" : ShellSkeleton;
+
 
   return (
     <Frame>
       {/* The result is its own card, across the full width of the page (one column on a phone, two from 768px). */}
       <div className={stage === "result" && result ? "w-full"
         : "mx-auto w-full max-w-[560px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900"} role="region" aria-label="Your task">
+        {stage === "currency" && session?.currency_question && (
+          <CurrencyChoice q={session.currency_question} sessionId={sessionId} onSettled={(next) => { setSession(next); prepare(next); }} />
+        )}
         {stage === "result" && result && (
-          <FirstValueCard result={result} onUpdated={setResult} onContinue={() => navigate("/dashboard", { replace: true })}
+          <FirstValueCard result={result} onUpdated={setResult}
             onPremium={premiumFlow({ base: `/task-sessions/${sessionId}/premium` })} />
         )}
         {stage !== "gone" && stage !== "result" && (
@@ -249,7 +323,20 @@ export default function StartPage({ framed = false }) {
         {stage === "choose" && session?.choose && (
           <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800" role="group" aria-label={session.choose.label} data-choose>
             <p className="text-base font-bold text-slate-900 dark:text-slate-100">{session.choose.label}</p>
-            <div className="mt-3 space-y-2">
+            {session.choose.rows?.length > 0 && (
+              // What changes, in plain words: Field | Before | Now, no arrows, nothing cut short (the owner's brief, 20 Oct).
+              <table className="mt-3 w-full table-fixed text-left text-[13px]" data-case-diff>
+                <thead><tr className="text-[12px] text-slate-500"><th className="w-1/4 pb-1 font-medium">Field</th><th className="pb-1 font-medium">Before</th><th className="pb-1 font-medium">Now</th></tr></thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {session.choose.rows.map((r) => (
+                    <tr key={r.field} className="align-top"><td className="py-1.5 pr-2 font-semibold text-slate-800 dark:text-slate-100">{r.field}</td>
+                      <td className="break-words py-1.5 pr-2 text-slate-500">{r.before}</td><td className="break-words py-1.5 text-slate-900 dark:text-slate-100">{r.now}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {session.choose.rows?.length > 0 && <p className="mt-2 text-[12px] text-slate-500">Your previous version is kept in History.</p>}
+            <div className={`mt-3 ${session.choose.rows?.length ? "flex flex-col gap-2 sm:flex-row" : "space-y-2"}`}>
               {session.choose.options.map((o) => (
                 <button key={o.value} type="button" disabled={busy} data-choice={o.value} aria-pressed={String(o.value) === String(session.choose.default ?? "")} onClick={async () => {
                   setBusy(true);
@@ -262,7 +349,7 @@ export default function StartPage({ framed = false }) {
                   } finally {
                     setBusy(false);
                   }
-                }} className={`block w-full rounded-xl border px-3.5 py-2.5 text-left text-sm font-semibold transition disabled:opacity-60 ${(session.choose.default != null ? String(o.value) !== String(session.choose.default) : o.value === "new")
+                }} className={`${session.choose.rows?.length ? "rounded-xl px-4 py-2 text-center" : "block w-full rounded-xl px-3.5 py-2.5 text-left"} border text-sm font-semibold transition disabled:opacity-60 ${(session.choose.default != null ? String(o.value) !== String(session.choose.default) : o.value === "new")
                   ? "border-slate-200 text-slate-700 hover:border-slate-300 dark:border-slate-700 dark:text-slate-300" : "border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-400 dark:bg-brand-900/20 dark:text-brand-200"}`}>
                   {o.label}
                 </button>

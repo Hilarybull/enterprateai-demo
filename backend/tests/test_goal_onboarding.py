@@ -217,9 +217,9 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     asked = {f["key"] for f in (shown.get("pending_question") or {}).get("fields") or []}
     assert not asked & {"customer_name", "customer_id", "customer_email", "items", "vat_rate"}
     done = shown
-    # A brand-new business has no email of its own yet, and a document is never sent under a placeholder: that one thing is asked.
-    assert [f["key"] for f in done["pending_question"]["fields"]] == ["business_email"]
-    done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {"business_email": "hello@newcomer.test"}}).json()["run"]
+    # A brand-new business starts with the sign-up email as its contact email (the owner's rule, 16 Oct): nothing more is
+    # asked, and the draft waits for approval.
+    assert data["workspace_profile"]["email"] == NEW_USER
     assert done["status"] == "awaiting_approval", done.get("pending_question") or done.get("error")      # a reviewable draft; sending still needs approval
     approval = env.pending(done)[0]
     assert approval["tool_id"] == "send_invoice" and (approval["payload"]["customer_name"], approval["payload"]["total"]) == ("ABC Consulting Ltd", 1800)      # 1,500 plus the 20% VAT given on the homepage
@@ -280,7 +280,7 @@ def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_ca
     assert [q["key"] for q in s["questions"] if not q.get("hidden")] == ["amount", "use", "stage", "route", "timing", "traction"]      # the six questions asked (the place is read, never asked)
     assert s["progress"] == {"answered": 0, "total": 6} and s["resolution"]["recommended_path"] == []      # counted in questions; no list of engines
     amount, _use, stage = s["questions"][:3]
-    assert amount["prefix"] == "£" and [c["label"] for c in amount["chips"]] == ["£10,000", "£25,000", "£50,000", "£100,000", "£250,000"]
+    assert amount["prefix"] == "£" and [c["label"] for c in amount["chips"]] == ["£10k", "£25k", "£50k", "£100k", "£250k"]      # short, as people say them (the owner's brief)
     assert stage["default"] == "" and s["missing"] == ["amount", "use", "stage", "route", "timing", "traction"]      # no answer is guessed for them
     s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 50000, "use": "Hire two developers and fund six months of marketing", "stage": "trading", "route": "equity", "timing": "Within 3 months", "traction": "Paying customers"}}).json()
     assert s["next"] == "identity"
@@ -305,7 +305,7 @@ def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_ca
     assert case["kind"] == rules.FUNDING and case["business_id"] == "A"
     assert (case["data"]["target_amount"], case["data"]["purpose"], case["data"]["stage"], case["data"]["pinned"]) == \
            (50000, "Hire two developers and fund six months of marketing", "trading", True)
-    assert case["data"]["title"].startswith("Hire two developers and fund six months of") and case["data"]["title"].endswith(" · £50k equity")      # named from the need
+    assert case["data"]["title"].startswith("£50k equity investment to hire two developers")      # named in plain words (the owner's brief)
     assert env.meter.balances[OWNER] == credits and env.meter.charges == []      # getting here used no AI Credits
 
 
@@ -405,36 +405,24 @@ def test_a_business_has_one_funding_case_and_every_funding_goal_updates_it(world
     cases = lambda: run(svc.store.list("subjects", "A", kind=rules.FUNDING))      # noqa: E731
     _first, made = _funding(client)
     data = cases()[0]["data"]
-    assert made["state"] == "handed_off" and len(cases()) == 1 and data["title"] == "Hiring · £50k equity"
+    assert made["state"] == "handed_off" and len(cases()) == 1 and data["title"] == "£50k equity investment for hiring"
     assert (data["target_amount"], data["purpose"], data["route_preference"], data["traction"]["summary"]) == (50000, "hiring", "equity", "Paying customers")
     assert data["receipt_date"] and data["provenance"]["target_amount"]["source"].startswith("From your funding chat, ")
     first_id = made["handoff"]["subject_id"]
-    # A different need: asked, with the diff, before anything is written.
-    sid, asked = _funding(client, amount=80000, use="a second site")
-    choose = asked["choose"]
-    assert [o["label"] for o in choose["options"]] == ["Replace", "Just update the changed details", "Cancel"]
-    assert "Amount £50,000 → £80,000 · Purpose hiring → a second site" in choose["label"] and "Your previous version stays in History." in choose["label"]
-    assert cases()[0]["data"]["target_amount"] == 50000      # nothing written yet
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
-    updated = client.post(f"/task-sessions/{sid}/prepare").json()
-    assert updated["handoff"]["subject_id"] == first_id and updated["handoff"]["message"].startswith('I updated "Hiring · £50k equity": Amount £50,000 → £80,000')
-    assert len(cases()) == 1 and (cases()[0]["data"]["target_amount"], cases()[0]["data"]["purpose"]) == (80000, "a second site")
-    assert cases()[0]["data"]["title"] == "Hiring · £50k equity"      # only the changed details
-    # Replace: the new need, the old one in History.
-    sid, asked = _funding(client, amount=120000, use="a new van")
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"replace:{first_id}"}})
-    replaced = client.post(f"/task-sessions/{sid}/prepare").json()
+    # A different need: one confirmation, the recap's "Looks right" (the owner's QA, 21 Oct): never a second "I'll update
+    # your funding case" screen. The one case takes the new need, what changed is said in plain words, and the previous
+    # version is kept in History automatically.
+    sid, updated = _funding(client, amount=80000, use="a second site")
+    assert not updated.get("choose")
+    assert updated["case_changes"][:2] == [{"field": "Amount", "before": "£50,000", "now": "£80,000"}, {"field": "Purpose", "before": "hiring", "now": "a second site"}]
     data = cases()[0]["data"]
-    assert replaced["handoff"]["subject_id"] == first_id and data["title"] == "A new van · £120k equity" and data["target_amount"] == 120000
+    assert updated["handoff"]["subject_id"] == first_id and len(cases()) == 1 and (data["target_amount"], data["purpose"]) == (80000, "a second site")
     prev = data["previous_needs"][0]
-    assert prev["title"] == "Hiring · £50k equity" and prev["values"]["target_amount"] == 80000 and prev["summary"].startswith("£80k equity")
-    assert "traction" in prev["set_aside"] and data["traction"]["summary"] == "Paying customers"      # the new chat's own traction
+    assert prev["title"] == "£50k equity investment for hiring" and prev["values"]["target_amount"] == 50000
     # Archived: reactivated and updated.
     run(svc.set_status(OWNER, "A", rules.FUNDING, first_id, "archive", OWNER))
     sid, again = _funding(client, amount=20000, use="Stock for Christmas")
-    assert again["choose"]["options"][0]["value"] == f"replace:{first_id}"
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
-    again = client.post(f"/task-sessions/{sid}/prepare").json()
+    assert not again.get("choose")
     assert again["handoff"]["subject_id"] == first_id and len(cases()) == 1 and cases()[0]["status"] != "archived"
     # And the module itself refuses a second one.
     import pytest
@@ -587,8 +575,8 @@ def test_the_funding_case_does_not_ask_again_for_what_was_given_on_the_homepage(
     detail = run(svc.get_subject(OWNER, "A", rules.FUNDING, done["handoff"]["subject_id"], OWNER))
     actions = {a["code"]: a for a in detail["actions"]}
     # Each action names only what is still missing.
-    # "Within 3 months" is the receipt date now (the end of that month): only the confirmation is left.
-    assert actions["C1.A"]["title"] == "Confirm the amount and date you entered."
+    # "Within 3 months" is the receipt date now and the amount came from the chat: confirmed, nothing to ask (20 Oct).
+    assert "C1.A" not in actions
     assert case["receipt_date"]
     assert actions["C1.B"]["title"] == "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it."
     assert actions["C1.B"]["why"] == "What the funding is for is entered. It isn't linked to a milestone yet."
@@ -599,7 +587,9 @@ def test_the_funding_case_does_not_ask_again_for_what_was_given_on_the_homepage(
     bare = run(svc.create_subject(OWNER, "A", rules.FUNDING, {"title": "Empty case"}, OWNER))
     run(svc.request_assessment(OWNER, "A", rules.FUNDING, bare["id"], email=OWNER))
     empty = {a["code"]: a for a in run(svc.get_subject(OWNER, "A", rules.FUNDING, bare["id"], OWNER))["actions"]}
-    assert empty["C1.A"]["title"].startswith("Enter the amount you want to raise")
+    # A case made by hand in the same business is filled from what was said there too (the owner's QA, 17 Oct): only the
+    # date is asked, never the amount again.
+    assert empty["C1.A"]["title"] == "When do you need the money?"
     assert detail["assessment"]["result"]["classification"] == run(svc.get_subject(OWNER, "A", rules.FUNDING, bare["id"], OWNER))["assessment"]["result"]["classification"]
 
 
@@ -862,7 +852,7 @@ def test_a_pinned_funding_case_shows_on_the_dashboard_live_and_unpins_with_undo(
     case_id = made["handoff"]["subject_id"]
     cards = client.get("/businesses/A/pinned").json()["items"]
     card = next(c for c in cards if c["id"] == case_id)
-    assert card["label"].startswith("Funding readiness · ") and card["open"] == f"/funding/{case_id}?tab=results"
+    assert card["label"].startswith("Funding readiness · ") and card["open"] == f"/funding/{case_id}" and card["answers"] == f"/funding/{case_id}?tab=answers"
     assert card["verdict"] in ("Ready to approach funders", "Not ready to approach funders yet")
     client.post(f"/businesses/A/pinned/{case_id}/unpin")
     assert not [c for c in client.get("/businesses/A/pinned").json()["items"] if c["id"] == case_id]

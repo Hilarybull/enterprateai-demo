@@ -9,14 +9,14 @@ export const FEATURES = {
     newLabel: "New funding case", nameField: "title", namePlaceholder: "For example: Seed round",
     intro: "See how prepared you are to approach funders, what evidence is missing and what to do next.",
     caveat: "Readiness measures preparation against the checklist. It is not the likelihood of securing investment.",
-    gatesTitle: "Gates", documentsTitle: "Materials",
+    gatesTitle: "Must-haves", documentsTitle: "Materials",
   },
   launch: {
     key: "launch", segment: "launch-initiatives", base: "/launch", title: "Launch Readiness", noun: "launch", nounPlural: "launches",
     newLabel: "New launch", nameField: "name", namePlaceholder: "For example: Bookkeeping service launch",
     intro: "Work out what must be in place before you launch, what is blocking you and what to do next.",
     caveat: "Readiness measures preparation for the launch you define. It does not guarantee demand, profit or compliance, and nothing launches automatically.",
-    gatesTitle: "Blockers", documentsTitle: "Report and checklist",
+    gatesTitle: "Must-haves", documentsTitle: "Report and checklist",
   },
 };
 
@@ -29,7 +29,7 @@ export const CLASSIFICATION = {
 export const CHECK_STATE = {
   passed: { label: "In place", mark: "✓", tone: "emerald" },
   failed: { label: "Not in place", mark: "✕", tone: "rose" },
-  unknown: { label: "Not known yet", mark: "?", tone: "slate" },
+  unknown: { label: "Need from you", mark: "?", tone: "slate" },      // the shared words (lib/vocab.js)
 };
 export const ACTION_STATE = { open: "Open", in_progress: "In progress", awaiting_evidence: "Awaiting evidence", completed: "Completed", dismissed: "Dismissed" };
 export const LIFECYCLE = { draft: "Draft", active: "Active", preparing: "Preparing", launched: "Launched", cancelled: "Cancelled", archived: "Archived" };
@@ -141,6 +141,6 @@ export function moneyLabel(value, currency) {
   if (value === null || value === undefined || value === "") return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", maximumFractionDigits: 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", minimumFractionDigits: 0, maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
 }
 export const newKey = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(16).slice(2)}`);

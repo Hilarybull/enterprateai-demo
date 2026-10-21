@@ -1,5 +1,5 @@
-// QA, 15 Oct ("why make it editable if it isn't"): a calculated figure is worked out again from the inputs, so it has no
-// Edit of its own; an input it uses (a figure on record) keeps Edit.
+// QA, 17 Oct ("all the results" editable, updatable and adoptable): every result has Edit, calculated ones too; a
+// calculation is worked out again live as its inputs change.
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import ResearchReview from "./ResearchReview";
@@ -12,19 +12,17 @@ const run = { id: "rr_1", status: "review", counts: { researched: 0, estimated: 
     { id: "e1", kind: "estimated", basis: "benchmark", field: "fixed_costs", label: "Monthly fixed costs", value: "₦35,000", number: 35000, sources: [], used_for: "Break-even" },
     { id: "c1", kind: "estimated", basis: "calculated", derive: "forecast_12m", label: "12-month forecast", value: "Cash after 12 months: ₦8,220,000", used_for: "12-month forecast" }] };
 
-describe("calculated figures in the research review", () => {
-  it("have Accept and Reject only, with where to change them; inputs keep Edit", () => {
+describe("every result in the research review", () => {
+  it("can be accepted, edited or rejected; a calculated one follows its figures, with no Edit (QA, 17 Oct)", () => {
     render(<ResearchReview businessId="ws1" run={run} onAdopted={() => {}} />);
     const open = screen.queryByRole("button", { name: "Check or review inputs" });
     if (open && !screen.queryByRole("group", { name: "Your decision: 12-month forecast" })) fireEvent.click(open);
-    const calc = within(screen.getByRole("group", { name: "Your decision: 12-month forecast" })).getAllByRole("button").map((b) => b.textContent);
-    expect(calc).toEqual(["Accept", "Reject"]);
-    expect(document.querySelector("[data-research-item='forecast_12m'] [data-calculated-note]").textContent).toBe("Worked out from the figures above. To change it, edit those and check again.");
-    const input = within(screen.getByRole("group", { name: "Your decision: Sales a month" })).getAllByRole("button").map((b) => b.textContent);
-    expect(input).toEqual(["Accept", "Edit", "Reject"]);
-    const found = within(screen.getByRole("group", { name: "Your decision: Loans for new and small businesses (Nigeria)" })).getAllByRole("button").map((b) => b.textContent);
-    expect(found).toEqual(["Accept", "Reject"]);      // a researched finding is its source's words: never rewritten
-    expect(within(screen.getByRole("group", { name: "Your decision: Monthly fixed costs" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["Accept", "Edit", "Reject"]);
+    expect(within(screen.getByRole("group", { name: "Your decision: 12-month forecast" })).getAllByRole("button").map((b) => b.textContent)).toEqual(["Accept", "Reject"]);
+    for (const name of ["Sales a month", "Loans for new and small businesses (Nigeria)", "Monthly fixed costs"]) {
+      expect(within(screen.getByRole("group", { name: `Your decision: ${name}` })).getAllByRole("button").map((b) => b.textContent)).toEqual(["Accept", "Edit", "Reject"]);
+    }
+    expect(document.querySelector("[data-research-item='forecast_12m'] [data-calculated-note]").textContent)
+      .toBe("Worked out from the figures above, and updated as you change them.");
   });
 });
 

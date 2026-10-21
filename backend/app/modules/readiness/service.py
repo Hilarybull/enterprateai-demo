@@ -9,7 +9,9 @@ scenario changes nothing at all. Readiness changes only when an assessment is ru
 from __future__ import annotations
 
 import copy
+import json
 import logging
+import re
 import uuid
 from datetime import date, datetime, timezone
 import asyncio
@@ -192,7 +194,7 @@ def _said_where(provenance: dict | None, data: dict) -> dict:
     for path, source in (provenance or {}).items():
         value = engine.get(data, path)
         if value not in (None, ""):
-            out[path] = {"value": value, "source": source}
+            out[path] = {"value": value, "source": source, "as_of": datetime.now(timezone.utc).date().isoformat()}
     return out
 
 
@@ -216,6 +218,9 @@ def _evidence_ids(value: Any) -> set[str]:
     return out
 
 
+_LATER: set = set()      # background work kept until it finishes
+
+
 class ReadinessService:
     def __init__(self, *, store: Store, business: bz.Business, policy_of: Callable[[str], Awaitable[dict]] | None = None,
                  clock: Callable[[], datetime] = now_utc, emit: Callable[[dict], Awaitable[None]] | None = None):
@@ -235,7 +240,8 @@ class ReadinessService:
         except bz.BusinessAccessDenied as e:
             raise Denied(str(e)) from e
         now = self.clock()
-        return {"actor": actor, "data": record["data"], "now": now, "today": bz.local_now(record["data"], now).date(), "business_id": business_id}
+        return {"actor": actor, "data": record["data"], "now": now, "today": bz.local_now(record["data"], now).date(), "business_id": business_id,
+                "owner_id": record.get("owner_id")}
 
     @staticmethod
     def can(actor, subject_type: str) -> dict:
@@ -454,6 +460,238 @@ class ReadinessService:
                     take("economics.price_per_unit", bz.money(products[0].get("base_price")), "Catalogue")
         return values, prov
 
+    @staticmethod
+    def already_said(subject_type: str, data: dict, today: date) -> tuple[dict, dict]:
+        """What the business has already told us elsewhere, for the case's blank fields (the owner's QA, 17 Oct: the case
+        asked again for what the funding chat and the workspace form had): the funding chat and earlier checks, then the
+        workspace profile. Only what was said; nothing is estimated."""
+        values: dict[str, Any] = {}
+        prov: dict[str, dict] = {}
+
+        foreign = ReadinessService._other_offerings(data)
+
+        def take(path: str, value: Any, source: str) -> None:
+            if path in values or engine.blank(value):
+                return
+            if isinstance(value, str):
+                value = value.strip()
+                if not value or value.lower() in ("unknown", "not sure", "n/a"):
+                    return
+                if foreign & set(re.findall(r"[a-z]{4,}", value.lower())):
+                    return      # about another offering the workspace talked about (the owner's QA, 21 Oct: a dog-grooming van)
+            values[path] = value
+            prov[path] = {"source": source, "as_of": today.isoformat(), "value": value}
+
+        said = (((data.get("quick_check_answers") or {}).get("need_funding") or {}).get("answers") or {}) if subject_type == rules.FUNDING else \
+            (((data.get("quick_check_answers") or {}).get("launch") or {}).get("answers") or {})
+        shared = {k: (v or {}).get("value") for k, v in (data.get("shared_answers") or {}).items() if isinstance(v, dict)}
+        wp = data.get("workspace_profile") or {}
+        place = ", ".join(x for x in (str(wp.get("city") or "").strip(), str(wp.get("country") or "").strip()) if x)
+        chat = "your funding chat" if subject_type == rules.FUNDING else "your launch check"
+        # The research the owner adopted (its latest dataset version): their figures, their answers to its questions, and
+        # what it worked out from them (the owner's QA, 17 Oct: "populate these from the research based on what I input").
+        goal = "need_funding" if subject_type == rules.FUNDING else "launch"
+        version = ((data.get("assessment_datasets") or {}).get(goal) or [{}])[-1] or {}
+        research = "your adopted research"
+        said = {**(version.get("answers") or {}), **said}
+        figures = dict(version.get("inputs") or {})
+        answered = {x.get("field"): x.get("answer") for x in version.get("adopted") or [] if x.get("decision") == "answered" and x.get("field")}
+        worked = {x.get("derive"): x for x in version.get("adopted") or [] if x.get("derive") and x.get("decision") in ("accepted", "edited")}
+        # Research not adopted yet enriches the case too (the owner's QA, 17 Oct), said so, and only where nothing adopted did.
+        runs = [r for r in (data.get("research_runs") or {}).values() if isinstance(r, dict) and r.get("goal") == goal and r.get("status") in ("review", "adopted")]
+        latest = max(runs, key=lambda r: str(r.get("created_at") or ""), default=None)
+        if latest and (not version or str(latest.get("created_at") or "") > str(version.get("created_at") or "")) and latest.get("status") == "review":
+            research = "your research (not adopted yet)"
+            said = {**(latest.get("answers") or {}), **said}
+            for x in latest.get("items") or []:
+                f = x.get("field")
+                if f and f not in figures and x.get("basis") == "benchmark" and isinstance(x.get("number"), (int, float)):
+                    figures[f] = x["number"]
+                if x.get("derive") and x.get("derive") not in worked:
+                    worked[x["derive"]] = x
+            figures = {**(latest.get("inputs") or {}), **figures}
+        if subject_type == rules.FUNDING:
+            for f, path in (("price", "economics.price"), ("cost", "economics.direct_cost"), ("fixed_costs", "economics.fixed_costs_monthly")):
+                if isinstance(figures.get(f), (int, float)):
+                    take(path, str(figures[f]), research)
+            who = answered.get("team") or answered.get("launch_owner") or figures.get("team") or figures.get("launch_owner")
+            # "22 people" is how many, not who (the owner's QA, 21 Oct: it was put as the owner of customer acquisition)
+            if isinstance(who, str) and who.strip() and not re.match(r"^\s*\d+\s*(people|persons?|staff|members?)?\s*$", who, re.I):
+                take("team.responsibilities", [{"area": "Delivering the plan", "owner": who.strip()},
+                                               {"area": "Winning customers", "owner": who.strip()}], research)
+                take("market.acquisition_owner", who.strip(), research)
+            table = ((worked.get("use_of_funds") or {}).get("table") or []) if isinstance(worked.get("use_of_funds"), dict) else []
+            if not table:
+                # From the case's own amount, what it is for and its fixed costs (the owner's QA, 21 Oct: "Allocations reconcile
+                # to the target" stayed open with all three known)
+                case_now = data.get("_case_now") or {}
+                def _n(v):
+                    try:
+                        return float(str(v).replace(",", "")) if v not in (None, "") else None
+                    except ValueError:
+                        return None
+                amt = _n(said.get("amount")) or _n(case_now.get("target_amount"))
+                fixed = _n(((case_now.get("economics") or {}).get("fixed_costs_monthly"))) or figures.get("fixed_costs")
+                what = str(case_now.get("purpose") or said.get("use") or "").strip()
+                if amt and fixed is not None and what:
+                    from app.modules.agent import research as _rr
+                    dv = _rr.derive("use_of_funds", {"amount": amt, "fixed_costs": float(fixed), "use": what}, bz.currency_of(data))
+                    table = dv.get("table") or []
+            lines = []
+            for row in table:
+                line, amt = str(row.get("line") or ""), row.get("amount")
+                if not isinstance(amt, (int, float)) or amt <= 0 or line.lower().startswith("not yet allocated"):
+                    continue
+                low = line.lower()
+                reserve = low.startswith("reserve")
+                category = ("Reserve" if reserve else "Operations" if low.startswith("working capital")
+                            else "Operations" if "delivery costs" in low
+                            else "Equipment" if re.search(r"\b(bays?|equipment|machines?|vans?|vehicles?|building|construction|tools?|kit|premises|shop|fit[- ]?out)\b", low)
+                            else "Marketing and sales" if re.search(r"\b(marketing|advert|ads|promotion)\b", low) else "Other")
+                lines.append({"category": category, "amount": str(round(amt)), "purpose": line,
+                              **({"rationale": "One month of fixed costs, held so the business keeps running while the plan pays back."} if reserve else {})})
+            if lines:
+                take("use_of_funds", lines, research)
+            amount = said.get("amount")
+            rec = (data.get("quick_check_answers") or {}).get(goal) or {}
+            own = str(rec.get("currency") or "").upper()
+            if isinstance(amount, (int, float)) and amount > 0 and (not own or own == bz.currency_of(data)):
+                take("target_amount", str(amount), chat)      # said in another currency: confirmed in the review, never relabelled
+            take("purpose", said.get("use"), chat)
+            route = str(said.get("route") or "").strip().lower()
+            if route in ("equity", "loan", "grant", "unknown"):
+                take("route_preference", "unsure" if route == "unknown" else route, chat)
+            take("traction.summary", said.get("traction") or shared.get("evidence"), chat)
+            from app.modules.agent import research as _r
+            thin_rec = next((v for k, v, _w in _r.records_of(data, today) if k == "records_thin"), None)
+            if thin_rec and thin_rec.get("total"):
+                take("traction.monthly_revenue", str(round(float(thin_rec["total"]))), "your invoices so far (too few for a typical month: change it)")
+            paying = next((v for k, v, _w in _r.records_of(data, today) if k == "evidence"), None)
+            n_paying = re.match(r"^(\d+) paying customer", str(paying or ""))
+            if n_paying:
+                take("traction.customers", n_paying.group(1), "your invoices")
+            vague = re.compile(r"^(?:any ?(?:one|body)|every ?(?:one|body)|all|people|customers|not sure)\.?$", re.I)
+            customer = said.get("customer") or shared.get("customer")
+            take("market.target_segment", None if vague.match(str(customer or "").strip()) else customer, chat)
+            take("market.location", said.get("where") or shared.get("where"), chat)
+            # Where it trades and how it wins customers, from the other checks and the research (the owner's QA, 21 Oct:
+            # "listen to other modules and populate these")
+            others = {k: ((data.get("quick_check_answers") or {}).get(k) or {}).get("answers") or {} for k in ("launch", "more_customers", "price_offer", "test_idea")}
+            for g in ("launch", "more_customers", "price_offer", "test_idea"):
+                take("market.location", others[g].get("where"), f"your {g.replace('_', ' ')} check")
+                take("market.acquisition_approach", others[g].get("channel") or others[g].get("route"), f"your {g.replace('_', ' ')} check")
+            here = (latest or {}).get("context") or {}
+            take("market.location", ", ".join(x for x in (here.get("place"), here.get("country")) if x), research)
+            channels_found = next((x.get("value") for r in sorted(runs, key=lambda r: str(r.get("created_at") or ""), reverse=True)
+                                   for x in r.get("items") or [] if x.get("topic") == "channels" and x.get("value") and x.get("sources")), None)
+            take("market.acquisition_approach", channels_found, research)
+            for k in ("target_customer", "ideal_customer", "target_market", "target_customer_type"):      # each in turn: one about another offering is passed over
+                take("market.target_segment", wp.get(k), "your workspace profile")
+            take("market.location", place or wp.get("location"), "your workspace profile")
+            # Only words about this business (the owner's QA, 21 Oct: another business's "mobile grooming van" filled it)
+            apart = wp.get("usp") or wp.get("unique_selling_point") or wp.get("value_proposition") or wp.get("differentiation")
+            mine = {w for s in (wp.get("services") or []) if isinstance(s, dict) for w in re.findall(r"[a-z]{4,}", str(s.get("service_name") or "").lower())}
+            mine |= set(re.findall(r"[a-z]{4,}", " ".join(str(wp.get(k) or "") for k in ("key_offering_focus", "primary_industry", "business_type", "company_name")).lower()))
+            about_us = not mine or bool(mine & set(re.findall(r"[a-z]{4,}", str(apart or "").lower())))
+            take("market.differentiation", apart if about_us else None, "your workspace profile")
+            channels = wp.get("marketing_channels") or wp.get("acquisition_channels") or wp.get("channels")
+            take("market.acquisition_approach", ", ".join(map(str, channels)) if isinstance(channels, list) else channels, "your workspace profile")
+            # The business's own records: price, cost per sale and fixed costs (the owner's QA, 20 Oct).
+            from app.modules.agent import research as _research
+            for f, v, where in _research.records_of(data, today):
+                path = {"price": "economics.price", "cost": "economics.direct_cost", "fixed_costs": "economics.fixed_costs_monthly"}.get(f)
+                if path and isinstance(v, (int, float)):
+                    take(path, str(v), where[:1].lower() + where[1:] if where else "your records")
+            # What the Agent drafted from your workspace and research (its paid run): last, only where nothing else said.
+            drafts_from = latest or max([r for r in runs if r.get("case_drafts")], key=lambda r: str(r.get("created_at") or ""), default=None)
+            for path, text in ((drafts_from or {}).get("case_drafts") or {}).items():
+                take(path, text, "the Agent's draft from your workspace and research, to check")
+        else:
+            take("customers.target_segment", said.get("customer") or shared.get("customer"), chat)
+            take("customers.target_segment", wp.get("target_customer_type"), "your workspace profile")
+        return values, prov
+
+    @staticmethod
+    def _other_offerings(data: dict) -> set[str]:
+        """Words of other offerings the workspace holds, never its own: another check's idea, another chat's business, and
+        profile text that matches neither its services nor its name (the owner's QA, 21 Oct: a cleaning company's profile
+        described a dog-grooming van). What the case is filled with never speaks of them."""
+        wp = data.get("workspace_profile") or {}
+        words = lambda t: set(re.findall(r"[a-z]{4,}", str(t or "").lower()))      # noqa: E731
+        common = {"business", "service", "services", "small", "local", "customers", "people", "with", "from", "that", "this", "their", "your",
+                  "will", "have", "more", "into", "about", "company", "limited", "offer", "offers", "provide", "provides", "building",
+                  "enterprateai", "families", "busy", "professionals", "owners", "work", "full", "time", "aged", "come", "door", "need", "travel"}
+        core = set().union(*[words(s.get("service_name")) for s in (wp.get("services") or []) if isinstance(s, dict)], words(wp.get("company_name")))
+        for rec in (data.get("quick_check_answers") or {}).values():      # what the owner said they sell
+            a = (rec or {}).get("answers") or {}
+            if core & words(a.get("sell")):
+                core |= words(a.get("sell"))
+        place = words(wp.get("city")) | words(wp.get("country")) | words(wp.get("state_or_region"))
+        mine = core | place | words(wp.get("target_customer_type"))
+        other = set()
+        if core:
+            for k in ("description", "key_offering_focus", "target_customer", "problem", "usp", "value_proposition", "about_company"):
+                w = words(wp.get(k))
+                if w and not (w & core):
+                    other |= w
+        for rec in (data.get("quick_check_answers") or {}).values():
+            a = (rec or {}).get("answers") or {}
+            for k in ("sell", "description", "offer"):
+                w = words(a.get(k))
+                if w and core and not (w & core):
+                    other |= w
+        for r in (data.get("research_runs") or {}).values():
+            w = words(((r or {}).get("context") or {}).get("offering")) if isinstance(r, dict) else set()
+            if w and core and not (w & core):
+                other |= w
+        return other - mine - common
+
+    @staticmethod
+    def _still_fits(path: str, value: Any, data: dict) -> bool:
+        """A value put in for the owner that still says something about this business: not a count as a person ("22
+        people"), not a vague answer ("anybody"), not another business's words."""
+        text = " ".join(str(v.get("owner") or "") for v in value if isinstance(v, dict)) if isinstance(value, list) else str(value or "")
+        if path in ("market.acquisition_owner", "team.responsibilities"):
+            return not re.match(r"^\s*\d+\s*(people|persons?|staff|members?)?\s*$", text, re.I)
+        if path == "market.target_segment":
+            return not re.match(r"^(?:any ?(?:one|body)|every ?(?:one|body)|all|people|customers|not sure)\.?$", text.strip(), re.I)
+        if ReadinessService._other_offerings(data) & set(re.findall(r"[a-z]{4,}", text.lower())):
+            return False
+        if path == "market.differentiation":
+            wp = data.get("workspace_profile") or {}
+            mine = {w for s in (wp.get("services") or []) if isinstance(s, dict) for w in re.findall(r"[a-z]{4,}", str(s.get("service_name") or "").lower())}
+            mine |= set(re.findall(r"[a-z]{4,}", " ".join(str(wp.get(k) or "") for k in ("key_offering_focus", "primary_industry", "business_type", "company_name")).lower()))
+            return not mine or bool(mine & set(re.findall(r"[a-z]{4,}", text.lower())))
+        return True
+
+    def _fill_blanks(self, subject_type: str, row: dict, data: dict, today: date) -> dict | None:
+        """The case's blank fields, filled from what the business already said. Each field once: one the owner cleared
+        stays clear. Returns the new data, or None when nothing changed."""
+        values, prov = self.already_said(subject_type, {**data, "_case_now": row.get("data") or {}}, today)
+        case = row.get("data") or {}
+        done = set(case.get("filled_from_records") or [])
+        # Never filled again: only what the owner cleared themselves (the owner's QA, 21 Oct: fields cleared by the Agent's own
+        # clean-up stayed empty for ever under "each field once").
+        theirs = set(case.get("cleared_by_owner") or [])
+        fills = {p: v for p, v in values.items() if p not in theirs and engine.blank(engine.get(case, p))}
+        # What was copied in before and is no longer taken (the owner's QA, 21 Oct: "22 people" as who wins customers,
+        # "anybody" as the target customer, another business's words as what sets it apart), still as copied: cleared.
+        was = case.get("provenance") or {}
+        stale = [p for p in ("market.acquisition_owner", "team.responsibilities", "market.target_segment", "market.differentiation")
+                 if isinstance(was.get(p), dict) and str(was[p].get("value")) == str(engine.get(case, p)) and not self._still_fits(p, engine.get(case, p), data)]
+        if not fills and not stale:
+            return None
+        import copy
+        out = copy.deepcopy(case)
+        for path in stale:
+            _set(out, path, None)
+            out.get("provenance", {}).pop(path, None)
+        for path, value in fills.items():
+            _set(out, path, value)
+        out["provenance"] = {**(out.get("provenance") or {}), **{p: prov[p] for p in fills}}
+        out["filled_from_records"] = sorted(done | set(fills))
+        return out
+
     # ── subjects: funding cases and launch initiatives ────────────────────────
 
     def _public(self, row: dict, ctx: dict) -> dict:
@@ -472,6 +710,10 @@ class ReadinessService:
         self._need(ctx, subject_type, "edit")
         _known_fields(subject_type, payload)
         values, prov = self.prefill(subject_type, ctx["data"], ctx["today"])
+        said, said_prov = self.already_said(subject_type, ctx["data"], ctx["today"])
+        for path, value in said.items():
+            if path not in values:
+                values[path], prov[path] = value, said_prov[path]
         data: dict = {}
         for path, value in values.items():
             _set(data, path, value)
@@ -549,7 +791,171 @@ class ReadinessService:
                 return_exceptions=True)
             ctx = await self._ctx(user_id, business_id, email)
             self._need(ctx, subject_type, "read")
-            return await self._detail(await self._row("subjects", business_id, subject_id, subject_type), ctx)
+            row = await self._row("subjects", business_id, subject_id, subject_type)
+        if row.get("status") not in ("archived", "cancelled") and self.can(ctx["actor"], subject_type).get(f"{FEATURE[subject_type]}.edit"):
+            filled = self._fill_blanks(subject_type, row, ctx["data"], ctx["today"])
+            if filled is not None:
+                try:
+                    row = await self.store.update("subjects", row["id"], {"data": filled, "updated_at": ctx["now"]}, bump=False) or {**row, "data": filled}
+                except Exception:      # noqa: BLE001 - shown as it is; filled next time
+                    logger.warning("could not fill blank fields on %s", row.get("id"), exc_info=True)
+            self._draft_blanks_later(user_id, subject_type, row, ctx)
+            try:
+                if not await self._forecast_of(row):
+                    draft = self._forecast_draft(row, ctx)
+                    months = (draft or {}).get("months") or []
+                    if months and all(m.get("receipts") not in (None, "") and m.get("payments") not in (None, "") for m in months):
+                        # The Agent's forecast kept on the case as a draft, never as the owner's confirmation (the owner's QA, 21 Oct:
+                        # "A complete forecast" stayed open while the Agent's forecast sat unsaved on the page)
+                        await self.save_forecast(user_id, business_id, subject_type, subject_id, {k: v for k, v in draft.items() if k not in ("asks", "figures")},
+                                                 None, email, agent=True)
+                        row = await self._row("subjects", business_id, subject_id, subject_type)
+                        filled = filled or {}
+            except Exception:      # noqa: BLE001 - shown as a draft on the page instead
+                logger.info("agent forecast not saved for %s", row.get("id"), exc_info=True)
+            if filled is not None:
+                self._check_again_later(user_id, business_id, subject_type, subject_id, email)
+            try:
+                f = await self._forecast_of(row)
+                rolled = self.roll_actuals((f or {}).get("data") or {}, ctx["data"], ctx["today"]) if f else None
+                if rolled is not None:
+                    await self.store.update("forecasts", f["id"], {"data": rolled, "updated_at": ctx["now"]}, bump=False)
+            except Exception:      # noqa: BLE001 - the forecast shows as it is; rolled forward next time
+                logger.info("forecast actuals not rolled for %s", row.get("id"), exc_info=True)
+        return await self._detail(row, ctx)
+
+    @staticmethod
+    def roll_actuals(forecast: dict, data: dict, today: date) -> dict | None:
+        """Each month gone by with money on record in Business Operations becomes that month's actual: receipts from the
+        invoices paid in it, payments from the expenses paid in it, its basis "actual" (the owner's QA, 21 Oct: "will it
+        update each month, with forecast, actual, estimate?"). A month the owner set as actual themselves is kept."""
+        from app.modules.agent import research as _r
+        months = forecast.get("months") or []
+        this = today.strftime("%Y-%m")
+        fin = data.get("financials") or {}
+        got: dict[str, float] = {}
+        for inv in fin.get("invoices") or []:
+            if isinstance(inv, dict) and not inv.get("archived") and bz.invoice_received(inv) > 0:
+                day = _r._paid_on(inv, today)
+                got[day.strftime("%Y-%m")] = got.get(day.strftime("%Y-%m"), 0.0) + float(bz.in_base(data, inv, bz.invoice_received(inv)) or 0)
+        spent: dict[str, float] = {}
+        for e in fin.get("expenses") or []:
+            if isinstance(e, dict) and not e.get("archived") and bz.status_of(e) in ("paid", ""):
+                day = bz.parse_day(e.get("date") or e.get("expense_date") or e.get("created_at"))
+                if day:
+                    amt = float(bz.in_base(data, e, bz.money(e.get("price") or e.get("total_amount") or e.get("amount"))) or 0)
+                    spent[day.strftime("%Y-%m")] = spent.get(day.strftime("%Y-%m"), 0.0) + amt
+        changed = False
+        out = []
+        for m in months:
+            key = str(m.get("month") or "")
+            if key < this and m.get("basis") != "actual" and (key in got or key in spent):
+                m = {**m, "receipts": str(round(got.get(key, 0.0))), "payments": str(round(spent.get(key, 0.0))), "basis": "actual",
+                     "actual_from": "Business Operations"}
+                changed = True
+            out.append(m)
+        return {**forecast, "months": out} if changed else None
+
+    def _check_again_later(self, user_id: str, business_id: str, subject_type: str, subject_id: str, email: str | None) -> None:
+        """The check run again after the Agent filled the case (the owner's QA, 21 Oct: the checklist stayed as it was)."""
+        async def go() -> None:
+            try:
+                await self.request_assessment(user_id, business_id, subject_type, subject_id, idempotency_key=f"agent-fill:{subject_id}:{uuid.uuid4().hex[:8]}", email=email)
+            except Exception:      # noqa: BLE001 - checked on the next "Check again"
+                logger.info("check after the agent's fill not run for %s", subject_id, exc_info=True)
+        try:
+            task = asyncio.get_running_loop().create_task(go())
+            _LATER.add(task)
+            task.add_done_callback(_LATER.discard)
+        except RuntimeError:
+            pass
+
+    _DRAFTING: set = set()
+    _DRAFTED_ON: dict = {}      # case id: the day the Agent last drafted its blanks
+
+    def _draft_blanks_later(self, user_id: str, subject_type: str, row: dict, ctx: dict) -> None:
+        """The case's fields still blank, drafted by the Agent with AI from everything the workspace holds (profile,
+        catalogue, Business Operations records, other checks, research), in the background, at most once a day, into the
+        fields still blank and never one the owner cleared (the owner's QA, 21 Oct: "if you expect the user to fill it
+        manually, why agentic?"). Each is marked "Suggested by the Agent" to keep or change."""
+        if subject_type != rules.FUNDING:
+            return
+        from app.modules.agent import research
+        case = row.get("data") or {}
+        theirs = set(case.get("cleared_by_owner") or [])
+        blank = [p for p in (research.CASE_DRAFT_FIELDS.get("need_funding") or {}) if p not in theirs and engine.blank(engine.get(case, p))]
+        if not blank or self._DRAFTED_ON.get(row["id"]) == ctx["today"].isoformat() or row["id"] in self._DRAFTING:
+            return
+        self._DRAFTING.add(row["id"])
+        self._DRAFTED_ON[row["id"]] = ctx["today"].isoformat()      # once a day, never written on the case itself
+
+        async def go() -> None:
+            try:
+                data = ctx.get("data") or {}
+                goal_answers = (((data.get("quick_check_answers") or {}).get("need_funding") or {}).get("answers")) or {}
+                i = research.inputs_of("need_funding", goal_answers, data)
+                runs = [r for r in (data.get("research_runs") or {}).values() if isinstance(r, dict) and r.get("goal") == "need_funding"]
+                found = [x for r in runs for x in r.get("items") or [] if x.get("sources") and not research.nothing_found(x)][:12]
+                facts = research.workspace_facts(data, goal_answers, i, found)
+                facts["case_so_far"] = {k: v for k, v in case.items() if k in ("title", "purpose", "target_amount", "currency", "route_preference", "stage", "market", "traction")}
+                facts["other_checks"] = {k: (v or {}).get("answers") for k, v in (data.get("quick_check_answers") or {}).items() if isinstance(v, dict)}
+                # Business Operations: who buys, and what they paid (the owner's QA, 21 Oct: "look at the business operations")
+                invs = [x for x in ((data.get("financials") or {}).get("invoices") or []) if isinstance(x, dict) and not x.get("archived")]
+                facts["customers_on_record"] = sorted({str(x.get("customer_name") or "").strip() for x in invs if str(x.get("customer_name") or "").strip()}
+                                                      | {str(c.get("name") or "").strip() for c in ((data.get("catalogue") or {}).get("customers") or []) if isinstance(c, dict) and c.get("name")})[:20]
+                try:      # the people in this workspace and what they can reach (the owner's QA, 21 Oct)
+                    from app.modules.workspace_access.service import list_members
+                    from app.core.supabase import sb_select
+                    owner = await sb_select("users", filters=[("id", "eq", str(ctx.get("owner_id") or user_id))], single=True) or {}
+                    facts["team"] = [{"who": owner.get("full_name") or owner.get("name") or owner.get("email") or "the owner", "role": "owner"}] + [
+                        {"who": m.get("email"), "role": "member", "can_use": sorted(((m.get("permissions") or {}).get("modules") or []))[:8]}
+                        for m in (await list_members(row["business_id"]))[:10]]
+                except Exception:      # noqa: BLE001 - drafted without it
+                    pass
+                facts["paid_invoices"] = [{"customer": x.get("customer_name"), "amount": x.get("total_amount"), "currency": x.get("currency"), "what": x.get("description")}
+                                          for x in invs if str(x.get("status") or "").lower() == "paid"][:10]
+                # Never another offering's words in, or out (the owner's QA, 21 Oct: a dog-grooming profile on a cleaning company)
+                foreign = self._other_offerings(data)
+                said = lambda v: set(re.findall(r"[a-z]{4,}", json.dumps(v, default=str).lower()))      # noqa: E731
+                facts["profile"] = {k: v for k, v in (facts.get("profile") or {}).items() if not (foreign & said(v))}
+                fields = {p: research.CASE_DRAFT_FIELDS["need_funding"][p] for p in blank}
+                drafted = await research.draft_case_fields(research._default_llm(user_id), "need_funding", facts, only=fields)
+                drafted = {p: v for p, v in drafted.items() if not (foreign & said(v))}
+                fresh = await self.store.get("subjects", row["id"])
+                if not fresh:
+                    return
+                now_case = dict(fresh.get("data") or {})
+                prov = dict(now_case.get("provenance") or {})
+                put = {p: v for p, v in drafted.items() if engine.blank(engine.get(now_case, p)) and p not in set(now_case.get("cleared_by_owner") or [])}
+                if not put:
+                    return      # nothing to add: the case is not touched (its check stays current)
+                for p, v in put.items():
+                    if isinstance(v, list):      # each row its own id, as the form makes them
+                        v = [{"id": uuid.uuid4().hex[:12], **r} for r in v]
+                    _set(now_case, p, v)
+                    prov[p] = {"source": "Suggested by the Agent", "as_of": ctx["today"].isoformat(), "value": v}
+                now_case["provenance"] = prov
+                if put.get("milestones"):
+                    first = (now_case.get("milestones") or [{}])[0].get("id")
+                    for ref in ("purpose_milestone_id",):
+                        if first and not now_case.get(ref):
+                            now_case[ref] = first
+                    if first and not (now_case.get("market") or {}).get("acquisition_milestone_id"):
+                        now_case.setdefault("market", {})["acquisition_milestone_id"] = first
+                now_case["filled_from_records"] = sorted(set(now_case.get("filled_from_records") or []) | set(put))
+                await self.store.update("subjects", row["id"], {"data": now_case, "updated_at": ctx["now"]}, bump=False)
+                self._check_again_later(user_id, row["business_id"], subject_type, row["id"], None)
+            except Exception:      # noqa: BLE001 - left blank; drafted again tomorrow
+                logger.info("agent drafts for case %s not made", row.get("id"), exc_info=True)
+            finally:
+                self._DRAFTING.discard(row["id"])
+        try:
+            task = asyncio.get_running_loop().create_task(go())
+            _LATER.add(task)
+            task.add_done_callback(_LATER.discard)
+        except RuntimeError:
+            self._DRAFTING.discard(row["id"])
+        return
 
     async def _preview_previous(self, out: dict, business_id: str) -> None:
         """What each thing set aside from the previous funding need says (the owner's QA, 15 Oct), so Keep or Remove is
@@ -590,10 +996,25 @@ class ReadinessService:
         assessment, summary = await asyncio.gather(self._public_assessment(latest, row, ctx) if latest else nothing(), self._summary_of(row, latest, ctx))
         out = self._public(row, ctx)
         await self._preview_previous(out, row["business_id"])
+        definition = rules.public_profile(profile)
+        note = None
+        route = str(data.get("route_preference") or "").lower()
+        if row["kind"] == rules.FUNDING and route in ("loan", "grant"):
+            # No loan or grant checklist yet (the owner's brief, 20 Oct): said plainly, and nothing reads as equity.
+            note = f"{route.capitalize()} checklist coming soon, using general checks."
+            swap = lambda t: (str(t).replace("initial equity discussions", "initial funding discussions")      # noqa: E731
+                              .replace("the likelihood of securing investment", "the likelihood of securing funding")
+                              .replace("an investor's own assessment", "a lender's own assessment" if route == "loan" else "a funder's own assessment"))
+            definition = {**definition, "title": "General funding checks", "description": swap(definition.get("description") or ""),
+                          "wording": {k: swap(v) for k, v in (definition.get("wording") or {}).items()}}
         out.update({
-            "profile_definition": rules.public_profile(profile),
+            "checklist_note": note,
+            "profile_definition": definition,
             "sections": engine.section_progress(profile, data, (forecast or {}).get("data")),
             "forecast": self._public_forecast(forecast, row, ctx, evidence) if forecast else None,
+            # No forecast yet: one filled in from the workspace and research, for the owner to check and save (saving is
+            # what confirms it). The owner's QA, 20 Oct: "the agent should populate these".
+            "forecast_draft": None if forecast else self._forecast_draft(row, ctx),
             "evidence": [self._public_evidence(e, ctx["today"], profile) for e in evidence],
             "assessment": assessment,
             "actions": actions,
@@ -618,6 +1039,10 @@ class ReadinessService:
         before = row["data"] or {}
         given = {k: _clean(v) for k, v in (changes or {}).items() if k in CORE_FIELDS[subject_type]}
         data = _deep_merge(before, given)
+        if subject_type == rules.FUNDING and ("target_amount" in given or "receipt_date" in given) and data.get("target_amount") not in (None, ""):
+            # The owner entered the amount (and date) themselves: confirmed by doing so (the owner's brief, 20 Oct: no
+            # separate "I confirm this amount and date" box).
+            data["timing_confirmed"] = True
         data = self._validate(subject_type, data, before)
         self._stamp(subject_type, data, before, ctx, confirm)
         await self._check_references(business_id, data)
@@ -626,6 +1051,9 @@ class ReadinessService:
         for path in list(prov):
             if engine.get(data, path) != prov[path].get("value"):
                 prov.pop(path)                       # edited: now the case's own assumption
+        cleared = [p for p in (before.get("filled_from_records") or []) if not engine.blank(engine.get(before, p)) and engine.blank(engine.get(data, p))]
+        if cleared:
+            data["cleared_by_owner"] = sorted(set(before.get("cleared_by_owner") or []) | set(cleared))      # theirs: never filled again
         prov.update(_said_where(provenance, data))      # what this change came from ("From your funding chat, 15 Oct")
         data["provenance"] = prov
         data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
@@ -896,6 +1324,143 @@ class ReadinessService:
         f = next((x for x in await self.store.list("forecasts", row["business_id"], limit=100) if x["id"] == fid), None)             or await self.store.get("forecasts", fid)
         return f if f and f["business_id"] == row["business_id"] else None
 
+    async def refresh_forecast(self, user_id: str, business_id: str, subject_type: str, subject_id: str, figures: dict,
+                               owner_set: set, email: str | None = None) -> dict | None:
+        """The case's saved forecast rewritten from adopted figures: every month's receipts from the monthly revenue (or
+        price × sales), payments from the cost of those sales plus fixed costs. Only the lines those figures give; a month
+        the owner typed a different figure into by hand is kept when nothing they adopted speaks for it."""
+        row = await self._row("subjects", business_id, subject_id, subject_type)
+        existing = await self._forecast_of(row)
+        if not existing:
+            return None
+        n = lambda k: float(figures[k]) if isinstance(figures.get(k), (int, float)) else None      # noqa: E731
+        revenue = n("monthly_revenue") or ((n("price") or 0) * (n("monthly_sales") or 0)) or None
+        sales = (revenue / n("price")) if revenue and n("price") else n("monthly_sales")      # the sales behind that revenue
+        payments = ((n("cost") or 0) * (sales or 0) + (n("fixed_costs") or 0)) if (n("cost") is not None and sales and n("fixed_costs") is not None) else None
+        if revenue is None and payments is None:
+            return None
+        data = copy.deepcopy(existing.get("data") or {})
+        whole = lambda v: str(int(round(v)))      # noqa: E731  whole units, as the form shows money
+        months = data.get("months") or []
+        blank = lambda k: all(m.get(k) in (None, "") for m in months)      # noqa: E731
+        # A saved forecast's figures are the owner's (the owner's QA, 21 Oct: their ₦1,200,000 was replaced by ₦331,425
+        # "from your records" without asking): only a figure they adopted as their own rewrites them, else blanks are filled.
+        if not (blank("receipts") or "monthly_revenue" in owner_set or "price" in owner_set):
+            revenue = None
+        if not (blank("payments") or {"cost", "fixed_costs", "monthly_revenue", "price"} & owner_set):
+            payments = None
+        if revenue is None and payments is None:
+            return None
+        for m in months:
+            if revenue is not None:
+                m["receipts"] = whole(revenue)
+            if payments is not None:
+                m["payments"] = whole(payments)
+        payload = {**data, "months": months}
+        payload.pop("confirmed_at", None)
+        payload.pop("confirmed_by", None)
+        return await self.save_forecast(user_id, business_id, subject_type, subject_id, payload, existing.get("revision"), email)
+
+    def _forecast_draft(self, row: dict, ctx: dict) -> dict | None:
+        _plain = lambda v: f"{v:.2f}".rstrip("0").rstrip(".")      # noqa: E731  ("40000", "1250.5"), as the form shows a figure
+        """A 12-month forecast worked out from what the workspace and research hold: receipts are sales a month times the
+        price, payments the cost of those sales plus fixed costs, opening cash from the records. Only the figures known;
+        a month's line stays blank when its inputs aren't. Never saved by itself."""
+        try:
+            from app.modules.agent import research
+            data = ctx.get("data") or {}
+            goal = "need_funding" if row["kind"] == rules.FUNDING else "launch"
+            version = ((data.get("assessment_datasets") or {}).get(goal) or [{}])[-1] or {}
+            answers = {**(version.get("answers") or {}), **((((data.get("quick_check_answers") or {}).get(goal) or {}).get("answers")) or {})}
+            case = row.get("data") or {}
+            econ, traction = case.get("economics") or {}, case.get("traction") or {}
+            figures = {k: v for k, v in (("price", econ.get("price")), ("cost", econ.get("direct_cost")), ("fixed_costs", econ.get("fixed_costs_monthly")),
+                                         ("monthly_revenue", traction.get("monthly_revenue"))) if v not in (None, "")}
+            i = research.inputs_of(goal, answers, {**data, "case_figures": figures} if figures else data)
+            owned = {k for k, src in (version.get("inputs_from") or {}).items() if src == "your answer"}
+            for k, v in (version.get("inputs") or {}).items():
+                if isinstance(v, (int, float)) and (i.get(k) is None or k in owned):
+                    i[k] = v      # an adopted edit beats the records (the owner's QA, 21 Oct)
+                    i.setdefault("_from", {})[k] = "your figure" if k in owned else "your adopted research"
+        except Exception:      # noqa: BLE001 - the form is shown empty instead
+            logger.info("forecast draft skipped", exc_info=True)
+            return None
+        num = lambda k: i.get(k) if isinstance(i.get(k), (int, float)) else None      # noqa: E731
+        price, cost, sales, fixed, cash = num("price"), num("cost"), num("monthly_sales"), num("fixed_costs"), num("cash_in_bank")
+        stated = num("monthly_revenue")
+        # Figures two places disagree on are asked before anything is drafted from them (the owner's QA, 21 Oct: the case's
+        # ₦60 cost against the catalogue's ₦1,500, drafted silently): the lines that need them stay blank until answered.
+        clash = {k: c for k, c in (i.get("_conflicts") or {}).items() if k in ("price", "cost", "monthly_revenue") and c.get("question")}
+        if econ.get("confirmed_at"):
+            clash.pop("price", None)      # the owner chose the case's price and cost: theirs, never asked again
+            clash.pop("cost", None)
+        if traction.get("confirmed_at"):
+            clash.pop("monthly_revenue", None)      # and their revenue
+        asked_revenue = "monthly_revenue" in clash
+        if asked_revenue:
+            stated = None
+        if "price" in clash and not stated:
+            price = None
+        if "cost" in clash or ("price" in clash and not stated):
+            cost = None
+        # The revenue said or recorded first (the owner's brief, 20 Oct: receipts start from ₦1.2m a month, never price × volume).
+        receipts = stated if stated else (price * sales if price is not None and sales is not None else None)
+        # The sales behind that revenue (₦1,200,000 at ₦4,000 is 300 sales), so their costs are counted: never the
+        # invoices' one sale a month beside the case's own revenue (the owner's QA, 21 Oct).
+        if stated and price:
+            sales = round(stated / price, 2)
+        payments = cost * sales + fixed if None not in (cost, sales, fixed) else None
+        if asked_revenue:
+            receipts = payments = None      # how much comes in is asked first: nothing guessed from another figure
+        thin_default = None
+        if receipts is None and i.get("_thin") and not asked_revenue:
+            # Too little on record for a typical month, but never an empty forecast (the owner's QA, 21 Oct: "fill the
+            # default"): what the records show so far, said as that, to change to a typical month.
+            got = float((i["_thin"] or {}).get("total") or 0)
+            if got > 0:
+                receipts = thin_default = got
+                if price:
+                    sales = round(got / price, 2)
+                    payments = cost * sales + fixed if None not in (cost, fixed) else None
+        if receipts is None and payments is None and not i.get("_thin") and not clash:
+            return None
+        start = ctx["today"].replace(day=1)
+        months = []
+        whole = lambda v: str(int(round(v)))      # noqa: E731  whole units (the owner's QA, 21 Oct: never "59,885.8")
+        for n in range(12):
+            y, m = divmod(start.month - 1 + n, 12)
+            months.append({"month": f"{start.year + y}-{m + 1:02d}", "receipts": None if receipts is None else whole(receipts),
+                           "payments": None if payments is None else whole(payments), "basis": "estimate" if thin_default is not None else "forecast"})
+        where = i.get("_from") or {}
+        cur = str(i.get("currency") or research.task_currency(data)).upper()
+        sign = lambda v: research.money(v, cur)      # noqa: E731
+        notes = []
+        if thin_default is not None:
+            notes.append({"applies_to": "receipts", "text": f"{sign(thin_default)} a month, what your records show so far: change it to a typical month",
+                          "source": (i.get("_thin") or {}).get("words") or "your records"})
+        elif receipts is not None:
+            src = str(where.get("monthly_revenue") or "")
+            case_said = str((((row.get("data") or {}).get("provenance") or {}).get("traction.monthly_revenue") or {}).get("source") or "")
+            from_records = src == research.CASE_SOURCE and bool(re.search(r"invoice|record", case_said, re.I))
+            told = not from_records and (src.startswith("From your chat") or src == research.CASE_SOURCE or src in ("your answer", "your figure"))
+            notes.append({"applies_to": "receipts", "text": (f"{sign(stated)} a month, {'as you gave it' if told else 'from your records'}" if stated
+                                                             else f"{sales:g} sales a month at {sign(price)} each"),
+                          "source": "; ".join(dict.fromkeys(str(where.get(k) or "") for k in (("monthly_revenue",) if stated else ("monthly_sales", "price")) if where.get(k)))})
+        if payments is not None:
+            notes.append({"applies_to": "payments", "text": f"{sign(cost)} a sale for {round(sales):g} sales, plus {sign(fixed)} fixed costs a month",
+                          "source": "; ".join(dict.fromkeys(str(where.get(k) or "") for k in ("cost", "fixed_costs") if where.get(k)))})
+        thin = i.get("_thin") if stated is None else None
+        asks = [{"field": "monthly_revenue", "question": "What do you expect to earn in a typical month?", "why": f"{thin['words']}.",
+                 "label": "Your estimate"}] if thin else []
+        for k, c in clash.items():
+            asks.append({"field": k, "question": c["question"], "choices": [v for v in (c.get("case"), c.get("other", c.get("said"))) if v is not None],
+                         "conflict": True})
+        return {"currency": cur, "start_month": months[0]["month"], "months": months, "assumptions": notes, "asks": asks,
+                # so a typical month answered on the page gives its payments too: sales = revenue / price
+                "figures": {k: v for k, v in (("price", price), ("cost", cost), ("fixed_costs", fixed)) if isinstance(v, (int, float))},
+                "opening_cash": None if cash is None else _plain(cash), "opening_cash_as_of": ctx["today"].isoformat() if cash is not None else None,
+                "from": "Filled in by the Agent from your workspace and research"}
+
     def _public_forecast(self, f: dict, row: dict, ctx: dict, evidence: list[dict] | None = None) -> dict:
         data = f["data"] or {}
         profile = rules.get_profile(row["data"]["profile"])
@@ -984,7 +1549,7 @@ class ReadinessService:
         return out
 
     async def save_forecast(self, user_id: str, business_id: str, subject_type: str, subject_id: str, payload: dict, revision: int | None = None,
-                            email: str | None = None) -> dict:
+                            email: str | None = None, agent: bool = False) -> dict:
         """Create or replace the subject's forecast. Saving records that the figures were confirmed today."""
         ctx = await self._ctx(user_id, business_id, email)
         self._need(ctx, subject_type, "edit")
@@ -998,7 +1563,10 @@ class ReadinessService:
                 await self._row("evidence", business_id, eid)
             except NotFound:
                 raise Invalid({"evidence_id": "That evidence can't be found in this business."})
-        data.update({"confirmed_at": ctx["today"].isoformat(), "confirmed_by": ctx["actor"].email or user_id})
+        if agent:
+            data.update({"drafted_by": "Agent", "confirmed_at": None, "confirmed_by": None})      # a draft: confirmed when the owner saves it
+        else:
+            data.update({"confirmed_at": ctx["today"].isoformat(), "confirmed_by": ctx["actor"].email or user_id})
         if existing:
             if revision is None or int(revision) != int(existing["revision"]):
                 raise Conflict("stale_revision", "The forecast changed while you were editing. Your figures are kept here so you can compare and apply them again.",

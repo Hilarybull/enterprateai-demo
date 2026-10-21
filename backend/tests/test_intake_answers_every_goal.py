@@ -11,7 +11,7 @@ from app.modules.agent.intake_turn import resolve_when
 RICH = [
     ("need_funding", "amount", "£25k for a second van and a driver, we are already trading, need it by March",
      {"amount": 25000.0, "use": "second van and a driver", "stage": "trading", "timing": resolve_when("by March")}, "route",
-     f"Got it: £25,000 for a second van and a driver, trading, by {resolve_when('by March')}. What funding route are you considering?"),
+     f"Thanks, noted: £25,000 for a second van and a driver, trading, by {resolve_when('by March')}. What funding route are you considering?"),
     ("test_idea", "description", "A mobile car wash in Abuja for busy office workers, I'd charge £25 a wash and could do 60 a month",
      {"description": "mobile car wash", "where": "Abuja", "customer": "busy office workers", "price": 25.0, "monthly_sales": 60.0}, "cost", None),
     ("launch", "kind", "A dog walking service in Leeds next month, for busy professionals",

@@ -484,6 +484,14 @@ def currency_of(data: dict) -> str:
     return country_currency(data) or "GBP"
 
 
+def known_currency(data: dict) -> str | None:
+    """The workspace currency when one is known (saved, or its country's); None when only the GBP fallback would say."""
+    import re
+    saved = str(((data or {}).get("settings") or {}).get("currency") or "")
+    m = re.search(r"\(([A-Z]{3})\)", saved) or re.match(r"^([A-Z]{3})$", saved.strip().upper())
+    return m.group(1) if m else country_currency(data)
+
+
 def country_currency(data: dict) -> str | None:
     """The currency of the country on the workspace profile, or None."""
     country = ((data or {}).get("workspace_profile") or {}).get("country")
@@ -535,8 +543,13 @@ def fx_rate(data: dict, code: str) -> float | None:
 
 
 def in_base(data: dict, doc: dict, amount: float) -> float | None:
-    """A document's amount in the workspace currency, at the stored rate; None when its rate is not known yet."""
-    r = fx_rate(data, doc_currency(doc, currency_of(data)))
+    """A document's amount in the workspace currency: at the rate pinned on it when it was first converted, else the stored
+    rate; None when no rate is known yet."""
+    base = currency_of(data)
+    pinned = (doc or {}).get("fx") or {}
+    if doc_currency(doc, base) != base and pinned.get("to") == base and pinned.get("rate"):
+        return money(float(amount or 0) * float(pinned["rate"]))
+    r = fx_rate(data, doc_currency(doc, base))
     return money(float(amount or 0) * r) if r is not None else None
 
 

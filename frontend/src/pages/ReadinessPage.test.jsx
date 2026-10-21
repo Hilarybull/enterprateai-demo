@@ -2,12 +2,13 @@
 // (not colour), conflicts kept on the page, and the dashboard strip.
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ReadinessPage from "./ReadinessPage";
 import ReadinessStrip from "../components/readiness/DashboardStrip";
 import { actionCardsFor, arrangeInsights } from "../lib/dashboardLayout";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 
 const profile = {
   key: "launch.commercial_service.uk@0.1", title: "Commercial service launch", version: "0.1", status_note: "Pilot checklist.",
@@ -56,7 +57,17 @@ const mount = (path, feature = "launch") => render(
     <Route path={`/${feature}/:subjectId`} element={<ReadinessPage feature={feature} />} />
   </Routes></MemoryRouter>);
 
-beforeEach(() => { useWorkspaceStore.setState({ workspaceId: "ws1" }); mockApi(); });
+// Launch and Funding Readiness are on Starter and above (the pricing PDF): these run on Starter.
+beforeEach(() => { useWorkspaceStore.setState({ workspaceId: "ws1" }); useAuthStore.setState({ subscription: { plan_key: "starter_insight", status: "active", billing_period: "monthly" }, platformGrants: [] }); mockApi(); });
+
+describe("below Starter (the pricing PDF)", () => {
+  it("Launch and Funding Readiness say which plan includes them, with a way to upgrade", async () => {
+    useAuthStore.setState({ subscription: { plan_key: "explorer", status: "active", billing_period: "monthly" }, platformGrants: [] });
+    render(<MemoryRouter initialEntries={["/funding"]}><Routes><Route path="/funding" element={<ReadinessPage feature="funding" />} /></Routes></MemoryRouter>);
+    expect(document.querySelector("[data-readiness-locked]").textContent).toContain("AI-Powered Funding Readiness is included on the Starter plan and above.");
+    cleanup();
+  });
+});
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("readiness list", () => {
@@ -78,8 +89,8 @@ describe("readiness list", () => {
     mount("/launch");
     const first = (await screen.findByText("Bookkeeping launch")).closest("button");
     expect(first.textContent).toContain("Not ready");
-    expect(first.textContent).toContain("No overall score yet");
-    expect(first.textContent).toContain("1 blocker");
+    expect(first.textContent).toContain("Not scored yet · Not ready to launch yet.");      // one score and one plain sentence
+    expect(first.textContent).toContain("1 thing to do first.");
     expect(first.textContent).toContain("Out of date");
     expect(screen.getByText("Payroll launch").closest("button").textContent).toContain("Not checked yet");      // never a zero score
     cleanup();
@@ -92,15 +103,17 @@ describe("readiness list", () => {
 describe("readiness detail", () => {
   it("shows the result, blockers and unknowns in words", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
-    mount("/launch/s1?tab=results");
+    mount("/launch/s1?tab=advanced");      // the full check lives on Advanced (the owner's brief, 17 Oct)
     await screen.findByText("Not prepared yet for the defined launch scope.");
     expect(screen.getByText("No overall score until every item is known")).toBeTruthy();
-    expect(screen.getByText("Blocking")).toBeTruthy();
-    expect(screen.getByText("Required and not completed: Insurance.")).toBeTruthy();
-    expect(screen.getAllByText("Not known yet").length).toBeGreaterThan(0);
+    expect(screen.getByText("Must fix")).toBeTruthy();
+    expect(screen.getAllByText("Required and not completed: Insurance.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Need from you").length).toBeGreaterThan(0);
     expect(screen.getByRole("progressbar", { name: "Evidence coverage" }).getAttribute("aria-valuenow")).toBe("80");
-    expect(screen.getByText(/A first launch: there is no trading history/)).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Decision" })).toBeTruthy();
+    expect(screen.getAllByText(/A first launch: there is no trading history/).length).toBeGreaterThan(0);
+    // Three tabs (the owner's brief, 20 Oct); the decision is on Advanced.
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Inputs", "Advanced"]);
+    expect(document.getElementById("adv-decision")).toBeTruthy();
   });
 
   it("saves edits automatically and keeps them on the page when someone else saved first", async () => {
@@ -114,7 +127,7 @@ describe("readiness detail", () => {
         return { body: subject({ revision: body.revision + 1, data: { ...subject().data, customers: body.changes.customers } }) };
       } },
     ];
-    mount("/launch/s1");
+    mount("/launch/s1?tab=answers");
     const box = await screen.findByLabelText("Who is this launch for?");
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.change(box, { target: { value: "Practice owners" } });
@@ -135,7 +148,7 @@ describe("readiness detail", () => {
       { method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) },
       { method: "PATCH", match: /launch-initiatives\/s1$/, reply: () => ({ status: 422, body: { detail: { code: "invalid", message: "Enter a valid date.", errors: { "customers.target_segment": "This answer isn't valid." } } } }) },
     ];
-    mount("/launch/s1");
+    mount("/launch/s1?tab=answers");
     const box = await screen.findByLabelText("Who is this launch for?");
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.change(box, { target: { value: "x" } });
@@ -151,7 +164,7 @@ describe("readiness detail", () => {
 
   it("read-only roles and archived records can't be edited", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject({ status: "archived", can: { "launch.read": true, "launch.edit": true } }) }) }];
-    mount("/launch/s1");
+    mount("/launch/s1?tab=answers");
     expect((await screen.findByLabelText("Who is this launch for?")).disabled).toBe(true);
     expect(screen.getByText(/is archived. It can be read and exported/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reactivate" })).toBeTruthy();
@@ -248,12 +261,12 @@ describe("arriving from a goal started on the homepage", () => {
   it("says once what was set up and where things stand, survives a reload, and goes when dismissed", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
     sessionStorage.setItem("ea_goal_handoff", JSON.stringify({ to: "/launch/s1", message: NOTE }));
-    const view = mount("/launch/s1?tab=results");
+    const view = mount("/launch/s1?tab=advanced");
     const note = await screen.findByText(NOTE);
     expect(note.closest("[data-goal-handoff]").getAttribute("role")).toBe("status");
     expect(screen.getByText("Not prepared yet for the defined launch scope.")).toBeTruthy();      // the result of the check is on the page with it
     view.unmount();
-    mount("/launch/s1?tab=results");                                        // a reload, or the page mounting twice: still there
+    mount("/launch/s1?tab=advanced");                                       // a reload, or the page mounting twice: still there
     expect(await screen.findByText(NOTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(NOTE)).toBeNull();
@@ -263,9 +276,45 @@ describe("arriving from a goal started on the homepage", () => {
   it("is shown only on the record it is about", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s2$/, reply: () => ({ body: subject({ id: "s2" }) }) }];
     sessionStorage.setItem("ea_goal_handoff", JSON.stringify({ to: "/launch/s1", message: NOTE }));
-    mount("/launch/s2?tab=results");
+    mount("/launch/s2?tab=advanced");
     await screen.findByText("Not prepared yet for the defined launch scope.");
     expect(document.querySelector("[data-goal-handoff]")).toBeNull();
     sessionStorage.removeItem("ea_goal_handoff");
+  });
+});
+
+describe("the case page (the owner's brief, 20 Oct)", () => {
+  it("opens on Overview, with three tabs, one primary button and Pin, Run again and Archive in a menu", async () => {
+    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
+    mount("/launch/s1");
+    await screen.findByRole("tab", { name: "Overview" });
+    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Inputs", "Advanced"]);
+    const header = document.querySelector("[data-case-header]");
+    expect(header.querySelector("[data-case-eyebrow]").textContent).toBe("Launch readiness");
+    expect([...header.querySelectorAll("button")].filter((b) => !b.hasAttribute("data-case-menu")).map((b) => b.textContent)).toEqual(["Edit inputs"]);
+    fireEvent.click(header.querySelector("[data-case-menu]"));
+    expect(within(header).getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["Pin to dashboard", "Run the check again", "All launches", "Archive"]);
+    expect(document.querySelectorAll("[data-case-status]").length).toBe(1);      // the status once per page
+  });
+
+  it("old addresses still open: tab=setup is Your answers, tab=results is Overview", async () => {
+    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
+    mount("/launch/s1?tab=setup");
+    expect(await screen.findByLabelText("Who is this launch for?")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Inputs" }).getAttribute("aria-selected")).toBe("true");
+    cleanup();
+    mount("/launch/s1?tab=results");
+    await screen.findByRole("tab", { name: "Overview" });
+    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("an unchecked case says so once, with what to do, and no coverage line", async () => {
+    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject({ assessment: null, summary: { classification: null } }) }) }];
+    mount("/launch/s1");
+    await screen.findByRole("tab", { name: "Overview" });
+    expect(document.querySelector("[data-case-status]").textContent).toBe("Not checked yet. Run the check to see your score.");
+    expect(screen.queryByText(/^I know \d+%/)).toBeNull();
+    expect(within(document.querySelector("[data-case-header]")).getByRole("button", { name: "Run the check" })).toBeTruthy();
   });
 });

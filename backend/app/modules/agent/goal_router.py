@@ -2,6 +2,7 @@
 session need no account; attaching, resuming and preparing need a signed-in user."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.agent import first_value
 from app.modules.agent import goals
-from app.shared.auth.deps import get_current_user
+from app.shared.auth.deps import get_current_user, get_optional_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["goal-onboarding"])
@@ -73,6 +74,8 @@ class StartIn(BaseModel):
     text: str | None = Field(default=None, max_length=500)
     key: str | None = Field(default=None, max_length=64)                 # a homepage goal or quick task
     entry_mode: str = Field(default="free_text", max_length=20)          # business_goal | quick_task | free_text
+    currency: str | None = Field(default=None, max_length=3)               # the workspace's, or the visitor's country's
+    business_id: str | None = Field(default=None, max_length=64)           # signed in: the workspace, whose own currency wins
 
 
 class InputsIn(BaseModel):
@@ -203,7 +206,18 @@ async def start_session(body: StartIn, request: Request):
     if not (body.text or "").strip() and not body.key:
         raise HTTPException(status_code=422, detail="Say what you want to do, or pick a suggestion.")
     _allow(request)
-    return goals.public(await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode))
+    currency = body.currency
+    if body.business_id:
+        # Signed in: the workspace's own currency, never what the browser had kept (the owner's QA, 20 Oct: £ chips on a
+        # naira workspace put £250,000 on the case). Signed out, the visitor's country's, as the page sends it.
+        try:
+            user = await get_optional_user(request)
+            if user:
+                from app.modules.agent import business as bz
+                currency = bz.currency_of(await _business_for(user, body.business_id)) or currency
+        except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
+            pass
+    return goals.public(await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency))
 
 
 @router.get("/task-sessions/{session_id}")
@@ -351,6 +365,20 @@ async def edit_session_answers(session_id: str, body: EditAnswersIn, user=Depend
     return await _first_value_reply(session, user)
 
 
+@router.get("/businesses/{business_id}/cases/{case_id}/overview")
+async def case_overview(business_id: str, case_id: str, user=Depends(get_current_user)):
+    """A funding case's or launch plan's Overview: the very result its chat ended on, built by the same function the chat's
+    result screen uses, so both show one score, one count, one coverage and the same next steps (the owner's QA, 20 Oct)."""
+    data = await _business_for(user, business_id)
+    sid = (data.get("chat_sessions") or {}).get(str(case_id))
+    if not sid:
+        raise HTTPException(status_code=404, detail="This case wasn't set up from a chat.")
+    session = await _session(sid)
+    if str(session.get("business_id")) != str(business_id):
+        raise HTTPException(status_code=404, detail="Not found.")
+    return await _first_value_reply(session, user)
+
+
 async def _first_value_reply(session: dict, user: dict) -> dict:
     data = None
     if session.get("business_id"):
@@ -416,6 +444,8 @@ async def first_results(business_id: str, user=Depends(get_current_user)):
 class QuickCheckIn(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
     progress_key: str | None = Field(default=None, max_length=64)      # the page's key for live progress while it researches
+    only: list[str] | None = Field(default=None, max_length=10)        # one step's gaps: "Do it for me" on that step
+    fresh: bool = False      # "Research again": a new search, a new 60-credit budget, never the earlier run reopened
 
 
 async def _business_for(user: dict, business_id: str) -> dict:
@@ -567,11 +597,132 @@ async def _premium_context(user: dict, business_id: str, goal_key: str, raw: dic
     if goal_key not in research.CAPABILITY:
         raise HTTPException(status_code=404, detail="This check has no premium step yet.")
     data = await _business_for(user, business_id)
+    figures = await _case_figures(user, business_id, goal_key)
+    if figures:
+        data = {**data, "case_figures": figures}
     answers = {**first_value.known_answers(goal_key, data), **_read_answers(goal_key, raw)}
     return data, answers, first_value.assess(goal_key, answers, data)
 
 
-async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict | None = None, data: dict | None = None) -> dict:
+# The case's own economics, as the research reads them (the owner's QA, 21 Oct: the case's ₦40,000 fixed costs first).
+_CASE_PATHS = {"need_funding": {"price": "economics.price", "cost": "economics.direct_cost", "fixed_costs": "economics.fixed_costs_monthly",
+                                "monthly_revenue": "traction.monthly_revenue"},
+               "launch": {"price": "economics.price_per_unit", "cost": "economics.variable_cost_per_unit", "fixed_costs": "economics.fixed_costs_monthly"}}
+
+
+async def _case_figures(user: dict, business_id: str, goal_key: str) -> dict:
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    paths = _CASE_PATHS.get(goal_key)
+    if not paths:
+        return {}
+    kind = rr.FUNDING if goal_key == "need_funding" else rr.LAUNCH
+    try:
+        svc = service_for(get_orchestrator())
+        listed = await svc.list_subjects(user["id"], business_id, kind, user.get("email"), include_archived=False)
+        live = [x for x in listed.get("items") or [] if x.get("status") not in ("cancelled", "archived")]
+        if not live:
+            return {}
+        subject = await svc.get_subject(user["id"], business_id, kind, live[0]["id"], user.get("email"))
+    except Exception:      # noqa: BLE001 - the research carries on from the workspace
+        return {}
+    return case_figures_of(subject, goal_key)
+
+
+def case_figures_of(subject: dict, goal_key: str) -> dict:
+    """The figures a case holds as the owner's own: each one not still as copied in from the records, and the monthly
+    revenue its own forecast shows. `_on_case`: the price and cost the case shows, whoever set them, so a different figure
+    elsewhere is asked about before anything is drafted (the owner's QA, 21 Oct: ₦1,000 and ₦60 on the case, ₦4,000 and
+    ₦1,500 in the catalogue, drafted silently)."""
+    paths = _CASE_PATHS.get(goal_key) or {}
+    case = (subject or {}).get("data") or {}
+    out = {}
+    shown = {}
+    for f in ("price", "cost"):
+        v = case
+        for part in (paths.get(f) or "").split("."):
+            v = (v or {}).get(part) if isinstance(v, dict) else None
+        try:
+            if v not in (None, "") and float(str(v).replace(",", "")) > 0:
+                shown[f] = float(str(v).replace(",", ""))
+        except ValueError:
+            pass
+    if shown:
+        out["_on_case"] = shown
+    if (case.get("economics") or {}).get("confirmed_at") or (case.get("traction") or {}).get("confirmed_at"):
+        # chosen by the owner: the case's, never asked about again
+        out["_confirmed"] = ([f for f in ("price", "cost") if (case.get("economics") or {}).get("confirmed_at")]
+                             + (["monthly_revenue"] if (case.get("traction") or {}).get("confirmed_at") else []))
+        for f in ("price", "cost"):
+            if f in shown:
+                out[f] = shown[f]
+    prov = case.get("provenance") or {}
+
+    def copied(path: str) -> bool:
+        # Copied in from the records and never changed since: not the owner's own figure. An edit drops the field's
+        # provenance, so a field with none left (or a different value) is theirs (the owner's QA, 21 Oct: their ₦1,200,000
+        # was read as copied from the records).
+        if path not in set(case.get("filled_from_records") or []) or not isinstance(prov.get(path), dict):
+            return False
+        was = prov[path].get("value")
+        here = case
+        for part in path.split("."):
+            here = (here or {}).get(part) if isinstance(here, dict) else None
+        if was is None:
+            return False
+        try:
+            return abs(float(str(was).replace(",", "")) - float(str(here).replace(",", ""))) < 0.005
+        except (TypeError, ValueError):
+            return str(was) == str(here)
+    for f, path in paths.items():
+        if copied(path):
+            continue
+        v = case
+        for part in path.split("."):
+            v = (v or {}).get(part) if isinstance(v, dict) else None
+        try:
+            if v not in (None, "") and float(str(v).replace(",", "")) > 0:
+                out[f] = float(str(v).replace(",", ""))
+        except ValueError:
+            continue
+    # The case's own forecast (the owner's QA, 21 Oct: it said ₦1,200,000 a month, the run used the invoices' ₦331,425).
+    # The monthly receipts most of its months show ("1200000" and "1,200,000.00" are the same figure).
+    months = (((subject.get("forecast") or {}).get("data") or {}).get("months") or [])
+    seen: dict[float, int] = {}
+    for m in months:
+        try:
+            v = float(str(m.get("receipts")).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            seen[v] = seen.get(v, 0) + 1
+    if seen and goal_key == "need_funding":
+        value, count = max(seen.items(), key=lambda kv: kv[1])
+        if count * 2 > sum(seen.values()):
+            out["monthly_revenue"] = value
+    return out
+
+
+async def _case_of(user: dict, business_id: str, case_id: str | None = None) -> dict | None:
+    """The funding case (the named one, else the business's live one), as the readiness module returns it."""
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    try:
+        svc = service_for(get_orchestrator())
+        listed = await svc.list_subjects(user["id"], business_id, rr.FUNDING, user.get("email"), include_archived=False)
+        live = [x["id"] for x in listed.get("items") or [] if x.get("status") not in ("cancelled", "archived")]
+        # The named case while it is live; else the business's live one (a chat's handoff can name a case since archived).
+        chosen = case_id if case_id in live else (live[0] if live else None)
+        if not chosen:
+            return None
+        return await svc.get_subject(user["id"], business_id, rr.FUNDING, chosen, user.get("email"))
+    except Exception:      # noqa: BLE001 - said without the case
+        logger.info("the funding case for %s could not be read", business_id, exc_info=True)
+        return None
+
+
+async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict | None = None, data: dict | None = None,
+                         only: list[str] | None = None, fresh: bool = False) -> dict:
     """QA PF1/PF3: entitlement first (the registry's plan for what the research stands for, admin grants included),
     then the cost, then what will be researched. Nothing has started; nothing is charged."""
     from app.modules.agent import config as agent_config, research
@@ -579,8 +730,11 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
     capability = research.CAPABILITY[goal_key]
     plan = await orch.rt.meter.plan(user["id"])
     i = research.inputs_of(goal_key, answers or {}, data)
-    topics, items, waiting = research.plan_run(goal_key, result, i, research.context_of(data, i))
     link = research.health()
+    cap = await orch.rt.meter.cost(research.feature_of(goal_key))
+    # The one price rule the start uses: shares of one budget, what was already paid for left out (the owner's QA, 20 Oct).
+    plan_ = research.priced_plan(goal_key, result, i, research.context_of(data, i), cap, research.without_runs(data) if fresh else data, answers, only, link["connected"])
+    topics, items, waiting = plan_["topics"], plan_["items"], plan_["waiting"]
     # QA R7-1: said before it starts: what will be researched, worked out and asked, and whether research is connected.
     base = {"capability": capability, "label": result["premium_next_action"]["label"], "blockers": len(result["blockers"]),
             "action": research.ACTION_NAME.get(goal_key, result["premium_next_action"]["label"]), "variable": True,
@@ -594,8 +748,8 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
                      "worked_out": len(waiting), "asked": len(items)}}
     # The same research within 30 days is opened again, free: no quote, no hold, no charge (the owner's QA, 15 Oct).
     fp = research.fingerprint_of(answers or {}, {k: v for k, v in i.items() if not k.startswith("_")}, [t["topic"] for t in topics],
-                                 research.context_of(data, i).get("country"))
-    again = research.reusable(data, goal_key, fp)
+                                 research.context_of(data, i).get("country")) + (":" + ",".join(sorted(only)) if only else "")
+    again = None if fresh else research.reuse_for(data, goal_key, fp, answers, only=only)      # the same rule the start uses: free here means free there
     if again:
         return {**base, "allowed": True, "reuse": again["id"], "cost": 0, "max": 0, "balance": None,
                 "existing": {"at": again["created_at"][:10], "findings": (again.get("counts") or {}).get("researched", 0)}}
@@ -606,7 +760,7 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
                 "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
     # One price for the run, the check's own on the price list (credit allocation v2); charged only when it finds something
     # with a checked source. What is worked out from the owner's figures, and every question, is free (Credit System v2 §6).
-    price = await orch.rt.meter.cost(research.feature_of(goal_key)) if (topics and link["connected"]) else 0
+    price = plan_["price"]
     balance = await orch.rt.meter.balance(user["id"])
     if price and balance is not None and balance < price:
         return {**base, "allowed": False, "cost": price, "max": price, "balance": balance,
@@ -655,20 +809,88 @@ async def _session_premium_context(session_id: str, user: dict) -> tuple:
 
 
 @router.post("/task-sessions/{session_id}/premium/quote")
-async def session_premium_quote(session_id: str, user=Depends(get_current_user)):
+async def session_premium_quote(session_id: str, body: QuickCheckIn | None = None, user=Depends(get_current_user)):
     _s, goal, data, answers, result = await _session_premium_context(session_id, user)
-    return await _premium_quote(user, goal, result, answers, data)
+    return await _premium_quote(user, goal, result, answers, data, only=body.only if body else None, fresh=bool(body and body.fresh))
+
+
+_NEXT_CAPABILITIES = ("expansion_scenario", "business_plan_draft", "idea_validation", "funding_pack_draft", "sales_letter_draft")
+
+
+@router.get("/task-sessions/{session_id}/next-actions")
+async def session_next_actions(session_id: str, user=Depends(get_current_user)):
+    """What to run next after this funding check (the owner's brief, 21 Oct): at most three, each opening a real feature
+    prefilled from the workspace and the case, its cost first. The result screen, the case page, the dashboard's Agent
+    card and the chat all read this one list."""
+    from app.modules.agent import config as agent_config, next_actions
+    session, goal, data, answers, _r = await _session_premium_context(session_id, user)
+    if goal != "need_funding":
+        return {"items": []}
+    orch = get_orchestrator()
+    result = goals.first_value_of(session, data) or _r
+    plan = await orch.rt.meter.plan(user["id"])
+    prices = {}
+    for c in _NEXT_CAPABILITIES:
+        feature = agent_config.feature_of(c)
+        try:
+            prices[c] = int(await orch.rt.meter.cost(feature)) if feature else 0
+        except Exception:      # noqa: BLE001 - an unknown price is shown when it is asked, before anything starts
+            prices[c] = 0
+    try:
+        waiting = await orch.rt.store.list_runs(session["business_id"], statuses=["awaiting_approval"], limit=200)
+        pending = {r.get("capability") for r in waiting}
+    except Exception:      # noqa: BLE001
+        pending = set()
+    case_id = (session.get("handoff") or {}).get("subject_id") or next((cid for cid, sid in (data.get("chat_sessions") or {}).items() if sid == session_id), None)
+    # The case as it stands (the owner's QA, 21 Oct: "yours is missing" beside a case with a forecast): the named case,
+    # else the business's live one.
+    subject = await _case_of(user, session["business_id"], case_id)
+    case_id = (subject or {}).get("id") or case_id
+    econ = ((subject or {}).get("data") or {}).get("economics") or {}
+    items = next_actions.recommend(result, answers, data, plan=plan, prices=prices, pending=pending, case_id=case_id, session_id=session_id,
+                                   currency=goals.case_currency(session, data),
+                                   # a forecast on the case, saved or drafted on its page
+                                   case_forecast=bool((subject or {}).get("forecast") or (subject or {}).get("forecast_draft")),
+                                   case_economics={"price": econ.get("price"), "cost": econ.get("direct_cost")})
+    return {"items": items, "case_id": case_id}
+
+
+@router.get("/task-sessions/{session_id}/case-changes")
+async def session_case_changes(session_id: str, user=Depends(get_current_user)):
+    """What this chat would change on the funding case, said in the recap before anything is written (the owner's QA,
+    21 Oct: one confirmation, never a second "I'll update your funding case" screen)."""
+    session = await goals.load(get_store(), session_id)
+    if not session or session.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        rows = await goals.case_changes(get_orchestrator(), session, user["id"], user.get("email"))
+    except Exception:      # noqa: BLE001 - the recap shows without it
+        logger.info("case changes for %s not worked out", session_id, exc_info=True)
+        rows = []
+    return {"changes": rows}
+
+
+@router.get("/task-sessions/{session_id}/premium/steps")
+async def session_premium_steps(session_id: str, user=Depends(get_current_user)):
+    """Each next step's own price, before anything starts: {"steps": {gap: credits}, "all": up to}. 0 is free."""
+    from app.modules.agent import research
+    _s, goal, data, answers, result = await _session_premium_context(session_id, user)
+    i = research.inputs_of(goal, answers or {}, data)
+    cap = await get_orchestrator().rt.meter.cost(research.feature_of(goal))
+    return research.step_prices(goal, result, i, research.context_of(data, i), cap, research.health()["connected"], data, answers)
 
 
 @router.post("/task-sessions/{session_id}/premium")
 async def session_premium(session_id: str, body: QuickCheckIn | None = None, user=Depends(get_current_user)):
     from app.modules.agent import research
     session, goal, data, answers, result = await _session_premium_context(session_id, user)
-    quote = await _premium_quote(user, goal, result, answers, data)
+    only = body.only if body else None
+    fresh = bool(body and body.fresh)
+    quote = await _premium_quote(user, goal, result, answers, data, only=only, fresh=fresh)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
     run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data,
-                               progress_key=body.progress_key if body else None)
+                               progress_key=body.progress_key if body else None, only=only, fresh=fresh)
     run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"], "business_id": session["business_id"]}
 
@@ -681,7 +903,7 @@ class CaseEditIn(BaseModel):
     changes: dict[str, Any] = Field(default_factory=dict)
 
 
-_FIX = {"G1": ("Confirm the amount and date", "goal"), "G2": ("Fix allocations", "finances"), "G3": ("Complete the forecast", "finances"),
+_FIX = {"G1": ("Check the amount and date", "goal"), "G2": ("Fix allocations", "finances"), "G3": ("Complete the forecast", "finances"),
         "G4": ("Resolve the document figures", "documents")}
 
 
@@ -724,16 +946,33 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
     the pack count, and where to open it. Stored on the record itself (per workspace), at most three shown."""
     from app.modules.readiness import rules as rr
     from app.modules.readiness.service import service_for
-    await _business_for(user, business_id)
+    data = await _business_for(user, business_id)
     svc = service_for(get_orchestrator())
     out = []
+
+    async def chat_result(case_id: str) -> dict | None:
+        # The case's own chat result: the record the case page and the result screen show (one score, one count).
+        sid = (data.get("chat_sessions") or {}).get(str(case_id))
+        if not sid:
+            return None
+        try:
+            return goals.first_value_of(await _session(sid), data)
+        except Exception:      # noqa: BLE001 - the case's own summary stands
+            return None
     for kind in (rr.FUNDING, rr.LAUNCH):
         listed = await svc.list_subjects(user["id"], business_id, kind, user.get("email"), include_archived=False)
         for item in listed.get("items") or []:
             if not item.get("pinned"):
                 continue
-            summary = item.get("summary") or {}
+            summary = dict(item.get("summary") or {})
             base = f"/{'funding' if kind == rr.FUNDING else 'launch'}/{item['id']}"
+            told = await chat_result(item["id"])
+            if told:
+                # The owner's brief (20 Oct): the strip reads what the case page shows: the full check's score when it has
+                # one, else the chat's; the things to do are the result's own steps.
+                if summary.get("score") is None and isinstance(told.get("score"), (int, float)):
+                    summary["score"] = told["score"]
+                summary["open_actions"] = len(told.get("blockers") or [])
             cls = summary.get("classification")
             verdict = None
             if kind == rr.FUNDING:
@@ -743,7 +982,9 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
             out.append({"id": item["id"], "kind": "funding" if kind == rr.FUNDING else "launch",
                         "label": f"{'Funding readiness' if kind == rr.FUNDING else 'Launch readiness'} · {item.get('title')}",
                         "score": summary.get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),
-                        "pack": summary.get("pack"), "blockers": summary.get("blockers") or [], "open": f"{base}?tab=results", "updated_at": item.get("updated_at")})
+                        "title": item.get("title"), "to_do": summary.get("open_actions") if isinstance(summary.get("open_actions"), int) else len(summary.get("blockers") or []),
+                        "pack": summary.get("pack"), "blockers": summary.get("blockers") or [], "open": base, "answers": f"{base}?tab=answers",
+                        "again": f"{base}?check=again", "updated_at": item.get("updated_at")})
     out.sort(key=lambda x: str(x.get("updated_at") or ""), reverse=True)
     # All of them (up to 20): the dashboard leaves out the one already shown as the result card, then shows three.
     return {"items": out[:20], "more": max(0, len(out) - 3)}
@@ -860,11 +1101,15 @@ async def research_progress(key: str, user=Depends(get_current_user)):
 async def research_runs(business_id: str, goal: str | None = None, user=Depends(get_current_user)):
     """The saved research for a check (the funding case's Research tab): each run's date, findings and review state, free
     to open at any time."""
+    from app.modules.agent import research
     data = await _business_for(user, business_id)
     runs = [r for r in (data.get("research_runs") or {}).values() if isinstance(r, dict) and (not goal or r.get("goal") == goal)
             and r.get("status") in ("review", "adopted")]
     return {"runs": [{"id": r["id"], "goal": r.get("goal"), "created_at": r.get("created_at"), "status": r.get("status"), "counts": r.get("counts"),
-                      "findings": sum(1 for x in r.get("items") or [] if x.get("sources")), "charged": r.get("charged", 0)}
+                      # every finding on the run, as its summary counts them ("3 found online"); the new ones beside it
+                      "findings": sum(1 for x in r.get("items") or [] if x.get("sources") and not research.nothing_found(x)),
+                      "new_findings": r.get("findings", sum(1 for x in r.get("items") or [] if x.get("sources") and not x.get("carried_from"))),
+                      "charged": r.get("charged", 0)}
                      for r in sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)]}
 
 
@@ -874,7 +1119,19 @@ async def research_run(business_id: str, run_id: str, user=Depends(get_current_u
     run = (data.get("research_runs") or {}).get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Not found.")
-    return {"research": run}
+    from app.modules.agent import research
+    return {"research": research.redraft(research.refresh_from_records(run, data), data)}      # the records' figures and the case's answers, free
+
+
+@router.post("/businesses/{business_id}/research/{run_id}/preview")
+async def research_preview(business_id: str, run_id: str, body: ResearchReview, user=Depends(get_current_user)):
+    """The calculations as they would be with these decisions, while the owner edits: nothing is saved or charged."""
+    from app.modules.agent import research
+    data = await _business_for(user, business_id)
+    run = (data.get("research_runs") or {}).get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return {"calculated": research.preview(run, body.decisions, data)}
 
 
 @router.post("/businesses/{business_id}/research/{run_id}/review")
@@ -891,24 +1148,48 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
         raise HTTPException(status_code=403, detail="Only someone who can edit this business can adopt research.")
     try:
         out = await research.review(orch, user=user, business_id=business_id, run_id=run_id, decisions=body.decisions)
-    except KeyError as e:
+    except research.RunNotFound as e:
         raise HTTPException(status_code=404, detail="Not found.") from e
     except ValueError as e:
         raise HTTPException(status_code=409, detail="This research has already been reviewed, or has nothing to review.") from e
+    except Exception as e:      # noqa: BLE001 - never a silent failure (the owner's QA, 21 Oct): logged, and said plainly
+        logger.exception("research review %s failed", run_id)
+        raise HTTPException(status_code=500, detail="That couldn't be saved just now. Nothing was changed. Try again.") from e
     # §2 (R3): a launch or funding review feeds the one assessment, and what the page shows is that assessment's summary.
     from app.modules.agent import assessment_summary
     goal = (out.get("goal") or "")
     if goal in assessment_summary.KIND_OF_GOAL:
-        inputs = ((((await orch.rt.business.load(business_id)).get("assessment_datasets") or {}).get(goal) or [{}])[-1]).get("inputs") or {}
+        version = (((await orch.rt.business.load(business_id)).get("assessment_datasets") or {}).get(goal) or [{}])[-1]
+        inputs = version.get("inputs") or {}
+        mine = {f for f, src in (version.get("inputs_from") or {}).items() if src == "your answer"}      # edited or answered in this review
         accepted = [x for x in out.get("items") or [] if x.get("decision") in ("accepted", "edited") and x.get("kind") == "researched"]
-        summary = await assessment_summary.feed(orch, user, business_id, goal, inputs, out.get("answers") or {}, f"review:{run_id}:{out.get('dataset_version')}",
-                                                research=accepted)
-        out["assessment"] = summary
 
-        def _keep(d: dict) -> None:
-            (research._runs(d).get(run_id) or {})["assessment"] = summary
-        await orch.rt.business.mutate(business_id, _keep)
-    return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"], "assessment": out.get("assessment")}
+        async def _check() -> dict | None:
+            summary = await assessment_summary.feed(orch, user, business_id, goal, inputs, out.get("answers") or {}, f"review:{run_id}:{out.get('dataset_version')}",
+                                                    research=accepted, owner_set=mine)
+
+            def _keep(d: dict) -> None:
+                (research._runs(d).get(run_id) or {})["assessment"] = summary
+            await orch.rt.business.mutate(business_id, _keep)
+            return summary
+        # The adopted items are saved already; the case is checked again here, and when that takes longer than a few seconds
+        # it finishes in the background (the owner's QA, 21 Oct: one adopt took 30 s). The page asks for the new score.
+        task = asyncio.ensure_future(_check())
+        _BACKGROUND.add(task)
+        task.add_done_callback(_BACKGROUND.discard)
+        try:
+            out["assessment"] = await asyncio.wait_for(asyncio.shield(task), REVIEW_CHECK_SECONDS)
+        except asyncio.TimeoutError:
+            out["checking"] = True
+            logger.info("research review %s: the case is still being checked, in the background", run_id)
+        except Exception:      # noqa: BLE001 - saved either way; the case is checked again on its page
+            logger.exception("research review %s: the case check failed", run_id)
+    return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"], "assessment": out.get("assessment"),
+            "checking": bool(out.get("checking"))}
+
+
+REVIEW_CHECK_SECONDS = 2.5      # then "Saved. Checking your score…", and the page fetches it (the owner's QA: under 5 s)
+_BACKGROUND: set = set()      # checks still running after their reply, kept so they are never collected mid-way
 
 
 class UseFigures(BaseModel):
@@ -1144,6 +1425,7 @@ class CatalogueItemIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     base_price: float | None = Field(default=None, ge=0)
     cost_of_sales: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")      # the currency it was priced in, kept as given
 
 
 @router.post("/businesses/{business_id}/catalogue/from-check")
@@ -1173,6 +1455,8 @@ async def catalogue_from_check(business_id: str, body: CatalogueItemIn, user=Dep
             item["base_price"] = body.base_price
         if body.cost_of_sales is not None:
             item["cost_of_sales"] = body.cost_of_sales
+        if body.currency and (body.base_price is not None or body.cost_of_sales is not None):
+            item["currency"] = body.currency
         item["updated_at"] = now
         saved["product"] = dict(item)
     await orch.rt.business.mutate(business_id, _put)
@@ -1181,6 +1465,26 @@ async def catalogue_from_check(business_id: str, body: CatalogueItemIn, user=Dep
             "message": f"{'Added' if saved.get('created') else 'Updated'} in your catalogue: {p.get('name') or name}."
                        + ("" if p.get("base_price") else " Add its price in Catalogue so it can go on quotes and invoices."),
             "actions": [{"label": "Open catalogue", "to": "/catalogue"}]}
+
+
+class SenderRefreshIn(BaseModel):
+    approval_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/businesses/{business_id}/drafts/refresh-sender")
+async def refresh_draft_sender(business_id: str, body: SenderRefreshIn, user=Depends(get_current_user)):
+    """[Update them] after a rename: the chosen unsent drafts show the workspace's name and details as they are now.
+    Only drafts still waiting for approval; a sent document is never changed."""
+    orch = get_orchestrator()
+    try:
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except Exception as e:      # noqa: BLE001 - no access reads as not found
+        raise HTTPException(status_code=404, detail="Not found.") from e
+    if not getattr(actor, "can_prepare", False):
+        raise HTTPException(status_code=403, detail="You can't change this workspace's drafts.")
+    from app.modules.agent.sender_refresh import refresh_sender
+    done = await refresh_sender(orch, business_id, body.approval_ids)
+    return {"updated": done, "message": f"Updated the sender on {len(done)} draft{'s' if len(done) != 1 else ''}." if done else "Nothing to update."}
 
 
 @router.post("/task-sessions/{session_id}/attach-user")
@@ -1204,6 +1508,23 @@ async def resume_session(session_id: str, body: ResumeIn | None = None, user=Dep
     return goals.public(session)
 
 
+class CurrencyIn(BaseModel):
+    choice: str = Field(pattern="^(keep|meant)$")      # keep the figures (converted), or they were meant in the workspace's currency
+
+
+@router.post("/task-sessions/{session_id}/currency")
+async def settle_session_currency(session_id: str, body: CurrencyIn, user=Depends(get_current_user)):
+    """"You said £10,000. Your workspace uses naira": settled once, before anything is prepared."""
+    session = await _session(session_id)
+    _mine(session, user)
+    try:
+        session = await goals.settle_currency(get_store(), session, body.choice)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail="Today's rate isn't available just now, so the figure can't be converted. "
+                                                    "Choose the workspace's currency, or try again shortly.") from e
+    return goals.public(session)
+
+
 class PrepareIn(BaseModel):
     confirmed: bool = False      # the price was shown and Start pressed
 
@@ -1214,6 +1535,8 @@ async def prepare_session(session_id: str, body: PrepareIn | None = None, user=D
     _mine(session, user)
     if goals.public(session)["missing"]:
         raise HTTPException(status_code=409, detail="A few details are still needed before this can be prepared.")
+    if session.get("currency_question"):
+        raise HTTPException(status_code=409, detail="Say which currency your figures are in first. Nothing was prepared.")
     try:
         session = await goals.prepare(get_store(), session, get_orchestrator(), user["id"], user.get("email"), confirmed=bool(body and body.confirmed))
     except PermissionError as e:

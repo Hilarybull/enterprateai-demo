@@ -19,8 +19,9 @@ CONTRACT = ("business_id", "assessment_id", "profile_version", "classification",
             "freshness", "blocker_count", "next_action_id")
 # Accepted figure -> where the case keeps it (the readiness engine's own fields).
 FEEDS = {"launch": {"price": "economics.price_per_unit", "cost": "economics.variable_cost_per_unit", "fixed_costs": "economics.fixed_costs_monthly"},
-         "funding": {"price": "economics.price", "cost": "economics.direct_cost", "fixed_costs": "economics.fixed_costs_monthly", "amount": "target_amount"}}
-FIELD_WORD = {"price": "price per sale", "cost": "cost per sale", "fixed_costs": "monthly fixed costs", "amount": "funding amount"}
+         "funding": {"price": "economics.price", "cost": "economics.direct_cost", "fixed_costs": "economics.fixed_costs_monthly", "amount": "target_amount",
+                     "monthly_revenue": "traction.monthly_revenue"}}
+FIELD_WORD = {"price": "price per sale", "cost": "cost per sale", "fixed_costs": "monthly fixed costs", "amount": "funding amount", "monthly_revenue": "revenue each month"}
 
 
 def _differs(a: Any, b: Any) -> bool:
@@ -83,7 +84,7 @@ DEMAND_CHECK = {"launch": "C1.A", "funding": "C4.A"}
 
 
 async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str, float], said: dict, reference: str,
-               research: list[dict] | None = None) -> dict | None:
+               research: list[dict] | None = None, owner_set: set[str] | None = None) -> dict | None:
     """Accepted figures into the one launch initiative or funding case (made if there is none), into its empty fields
     only, then the case is assessed again. Returns that assessment's summary. A field the case already holds is left as it
     is (the case's own assumption): it is listed, never overwritten."""
@@ -118,6 +119,10 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 held = _get(data, path)
                 if held in (None, ""):
                     _put(changes, path, str(figures[f]))
+                elif _differs(held, figures[f]) and f in (owner_set or set()):
+                    # The owner's own edit or answer in the review, adopted: their latest word, so the case takes it at once
+                    # (the owner's QA, 17 Oct). Only a figure the research found is asked about before it replaces theirs.
+                    _put(changes, path, str(figures[f]))
                 elif _differs(held, figures[f]):
                     # R2: the case's own figure is never overwritten: the difference is shown, with a way to use the review's.
                     differences.append({"field": f, "label": FIELD_WORD.get(f, f), "case_value": held, "review_value": figures[f]})
@@ -131,6 +136,12 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 merged = {k: {**(data.get(k) or {}), **v} if isinstance(v, dict) else v for k, v in changes.items()}
                 await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email)
             subject_id = live[0]["id"]
+            # The case's forecast follows what was adopted (the owner's QA, 21 Oct: an edited ₦1,200,000 a month left every
+            # month at ₦331,425): its months rewritten from the adopted figures, the owner's own edits first.
+            try:
+                await svc.refresh_forecast(user["id"], business_id, subject_type, subject_id, figures, owner_set or set(), email)
+            except Exception:      # noqa: BLE001 - the case is updated either way; its forecast is edited on its own page
+                logger.info("case forecast not refreshed for %s", business_id, exc_info=True)
         else:
             payload: dict = {("name" if kind == "launch" else "title"): (str(said.get("sell") or said.get("description") or "My launch" if kind == "launch" else "My funding case"))[:80]}
             for f, path in FEEDS[kind].items():
@@ -191,8 +202,9 @@ async def use_figures(orch, user: dict, business_id: str, kind: str, figures: di
             _put(changes, FEEDS[kind][f], str(value))
     if not changes:
         return await current(orch, user["id"], business_id, kind, email)
-    if changes.get("economics"):
-        changes["economics"]["confirmed_at"] = orch.rt.clock().date().isoformat()
+    for part in ("economics", "traction"):
+        if changes.get(part):
+            changes[part]["confirmed_at"] = orch.rt.clock().date().isoformat()      # chosen by the owner: never asked again
     merged = {k: {**(data.get(k) or {}), **v} if isinstance(v, dict) else v for k, v in changes.items()}
     await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email)
     await svc.request_assessment(user["id"], business_id, subject_type, live[0]["id"], idempotency_key=reference, email=email)

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { refusalMessage } from "../lib/entitlement";
 import { getCurrencySymbol } from "../lib/currencies";
 import { creditCopy } from "../lib/creditCopy";
+import ResearchSummary from "./ResearchSummary";
 
 // QA PF3/R7/R9 (First-Value PRD 8.4, 9.4, 10.4, 11.5, 13): an answer for every gap, before anything is asked.
 //   Researched:  found, with its sources (title, site, date, link) and what it is used for.
@@ -13,11 +14,11 @@ import { creditCopy } from "../lib/creditCopy";
 // Nothing counts until it is adopted. Then the check runs again, criterion by criterion, with its sources.
 
 const CONFIDENCE = (c) => (c >= 0.7 ? "High" : c >= 0.4 ? "Medium" : "Low");
-const STATE_WORD = { met: "Met", partially_met: "Partly met", unmet: "Not met", unknown: "Not known yet" };
-const money = (v) => Number(v || 0).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+const STATE_WORD = { met: "Met", partially_met: "Partly met", unmet: "Not met", unknown: "Need from you" };
+const money = (v) => { const n = Number(String(v ?? 0).replace(/,/g, "")) || 0; return Math.abs(n) >= 100 ? Math.round(n).toLocaleString("en-GB") : n.toLocaleString("en-GB", { maximumFractionDigits: 2 }); };
 // Every figure with its unit: money with its currency, a count with what it counts ("37,000 sales a month").
-const MONEY_FIELDS = new Set(["price", "cost", "fixed_costs", "amount", "cash_in_bank"]);
-const UNIT = { price: "a sale", cost: "a sale", fixed_costs: "a month", amount: "", cash_in_bank: "", monthly_sales: "sales a month",
+const MONEY_FIELDS = new Set(["price", "cost", "fixed_costs", "amount", "cash_in_bank", "monthly_revenue"]);
+const UNIT = { price: "a sale", cost: "a sale", fixed_costs: "a month", amount: "", cash_in_bank: "", monthly_sales: "sales a month", monthly_revenue: "a month",
   team_size: "people", hours_per_job: "hours a job", hours_per_person: "hours a month each", capacity: "jobs a month" };
 export function unitsOf(field, currency) {
   if (!(field in UNIT)) return null;
@@ -29,6 +30,8 @@ export function withUnit(field, value, currency) {
   if (!u || String(value ?? "").trim() === "" || !Number.isFinite(n)) return String(value ?? "");
   return `${u.before}${money(n)}${u.after ? ` ${u.after}` : ""}`;
 }
+/** ₦994,276 (and −₦6,600,000): money with its sign and commas, whole above 100. */
+const signed = (v, currency) => { const n = Number(String(v ?? 0).replace(/,/g, "")) || 0; return `${n < 0 ? "\u2212" : ""}${getCurrencySymbol(currency)}${money(Math.abs(n))}`; };
 const pill = (on) => `rounded-lg border px-2.5 py-1 text-[12px] font-semibold transition ${on ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-600 hover:border-brand-300"}`;
 
 // §5: market and demand evidence stays current for 180 days; price, cost, forecast and capacity for 30.
@@ -36,30 +39,77 @@ const FRESH_NOTE = (i) => (["comparable_prices", "positioning"].includes(i.topic
   ? "Price, cost and forecast figures are current for 30 days." : "Market evidence is current for 180 days.");
 
 function badge(i) {
-  if (i.kind === "researched") return ["Researched", "bg-sky-50 text-sky-800"];
+  // The shared words (lib/vocab.js): Found online, My estimate, Worked out.
+  if (i.kind === "researched") return ["Found online", "bg-sky-50 text-sky-800"];
   if (i.kind === "reused") return [i.source_note || "Already on record", "bg-emerald-50 text-emerald-800"];
-  if (i.basis === "calculated") return ["Calculated", "bg-indigo-50 text-indigo-800"];
-  if (i.basis === "benchmark" || i.kind === "estimated") return ["Estimated", "bg-amber-50 text-amber-800"];
+  if (i.basis === "calculated") return ["Worked out", "bg-indigo-50 text-indigo-800"];
+  if (i.basis === "benchmark" || i.kind === "estimated") return ["My estimate", "bg-amber-50 text-amber-800"];
   // §5: a gap no checked source supports is Missing, and asked; "Only you know" is the owner's own information.
   if (i.kind === "question") return i.tag === "Only you know" ? ["Only you know", "bg-violet-50 text-violet-800"] : ["Missing", "bg-rose-50 text-rose-800"];
-  return ["Estimate", "bg-amber-50 text-amber-800"];
+  return ["My estimate", "bg-amber-50 text-amber-800"];
 }
 
-function Sources({ list }) {
+// A note said once per section ("A Nigeria figure, used for an Abuja business"), not under every source.
+const NOTES_SAID = new WeakMap();
+function Sources({ list, notes = null }) {
   if (!list?.length) return null;
+  const said = notes || new Set();
   return (
-    <ul className="mt-1 space-y-0.5" data-research-sources>
-      {list.map((s) => (
-        <li key={s.url} className="text-[12px] text-slate-500" data-research-source>
-          <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 underline-offset-2 hover:underline">{s.title || s.url}</a>
-          {s.publisher || s.site ? ` · ${s.publisher || s.site}` : ""}{s.date ? ` · ${s.date}` : " · no date given"}
-          {s.tier && <span data-source-tier className="ml-1.5 rounded bg-slate-100 px-1.5 text-[11px] font-semibold text-slate-600">{s.tier_label || `Tier ${s.tier}`}</span>}
-          {s.quote && <q data-source-quote className="mt-0.5 block italic text-slate-600">{s.quote}</q>}
-          {(s.accessed || s.region) && <span className="block text-[11px]">{s.region ? `Covers ${s.region}${s.period ? `, ${s.period}` : ""}. ` : ""}{s.accessed ? `Checked ${s.accessed}.` : ""}</span>}
-          {s.region_note && <span data-region-note className="block text-[11px] text-amber-700">{s.region_note}</span>}
-        </li>
-      ))}
+    <ul className="mt-1 min-w-0 space-y-1.5" data-research-sources>
+      {list.map((s) => {
+        const note = s.region_note && !said.has(s.region_note) ? s.region_note : null;
+        if (note) said.add(note);
+        return (
+          <li key={s.url} className="min-w-0 break-words text-[12px] text-slate-500" data-research-source>
+            <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 underline-offset-2 hover:underline">{s.title || s.url}</a>
+            {(s.publisher || s.site) && <span className="block">{s.publisher || s.site}</span>}
+            <span className="block" data-source-date>{s.date ? `Dated ${s.date}` : "No date given"}</span>
+            {s.tier && <span data-source-tier className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 text-[11px] font-semibold text-slate-600">{s.tier_label || `Tier ${s.tier}`}</span>}
+            {s.quote && <q data-source-quote className="mt-0.5 block whitespace-normal break-words italic text-slate-600">{s.quote}</q>}
+            {(s.accessed || s.region) && <span className="block text-[11px]">{s.region ? `Covers ${s.region}${s.period ? `, ${s.period}` : ""}. ` : ""}{s.accessed ? `Checked ${s.accessed}.` : ""}</span>}
+            {note && <span data-region-note className="block text-[11px] text-amber-700">{note}</span>}
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+// What the 12-month forecast is built from (the owner's QA, 20 Oct: "what of the forecasting?").
+const FORECAST_NEEDS = { price: "your price", cost: "your cost per sale", monthly_sales: "your sales a month", fixed_costs: "your monthly fixed costs" };
+
+/** The forecast, and any calculation that was waiting for your figures: built here as soon as they are answered, and
+ *  said plainly while it still waits (never a silent gap). */
+function FromAnswers({ calc, questions, decisions, goal, currency }) {
+  const built = Object.values(calc || {}).filter((c) => c.from_answers && c.value != null);
+  const forecast = Object.values(calc || {}).find((c) => c.derive === "forecast" && c.value != null);
+  const answered = (q) => decisions[q.id]?.decision === "answer" && String(decisions[q.id]?.value || "").trim();
+  const waiting = goal === "need_funding" && !forecast
+    ? questions.filter((q) => FORECAST_NEEDS[q.field] && !answered(q)).map((q) => FORECAST_NEEDS[q.field]) : [];
+  if (!built.length && !waiting.length) return null;
+  const sign = getCurrencySymbol(currency);
+  const m = (v) => `${Number(v) < 0 ? "−" : ""}${sign}${Math.abs(Number(v) || 0).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
+  return (
+    <section className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3.5" data-from-answers>
+      <p className="text-[13px] font-semibold text-slate-900">12-month cash forecast</p>
+      {forecast ? (
+        <>
+          <p className="mt-0.5 text-[12.5px] text-slate-700" data-forecast-value>{forecast.value}. Built from your answers; it updates as you change them.</p>
+          <div className="mt-2 overflow-x-auto">
+            <table className="min-w-[28rem] text-right text-[12px] tabular-nums" data-forecast-live>
+              <thead><tr className="text-slate-500"><th className="pr-3 text-left font-medium">Month</th><th className="pr-3 font-medium">In</th><th className="pr-3 font-medium">Out</th><th className="pr-3 font-medium">Profit</th><th className="font-medium">Cash</th></tr></thead>
+              <tbody>{forecast.table.map((r) => <tr key={r.month}><td className="pr-3 text-left">{r.month}</td><td className="pr-3">{m(r.in ?? r.revenue)}</td><td className="pr-3">{m(r.out ?? r.costs)}</td><td className="pr-3">{m(r.profit)}</td><td>{m(r.cash)}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <p className="mt-0.5 text-[12.5px] text-slate-700" data-forecast-waiting>
+          I'll build it as soon as you answer {waiting.length > 1 ? `${waiting.slice(0, -1).join(", ")} and ${waiting[waiting.length - 1]}` : waiting[0]} above.</p>
+      )}
+      {built.filter((c) => c.derive !== "forecast").map((c) => (
+        <p key={c.id} className="mt-2 text-[12.5px] text-slate-700" data-built={c.derive}><span className="font-semibold">{c.label}:</span> {c.value}</p>
+      ))}
+    </section>
   );
 }
 
@@ -73,15 +123,26 @@ function FundingDrafts({ d, currency }) {
       <p className="text-[11.5px] text-slate-500" data-amounts-in>Amounts in {String(currency || "GBP").toUpperCase()} ({getCurrencySymbol(currency)}).</p>
       {d.use_of_funds && (
         <table className="w-full text-left" data-use-of-funds><caption className="text-left font-semibold text-slate-700">Use of funds (estimate)</caption>
-          <tbody>{d.use_of_funds.map((r) => <tr key={r.line}><td className="py-0.5 pr-2">{r.line}</td><td className="py-0.5 text-right tabular-nums">{money(r.amount)}</td><td className="py-0.5 pl-2 text-slate-500">{r.how}</td></tr>)}</tbody>
+          <tbody>{d.use_of_funds.map((r) => <tr key={r.line}><td className="py-0.5 pr-2">{r.line}</td><td className="py-0.5 text-right tabular-nums">{signed(r.amount, currency)}</td><td className="py-0.5 pl-2 text-slate-500">{r.how}</td></tr>)}</tbody>
         </table>
       )}
       {d.forecast && (
         <div className="overflow-x-auto" data-forecast>
           <p className="font-semibold text-slate-700">12-month forecast (estimate, from your figures)</p>
           <table className="mt-1 min-w-[28rem] text-right tabular-nums"><thead><tr className="text-slate-500"><th className="pr-2 text-left">Month</th><th className="pr-2">In</th><th className="pr-2">Out</th><th className="pr-2">Profit</th><th>Cash</th></tr></thead>
-            <tbody>{d.forecast.map((r) => <tr key={r.month}><td className="pr-2 text-left">{r.month}</td><td className="pr-2">{money(r.revenue)}</td><td className="pr-2">{money(r.costs)}</td><td className="pr-2">{money(r.profit)}</td><td>{money(r.cash)}</td></tr>)}</tbody>
+            <tbody>{d.forecast.map((r) => <tr key={r.month}><td className="pr-2 text-left">{r.month}</td><td className="pr-2">{signed(r.in ?? r.revenue, currency)}</td><td className="pr-2">{signed(r.out ?? r.costs, currency)}</td><td className="pr-2">{signed(r.profit, currency)}</td><td>{signed(r.cash, currency)}</td></tr>)}</tbody>
           </table>
+        </div>
+      )}
+      {d.mismatch && (
+        <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-950" data-route-mismatch>
+          <p>{d.mismatch.message}</p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            <a href="#edit-answers" onClick={(e) => { e.preventDefault(); document.querySelector("[data-edit-answers]")?.click(); document.querySelector("[data-edit-form]")?.scrollIntoView?.({ block: "center" }); }}
+              className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900 hover:bg-amber-100" data-change-target>Change target</a>
+            <a href="#edit-answers" onClick={(e) => { e.preventDefault(); document.querySelector("[data-edit-answers]")?.click(); }}
+              className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900 hover:bg-amber-100" data-look-at-loans>Look at loans</a>
+          </div>
         </div>
       )}
       {/* Only the routes the research found something for, with its source: never a row of empty sections. */}
@@ -205,7 +266,12 @@ export function RecordSync({ businessId, runId, sync }) {
 /** Can the owner put their own value on this item? A figure on record or an estimate, yes; a researched finding (its
  *  source's words) or a calculated figure (worked out again from the inputs), no. */
 export const ownAnswer = (i) => i.kind === "reused" && /^your answer$/i.test(String(i.source_note || "").trim());
-export const editableItem = (i) => !(i.derive || i.basis === "calculated") && i.kind !== "researched";
+// Every result the owner gives or the research finds can be edited (the owner's QA, 17 Oct). A calculated figure cannot: it
+// follows the figures it is worked out from, live, as they are edited.
+export const editableItem = (i) => !(i.derive || i.basis === "calculated");
+// An adopted item's decision, as the review form holds it, to change it again.
+const decisionOf = (x) => ({ accepted: { decision: "accept" }, edited: { decision: "edit", value: x.edited_value ?? "" }, rejected: { decision: "reject" },
+  answered: { decision: "answer", value: x.answer ?? "" }, skipped: { decision: "skip", value: "" } })[x.decision] || null;
 
 export default function ResearchReview({ retry = null, ...props }) {
   const [run, setRun] = useState(props.run);
@@ -217,15 +283,34 @@ export default function ResearchReview({ retry = null, ...props }) {
   return <ReviewBody key={run.id} {...props} run={run} onRetry={again} retrying={retrying} />;
 }
 
-function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retrying = false }) {
+function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, retrying = false }) {
+  const [run, setRun] = useState(given);      // after adopting, the adopted results, to change again
   const every = (run.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
   // The owner's own answers are used as given and changed in "Your answers" above, never reviewed again here (QA, 15 Oct).
   const yours = every.filter(ownAnswer);
   const items = every.filter((i) => !ownAnswer(i));
-  const [decisions, setDecisions] = useState(() => Object.fromEntries(yours.map((i) => [i.id, { decision: "accept" }])));
+  // Edits in progress survive a refresh (this browser only): the review shows them as updated, never the old figure again.
+  const draftKey = `ea_review_draft:${run.id}`;
+  const [decisions, setDecisions] = useState(() => {
+    let kept = {};
+    try { kept = JSON.parse(sessionStorage.getItem(draftKey) || "{}") || {}; } catch { kept = {}; }
+    return { ...Object.fromEntries(yours.map((i) => [i.id, { decision: "accept" }])), ...kept };
+  });
+  useEffect(() => { try { sessionStorage.setItem(draftKey, JSON.stringify(decisions)); } catch { /* fine without it */ } }, [decisions, draftKey]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(run.status === "adopted" ? run : null);
+  const [calc, setCalc] = useState({});      // the calculations as they are with the decisions so far, while editing
+  const [doneScore, setDoneScore] = useState(null);
+  // Adopted results stay editable: back to the review with every decision as it was adopted.
+  const reopen = () => {
+    const items2 = (done.items || []).map((i) => ({ ...i, kind: i.kind || i.state }));
+    setDecisions(Object.fromEntries(items2.map((x) => [x.id, ownAnswer(x) ? { decision: "accept" } : decisionOf(x)]).filter(([, d]) => d)));
+    setRun({ ...done, status: "review" });
+    setCalc({});
+    setDone(null);
+    setReviewing(true);
+  };
   // The draft first (the funding case, or the figures worked out); what it rests on, to adopt, edit or reject,
   // opens with "Check or review inputs". With no draft to show, the inputs are shown at once.
   const draftOf = (r) => Boolean(r?.deliverables || r?.figures?.length);
@@ -239,22 +324,79 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
       {reviewing ? "Hide inputs" : label}
     </button>
   );
-  const set = (id, patch) => setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+  const set = (id, patch) => { setError(""); setDecisions((d) => ({ ...d, [id]: { ...d[id], ...patch } })); };
+  // An edit to a figure the case holds (price, cost, fixed costs, the amount) goes onto the case as you type, before
+  // adopting (the owner's QA, 17 Oct): the setup form shows it. Adopting is still what makes the research count.
+  const caseKind = { need_funding: "funding", launch: "launch" }[run?.goal];
+  const sentFigures = useRef({});
+  // {item id: the figure now on the case}, and {item id: true} while it is being saved: the Update button fades once saved.
+  const [savedAt, setSavedAt] = useState({});
+  const [saving, setSaving] = useState({});
+  const [failed, setFailed] = useState({});
+  const pushFigures = async (figures) => {
+    if (!caseKind || !Object.keys(figures).length) return;
+    const ids = every.filter((i) => i.field in figures).map((i) => i.id);
+    setSaving((m) => ({ ...m, ...Object.fromEntries(ids.map((id) => [id, true])) }));
+    setFailed((m) => ({ ...m, ...Object.fromEntries(ids.map((id) => [id, false])) }));
+    try {
+      await apiRequest(`/businesses/${businessId}/assessment/${caseKind}/use-figures`, "POST", { figures });
+      Object.assign(sentFigures.current, figures);
+      setSavedAt((m) => ({ ...m, ...Object.fromEntries(every.filter((i) => i.field in figures).map((i) => [i.id, figures[i.field]])) }));
+      window.dispatchEvent(new CustomEvent("ea:case:updated"));
+    } catch {
+      setFailed((m) => ({ ...m, ...Object.fromEntries(ids.map((id) => [id, true])) }));      // said beside the button; adopting still puts it on the case
+    } finally {
+      setSaving((m) => ({ ...m, ...Object.fromEntries(ids.map((id) => [id, false])) }));
+    }
+  };
+  const figureOf = (i, d) => {
+    if (!i.field || !["price", "cost", "fixed_costs", "amount"].includes(i.field) || !d) return null;
+    const raw = d.decision === "edit" || d.decision === "answer" ? d.value : null;
+    const n = raw == null ? NaN : Number(String(raw).replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  // Enter (or the tick): on the case at once.
+  const saveNow = (i) => { const n = figureOf(i, decisions[i.id]); if (n != null) pushFigures({ [i.field]: n }); };
+  // Edit is a decision once saved (Save or Enter); opening it is not. Cancel puts back what was chosen before.
+  const saveEdit = (i) => { set(i.id, { saved: true }); saveNow(i); };
+  // Cancel puts back what was there: the figure saved before this edit, else the decision before it (or none).
+  const cancelEdit = (i) => setDecisions((m) => {
+    const d = m[i.id] || {};
+    const next = { ...m };
+    if (d.restore != null) next[i.id] = { ...d, value: d.restore, saved: true, restore: undefined };
+    else if (d.before) next[i.id] = { decision: d.before };
+    else delete next[i.id];
+    return next;
+  });
+  // What is sent: an edit not saved yet counts as what was chosen before it (or nothing).
+  const sendable = (m) => Object.fromEntries(Object.entries(m).flatMap(([id, d]) => (d?.decision === "edit" && !d.saved ? (d.before ? [[id, { decision: d.before }]] : []) : [[id, d]])));
+  useEffect(() => {
+    // Also while questions wait for a calculation (the forecast): answering them builds it here, live.
+    if (done || !reviewing || !run?.id || !every.some((i) => i.derive || i.basis === "calculated" || i.for_derive)) return undefined;
+    const t = setTimeout(async () => {
+      try {
+        const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/preview`, "POST", { decisions });
+        setCalc(Object.fromEntries((out?.calculated || []).map((c) => [c.id, c])));
+      } catch { /* the figures shown stay as they were; adopting works them out again either way */ }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [decisions, reviewing, done, run?.id]);      // eslint-disable-line react-hooks/exhaustive-deps
   const questions = items.filter((i) => i.kind === "question");
   const proposals = items.filter((i) => i.kind !== "question");
   // Every question answered or skipped, explicitly: "Not known yet" is never left by default.
   const open = questions.filter((i) => !(decisions[i.id]?.decision === "skip" || (decisions[i.id]?.decision === "answer" && String(decisions[i.id]?.value || "").trim())));
-  const undecided = proposals.filter((i) => !decisions[i.id]?.decision);
-  const adoptAll = () => setDecisions((d) => ({ ...d, ...Object.fromEntries(undecided.map((i) => [i.id, { decision: "accept" }])) }));
+  const undecided = proposals.filter((i) => !decisions[i.id]?.decision || (decisions[i.id].decision === "edit" && !decisions[i.id].saved));
+  const adoptAll = () => setDecisions((d) => ({ ...d, ...Object.fromEntries(undecided.filter((i) => d[i.id]?.decision !== "edit").map((i) => [i.id, { decision: "accept" }])) }));
 
   async function adopt(chosen = decisions) {
-    const left = questions.filter((i) => !(chosen[i.id]?.decision === "skip" || (chosen[i.id]?.decision === "answer" && String(chosen[i.id]?.value || "").trim())));
-    if (left.length) return;
+    // What was adopted is applied; a question left open stays open on its own, never blocking the rest (the owner's QA, 21 Oct).
     setBusy(true);
     setError("");
     try {
-      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: chosen });
+      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: sendable(chosen) });
+      try { sessionStorage.removeItem(draftKey); } catch { /* fine */ }
       setDone(out.research);
+      setDoneScore(out?.result?.score ?? null);
       setReviewing(!draftOf(out.research));      // adopted: back to the draft, now checked again
       onAdopted?.(out);
     } catch (e) {
@@ -267,7 +409,7 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
     const a = done.after || {};
     return (
       <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-[13px] text-emerald-950" data-research-adopted>
-        <p className="font-semibold">Added to your dataset (version {done.dataset_version}) and checked again.</p>
+        <p className="font-semibold" data-applied-line>{typeof doneScore === "number" ? `Saved. Your score is now ${Math.round(doneScore)}/100.` : "Saved. Score paused: a few figures are still missing."}</p>
         {done.assessment ? (
           // §2 (R3): a launch or funding review feeds the one assessment; its summary is what is shown, never a second score.
           <dl className="mt-2 grid gap-1 sm:grid-cols-3" data-assessment-summary>
@@ -310,6 +452,10 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
         <CaseDifferences businessId={businessId} assessment={done.assessment} currency={currency} onUpdated={(a) => a && setDone((d) => ({ ...d, assessment: { ...a, differences: [] } }))} />
         <RecordSync businessId={businessId} runId={done.id} sync={done.record_sync} />
         <p className="mt-2 text-[12px] text-emerald-900">Researched and estimated figures stay marked as such until you confirm them. Nothing else on your business was changed.</p>
+        {done.items?.length > 0 && (
+          <button type="button" onClick={reopen} data-research-reopen
+            className="mt-2 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-emerald-900 hover:bg-emerald-100">Edit these results</button>
+        )}
       </div>
     );
   }
@@ -334,7 +480,7 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
           {creditCopy.doneVariable({ used: run.charged, findings: new Set(items.filter((i) => i.sources?.length && ["researched", "estimated"].includes(i.kind) && i.basis !== "calculated").map((i) => i.topic)).size, balance: run.balance })}</p>
       ) : null}
       {run.counts && <p className="text-[12px] text-slate-500" data-research-counts>
-        {run.counts.researched} researched · {run.counts.estimated} estimated · {run.counts.reused} already on record · {run.counts.calculated} calculated · {run.counts.asked} to answer · {run.counts.sources} sources</p>}
+        {run.counts.researched} found online · {run.counts.estimated} my estimates · {run.counts.reused} already on record · {run.counts.calculated} worked out · {run.counts.asked} to answer · {run.counts.sources} sources</p>}
       {!reviewing && <>
         <Draft r={run} />
         <p className="mt-3 text-[12.5px] text-slate-600" data-review-prompt>
@@ -357,9 +503,12 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
       {yours.length > 0 && <p className="mt-0.5 text-[12px] text-slate-500" data-your-answers-note>Your own answers ({yours.map((i) => i.label).join(", ")}) are used as you gave them. To change one, edit it in Your answers above.</p>}
       {undecided.length > 0 && <button type="button" onClick={adoptAll} data-adopt-all className="mt-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-800 hover:bg-brand-100">Adopt all ({undecided.length})</button>}
       <ul className="mt-2 space-y-3">
+        {(() => { NOTES_SAID.set(items, new Set()); return null; })()}
         {items.map((i) => {
           const d = decisions[i.id] || {};
-          const [word, tone] = badge(i);
+          const live = calc[i.id];
+          if (live) i = { ...i, value: live.value ?? null, working: live.working || i.working };
+          const [word, tone] = d.decision === "edit" && d.saved ? ["Your figure", "bg-emerald-50 text-emerald-800"] : badge(i);
           return (
             <li key={i.id} className="rounded-lg border border-slate-100 p-2.5" data-research-item={i.topic || i.derive || i.field} data-kind={i.basis || i.kind}>
               <div className="flex flex-wrap items-center gap-2">
@@ -382,9 +531,13 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
                 </div>
               ) : (
                 <>
-                  <p className="mt-1 text-[13px] text-slate-800" data-research-value>{withUnit(i.field, i.value, currency)}{i.basis === "benchmark" && i.number != null && String(i.number) !== String(i.value) ? ` (using ${withUnit(i.field, i.number, currency)})` : ""}</p>
+                  <p className="mt-1 text-[13px] text-slate-800" data-research-value>{d.decision === "edit" && d.saved && String(d.value ?? "").trim()
+                    ? <><span className="font-semibold">{withUnit(i.field, d.value, currency)}</span>
+                      <span className="ml-1.5 text-[11.5px] text-slate-500" data-was>Was {withUnit(i.field, i.value, currency)}</span>
+                      {savedAt[i.id] != null && savedAt[i.id] === figureOf(i, d) && <span className="ml-1.5 rounded bg-emerald-50 px-1.5 text-[11px] font-semibold text-emerald-700" data-updated>Updated on your case</span>}</>
+                    : i.value == null && (i.derive || i.basis === "calculated") ? "Needs the figures below it" : withUnit(i.field, i.value, currency)}{i.basis === "benchmark" && i.number != null && String(i.number) !== String(i.value) ? ` (using ${withUnit(i.field, i.number, currency)})` : ""}</p>
                   {i.working?.length > 0 && <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[12px] text-slate-600" data-working>{i.working.map((w) => <li key={w}>{w}</li>)}</ul>}
-                  <Sources list={i.sources} />
+                  <Sources list={i.sources} notes={NOTES_SAID.get(items)} />
                   {i.standard && <p className="mt-1 text-[11px] text-slate-500" data-research-standard>{i.kind === "researched" ? "Researched: " : "Not researched: "}{i.standard}.</p>}
                   {Array.isArray(i.range) && <p className="mt-0.5 text-[11px] text-amber-700" data-research-range>Sources disagree: {money(i.range[0])} to {money(i.range[1])}. Both are shown; neither is averaged.</p>}
                   {i.kind !== "researched" && i.method && <p className="mt-0.5 text-[11px] text-slate-500" data-research-method>Method: {i.method}</p>}
@@ -396,20 +549,44 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
                     {/* A researched finding is what its checked source says: accepted or rejected, never rewritten (an edit would
                         put words in the source's mouth). Edit is for figures that are yours to set: on record, or estimated. */}
                     {(!editableItem(i) ? [["accept", "Accept"], ["reject", "Reject"]] : [["accept", "Accept"], ["edit", "Edit"], ["reject", "Reject"]]).map(([k, label]) => (
-                      <button key={k} type="button" aria-pressed={d.decision === k} onClick={() => set(i.id, { decision: k, value: k === "edit" ? d.value ?? String(i.number ?? i.value) : d.value })} className={pill(d.decision === k)}>{label}</button>
+                      // A saved edit is what is accepted (the owner's QA, 20 Oct: Accept after Save put the old figure back):
+                      // Accept keeps it, shown pressed; only Reject, or Edit again, changes it.
+                      <button key={k} type="button" aria-pressed={d.decision === k || (k === "accept" && d.decision === "edit" && d.saved)} onClick={() => (k === "edit"
+                        ? set(i.id, { decision: "edit", value: d.value ?? String(i.number ?? i.value ?? ""), saved: false, before: d.decision === "edit" ? d.before : d.decision,
+                            restore: d.decision === "edit" && d.saved ? d.value : d.restore })
+                        : k === "accept" && d.decision === "edit" && d.saved ? null
+                        : k === "accept" && d.decision === "edit" && String(d.value ?? "").trim() ? saveEdit(i)
+                        : set(i.id, { decision: k, value: d.value, saved: undefined, before: undefined, pressed: k === "accept" || undefined }))}
+                        className={pill(d.decision === k || (k === "accept" && d.decision === "edit" && d.saved))}>{label}</button>
                     ))}
                   </div>
-                  {(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-calculated-note>Worked out from the figures above. To change it, edit those and check again.</p>}
-                  {i.kind === "researched" && !(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-researched-note>From a checked source: accept it or reject it.</p>}
-                  {d.decision === "edit" && editableItem(i) && (() => {
+                  {(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-calculated-note>Worked out from the figures above, and updated as you change them.</p>}
+                  {i.kind === "researched" && !(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-researched-note>From a checked source. Accept it, edit it to use your own figure, or reject it.</p>}
+                  {/* Closed once saved (the owner's QA, 20 Oct): the new figure shows above; Edit opens it again. Open while a save failed. */}
+                  {d.decision === "edit" && editableItem(i) && (!d.saved || failed[i.id]) && (() => {
                     const u = unitsOf(i.field, currency);
+                    const current = d.saved && (figureOf(i, d) == null || (savedAt[i.id] != null && savedAt[i.id] === figureOf(i, d)));
                     return (
-                      <div className="mt-2 flex items-center gap-2" data-edit-units>
-                        {u?.before && <span className="text-[13px] font-semibold text-slate-600" data-unit-before>{u.before}</span>}
-                        <input aria-label={`Your version: ${i.label}`} value={d.value ?? ""} onChange={(e) => set(i.id, { value: e.target.value })}
-                          inputMode={u ? "decimal" : undefined}
-                          className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-500" />
-                        {u?.after && <span className="shrink-0 text-[12.5px] text-slate-600" data-unit-after>{u.after}</span>}
+                      <div className="mt-2" data-edit-units>
+                        <div className="flex items-start gap-2">
+                          {u?.before && <span className="pt-1.5 text-[13px] font-semibold text-slate-600" data-unit-before>{u.before}</span>}
+                          <textarea aria-label={`Your version: ${i.label}`} value={d.value ?? ""} rows={1}
+                            onChange={(e) => { set(i.id, { value: e.target.value, saved: false }); e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; }}
+                            onFocus={(e) => { e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; }}
+                            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit(i); } }} enterKeyHint="done"
+                            inputMode={u ? "decimal" : undefined}
+                            className="min-w-0 flex-1 resize-none overflow-hidden rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] leading-5 outline-none focus:border-brand-500" />
+                          {u?.after && <span className="shrink-0 pt-1.5 text-[12.5px] text-slate-600" data-unit-after>{u.after}</span>}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center justify-end gap-2">
+                          {failed[i.id] && <span role="alert" className="text-[11.5px] text-rose-700">Not saved. Try again.</span>}
+                          <button type="button" onClick={() => cancelEdit(i)} className="rounded-lg px-2.5 py-1 text-[12.5px] font-semibold text-slate-600 hover:text-slate-900" data-edit-cancel>Cancel</button>
+                          <button type="button" onClick={() => saveEdit(i)} disabled={current || saving[i.id] || !String(d.value ?? "").trim()} aria-busy={saving[i.id] || undefined} data-update-now
+                            data-state={saving[i.id] ? "saving" : current ? "updated" : "ready"}
+                            className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:cursor-default disabled:bg-slate-200 disabled:text-slate-500">
+                            {saving[i.id] ? "Saving…" : current ? "Saved" : "Save"}
+                          </button>
+                        </div>
                       </div>
                     );
                   })()}
@@ -419,11 +596,13 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
           );
         })}
       </ul>
+      <FromAnswers calc={calc} questions={questions} decisions={decisions} goal={run.goal} currency={currency} />
       {run.deliverables && <Figures list={run.figures} />}
       {error && <p role="alert" className="mt-2 text-[12px] text-rose-700">{error}</p>}
       {open.length > 0 && <p className="mt-3 text-[12px] text-violet-800" data-questions-left>{open.length === 1 ? "1 question left" : `${open.length} questions left`}: answer or skip each.</p>}
       {undecided.length > 0 && <p className="mt-1 text-[12px] text-slate-500" data-undecided>{undecided.length} not adopted yet: they won't count unless you adopt them.</p>}
-      <button type="button" disabled={busy || open.length > 0} onClick={() => adopt()} aria-busy={busy} data-research-adopt
+      {busy && <p role="status" className="mt-2 text-[12.5px] text-slate-600" data-applying>Saving and checking your score…</p>}
+      <button type="button" disabled={busy} onClick={() => adopt()} aria-busy={busy} data-research-adopt
         className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
         {busy ? "Checking again…" : "Use what I adopted and check again"}
       </button>
@@ -437,15 +616,25 @@ function ReviewBody({ businessId, run, onAdopted = null, onRetry = null, retryin
  * then the review. `base` is the premium path (a quick check's, or a homepage task's); `body` what it is sent.
  * `onAdopted(out)`: the adopted result, to replace the first-value card with (R9-4).
  */
+/** After Start, in place: the one result view first (the owner's brief, 20 Oct), every input one press away. A run that
+ *  failed or found nothing shows the full review at once, where its reason is said. */
+export function InlineResearch({ businessId, run, onAdopted = null, retry = null }) {
+  const [all, setAll] = useState(false);
+  const empty = Boolean(run?.error) || !(run?.items || []).some((i) => i.derive || i.kind === "question" || (i.sources || []).length);
+  if (all || empty) return <ResearchReview businessId={businessId} run={run} onAdopted={onAdopted} retry={retry} />;
+  return <ResearchSummary businessId={businessId} run={run} onAdopted={onAdopted} onSeeAll={() => setAll(true)} />;
+}
+
 export function premiumFlow({ base, body = {}, businessId = null, onError = () => {}, onAdopted = null }) {
   return async () => {
     try {
       const quote = await apiRequest(`${base}/quote`, "POST", body);
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // one balance on the page
       if (!quote?.allowed) return { gate: quote?.gate };
       if (quote.reuse) {
         // The same research within 30 days: opened again, free (no price, no hold, no charge).
         const out = await apiRequest(base, "POST", body, { timeoutMs: 60000 });
-        if (out?.started) return { research: out.research, render: <ResearchReview businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} /> };
+        if (out?.started) return { research: out.research, render: <InlineResearch businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} /> };
       }
       const progressKey = `p${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
       const run = async () => {
@@ -457,7 +646,7 @@ export function premiumFlow({ base, body = {}, businessId = null, onError = () =
           const out = await run();
           if (!out?.started) return { gate: out?.gate };
           const retry = async () => { try { const again = await run(); return again?.started ? again.research : null; } catch { return null; } };
-          return { research: out.research, render: <ResearchReview businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} retry={retry} /> };
+          return { research: out.research, render: <InlineResearch businessId={businessId || out.business_id} run={out.research} onAdopted={onAdopted} retry={retry} /> };
         } catch (e) { onError(refusalMessage(e, creditCopy.unavailable())); return null; }
       } };
     } catch (e) { onError(refusalMessage(e, "That couldn't be started just now. Nothing was charged.")); return null; }

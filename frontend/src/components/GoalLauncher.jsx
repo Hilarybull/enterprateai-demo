@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
 import UkDateInput, { ukDate } from "./UkDateInput";
 import SaidLine from "./SaidLine";
+import { MoneyInput } from "./readiness/Fields";
 import { useAuthStore, useSignedIn } from "../store/auth";
+import { useWorkspaceStore } from "../store/workspace";
 import GoogleSignInButton from "./GoogleSignInButton";
 import { DURATION, prefersReducedMotion, useReducedMotion, useTypewriter } from "../lib/motion";
 import { DEMO_SECONDS } from "../config/agentDemo";
@@ -194,7 +196,7 @@ export function useGoalFlow() {
     trackGoal("entry_mode_selected", { entry_mode: body.entry_mode, ...(body.key ? { key: body.key } : {}) });
     const began = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
-      keep(await retryOnce(() => apiRequest("/task-sessions", "POST", body)));
+      keep(await retryOnce(() => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...chatWorkspace() })));
       // Time to the first question, measured and logged (the target is under 1.5 seconds).
       const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - began);
       trackGoal("first_question_shown", { ms });
@@ -311,11 +313,55 @@ export function useGoalFlow() {
     await useAuthStore.getState().googleLogin(credential);
     if (useAuthStore.getState().token) navigate(startPath(session.id));
   }, [navigate, session]);
+  // Signed in: the task is the user's at once (the owner's QA, 21 Oct: it stalled at "Here's where you stand", never attached).
+  const attached = useRef("");      // once per task, however many cards show it
+  const attachUser = useCallback(async () => {
+    if (!session?.id || attached.current === session.id) return false;
+    attached.current = session.id;
+    try { keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/attach-user`, "POST", {}, { timeoutMs: 15000 }))); return true; }
+    catch { attached.current = ""; return false; }
+  }, [session?.id, keep, retryOnce]);
   return { offer, session, busy, pending, resuming, problem, failed, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
-    newPassword, passwordHold, setPassword, skipPassword };
+    newPassword, passwordHold, setPassword, skipPassword, attachUser };
 }
 
 /** The launcher on its own: it runs its own flow and shows the task card beneath it. */
+// The chat's currency before anything is said (the owner's brief, 20 Oct): the workspace's when signed in, else the visitor's
+// country's from the browser's region or time zone; never £ by default for a visitor elsewhere.
+// The recap's confirm button, in each check's words (the owner's brief, 20 Oct).
+// The recap's rows in plain words (the owner's QA, 21 Oct): never the question text, never "?:".
+const RECAP_LABEL = { amount: "Amount", use: "For", stage: "Stage", route: "Route", timing: "When", traction: "Traction", currency: "Currency",
+  customer: "For", item: "Item", customer_email: "Email", where: "Where", price: "Price", cost: "Cost", sell: "Selling", description: "Idea" };
+
+const RECAP_OK = { need_funding: "Looks right, check my readiness", launch: "Looks right, check my readiness", test_idea: "Looks right, check my idea",
+  price_offer: "Looks right, check my price", more_customers: "Looks right, show my next steps", create_invoice: "Looks right, prepare it",
+  create_quotation: "Looks right, prepare it", prepare_proposal: "Looks right, prepare it" };
+const REGION_CURRENCY = { NG: "NGN", GB: "GBP", US: "USD", GH: "GHS", KE: "KES", IE: "EUR", DE: "EUR", FR: "EUR", ES: "EUR", IT: "EUR", NL: "EUR" };
+const ZONE_CURRENCY = { "Africa/Lagos": "NGN", "Europe/London": "GBP", "Africa/Accra": "GHS", "Africa/Nairobi": "KES" };
+/** Signed in: the workspace, so the server uses its own currency (a kept "GBP" default never reaches a naira workspace). */
+function chatWorkspace() {
+  try {
+    const ws = useWorkspaceStore.getState();
+    return ws.workspaceId ? { business_id: ws.workspaceId } : {};
+  } catch { return {}; }
+}
+
+function chatCurrency() {
+  try {
+    const ws = useWorkspaceStore.getState();
+    if (ws.workspaceId && ws.currency) return ws.currency;
+  } catch { /* no workspace: the visitor's */ }
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    if (ZONE_CURRENCY[zone]) return ZONE_CURRENCY[zone];
+    const region = String((navigator.languages || [navigator.language])[0] || "").split("-")[1]?.toUpperCase();
+    if (REGION_CURRENCY[region]) return REGION_CURRENCY[region];
+    if (zone.startsWith("America/")) return "USD";
+    if (zone.startsWith("Europe/")) return "EUR";
+  } catch { /* none known */ }
+  return undefined;
+}
+
 export default function GoalLauncher({ className = "" }) {
   const flow = useGoalFlow();
   return <GoalLauncherView className={className} flow={flow}>{flow.session && <GoalTaskCard key={flow.session.id} flow={flow} placement="inline" />}</GoalLauncherView>;
@@ -414,7 +460,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     window.addEventListener(LAUNCHER_PREFILL, prefill);
     return () => window.removeEventListener(LAUNCHER_PREFILL, prefill);
   }, []);
-  const typed = useTypewriter(EXAMPLES, { paused: focused || Boolean(text) || Boolean(picking) });
+  const typed = useTypewriter(EXAMPLES, { paused: focused || Boolean(text) || Boolean(picking) || Boolean(flow?.session) });
   const placeholder = reduced || focused || text ? STATIC_EXAMPLE : `${typed}|`;
   // Three goals at a time, moving on every few seconds so all of them get seen. It waits while the
   // pointer or the keyboard is on them, and stays on the chosen goal while its task is open.
@@ -628,7 +674,15 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   };
   const [values, setValues] = useState({});
   const [editing, setEditing] = useState(() => new Set());
-  const [answeredHere, setAnsweredHere] = useState(() => new Set());      // turns taken in this card (before the server's reply is in)
+  const [answeredHere, setAnsweredHere] = useState(() => new Set());
+  // The question a reply is being read for: the card stays on it until the server answers (the owner's QA, 17 Oct: the next
+  // question showed while the reply was still being read).
+  const [awaitingKey, setAwaitingKey] = useState(null);
+  // The recap before the hand-off (the owner's brief, 20 Oct): "Here's what I'll use", then [Looks right] or [Change something].
+  const [recapOk, setRecapOk] = useState(false);
+  const [changingRecap, setChangingRecap] = useState(false);
+  const recapDone = recapOk || Boolean(session?.verification?.sent);      // a code already sent: the recap was confirmed before
+  const [awaitingText, setAwaitingText] = useState("");      // what was sent, shown at once while it is read      // turns taken in this card (before the server's reply is in)
   useEffect(() => { setAnsweredHere(new Set()); }, [session?.id]);      // said-chips that were clicked: their fields are open to change
   const [currency, setCurrency] = useState(null);
   const [error, setError] = useState("");
@@ -678,13 +732,16 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const laterSaid = (q) => Boolean(q.unsure) && Object.prototype.hasOwnProperty.call(session?.inputs || {}, q.key) && (session.inputs[q.key] === "" || session.inputs[q.key] === "unknown");
   const open_ = (q) => !q.hidden && (!given(q) || ((values[q.key] === "" || values[q.key] == null) && !laterSaid(q)));
   const currentQuestion = useMemo(() => {
-    if (session?.next !== "questions") return null;
+    const atRecap = ["identity", "prepare"].includes(session?.next);
+    if (session?.next !== "questions" && !(atRecap && editing.size)) return null;
+    const held = awaitingKey && questions.find((question) => question.key === awaitingKey);
+    if (held) return held.prefix && sign ? { ...held, prefix: sign } : held;
     const editedKey = [...editing].find((value) => questions.some((question) => question.key === value));
     // In the order asked (who it is for first), required or not: each one is a turn.
     const fallback = editedKey ? questions.find((question) => question.key === editedKey) : questions.find(open_);
     if (!fallback) return null;
     return fallback.prefix && sign ? { ...fallback, prefix: sign } : fallback;
-  }, [session?.next, questions, editing, values, sign, session?.inputs, session?.proposed, answeredHere]);      // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.next, questions, editing, values, sign, session?.inputs, session?.proposed, answeredHere, awaitingKey]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [draftValue, setDraftValue] = useState("");
   const [typing, setTyping] = useState(false);
   const [phone, setPhone] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches);
@@ -733,28 +790,94 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const [changingSaid, setChangingSaid] = useState(false);
   useEffect(() => {
     if (!currentQuestion) { setDraftValue(""); return; }
-    setDraftValue(values[currentQuestion.key] ?? currentQuestion.default ?? "");
+    setDraftValue(values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || currentQuestion.default || "");      // asked again: the current answer, to change
   }, [currentQuestion?.key, currentQuestion?.default, values]);
   const step = session?.next;
+  useEffect(() => { if (step !== "identity") { setRecapOk(false); setChangingRecap(false); } }, [step]);
   const turn = session?.agent_turn || null;
   const ackLine = turn ? turn.ack : thread.length === 0 ? session?.acknowledged : "";
   // The thread as it happened (the server's turns): each message as typed, then the Agent's one reply. The newest reply is
   // the bubble with the next question; nothing is made up for a slot the Agent never asked about.
   const said_turns = Array.isArray(session?.turns) ? session.turns : null;
+  // The server's word on what is still open wins (the owner's QA, 17 Oct): a reply it didn't keep ("what do you think") is
+  // asked again, so the card reopens that question instead of moving on to the next one.
+  useEffect(() => {
+    const last = [...(said_turns || [])].reverse().find((t) => t.role === "assistant");
+    const k = last?.next;
+    if (!k) return;
+    const kept = session?.inputs?.[k];
+    if (kept !== undefined && kept !== null && kept !== "") return;      // kept: nothing to reopen
+    setValues((v) => (v[k] !== undefined && v[k] !== "" ? { ...v, [k]: "" } : v));
+    setAnsweredHere((had) => { if (!had.has(k)) return had; const next = new Set(had); next.delete(k); return next; });
+  }, [said_turns]);      // eslint-disable-line react-hooks/exhaustive-deps
   const lastAgent = said_turns && said_turns.length && said_turns[said_turns.length - 1].role === "assistant" ? said_turns[said_turns.length - 1] : null;
   const past = said_turns ? (lastAgent ? said_turns.slice(0, -1) : said_turns) : null;
   const agentLine = lastAgent && currentQuestion && lastAgent.next === currentQuestion.key ? lastAgent.content : null;
-  const said = (session?.summary || []).filter((r) => (step === "identity" ? true : r.proposed || r.from_message));
+  const recapStep = step === "identity" || (here && step === "prepare");
+  // A change asked for at the recap (the owner's QA, 21 Oct): that one question again, with its chips and the composer.
+  const reasking = recapStep && Boolean(currentQuestion);
+  const askingNow = step === "questions" || reasking;
+  const said = (session?.summary || []).filter((r) => (recapStep ? true : r.proposed || r.from_message));
+  // The whole conversation stays on screen (the owner's brief, 20 Oct): asked, answered, recapped, never replaced.
+  const keepThread = ["questions", "identity", "prepare", "currency"].includes(step);
+  const shownTurns = step === "questions" ? past : said_turns;
   const chosen = session?.goal_label && step !== "none" && step !== "clarify" ? session.goal_label : res?.original_goal;
   const open = (k) => setEditing((s) => new Set(s).add(k));
 
+  const recapOkRef = useRef(null);
+  const [fixText, setFixText] = useState("");
+  // A correction typed at the recap: read against every answer, nothing set up or charged (the owner's QA, 21 Oct).
+  const sendFix = () => {
+    const text = fixText.trim();
+    if (!text || busy) return;
+    setFixText("");
+    setAwaitingText(text);
+    Promise.resolve(answer({}, false, { message: text, asked: null })).finally(() => setAwaitingText(""));
+  };
+  const recapShown = recapStep && !reasking && said.length > 0 && !recapDone;
+  // What "Looks right" will change on the funding case, said in the recap itself (the owner's QA, 21 Oct: one confirmation,
+  // never a second "I'll update your funding case" screen), in the chat's own words.
+  const [caseChanges, setCaseChanges] = useState([]);
+  const changesKey = recapShown && here && session?.goal_key === "need_funding" ? `${session.id}:${JSON.stringify(session.inputs || {})}` : "";
   useEffect(() => {
-    // Signed in: straight on to the task (no email step), also for a task picked up ready to prepare.
-    if (here && (step === "identity" || (step === "prepare" && session?.authenticated)) && !newPassword && !flow.passwordHold?.current) carryOn();
-  }, [here, step, carryOn, newPassword]);      // eslint-disable-line react-hooks/exhaustive-deps
+    if (!changesKey) { setCaseChanges([]); return undefined; }
+    let live = true;
+    apiRequest(`/task-sessions/${session.id}/case-changes`, "GET").then((r) => { if (live) setCaseChanges(r?.changes || []); }).catch(() => {});
+    return () => { live = false; };
+  }, [changesKey]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // "Change something": its rows brought into view (the owner's QA, 21 Oct).
+  useEffect(() => {
+    if (!changingRecap) return;
+    const rows = typeof document !== "undefined" ? document.querySelector("[data-recap-rows]") : null;
+    rows?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [changingRecap]);
+  useEffect(() => {
+    // The newest turn or card in view: the card's own thread scrolled to its end (the page itself stays where it is).
+    const go = () => { if (body.current) body.current.scrollTop = body.current.scrollHeight; };
+    go();
+    const frame = typeof requestAnimationFrame === "function" ? requestAnimationFrame(go) : null;
+    return () => { if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); };
+    // also while a reply is read and when the next question arrives (the owner's QA, 21 Oct: "I shouldn't have to scroll")
+  }, [shownTurns?.length, recapShown, step, awaitingText, currentQuestion?.key, ackLine, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (recapShown) recapOkRef.current?.focus({ preventScroll: true });
+  }, [recapShown]);
+  const attaching = useRef(false);
+  useEffect(() => {
+    // Signed in, the questions done: the task is attached to the user here (never left awaiting an email), then the recap.
+    if (here && step === "identity" && session && !session.authenticated && !newPassword && !attaching.current) {
+      attaching.current = true;
+      flow.attachUser?.().finally(() => { attaching.current = false; });
+    }
+  }, [here, step, session?.authenticated, newPassword]);      // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // The recap first, signed in too (the owner's brief, 20 Oct): "Here's what I'll use", then on only after "Looks right".
+    const recapped = recapDone || !(session?.summary || []).length;
+    if (here && recapped && (step === "identity" || (step === "prepare" && session?.authenticated)) && !newPassword && !flow.passwordHold?.current) carryOn();
+  }, [here, step, carryOn, newPassword, recapDone]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) return null;
-  if (here && step === "identity" && !newPassword) return null;      // signed in: on to the task, unless a new account is setting its password
+  if (here && (step === "identity" || step === "prepare") && !newPassword && (recapDone || !(session?.summary || []).length)) return null;      // signed in, recap confirmed: on to the task
 
   function submitQuestion(nextValue = draftValue, typed = nextValue === draftValue) {
     const activeQuestion = currentQuestion;
@@ -776,7 +899,6 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     setValues(nextValues);
     if (editing.has(activeQuestion.key)) setEditing((had) => { const next = new Set(had); next.delete(activeQuestion.key); return next; });
     setError("");
-    setAnsweredHere((had) => new Set([...had, activeQuestion.key]));
     // Only what was given goes back: a default nobody confirmed is not sent as an answer (QA P2-3).
     const answers = Object.fromEntries(questions.filter((question) => nextValues[question.key] !== "" && nextValues[question.key] != null
       && (question.key === activeQuestion.key || given(question))).map((question) => [question.key, nextValues[question.key]]));
@@ -784,15 +906,20 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     if (writtenIn && writtenIn !== (currency || session.currency || "GBP")) answers.currency_said = writtenIn;
     const chipWords = !asTyped ? [...(activeQuestion.options || []), ...(activeQuestion.chips || [])].find((o) => String(o.value) === String(nextValue))?.label
       || (nextValue === "unknown" ? activeQuestion.unsure || "Not sure" : "") : "";
+    setDraftValue("");      // cleared on send, whatever was sent (the owner's brief, 20 Oct)
+    // Every answer, typed or picked, is read first: the card moves on to the next question only once the server has kept it
+    // (the owner's QA, 21 Oct: a picked answer showed the next question while it was still "Working…").
+    setAwaitingKey(activeQuestion.key);
+    setAwaitingText(asTyped || chipWords || String(nextValue ?? ""));
     Promise.resolve(answer(answers, questions.some((question) => question.proposed),
       asTyped ? { message: asTyped, asked: activeQuestion.key } : chipWords ? { picked: chipWords, asked: activeQuestion.key } : null)).then((ok) => {
-      if (ok === false) setAnsweredHere((had) => { const next = new Set(had); next.delete(activeQuestion.key); return next; });      // never advanced on a failure
-    });
+      if (ok !== false) setAnsweredHere((had) => new Set([...had, activeQuestion.key]));      // never advanced on a failure
+    }).finally(() => { setAwaitingKey(null); setAwaitingText(""); });
   }
 
   function submit(e) {
     e?.preventDefault();
-    if (step === "questions") {
+    if (askingNow) {      // a question, or one asked again at the recap
       submitQuestion();
     } else if (step === "identity") {
       setNote("");
@@ -821,7 +948,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
     // Under 768px: a full-screen sheet. From 1024px: the right-hand column, where the product preview was, never taller than the hero.
     : `${closed ? "max-md:hidden" : "max-md:flex"} flex-col bg-white max-md:fixed max-md:inset-0 max-md:z-[70] max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out] md:hidden `
       + "lg:absolute lg:inset-y-0 lg:left-6 lg:right-0 lg:z-10 lg:flex lg:rounded-2xl lg:border-2 lg:border-brand-500 lg:shadow-2xl lg:shadow-brand-900/10 lg:ring-4 lg:ring-brand-500/10 lg:motion-safe:animate-[ea-fade-in_.2s_ease-out]";
-  const primary = step === "questions" ? "Send" : step === "identity" ? (newPassword ? "Save and continue" : "Send") : null;
+  const primary = step === "questions" ? "Send" : step === "identity" && (recapDone || said.length === 0) && !(here && !newPassword) ? (newPassword ? "Save and continue" : "Send") : null;
 
   const sheet = (
     <section ref={card} aria-label="Your task" data-task-card data-placement={placement} className={`text-left ${shell}`}>
@@ -829,6 +956,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         <div className="min-w-0">
           <p className="truncate text-base font-bold text-slate-900" data-chosen title={chosen}>{chosen}</p>
           {res.original_goal && res.original_goal !== chosen && <p className="mt-0.5 truncate text-[12px] text-slate-400" title={res.original_goal}>You asked: {res.original_goal}</p>}
+          {res.execution_boundary && <p className="mt-0.5 text-[11.5px] text-slate-400" data-boundary>{res.execution_boundary}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button type="button" onClick={startOver} className="pt-0.5 text-[12px] font-semibold text-brand-700 underline-offset-2 hover:underline">
@@ -862,14 +990,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
             <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{session.value_line || res.message}</p>
           </div>
-          {res.execution_boundary && (
-            <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12px] text-amber-900" data-boundary role="note">
-              <InfoIcon /><span>{res.execution_boundary}</span>
-            </p>
-          )}
           {res.recommended_path?.length > 1 && (
             <p data-path className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-900">
-              I’ll check what looks ready and show you the gaps.
+              Your result comes straight after the questions, and starting is free.
             </p>
           )}
 
@@ -907,7 +1030,8 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {step === "questions" && said.length > 0 && (
+          {false && step === "questions" && said.length > 0 && (
+            // Removed from the thread (the owner's brief, 20 Oct): the recap before the hand-off shows what will be used.
             // What was read from their own sentence: one compact line, shown once (QA P5-1). "Edit" lists each, to pick the one to change.
             <SaidLine items={said.map((r) => ({ key: r.key, text: r.key === "currency" ? shownCurrency : r.value }))} editing={changingSaid}
               onEdit={() => setChangingSaid(true)}>
@@ -923,30 +1047,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
               </div>
             </SaidLine>
           )}
-          {step === "identity" && said.length > 0 && (
-            // At the checkpoint: everything given, a chip each.
-            <div data-said>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{step === "identity" ? "What you told me" : "From what you said"}</p>
-              <div className="mt-1 flex flex-wrap gap-1.5">
-                {said.map((r) => {
-                  const canEdit = step === "questions" && (r.key !== "currency" || session.currency_options?.length > 0);
-                  const label = `${r.label.replace(/\?$/, "")}: ${r.key === "currency" ? shownCurrency : r.value}`;
-                  return canEdit ? (
-                    <button key={r.key} type="button" data-said-chip={r.key} aria-label={`Change ${label}`} aria-pressed={editing.has(r.key)} onClick={() => open(r.key)}
-                      className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold transition ${editing.has(r.key) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-slate-50 text-slate-800 hover:border-brand-300"}`}>
-                      {r.key === "currency" ? shownCurrency : r.value}
-                    </button>
-                  ) : (
-                    <span key={r.key} data-said-chip={r.key} title={label} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-semibold text-slate-800">{r.key === "currency" ? shownCurrency : r.value}</span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {step === "questions" && past && past.length > 0 && (
+          {keepThread && (reasking ? said_turns : shownTurns) && (reasking ? said_turns : shownTurns).length > 0 && (
             <ol className="space-y-2" aria-label="The conversation so far" data-thread>
-              {past.map((t, n) => (
+              {(reasking ? said_turns : shownTurns).map((t, n) => (
                 <li key={n} data-turn={t.role}>
                   {t.role === "user"
                     ? <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-left text-[13px] font-medium text-white" data-user-says>{t.content}</p>
@@ -954,6 +1057,57 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                 </li>
               ))}
             </ol>
+          )}
+          {recapShown && (
+            // One recap card before anything is set up, the last thing in the thread, under "Here's where you stand" (the owner's
+            // QA, 21 Oct: it rendered at the top and had to be scrolled to).
+            <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm" data-recap>
+              {/* Said once (the owner's QA, 21 Oct): the chat's last line already says "Here's what I'll use:". */}
+              {!String([...(said_turns || [])].reverse().find((t) => t.role === "assistant")?.content || "").includes("what I'll use") && (
+                <p className="text-[13px] font-semibold text-slate-900">Here's what I'll use:</p>
+              )}
+              <p className="mt-1 text-[13px] leading-5 text-slate-700" data-recap-line>
+                {said.filter((r) => r.key !== "currency").map((r) => r.value).join(" · ")}
+              </p>
+              {caseChanges.length > 0 && (
+                <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[12.5px] text-slate-700" data-recap-case-changes>
+                  <p className="font-semibold text-slate-900">This updates your funding case:</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {caseChanges.map((c) => <li key={c.field}>{c.field}: {c.before === "Not set" ? c.now : `${c.before} to ${c.now}`}</li>)}
+                  </ul>
+                </div>
+              )}
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <button type="button" ref={recapOkRef} disabled={busy} onClick={() => { setRecapOk(true); setChangingRecap(false); if (here) setError(carryOn()); }} data-recap-ok
+                  className="rounded-lg bg-[#1F5BFF] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1747CC] disabled:opacity-60">
+                  {RECAP_OK[session.goal_key] || "Looks right, carry on"}
+                </button>
+                <button type="button" onClick={() => setChangingRecap((v) => !v)} aria-expanded={changingRecap} data-recap-change
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-[13px] font-semibold text-slate-700 hover:border-brand-300">Change something</button>
+              </div>
+              {changingRecap && (
+                <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100" role="group" aria-label="Change something" data-recap-rows>
+                  {said.filter((r) => r.key !== "currency" || session.currency_options?.length > 0).map((r) => (
+                    <li key={r.key} className="flex items-center gap-3 px-3 py-2 text-[13px]" data-recap-row={r.key}>
+                      <span className="w-20 shrink-0 text-slate-500">{RECAP_LABEL[r.key] || String(r.label || r.key).replace(/[?.:]+$/, "")}</span>
+                      <span className="min-w-0 flex-1 break-words font-medium text-slate-900">{r.key === "currency" ? shownCurrency : r.value}</span>
+                      <button type="button" data-said-chip={r.key} onClick={() => { open(r.key); setChangingRecap(false); }}
+                        className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">Change</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {step === "identity" && said.length > 0 && recapDone && (
+            // After the recap, at the sign-in: what will be saved, a chip each.
+            <div data-said>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">What you told me</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {said.map((r) => <span key={r.key} data-said-chip={r.key} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-semibold text-slate-800">{r.key === "currency" ? shownCurrency : r.value}</span>)}
+              </div>
+            </div>
           )}
           {step === "questions" && !past && thread.length > 0 && (
             <ol className="space-y-2" aria-label="The conversation so far" data-thread>
@@ -969,7 +1123,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </ol>
           )}
 
-          {step === "questions" && currentQuestion && typing && (
+          {askingNow && currentQuestion && typing && (
             <p role="status" aria-label="EnterprateAI is typing" data-typing className="flex w-fit gap-1 rounded-2xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-slate-100">
               {[0, 1, 2].map((n) => <span key={n} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-slate-400 motion-safe:animate-bounce" style={{ animationDelay: `${n * 120}ms` }} />)}
             </p>
@@ -1001,7 +1155,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
             </div>
           )}
 
-          {step === "questions" && currentQuestion && !typing && (
+          {askingNow && currentQuestion && !typing && (
             <div className="space-y-2" data-question-turn aria-live="polite">
               {/* One acknowledgement per answer, in the Agent's own bubble: what it captured (the last turn's, or what it read
                   from the first message), an answer to anything the owner asked, then the question, or a check to confirm. */}
@@ -1012,6 +1166,12 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   {turn?.confirm?.[0]?.slot === currentQuestion.key ? turn.confirm[0].question : currentQuestion.label}
                 </>}
               </div>
+              {awaitingKey && awaitingText && (
+                <>
+                  <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white" data-sending>{awaitingText}</div>
+                  <p role="status" className="text-[12px] text-slate-500" data-reading>Reading your reply…</p>
+                </>
+              )}
               {currentQuestion.type === "choice" ? (
                 <div className="flex flex-wrap gap-2" role="group" aria-label={currentQuestion.label} data-question-choice>
                   {[...currentQuestion.options, ...(currentQuestion.unsure && !currentQuestion.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((o) => (
@@ -1022,14 +1182,10 @@ export function GoalTaskCard({ flow, placement = "column" }) {
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl border border-white bg-white p-3 shadow-sm">
-                  {currentQuestion.type === "date"
-                    ? <UkDateInput aria-label={currentQuestion.label} value={draftValue} onChange={setDraftValue} className={inputCls} />
-                    : <input ref={reply} aria-label={currentQuestion.label} placeholder="Type your reply" value={draftValue} onChange={(e) => setDraftValue(e.target.value)}
-                    inputMode={currentQuestion.type === "number" ? "decimal" : undefined} type="text" className={`${inputCls} ${currentQuestion.prefix ? "pl-8" : ""}`} />}
-                  {currentQuestion.prefix && <span className="pointer-events-none absolute left-7 top-[50%] hidden text-sm font-medium text-slate-500" />}
+                // One input only, the composer at the bottom (the owner's brief, 20 Oct): the quick replies sit under the question.
+                <div>
                   {(currentQuestion.chips?.length > 0 || currentQuestion.unsure) && (
-                    <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label={currentQuestion.label}>
+                    <div className="flex flex-wrap gap-1.5" role="group" aria-label={currentQuestion.label}>
                       {[...(currentQuestion.chips || []), ...(currentQuestion.unsure ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((chip) => (
                         <button key={chip.value} type="button" disabled={busy} onClick={() => submitQuestion(chip.value, false)} data-quick-reply
                           className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold transition ${String(draftValue) === String(chip.value) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-slate-50 text-slate-700 hover:border-brand-300"}`}>
@@ -1046,7 +1202,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           {step === "questions" && session.progress?.total > 0 && (
             <p className="text-[11px] text-slate-400" data-progress aria-live="polite">{session.progress.answered} of {session.progress.total}</p>
           )}
-          {step === "identity" && (
+          {step === "identity" && (recapDone || said.length === 0) && !(here && !newPassword) && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-checkpoint>
               <div className="space-y-2" data-identity-turn>
                 <div className="rounded-2xl bg-white px-3 py-2 text-[13px] leading-5 text-slate-800 shadow-sm ring-1 ring-slate-100">
@@ -1130,6 +1286,30 @@ export function GoalTaskCard({ flow, placement = "column" }) {
 
         {/* Always in reach, however long the card: the one next step, and the way out. */}
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-b-2xl border-t border-slate-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-task-footer>
+          {askingNow && currentQuestion ? (
+            <div className="flex w-full items-center gap-2" data-composer>
+              {currentQuestion.prefix
+                ? <span className="min-w-0 flex-1"><MoneyInput aria-label={currentQuestion.label} value={draftValue} currency={shownCurrency} onChange={setDraftValue} className={`${inputCls} w-full`} /></span>
+                : currentQuestion.type === "date"
+                ? <UkDateInput aria-label={currentQuestion.label} value={draftValue} onChange={setDraftValue} className={`${inputCls} flex-1`} />
+                : <input ref={reply} aria-label={currentQuestion.label} placeholder={currentQuestion.type === "choice" ? "Pick one above, or type your reply" : "Type your reply"}
+                    value={!reasking && [...(currentQuestion.options || []), ...(currentQuestion.chips || [])].some((o) => String(o.value) === String(draftValue)) ? "" : draftValue}
+                    onChange={(e) => setDraftValue(e.target.value)}
+                    inputMode={currentQuestion.type === "number" ? "decimal" : undefined} type="text" className={`${inputCls} min-w-0 flex-1`} />}
+              <button type="submit" disabled={busy} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1F5BFF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#1747CC] disabled:opacity-60">
+                <span>{busy ? (slow ? "Still working…" : "Working…") : "Send"}</span>
+                {!busy && <ArrowRightIcon />}
+              </button>
+            </div>
+          ) : recapShown ? (
+            <div className="flex w-full items-center gap-2" data-composer data-recap-composer>
+              <input aria-label="Change something in your own words" placeholder="Or type what to change" value={fixText}
+                onChange={(e) => setFixText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFix(); } }}
+                type="text" className={`${inputCls} min-w-0 flex-1`} />
+              <button type="button" disabled={busy || !fixText.trim()} onClick={sendFix}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60">Send</button>
+            </div>
+          ) : (<>
           <div className="flex items-center gap-3">
             <button type="button" onClick={startOver} className="text-[13px] font-medium text-slate-500 hover:text-slate-700">{step === "none" ? "Ask for something else" : "Start again"}</button>
             {step === "identity" && !here && !sent && !newPassword && <button type="button" onClick={() => setError(carryOn())} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Sign in with a password</button>}
@@ -1140,6 +1320,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
               {!busy && <ArrowRightIcon />}
             </button>
           )}
+          </>)}
         </footer>
       </form>
     </section>

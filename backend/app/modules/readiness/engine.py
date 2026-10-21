@@ -376,12 +376,25 @@ def document_facts(subject: dict, forecast: dict | None) -> dict:
 
 EQUITY_ONLY_DOCUMENTS = ("executive_summary", "team_summary")
 
+_SIGN = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}
+
+
+def _cash(currency: str | None, value: Any) -> str:
+    """₦5,000,000, never "NGN 5,000,000.00" (the owner's QA, 21 Oct): the sign, whole units above 100. Wording only."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    sign = _SIGN.get(str(currency or "").upper(), f"{currency} " if currency else "")
+    text = f"{abs(v):,.2f}".replace(".00", "") if abs(v) < 100 else f"{round(abs(v)):,}"
+    return f"{chr(0x2212) if v < 0 else ''}{sign}{text}"
+
 
 def route_note(subject: dict) -> str | None:
     """Said on a loan or grant case: what the check is measured against for now."""
     route = str(subject.get("route_preference") or "").lower()
-    return (f"You're considering a {route}. This check uses our equity preparation checklist for now, without the investor-only materials."
-            if route in ("loan", "grant") else None)
+    # Plain words, nothing about equity on a loan case (the owner's QA, 21 Oct).
+    return (f"{route.capitalize()} checklist coming soon, using general checks." if route in ("loan", "grant") else None)
 
 
 def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
@@ -416,13 +429,15 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
         # The action asks only for what is missing: an amount already given is not asked for again.
         ask = [w for w, v in (("the amount you want to raise", target), ("its currency" if target is None else "the currency", currency or None),
                               ("when you expect to receive it" if target is None else "when you expect to receive the funding", receipt)) if v is None]
-        have = [f"{currency or ''} {target:,.2f}".strip()] if target is not None else []
+        have = [_cash(currency, target)] if target is not None else []
+        only_date = target is not None and currency and receipt is None
         r["C1.A"] = g["G1"] = _res(UNKNOWN, "Not entered yet: " + ", ".join(gone) + "." + (f" Already entered: {have[0]}." if have else ""),
-                                   how_to="Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ", then confirm the amount and date.")
+                                   how_to="When do you need the money?" if only_date else
+                                   "Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ".")
     elif not s.get("timing_confirmed"):
-        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not confirmed yet.", how_to="Confirm the amount and date you entered.")
+        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not saved as final yet.", how_to="Check the amount and date in Your answers, then save.")
     else:
-        r["C1.A"] = g["G1"] = _res(PASSED, f"{currency} {target:,.2f}, expected {receipt.strftime('%d %b %Y').lstrip('0')}.")
+        r["C1.A"] = g["G1"] = _res(PASSED, f"{_cash(currency, target)}, expected {receipt.strftime('%d %b %Y').lstrip('0')}.")
 
     if not blank(s.get("purpose")) and not milestones:
         r["C1.B"] = _res(UNKNOWN, "What the funding is for is entered. It isn't linked to a milestone yet.",
@@ -450,11 +465,11 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     else:
         total = sum((amt for amt, _ in parsed), Decimal(0)).quantize(fc.CENT)
         if total == target.quantize(fc.CENT):
-            r["C2.A"] = g["G2"] = _res(PASSED, f"Allocations total {currency} {total:,.2f}, equal to the target.")
+            r["C2.A"] = g["G2"] = _res(PASSED, f"Allocations total {_cash(currency, total)}, equal to the target.")
         else:
             diff = target.quantize(fc.CENT) - total
-            r["C2.A"] = g["G2"] = _res(FAILED, f"Allocations total {currency} {total:,.2f} against a target of {currency} {target:,.2f}: "
-                                               f"{currency} {abs(diff):,.2f} {'is not allocated' if diff > 0 else 'more than the target'}.",
+            r["C2.A"] = g["G2"] = _res(FAILED, f"Allocations total {_cash(currency, total)} against a target of {_cash(currency, target)}: "
+                                               f"{_cash(currency, abs(diff))} {'is not allocated' if diff > 0 else 'more than the target'}.",
                                        trigger={"target_amount": fc.money_str(target), "allocations_total": fc.money_str(total)})
     if not allocations:
         r["C2.B"] = _res(UNKNOWN, "No allocations yet.")

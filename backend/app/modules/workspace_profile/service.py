@@ -61,6 +61,30 @@ def owner_marks(data: dict | None, before: dict | None, after: dict) -> dict:
     return prov
 
 
+def _rename_log(data: dict, before: dict | None, after: dict, by: str) -> dict:
+    """A rename, kept in the workspace's history: "Renamed from X to Y by <who>, <date>" (the owner's QA, 16 Oct)."""
+    old, new = str((before or {}).get("company_name") or "").strip(), str((after or {}).get("company_name") or "").strip()
+    if not old or not new or old == new:
+        return {}
+    entry = {"kind": "workspace_renamed", "from": old, "to": new, "by": by, "at": datetime.now(timezone.utc).isoformat()}
+    return {"workspace_history": [entry, *list((data or {}).get("workspace_history") or [])][:200]}
+
+
+async def _after_rename(workspace_id: str, before: dict | None, after: dict) -> dict:
+    """After a rename: the unsent drafts still showing the old name, to ask the owner about. Nothing is changed here."""
+    old, new = str((before or {}).get("company_name") or "").strip(), str((after or {}).get("company_name") or "").strip()
+    if not old or not new or old == new:
+        return {}
+    try:
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.agent.sender_refresh import drafts_with_old_name
+        return {"renamed_from": old, "unsent_drafts": await drafts_with_old_name(get_orchestrator(), workspace_id, new)}
+    except Exception:      # noqa: BLE001 - the rename is saved either way
+        import logging
+        logging.getLogger(__name__).info("drafts not listed after the rename of %s", workspace_id, exc_info=True)
+        return {"renamed_from": old, "unsent_drafts": []}
+
+
 async def _sync_catalogue(workspace_id: str) -> None:
     """The profile's services in Catalogue > Products too (the owner's QA, 15 Oct), and its country's currency saved when
     none is (16 Oct), in one guarded save of the record."""
@@ -72,6 +96,11 @@ async def _sync_catalogue(workspace_id: str) -> None:
             save_country_currency(d)
             return add_profile_services(d)
         await SupabaseBusiness().mutate(workspace_id, _both)
+        # Tasks waiting on a question the saved profile now answers (the business email) carry on straight away.
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.agent.autostart import answer_from_profile
+        orch = get_orchestrator()
+        await answer_from_profile(orch, workspace_id, await orch.rt.business.load(workspace_id), await orch.rt.store.list_runs(workspace_id, limit=200))
     except Exception:      # noqa: BLE001 - the profile is saved either way; the next save adds them
         import logging
         logging.getLogger(__name__).info("catalogue not synced from the profile for %s", workspace_id, exc_info=True)
@@ -107,11 +136,13 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
                 "workspace_profile": merged_profile.model_dump(),
                 "workspace_profile_updated_at": now,
                 "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump()),
+                **_rename_log(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump(), user_id),
             },
         )
         await _sync_catalogue(str(ws.id))
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
-        return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at}
+        return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at,
+                **(await _after_rename(str(ws.id), existing, merged_profile.model_dump()))}
 
     # Create a workspace if none exists yet
     payload = {

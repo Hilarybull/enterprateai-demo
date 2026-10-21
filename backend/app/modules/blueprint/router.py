@@ -152,12 +152,9 @@ async def blueprint_generate(
         plan_key = await entitled_plan(user_id)
         has_blueprint_grant = await _has_platform_grant(user_id, "business_plan")
         if plan_key in _FREE_PLAN_KEYS and not has_blueprint_grant:
-            existing = await list_documents(user_id=user_id, type="business_plan", limit=2)
-            if len(existing) >= _LIFETIME_BLUEPRINT_LIMIT:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You have used your free lifetime business plan. Upgrade to generate more.",
-                )
+            # The AI Business Plan Generator is on Starter and above (the pricing PDF, 19 Oct 2026).
+            from app.modules.plans.access import refusal
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, "starter_insight", "The AI Business Plan Generator"))
 
     feature_code = _blueprint_feature_code(payload.type, payload.sections)
     logger.info("blueprint-generate start user=%s type=%s", user_id, payload.type)

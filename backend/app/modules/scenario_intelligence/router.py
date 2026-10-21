@@ -63,6 +63,10 @@ async def recommendations_generate(
     payload: RecommendationGenerateRequest,
     _user=Depends(get_current_user),
 ) -> RecommendationGenerateResponse:
+    # AI-Powered Decision Recommendations are on Starter and above (the pricing PDF, 19 Oct 2026).
+    from app.modules.plans.access import has_grant, plan_meets, refusal
+    if not (await plan_meets(_user["id"], "starter_insight") or await has_grant(_user["id"], "simulation")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(_user["id"], "starter_insight", "AI-Powered Decision Recommendations"))
     # In MVP, use current state to re-derive risk signals deterministically.
     risk_signals = detect_risks(payload.state)
     recs = recommend_scenarios(risk_signals)
@@ -79,7 +83,8 @@ async def scenario_templates_list(
 
 
 # QA PF1: which scenarios each plan can run, checked on the server too (the page's planAllowsScenario, the same
-# rule): the baseline projection on every plan; four scenarios on Starter; every scenario from Decision Engine.
+# rule): the baseline projection on every plan; four scenarios on Starter, 4 runs a month; every scenario, with no
+# monthly limit, from Decision Engine.
 # Running one is deterministic and free (Credit System v2 §6); only the AI explanation is charged.
 STARTER_SCENARIOS = ("tmpl_client_loss", "tmpl_payment_delay", "tmpl_revenue_drop", "tmpl_cost_increase")
 FREE_SCENARIOS = ("do_nothing_projection",)
@@ -91,12 +96,30 @@ def scenario_minimum_plan(template_id: str | None) -> str:
     return "starter_insight" if template_id in STARTER_SCENARIOS else "decision_engine"
 
 
-async def _require_scenario(user_id: str, template_id: str | None, name: str) -> None:
-    from app.modules.plans.access import has_grant, plan_meets, refusal
+STARTER_RUNS_A_MONTH = 4      # the owner (20 Oct 2026): 4 scenario simulations a month on Starter, as the Agent counts them
+
+
+async def _require_scenario(user_id: str, template_id: str | None, name: str, business_id: str | None = None) -> None:
+    from app.modules.plans.access import effective_plan_key, has_grant, plan_meets, refusal
     need = scenario_minimum_plan(template_id)
-    if need == "explorer" or await has_grant(user_id, "simulation") or await plan_meets(user_id, need):
+    if need == "explorer" or await has_grant(user_id, "simulation"):
         return
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, need, name or "This scenario"))
+    if not await plan_meets(user_id, need):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, need, name or "This scenario"))
+    if business_id and await effective_plan_key(user_id) == "starter_insight":
+        # Starter: 4 scenario simulations a month (the baseline projection is free and never counted).
+        from datetime import datetime, timezone
+        from app.core.supabase import sb_select
+        start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        try:
+            runs = await sb_select("scenario_runs", filters=[("business_id", "eq", business_id), ("created_at", "gte", start)], columns="scenario_template_id") or []
+        except Exception:      # noqa: BLE001 - can't count: the run goes ahead
+            runs = []
+        if len([r for r in runs if r.get("scenario_template_id") not in FREE_SCENARIOS]) >= STARTER_RUNS_A_MONTH:
+            detail = await refusal(user_id, "decision_engine", "More scenario simulations")
+            detail["message"] = (f"You've used all {STARTER_RUNS_A_MONTH} scenario simulations included in the Starter plan this month. "
+                                 "Decision Engine has no monthly limit.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 # ── QA PF4: no run (and no charge) without the data a projection needs ──────────────────────────────────────────
@@ -156,7 +179,8 @@ async def scenario_runs_create(
     template = resolve_template(payload.scenario_template_id)
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scenario template not found")
-    await _require_scenario(_user["id"], payload.scenario_template_id, getattr(template, "name", None) or payload.scenario_name or "This scenario")
+    await _require_scenario(_user["id"], payload.scenario_template_id, getattr(template, "name", None) or payload.scenario_name or "This scenario",
+                            business_id=payload.business_id)
     from app.modules.scenario_intelligence.service import CLIENT_SCENARIOS, has_client
     if payload.scenario_template_id in CLIENT_SCENARIOS and not has_client(payload.state):
         raise HTTPException(status_code=422, detail={"error": "NO_CLIENT_ON_RECORD",

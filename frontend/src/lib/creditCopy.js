@@ -23,3 +23,10 @@ export const creditCopy = {
 
 // Words a user must never see in credit copy (tests read every template against this).
 export const NOT_FOR_USERS = /\b(fields?|held|hold|committed|commit|agent_task|_full|AI fills)\b/i;
+
+// "Welcome credits · valid to 18 Dec": Explorer's 50 welcome AI credits last 60 days (the pricing PDF, 19 Oct 2026).
+export function welcomeWords(info) {
+  if (!info?.welcome_expires_at) return "Welcome credits";
+  const d = new Date(info.welcome_expires_at);
+  return Number.isNaN(d.getTime()) ? "Welcome credits" : `Welcome credits · valid to ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+}

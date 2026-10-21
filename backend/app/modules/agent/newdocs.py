@@ -20,7 +20,7 @@ from app.modules.agent.models import (
     A1_ASSIST, A3_EXECUTE_WITH_APPROVAL, Done, Next, StepDefinition, WaitForInput, WorkflowDefinition, new_id,
 )
 from app.modules.agent import workflows as _wf      # the payment-monitoring steps are Quote to Cash's own
-from app.modules.agent.tools import _amounts, _currency, _customers, _products, product_cost, product_price, valid_email
+from app.modules.agent.tools import _amounts, _asked_currency, _currency, _customers, _products, product_cost, product_price, valid_email
 
 _TRIGGERS = ("text", "ui_action", "api", "voice")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
@@ -613,19 +613,19 @@ async def add_item_step(ctx):
     # B4: a cost not given is unknown (None), never 0: a 0 cost made the margin 100%.
     cost = float(a["cost"]) if str(a.get("cost") if a.get("cost") is not None else "").strip() not in ("", "unknown") else None
     now = ctx.now().isoformat()
+    cur = _asked_currency(ctx, await ctx.rt.business.load(ctx.run["business_id"]))      # "£65" is £65 (the owner's QA, 20 Oct)
 
     def _apply(data: dict) -> str:
         products = data.setdefault("catalogue", {}).setdefault("products", [])
         for p in products:
             if str(p.get("name") or "").strip().lower() == name.lower():
-                p.update({"base_price": bz.money(price), **({"cost_of_sales": bz.money(cost)} if cost is not None else {}), "updated_at": now})
+                p.update({"base_price": bz.money(price), **({"cost_of_sales": bz.money(cost)} if cost is not None else {}), "currency": cur, "updated_at": now})
                 return "updated"
         products.append({"id": new_id(), "name": name, "base_price": bz.money(price), "cost_of_sales": bz.money(cost) if cost is not None else None, "created_by_agent": True,
-                         "agent_run_id": ctx.run["id"], "created_at": now})
+                         "currency": cur, "agent_run_id": ctx.run["id"], "created_at": now})
         return "added"
     how = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    data = await ctx.rt.business.load(ctx.run["business_id"])
-    return Done(f"Saved: {name} is {'now priced at' if how == 'updated' else 'in your catalogue at'} {fmt_money(price, bz.currency_of(data))}."
+    return Done(f"Saved: {name} is {'now priced at' if how == 'updated' else 'in your catalogue at'} {fmt_money(price, cur)}."
                 + ("" if cost is not None else " Its cost isn't known yet, so its margin isn't shown."),
                 outcome={"item": name, "links": [{"label": "Catalogue", "to": "/catalogue"}]})
 
@@ -652,17 +652,18 @@ async def record_expense_step(ctx):
     if not vendor or not what or amount <= 0:
         return form(a, "I need the supplier, what it was for, and an amount above 0.")
     now = ctx.now()
+    cur = _asked_currency(ctx, data)      # the currency it was given in ("£500"), never the workspace's by default (QA, 20 Oct)
 
     def _apply(d: dict) -> str:
         expenses = bz.records(d, "expenses")
         ref = bz.next_reference("EXP", expenses, now)
         expenses.append({"id": new_id(), "reference": ref, "vendor_name": vendor, "party_name": vendor, "party_type": "vendor", "description": what,
                          "amount": bz.money(amount), "total_amount": bz.money(amount), "date": str(a.get("date") or today)[:10],
-                         "status": "paid" if a.get("paid") != "no" else "pending", "currency": bz.currency_of(d), "source": "EnterprateAI Agent",
+                         "status": "paid" if a.get("paid") != "no" else "pending", "currency": cur, "source": "EnterprateAI Agent",
                          "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
         return ref
     ref = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    return Done(f"Saved: {fmt_money(amount, bz.currency_of(data))} to {vendor} for {what} ({ref}).",
+    return Done(f"Saved: {fmt_money(amount, cur)} to {vendor} for {what} ({ref}).",
                 outcome={"reference": ref, "amount": amount, "links": [{"label": "Expenses", "to": "/operations?tab=Procurement"}]})
 
 

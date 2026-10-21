@@ -7,7 +7,8 @@ import { currencySign, formatCurrency, newRecordId, todayLocal } from "../lib/fo
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useWorkspaceStore } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
+import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
 import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import ErrorBoundary, { Guarded } from "../components/ErrorBoundary";
@@ -831,10 +832,14 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
+function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
+  // A new document starts in the workspace currency (the owner's QA, 21 Oct: naira typed into a form that showed GBP was
+  // saved as GBP). Its own currency, once it has one, is kept for ever.
+  const storeIso = isoOfCurrency(useWorkspaceStore(st => st.currency));
+  const wsIso = isoOfCurrency(givenCurrency) || storeIso || "GBP";
 
   const [form, setForm] = React.useState(() => {
     const rawRef = record?.invoice_number || record?.reference || record?.quote_number || "";
@@ -859,7 +864,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       date: record?.date || record?.expense_date || todayLocal(),
       end_date: record?.end_date || "",
       payments: record?.payments || [],
-      currency: record?.currency || record?.source_currency || "",
+      currency: record?.currency || record?.source_currency || wsIso,
       payment_terms: record?.payment_terms || "",
       notes: record?.notes || "",
       vat_rate: record?.vat_rate != null ? String(record.vat_rate) : "0",
@@ -946,7 +951,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     const ref = refLabel || "";
     const party = form.customer_name || form.vendor_name || form.party_name || "—";
     const amt = Number(form.amount || 0);
-    const cur = form.currency || "GBP";
+    const cur = form.currency || wsIso;
     const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(n);
     const totalPaidAmt = (form.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
     const balanceDue = Math.max(0, amt - totalPaidAmt);
@@ -1005,7 +1010,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     <td style="padding:0 40px 0 20px; vertical-align:top; text-align:right;">
       ${form.due_date ? `<p style="font-size:9px; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin:0 0 6px 0;">Due Date</p>
       <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${new Date(form.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</p>` : `<p style="font-size:9px; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin:0 0 6px 0;">Currency</p>
-      <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${form.currency || "GBP"}</p>`}
+      <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${form.currency || wsIso}</p>`}
     </td>
   </tr>
 </table>
@@ -1197,15 +1202,15 @@ ${form.notes ? `<!-- NOTES -->
                         <tr key={item.id || i} className="border-t border-slate-100">
                           <td className="px-4 py-2.5 text-slate-700">{item.description || "—"}</td>
                           <td className="px-3 py-2.5 text-center text-slate-500">{item.qty || 1}×</td>
-                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || "GBP")}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || "GBP")}</td>
+                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || wsIso)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || wsIso)}</td>
                         </tr>
                       );
                     }) : (
                       <tr className="border-t border-slate-100">
                         <td className="px-4 py-3 text-slate-700">{form.description || "—"}</td>
                         <td colSpan={2}></td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(totalAmt, form.currency || "GBP")}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(totalAmt, form.currency || wsIso)}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1214,20 +1219,20 @@ ${form.notes ? `<!-- NOTES -->
               {/* Totals */}
               <div className="space-y-1.5">
                 {lineItems.length > 0 ? (<>
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || "GBP")}</span></div>
-                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT</span><span>{formatCurrency(liTotalVat, form.currency || "GBP")}</span></div>}
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || wsIso)}</span></div>
+                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT</span><span>{formatCurrency(liTotalVat, form.currency || wsIso)}</span></div>}
                 </>) : (
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(totalAmt, form.currency || "GBP")}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(totalAmt, form.currency || wsIso)}</span></div>
                 )}
                 {totalPaid > 0 && (
                   <div className="flex justify-between text-sm text-emerald-600">
                     <span>Amount Received</span>
-                    <span>{formatCurrency(totalPaid, form.currency || "GBP")}</span>
+                    <span>{formatCurrency(totalPaid, form.currency || wsIso)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3 mt-1">
                   <span className="text-sm font-bold text-indigo-800">Balance Due</span>
-                  <span className="text-base font-bold text-indigo-700">{formatCurrency(remaining, form.currency || "GBP")}</span>
+                  <span className="text-base font-bold text-indigo-700">{formatCurrency(remaining, form.currency || wsIso)}</span>
                 </div>
               </div>
               {/* Notes */}
@@ -1256,7 +1261,7 @@ ${form.notes ? `<!-- NOTES -->
               )}
             </Field>
             <Field label="Currency">
-              <select value={form.currency || "GBP"} onChange={e => set("currency")(e.target.value)}
+              <select value={form.currency || wsIso} onChange={e => set("currency")(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300">
                 {CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}
               </select>
@@ -1301,7 +1306,7 @@ ${form.notes ? `<!-- NOTES -->
                         </div>
                       </div>
                       <div className="flex justify-end text-[11px] text-slate-500">
-                        Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || "GBP")}</span>
+                        Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                       </div>
                     </div>
                   );
@@ -1331,7 +1336,7 @@ ${form.notes ? `<!-- NOTES -->
                             <button key={i} type="button" onClick={() => addLineItem(p)}
                               className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition">
                               <div className="text-sm text-slate-800 dark:text-slate-100 font-medium">{p.name}</div>
-                              {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || "GBP")}</div>}
+                              {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || wsIso)}</div>}
                             </button>
                           ))}
                           {catalogueProducts.filter(p => !catalogueSearch || (p.name || "").toLowerCase().includes(catalogueSearch.toLowerCase())).length === 0 && (
@@ -1347,7 +1352,7 @@ ${form.notes ? `<!-- NOTES -->
               <div className="mt-3 rounded-xl bg-white border border-slate-200 px-4 py-3 space-y-2 dark:border-slate-700 dark:bg-slate-900">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs text-slate-500">Subtotal</span>
-                  <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || "GBP")}</span>
+                  <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || wsIso)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs text-slate-500 shrink-0">VAT %</label>
@@ -1355,11 +1360,11 @@ ${form.notes ? `<!-- NOTES -->
                     <input type="number" value={form.vat_rate} onChange={e => set("vat_rate")(e.target.value)} placeholder="0" min="0" max="100"
                       className="w-20 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm text-slate-900 text-right focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
                     <span className="text-xs text-slate-400">=</span>
-                    <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || "GBP")}</span>
+                    <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || wsIso)}</span>
                   </div>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-slate-800 dark:text-slate-100 border-t border-slate-100 dark:border-slate-800 pt-2">
-                  <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || "GBP")}</span>
+                  <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || wsIso)}</span>
                 </div>
               </div>
             </div>
@@ -1418,7 +1423,7 @@ ${form.notes ? `<!-- NOTES -->
                   </div>
                   <div>
                     <div className="text-[10px] text-slate-400 uppercase tracking-wide mb-0.5">Currency</div>
-                    <div className="text-xs font-semibold text-slate-800">{form.currency || "GBP"}</div>
+                    <div className="text-xs font-semibold text-slate-800">{form.currency || wsIso}</div>
                   </div>
                 </div>
               </div>
@@ -1440,15 +1445,15 @@ ${form.notes ? `<!-- NOTES -->
                         <tr key={item.id || i} className="border-t border-slate-100">
                           <td className="px-4 py-2.5 text-slate-700">{item.description || "—"}</td>
                           <td className="px-3 py-2.5 text-center text-slate-500">{item.qty || 1}×</td>
-                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || "GBP")}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || "GBP")}</td>
+                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || wsIso)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || wsIso)}</td>
                         </tr>
                       );
                     }) : (
                       <tr className="border-t border-slate-100">
                         <td className="px-4 py-3 text-slate-700">{form.description || "—"}</td>
                         <td colSpan={2}></td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || "GBP")}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || wsIso)}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1457,12 +1462,12 @@ ${form.notes ? `<!-- NOTES -->
               {/* Totals */}
               <div className="space-y-1.5">
                 {lineItems.length > 0 && <>
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || "GBP")}</span></div>
-                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT ({liVatRate}%)</span><span>{formatCurrency(liTotalVat, form.currency || "GBP")}</span></div>}
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || wsIso)}</span></div>
+                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT ({liVatRate}%)</span><span>{formatCurrency(liTotalVat, form.currency || wsIso)}</span></div>}
                 </>}
                 <div className="flex justify-between items-center rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3 mt-1">
                   <span className="text-sm font-bold text-indigo-800">Total</span>
-                  <span className="text-base font-bold text-indigo-700">{formatCurrency(lineItems.length > 0 ? liGrandTotal : Number(form.amount || 0), form.currency || "GBP")}</span>
+                  <span className="text-base font-bold text-indigo-700">{formatCurrency(lineItems.length > 0 ? liGrandTotal : Number(form.amount || 0), form.currency || wsIso)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
@@ -1485,7 +1490,7 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
             {(<>
               <Field label="Currency">
-                <select value={form.currency || "GBP"} onChange={e => set("currency")(e.target.value)}
+                <select value={form.currency || wsIso} onChange={e => set("currency")(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300">
                   {CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}
                 </select>
@@ -1529,7 +1534,7 @@ ${form.notes ? `<!-- NOTES -->
                           </div>
                         </div>
                         <div className="flex justify-end text-[11px] text-slate-500">
-                          Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || "GBP")}</span>
+                          Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                         </div>
                       </div>
                     );
@@ -1559,7 +1564,7 @@ ${form.notes ? `<!-- NOTES -->
                               <button key={i} type="button" onClick={() => addLineItem(p)}
                                 className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition">
                                 <div className="text-sm text-slate-800 dark:text-slate-100 font-medium">{p.name}</div>
-                                {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || "GBP")}</div>}
+                                {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || wsIso)}</div>}
                               </button>
                             ))}
                             {catalogueProducts.filter(p => !catalogueSearch || (p.name || "").toLowerCase().includes(catalogueSearch.toLowerCase())).length === 0 && (
@@ -1575,7 +1580,7 @@ ${form.notes ? `<!-- NOTES -->
                 <div className="mt-3 rounded-xl bg-white border border-slate-200 px-4 py-3 space-y-2 dark:border-slate-700 dark:bg-slate-900">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-slate-500">Subtotal</span>
-                    <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || "GBP")}</span>
+                    <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || wsIso)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <label className="text-xs text-slate-500 shrink-0">VAT %</label>
@@ -1583,11 +1588,11 @@ ${form.notes ? `<!-- NOTES -->
                       <input type="number" value={form.vat_rate} onChange={e => set("vat_rate")(e.target.value)} placeholder="0" min="0" max="100"
                         className="w-20 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm text-slate-900 text-right focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
                       <span className="text-xs text-slate-400">=</span>
-                      <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || "GBP")}</span>
+                      <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || wsIso)}</span>
                     </div>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-800 dark:text-slate-100 border-t border-slate-100 dark:border-slate-800 pt-2">
-                    <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || "GBP")}</span>
+                    <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || wsIso)}</span>
                   </div>
                 </div>
               </div>
@@ -1730,6 +1735,12 @@ ${form.notes ? `<!-- NOTES -->
 }
 
 // Returns true when a string looks like a raw UUID or UUID fragment — not user-set
+/** "NGN" from "NGN", "ngn" or "Nigerian Naira (NGN)"; "" when there is none. */
+export function isoOfCurrency(c) {
+  const t = String(c || "").trim();
+  return ((t.match(/\(([A-Z]{3})\)\s*$/) || t.match(/^([A-Za-z]{3})$/)) || [])[1]?.toUpperCase() || "";
+}
+
 function isUuidLike(str) {
   return !str || /^[0-9a-f-]{8,36}$/i.test(str.trim());
 }
@@ -1770,7 +1781,12 @@ function buildRefMap(records, prefix) {
 
 export default function BusinessOperationsPage() {
   const workspaceId = useWorkspaceStore(s => s.workspaceId);
-  const wsCurrency = useWorkspaceStore(s => s.currency);
+  // The workspace currency from the workspace itself once it has loaded (settings, else its country's): the app-wide
+  // setting starts at GBP until the layout has loaded, and nothing is converted from that guess (the owner's QA, 21 Oct:
+  // ₦500 shown as "≈ £0.28" on a workspace in naira).
+  const storeCurrency = useWorkspaceStore(s => s.currency);
+  const [docCurrency, setDocCurrency] = useState(null);
+  const wsCurrency = docCurrency || storeCurrency;
   const workspaceName = useWorkspaceStore(s => s.workspaceName);
   const wsDoc = useWorkspaceStore(s => s.wsDoc);
   const { requests: proposalRequests, inbox: proposalInbox, fetchRequests: fetchProposalRequests, fetchInbox: fetchProposalInbox } = useProposalStore();
@@ -1820,22 +1836,28 @@ export default function BusinessOperationsPage() {
   const [deliveryInvoice, setDeliveryInvoice] = useState(null); // invoice to mark as delivered
   const [shareItem, setShareItem] = useState(null); // { record, type }
   const [shareToast, setShareToast] = useState("");
-  const [fxRates, setFxRates] = useState({}); // { "USD": 0.79, ... } — rate TO workspace currency
-  const [fxDates, setFxDates] = useState({}); // { "USD": "2026-10-16" }: the provider's date for each rate, said with the amount
+  // The rates into the workspace currency, from the one conversion service every page uses (lib/fx): { GBP: 1775.2 },
+  // with the provider's date for each, said with the amount.
+  const fxIso = fxIsoOf(wsCurrency);
+  const { rates: fxRates, dates: fxDates } = useFxRates(foreignOf([...invoices, ...quotes, ...expenses, ...contracts], fxIso), docCurrency ? fxIso : "");
   const [reportRange, setReportRange] = useState("6m");
   // The currencies the documents are in besides the workspace's (each document keeps its own): converted into the
   // workspace currency for totals at today's rate, or, with no rate yet, left out and named (the owner's QA, 16 Oct).
   const fx = useMemo(() => {
     const isoOf = (c) => (String(c || "").match(/\(([A-Z]{3})\)/)?.[1] || String(c || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
     const ws = isoOf(wsCurrency) || "GBP";
-    const other = [...new Set([...invoices, ...expenses, ...quotes, ...contracts].map((d) => isoOf(d?.currency)).filter((c) => c && c !== ws))];
-    return { ws, converted: other.filter((c) => fxRates[c] != null), missing: other.filter((c) => fxRates[c] == null) };
-  }, [invoices, expenses, quotes, contracts, fxRates, wsCurrency]);
+    if (!docCurrency) return { ws, converted: [], missing: [] };      // nothing said about conversions until the workspace's own currency is known
+    const docs = [...invoices, ...expenses, ...quotes, ...contracts];
+    const other = [...new Set(docs.map((d) => isoOf(d?.currency)).filter((c) => c && c !== ws))];
+    // a currency whose every document carries its own pinned rate is converted, whatever today's lookup says
+    const pinnedAll = (c) => docs.filter((d) => isoOf(d?.currency) === c).every((d) => pinnedRate(d, ws) != null);
+    return { ws, converted: other.filter((c) => fxRates[c] != null || pinnedAll(c)), missing: other.filter((c) => fxRates[c] == null && !pinnedAll(c)) };
+  }, [invoices, expenses, quotes, contracts, fxRates, wsCurrency, docCurrency]);
   // KPI tiles: totals in the workspace currency (never a hard-coded £), "≈" when other currencies were converted into them.
   const fmtMoney = (n) => {
     const v = Number(n || 0);
     let shown;
-    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: fx.ws, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(v); }
+    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: fx.ws, maximumFractionDigits: 0 }).format(v); }
     catch { shown = formatCurrency(v, fx.ws); }
     return `${fx.converted.length ? "≈ " : ""}${shown}`;
   };
@@ -1844,11 +1866,11 @@ export default function BusinessOperationsPage() {
 
   const reportMonths = useMemo(() => {
     const wsIso = (wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1]?.toUpperCase() || (wsCurrency || "GBP").toUpperCase();
-    function toWsAmt(amount, cur) {
+    function toWsAmt(amount, cur, doc = null) {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").toUpperCase()).slice(0, 3);
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
       return rate != null ? num * rate : 0;
     }
     const rawAmt = r => Number(r?.total_amount || r?.amount || r?.price || 0);
@@ -1865,10 +1887,10 @@ export default function BusinessOperationsPage() {
       const label = d.toLocaleDateString("en-GB", { month: "short", ...(monthCount === 12 ? { year: "2-digit" } : {}) });
       const rev = invoices
         .filter(inv => { const dd = new Date(invDate(inv) || 0); return dd.getFullYear() === y && dd.getMonth() === mo && ["paid","delivered"].includes((inv.status||"").toLowerCase()); })
-        .reduce((s, inv) => s + toWsAmt(rawAmt(inv), inv.currency), 0);
+        .reduce((s, inv) => s + toWsAmt(rawAmt(inv), inv.currency, inv), 0);
       const cost = expenses
         .filter(e => { const dd = new Date(expDate(e) || 0); return dd.getFullYear() === y && dd.getMonth() === mo; })
-        .reduce((s, e) => s + toWsAmt(rawAmt(e), e.currency), 0);
+        .reduce((s, e) => s + toWsAmt(rawAmt(e), e.currency, e), 0);
       return { label, rev, cost };
     });
   }, [invoices, expenses, fxRates, wsCurrency, reportRange]);
@@ -1892,6 +1914,8 @@ export default function BusinessOperationsPage() {
 
   function _applyWsDoc(ws) {
     ensureBusinessTimezone(workspaceId, ws);
+    const own = workspaceCurrencyOf(ws?.data);
+    if (own) setDocCurrency(own);
     const fin = ws?.data?.financials || {};
     const cat = ws?.data?.catalogue || ws?.data || {};
     setInvoices(Array.isArray(fin.invoices) ? fin.invoices : []);
@@ -1973,34 +1997,6 @@ export default function BusinessOperationsPage() {
   }, [workspaceId]); // eslint-disable-line
 
 
-  // Fetch exchange rates for foreign-currency records
-  useEffect(() => {
-    if (!wsCurrency) return;
-    const wsIso = ((wsCurrency.match(/\(([A-Z]{3})\)\s*$/) || wsCurrency.match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase() || wsCurrency.toUpperCase();
-    const allRecs = [...invoices, ...quotes, ...expenses];
-    const foreign = new Set(
-      allRecs.map(r => {
-        const c = String(r.currency || r.source_currency || "").trim();
-        return ((c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase() || c.toUpperCase();
-      }).filter(iso => iso && iso !== wsIso && iso.length === 3)
-    );
-    if (!foreign.size) return;
-    let alive = true;
-    Promise.all([...foreign].map(async from => {
-      try {
-        const data = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-        return { from, rate: data?.rate ?? null, date: data?.date || null };
-      } catch { return { from, rate: null, date: null }; }
-    })).then(results => {
-      if (!alive) return;
-      const next = {};
-      const days = {};
-      results.forEach(({ from, rate, date }) => { if (rate != null) { next[from] = rate; days[from] = date; } });
-      setFxRates(prev => ({ ...prev, ...next }));
-      setFxDates(prev => ({ ...prev, ...days }));
-    });
-    return () => { alive = false; };
-  }, [invoices, quotes, expenses, wsCurrency]); // eslint-disable-line
 
   const m = useMemo(() => {
     // Helpers
@@ -2016,13 +2012,13 @@ export default function BusinessOperationsPage() {
       if (!cur) return null;
       return (((String(cur).match(/\(([A-Z]{3})\)\s*$/) || String(cur).match(/^([A-Z]{3})$/i)) || [])[1])?.toUpperCase() || String(cur).toUpperCase();
     }
-    function toWs(amount, cur) {
+    function toWs(amount, cur, doc = null) {
       const num = Number(amount || 0);
       const fromIso = _resolveIso(cur);
       if (!fromIso) return num;
       const wsIso = _wsIso();
       if (fromIso === wsIso) return num;
-      const rate = fxRates[fromIso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[fromIso];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;
     }
     function receivedAmt(i) {
@@ -2048,18 +2044,18 @@ export default function BusinessOperationsPage() {
     // Invoices (filtered by range)
     const paidInvoices = invoices.filter(i => st(i.status) === "paid" && inRange(invAnchor(i)));
     const deliveredInvoices = invoices.filter(i => st(i.status) === "delivered" && inRange(invAnchor(i)));
-    const cashIn = paidInvoices.reduce((s, i) => s + toWs(receivedAmt(i), i.currency), 0);
+    const cashIn = paidInvoices.reduce((s, i) => s + toWs(receivedAmt(i), i.currency, i), 0);
     // Everything still owed on issued invoices (unpaid and part-paid), whatever their date.
-    const receivables = invoices.reduce((s, i) => s + toWs(invoiceOutstanding(i), i.currency), 0);
+    const receivables = invoices.reduce((s, i) => s + toWs(invoiceOutstanding(i), i.currency, i), 0);
     const overdueInvoices = invoices.filter(isOverdue).length;
-    const totalRevenue = [...paidInvoices, ...deliveredInvoices].reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+    const totalRevenue = [...paidInvoices, ...deliveredInvoices].reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
 
     // Expenses (filtered by range)
     const paidExpenses = expenses.filter(e => st(e.status) === "paid" && inRange(expAnchor(e)));
-    const cashOut = paidExpenses.reduce((s, e) => s + toWs(rawAmt(e), e.currency), 0);
+    const cashOut = paidExpenses.reduce((s, e) => s + toWs(rawAmt(e), e.currency, e), 0);
     const payables = expenses
       .filter(e => ["pending","overdue","draft"].includes(st(e.status)) && inRange(expAnchor(e)))
-      .reduce((s, e) => s + toWs(rawAmt(e), e.currency), 0);
+      .reduce((s, e) => s + toWs(rawAmt(e), e.currency, e), 0);
 
     // Contracts (active ones regardless of range; contract value filtered by range)
     const activeContracts = contracts.filter(c => ["active","signed"].includes(st(c.status)) || !c.status).length;
@@ -2068,7 +2064,7 @@ export default function BusinessOperationsPage() {
     const { contractDrafts: awaitingApproval, contractsOut } = pipelineCounts(contracts, []);
     const expiringSoon = contracts.filter(c => st(c.status) === "expiring_soon").length;
     const rangeContracts = contracts.filter(c => inRange(cAnchor(c)));
-    const totalContractValue = rangeContracts.reduce((s, c) => s + toWs(rawAmt(c), c.currency), 0);
+    const totalContractValue = rangeContracts.reduce((s, c) => s + toWs(rawAmt(c), c.currency, c), 0);
 
     // Quotes (filtered by range)
     const rangeQuotes = quotes.filter(q => inRange(qAnchor(q)));
@@ -2080,7 +2076,7 @@ export default function BusinessOperationsPage() {
     const winRate = rangeQuotes.length > 0 ? Math.round((wonQuotes / rangeQuotes.length) * 100) : 0;
     const potentialValue = rangeQuotes
       .filter(q => !["rejected","expired"].includes(st(q.status)))
-      .reduce((s, q) => s + toWs(rawAmt(q), q.currency), 0);
+      .reduce((s, q) => s + toWs(rawAmt(q), q.currency, q), 0);
 
     // RFQ (filtered by range)
     const rangeRfqs = rfqRequests.filter(r => inRange(r.created_at));
@@ -2137,27 +2133,29 @@ export default function BusinessOperationsPage() {
   }
 
   /** A list's amount cell: the document's own currency, and under it, small and grey, "≈ ₦…" in the workspace currency. */
-  function AmountCell({ value, currency }) {
+  function AmountCell({ value, currency, doc = null }) {
     const num = Number(value || 0);
     const fromIso = _resolveIso(currency) || _wsIso();
     const ws = _wsIso();
-    const rate = fromIso === ws ? 1 : fxRates[fromIso];
+    const pinned = fromIso === ws ? null : pinnedRate(doc, ws);
+    const rate = fromIso === ws ? 1 : (pinned ?? fxRates[fromIso]);
+    const when = pinned && doc?.fx?.date ? ` at ${new Date(`${String(doc.fx.date).slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate` : null;
     return (
       <span className="whitespace-nowrap" data-amount-cell>
         <span className="block font-medium text-slate-800">{formatCurrency(num, fromIso)}</span>
         {fromIso !== ws && (rate != null
-          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}{rateWords(fromIso)}</span>
+          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}{when ?? rateWords(fromIso)}</span>
           : <span className="block text-[11px] text-slate-400" data-amount-converted>No {ws} rate yet</span>)}
       </span>
     );
   }
 
-  function toWsConverted(amount, cur) {
+  function toWsConverted(amount, cur, doc = null) {
     const num = Number(amount || 0);
     const fromIso = _resolveIso(cur);
     const ws = _wsIso();
     if (!fromIso || fromIso === ws) return num;
-    const rate = fxRates[fromIso];
+    const rate = pinnedRate(doc, ws) ?? fxRates[fromIso];
     return rate != null ? num * rate : 0;
   }
   function receivedAmt(i) {
@@ -2893,7 +2891,7 @@ export default function BusinessOperationsPage() {
                     Customer: q.customer_name || q.recipient || "—",
                     Reference: quoteRefMap.get(q.id) || "—",
                     Description: q.description || q.title || "—",
-                    Amount: <AmountCell value={Number(q.total_amount || q.amount || 0)} currency={q.currency} />,
+                    Amount: <AmountCell value={Number(q.total_amount || q.amount || 0)} currency={q.currency} doc={q} />,
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
@@ -2971,7 +2969,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} />,
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} doc={inv} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -3006,7 +3004,7 @@ export default function BusinessOperationsPage() {
                   : (String(inv.status || "").toLowerCase() === "paid" ? [{ id: `legacy-${inv.id}`, amount: invoiceReceived(inv), paid_at: inv.paid_at || inv.date || inv.created_at, legacy: true }] : []);
                 return pays.map((p) => ({ inv, p }));
               }).sort((a, b) => new Date(b.p.paid_at || 0) - new Date(a.p.paid_at || 0));
-              const totalReceived = receiptRows.reduce((s, { inv, p }) => s + toWsConverted(p.amount, inv.currency), 0);
+              const totalReceived = receiptRows.reduce((s, { inv, p }) => s + toWsConverted(p.amount, inv.currency, inv), 0);
               const issued = receiptRows.filter(({ p }) => p.receipt?.number).length;
               return (
                 <>
@@ -3024,7 +3022,7 @@ export default function BusinessOperationsPage() {
                       "Receipt #": p.receipt?.number || "—",
                       Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                       "Invoice #": invoiceRefMap.get(inv.id) || "—",
-                      Amount: <AmountCell value={Number(p.amount || 0)} currency={inv.currency} />,
+                      Amount: <AmountCell value={Number(p.amount || 0)} currency={inv.currency} doc={inv} />,
                       "Date Paid": fmtDay(p.paid_at),
                       Receipt: <StatusPill status={p.receipt?.sent_at ? "Sent" : p.receipt?.number ? "Issued" : "Not issued"} />,
                       Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", inv, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", inv) }, ...agentInvoiceItems(inv), { label: "Share Receipt", onClick: () => setShareItem({ record: inv, type: "invoice", receiptMode: true }) }]} />,
@@ -3342,7 +3340,7 @@ export default function BusinessOperationsPage() {
                     Type: <StatusPill status={t._t} />,
                     Party: t._party,
                     Reference: (!isUuidLike(t.reference) && t.reference) ? t.reference : "—",
-                    Amount: <AmountCell value={Number(t.total_amount || t.amount || 0)} currency={t.currency} />,
+                    Amount: <AmountCell value={Number(t.total_amount || t.amount || 0)} currency={t.currency} doc={t} />,
                     Date: fmtDate(t.date || t.created_at),
                     Status: <StatusPill status={t.status || "Pending"} paymentType={t.payment_type} />,
                     "Linked Record": t._linked,
@@ -3367,7 +3365,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.party_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} />,
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} doc={inv} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -3408,7 +3406,7 @@ export default function BusinessOperationsPage() {
                     Vendor: e.vendor_name || e.party_name || "—",
                     Reference: e.reference || e.id?.slice(0, 8) || "—",
                     Description: e.description || e.title || "—",
-                    Amount: <AmountCell value={Number(e.total_amount || e.amount || e.price || 0)} currency={e.currency} />,
+                    Amount: <AmountCell value={Number(e.total_amount || e.amount || e.price || 0)} currency={e.currency} doc={e} />,
                     Status: <StatusPill status={e.status || "Pending"} />,
                     Date: fmtDate(e.date || e.created_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", e) }, { label: "Edit", onClick: () => openEdit("expense", e) }, ...(e.status !== "paid" ? [{ label: "Mark as Paid", onClick: () => markAsPaid("expense", e.id) }] : []), { label: "Delete", tone: "danger", onClick: () => deleteItem("expense", e.id) }]} />,
@@ -3423,7 +3421,7 @@ export default function BusinessOperationsPage() {
                 rows={invoices.filter(i => i.status === "paid" || i.status === "partial").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
                   Party: r.customer_name || r.party_name || "—",
                   Reference: r.reference || r.id?.slice(0, 8) || "—",
-                  Amount: <AmountCell value={receivedAmt(r)} currency={r.currency} />,
+                  Amount: <AmountCell value={receivedAmt(r)} currency={r.currency} doc={r} />,
                   Date: fmtDate(r.paid_at || r.date || r.created_at),
                   Status: <StatusPill status={r.status || "paid"} />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }]} />,
@@ -3437,7 +3435,7 @@ export default function BusinessOperationsPage() {
                 rows={expenses.filter(e => e.status === "paid").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(p => ({
                   Party: p.vendor_name || p.supplier_name || p.party_name || "—",
                   Reference: p.reference || p.id?.slice(0, 8) || "—",
-                  Amount: <AmountCell value={Number(p.total_amount || p.amount || 0)} currency={p.currency} />,
+                  Amount: <AmountCell value={Number(p.total_amount || p.amount || 0)} currency={p.currency} doc={p} />,
                   Date: fmtDate(p.paid_at || p.date || p.created_at),
                   Status: <StatusPill status="paid" />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", p) }]} />,
@@ -3567,13 +3565,13 @@ export default function BusinessOperationsPage() {
                     Customer: name,
                     Proposals: quotes.filter(q => q.customer_name === name).length,
                     Won: quotes.filter(q => q.customer_name === name && (q.status === "won" || q.status === "accepted")).length,
-                    Revenue: fmtMoney(invoices.filter(i => i.customer_name === name && ["paid","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency), 0)),
+                    Revenue: fmtMoney(invoices.filter(i => i.customer_name === name && ["paid","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency, i), 0)),
                     Receivables: fmtMoney(invoices.filter(i => i.customer_name === name).reduce((s, i) => {
                       const st2 = (i.status || "").toLowerCase();
-                      if (["sent","overdue","delivered"].includes(st2)) return s + toWsConverted(i.total_amount || i.amount || 0, i.currency);
+                      if (["sent","overdue","delivered"].includes(st2)) return s + toWsConverted(i.total_amount || i.amount || 0, i.currency, i);
                       if (st2 === "paid" && i.payment_type === "partial") {
-                        const recv = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency), 0);
-                        return s + toWsConverted(Math.max(0, Number(i.total_amount || i.amount || 0) - recv), i.currency);
+                        const recv = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency, i), 0);
+                        return s + toWsConverted(Math.max(0, Number(i.total_amount || i.amount || 0) - recv), i.currency, i);
                       }
                       return s;
                     }, 0)),
@@ -3717,6 +3715,7 @@ export default function BusinessOperationsPage() {
             ...quotes.map(q => q.customer_name),
           ].filter(Boolean))]}
           workspaceName={workspaceName}
+          wsCurrency={wsCurrency}
           onSave={saveRecord}
           onRecordPayment={recordPayment}
           onClose={() => setRecordModal(null)}

@@ -44,6 +44,6 @@ def test_what_a_task_is_charged_is_what_it_says():
 
 
 def test_a_task_with_nothing_to_do_is_free():
-    env = Env(plan="starter_insight", credits=50)
+    env = Env(plan="decision_engine", credits=50)
     r = env.submit(capability="funding_pack_draft", channel="ui_action")["run"]      # no funding case yet
     assert r["state"]["outcome"].get("skipped") and env.meter.charges == []

@@ -115,7 +115,7 @@ def readiness_report(subject: dict, run: dict, actions: list[dict]) -> dict:
     cur = s.get("currency") or (snap.get("forecast") or {}).get("currency") or snap["business"].get("currency")
     if result["subject_type"] == rules.FUNDING:
         about = _section("Funding case", items=[
-            _item("Business", snap["business"].get("name") or ""), _item("Case", s.get("title")), _item("Route", str(s.get("route") or "").capitalize()),
+            _item("Business", snap["business"].get("name") or ""), _item("Case", s.get("title")), _item("Route", str(s.get("route_preference") or s.get("route") or "").replace("unsure", "Not decided yet").capitalize()),
             _item("Target", _money(s.get("currency"), s.get("target_amount")) or "Not set"), _item("Intended receipt", s.get("receipt_date") or "Not set")])
     else:
         about = _section("Launch", items=[

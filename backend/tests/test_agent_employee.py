@@ -174,7 +174,7 @@ def _busy(env):
 
 
 def test_turning_off_one_automatic_item_stops_that_item_and_only_that_item():
-    env = Env()
+    env = Env(plan="decision_engine")
     _busy(env)
     run(env.store.set_policy("A", {"automation": {"auto_start": True, "items": {"invoice_overdue": False}}}, OWNER))
     started = {r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))}
@@ -182,7 +182,7 @@ def test_turning_off_one_automatic_item_stops_that_item_and_only_that_item():
     by = {e["key"]: e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]}
     assert (by["invoice_overdue"]["on"], by["invoice_overdue"]["starts"]) == (False, "suggested")
     assert (by["payment_recorded"]["on"], by["payment_recorded"]["starts"]) == (True, "automatic")
-    assert all(e["minimum_plan_label"] in ("Explorer", "Starter") and (e["switchable"] or e["capability"] in SUGGEST_ONLY) for e in by.values())
+    assert all(e["minimum_plan_label"] in ("Explorer", "Starter", "Decision Engine") and (e["switchable"] or e["capability"] in SUGGEST_ONLY) for e in by.values())
     assert set(by) == set(autostart.ITEMS)
     assert all(not by[k]["switchable"] and by[k]["starts"] == "suggested" for k in by if by[k]["capability"] in SUGGEST_ONLY)      # §4: suggested only
     # Switched back on, it is prepared.

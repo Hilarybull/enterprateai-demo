@@ -1518,6 +1518,12 @@ async def idea_validation_step(ctx):
     feature = "idea_validation_comprehensive" if depth == "comprehensive" else "idea_validation"
     r = await _studio(ctx, feature, ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id,
                                                                  business_id=None if separate else ctx.run["business_id"], idea=idea))
+    # PRD 5.2 (the owner's QA, 16 Oct): with the economics it needs unknown, no score is given, never a low one: what is
+    # missing is said instead, and the risks and next steps still are. Said on the saved draft too (the owner's QA, 21 Oct:
+    # the results page showed it as 0, "Risky").
+    gaps = economics_gaps(idea, ctx.answers)
+    if gaps:
+        r = {**r, "evidence": "insufficient", "gaps": gaps}
     if separate:
         await _keep_separate_idea(ctx, idea, r)
     else:
@@ -1525,13 +1531,6 @@ async def idea_validation_step(ctx):
         await _draft_in_history(ctx, idea, r)
     from app.modules.agent.services import risk_sentence
     risks, steps = [risk_sentence(x) for x in r.get("risks") or []], [str(x) for x in r.get("next_steps") or []]
-    # PRD 5.2 (the owner's QA, 16 Oct): with the economics it needs unknown, no score is given, never a low one: what is
-    # missing is said instead, and the risks and next steps still are.
-    gaps = economics_gaps(idea, ctx.answers)
-    if gaps:
-        r = {**r, "evidence": "insufficient", "gaps": gaps}
-        if not separate:      # a separate idea never writes to the business record
-            await _keep(ctx, "validation", {k: v for k, v in r.items() if k not in ("payload", "quick")})
     head = ((f"Not enough evidence to score this idea yet. Still needed: {_and_list(gaps)}. "
              f"{len(risks)} risk{'s' if len(risks) != 1 else ''} and {len(steps)} next step{'s' if len(steps) != 1 else ''} found so far.")
             if gaps else
@@ -1576,7 +1575,9 @@ async def _draft_in_history(ctx, idea: dict, r: dict) -> None:
     entry = {"id": idea["history_id"], "type": "v4_validation", "title": (payload.get("step1") or {}).get("idea_name") or "Idea Validation",
              "created_at": ctx.now().isoformat(), "status": "pending", "score": r.get("score"), "confidence": r.get("confidence"), "verdict": r.get("verdict"),
              "journey": idea.get("depth") or payload.get("validation_mode") or "basic", "payload": payload, "result": quick, "source": "agent", "run_id": ctx.run["id"],
-             "full_report": r.get("full_report") or "pending"}
+             "full_report": r.get("full_report") or "pending",
+             # not scored: what it still needs, said on the results page instead of a 0 (the owner's QA, 21 Oct)
+             **({"evidence": "insufficient", "gaps": r["gaps"], "result": {**quick, "insufficient": True, "gaps": r["gaps"]}} if r.get("gaps") else {})}
 
     def _apply(data: dict) -> None:
         history = [e for e in data.get("validation_history") or [] if isinstance(e, dict) and e.get("id") != entry["id"]]

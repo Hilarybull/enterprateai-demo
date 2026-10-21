@@ -30,8 +30,8 @@ def test_one_message_answers_several_questions_and_only_the_rest_are_asked():
     from app.modules.agent.intake_turn import resolve_when
     assert s["proposed"] == {"amount": 25000.0, "use": "van", "stage": "trading", "timing": resolve_when("by March")}      # the next March
     assert shown["missing"] == ["route", "traction"]                        # only what was not said is asked
-    assert shown["acknowledged"] == f"Got it: £25,000 for a van, trading, by {resolve_when('by March')}." and shown["progress"] == {"answered": 4, "total": 6}
-    assert shown["value_line"] == "I'll check how funding-ready you are and show you the gaps." and shown["resolution"]["recommended_path"] == []
+    assert shown["acknowledged"] == f"Thanks, noted: £25,000 for a van, trading, by {resolve_when('by March')}." and shown["progress"] == {"answered": 4, "total": 6}
+    assert shown["value_line"] == "A few quick questions, then you'll get a score out of 100 for how ready you are to ask for funding, and the first things to fix." and shown["resolution"]["recommended_path"] == []
     assert any(e.get("name") == "questions_avoided" for e in store.events) or True
     # "Not sure" is an answer: kept as unknown, never guessed.
     s = asyncio.run(goals.add_inputs(store, s, {"route": "unknown", "traction": "No traction yet"}))
@@ -41,7 +41,7 @@ def test_one_message_answers_several_questions_and_only_the_rest_are_asked():
 
 def test_the_funding_result_follows_the_contract_and_never_counts_an_unknown_as_met():
     r = fv.assess("need_funding", {"amount": 25000, "use": "a second van and a driver", "stage": "trading", "route": "unknown", "timing": "By March", "traction": "12 regular customers"})
-    assert all(k in r for k in CONTRACT) and r["assessment_type"] == "funding_readiness_initial" and r["headline"] == "Initial Funding Preparation"
+    assert all(k in r for k in CONTRACT) and r["assessment_type"] == "funding_readiness_initial" and r["headline"] == "Funding readiness"
     assert r["ruleset_version"] == fv.RULESET_VERSION and r["provisional"] is True
     assert [c["weight"] for c in r["criteria"]] == [10, 15, 20, 15, 10, 10, 10, 10]      # the PRD's eight criteria and weights
     assert isinstance(r["score"], int) and 0 < r["score"] < 50 and 0 < r["evidence_coverage"] < 100      # coverage is its own figure

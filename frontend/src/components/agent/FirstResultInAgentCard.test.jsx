@@ -59,12 +59,11 @@ describe.each(Object.entries(RESULTS))("the %s result under the Agent card", (_k
     expect(panel.className).toContain("bg-white");
     expect(within(card).queryByRole("button", { name: "More actions" })).toBeNull();
     expect(within(panel).getByRole("button", { name: "Dismiss" })).toBeTruthy();
-    const labels = within(panel.querySelector("[data-result-actions]")).getAllByRole("button").map((b) => b.textContent);
-    expect(labels[0]).toBe(result.premium_next_action.label);
-    expect(labels).not.toContain("View details");      // one "Open …" to the result's own page, never a second copy in a drawer
-    expect(labels.filter((l) => /^Open /.test(l))).toEqual([OPEN[_kind].label]);
-    expect(labels).toContain("Save for later");
-    expect(panel.querySelector("[data-result-numbers]").textContent).toBe(result.key_numbers.join(" · "));
+    // One link only (the owner's brief, 20 Oct): "Open full page". No Save for later (it is saved as it goes), no Edit answers.
+    expect(within(panel.querySelector("[data-result-actions]")).queryAllByRole("button")).toEqual([]);
+    expect(within(panel).getByRole("link", { name: "Open full page" })).toBeTruthy();
+    expect(within(panel).queryByRole("button", { name: "Save for later" })).toBeNull();
+    expect(panel.querySelector("[data-result-numbers]")).toBeNull();      // the score once
   });
 });
 
@@ -84,7 +83,7 @@ it("dismissing folds it away with Undo for 5 seconds; Undo brings it back", asyn
 it.each(Object.keys(OPEN))("the %s result's Open button lands on its own page, and no drawer opens", async (kind) => {
   firstValue = { business_id: "ws1", result: RESULTS[kind] };
   await mount();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: OPEN[kind].label })); });
+  await act(async () => { fireEvent.click(screen.getByRole("link", { name: "Open full page" })); });
   expect(screen.getByTestId("where").textContent).toBe(OPEN[kind].to);
   expect(document.querySelector("[data-result-drawer]")).toBeNull();
 });

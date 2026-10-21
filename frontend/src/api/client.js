@@ -155,6 +155,7 @@ async function send(path, method, body, options, asText = false) {
       data = await res.json();
       if (typeof data?.detail === "string") message = data.detail;
       else if (Array.isArray(data?.detail) && data.detail[0]?.msg) message = data.detail[0].msg;
+      else if (typeof data?.detail?.message === "string") message = data.detail.message;      // a plan refusal, in words
       else if (typeof data?.message === "string") message = data.message;
       else message = JSON.stringify(data);
     } catch {

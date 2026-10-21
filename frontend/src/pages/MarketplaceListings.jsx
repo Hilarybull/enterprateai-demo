@@ -2406,7 +2406,7 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
   );
 }
 
-// ─── main page ─────────────────────────────────────────���──────────────────────
+// ─── main page ──────────────────────────────────────────────────────────────────
 
 // The Products & Services and Proposal Requests tabs of the Marketplace. The page shell
 // (MarketplacePage) owns the header, the search box and the tabs, and loads this on demand.

@@ -6,7 +6,7 @@ import * as client from "../api/client";
 import FirstValueCard from "./FirstValueCard";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-const base = (score, over = {}) => ({ assessment_type: "funding_readiness_initial", headline: "Initial Funding Preparation", score, score_label: "out of 100", evidence_coverage: 50,
+const base = (score, over = {}) => ({ assessment_type: "funding_readiness_initial", headline: "Funding readiness", score, score_label: "out of 100", evidence_coverage: 50,
   strengths: [], blockers: [], criteria: [], metrics: [], free_next_actions: [], premium_gate: { allowed: true }, _session: "sess-1",
   _edit: { questions: [{ key: "amount", label: "How much funding do you need?", type: "number" }, { key: "stage", label: "What stage is the business at?", type: "choice",
     options: [{ value: "pre_revenue", label: "Not trading yet" }, { value: "trading", label: "Trading" }] }], answers: { amount: 250000, stage: "pre_revenue" } }, ...over });
@@ -18,7 +18,7 @@ describe("edit and run again on the result", () => {
     render(<MemoryRouter><FirstValueCard result={base(22)} onUpdated={onUpdated} /></MemoryRouter>);
     expect(document.querySelector("[data-fv-score]").textContent.startsWith("22")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Edit answers" }));
-    expect(screen.getByLabelText("How much funding do you need?").value).toBe("250000");
+    expect(screen.getByLabelText("How much funding do you need?").value).toBe("250,000");
     expect(screen.getByRole("button", { name: "Save and check again" }).disabled).toBe(true);      // nothing changed yet
     fireEvent.change(screen.getByLabelText("What stage is the business at?"), { target: { value: "trading" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save and check again" })); });

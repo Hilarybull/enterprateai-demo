@@ -328,10 +328,16 @@ def brand_brief(data: dict) -> dict | None:
     no offering yet, or nothing left to draft."""
     p = data.get("workspace_profile") or {}
     empty = [f for f in BRAND_FIELDS if _blank(p.get(f))]
+    # Services with no description yet (the owner's QA, 21 Oct: "why did the agent not add description for these services")
+    bare = [str(s.get("service_name") or "").strip() for s in (p.get("services") or []) if isinstance(s, dict)
+            and str(s.get("service_name") or "").strip() and _blank(s.get("service_description")) and _blank(s.get("description"))
+            and s.get("description_undone") is not True]
+    if bare:
+        empty = empty + ["service_descriptions"]
     offering = p.get("key_offering_focus") or ((p.get("services") or [{}])[0] or {}).get("service_name") if isinstance(p.get("services"), list) and p.get("services") else p.get("key_offering_focus")
     if not empty or not offering:
         return None
-    return {"fields": empty, "offering": offering, "customer": p.get("target_customer_type") if is_segment(p.get("target_customer_type")) else "", "place": ", ".join(x for x in (p.get("city"), p.get("country")) if x),
+    return {"fields": empty, "services": bare, "offering": offering, "customer": p.get("target_customer_type") if is_segment(p.get("target_customer_type")) else "", "place": ", ".join(x for x in (p.get("city"), p.get("country")) if x),
             "problem": p.get("problem") or "", "company": p.get("company_name") or ""}
 
 
@@ -342,9 +348,11 @@ BRAND_SYSTEM = ("You write short, plain, specific business profile text from the
 def brand_prompt(brief: dict) -> str:
     import json as _json
     return ("Draft these empty business profile fields: " + ", ".join(brief["fields"]) + ".\n"
-            "Rules: tagline under 8 words; vision one sentence; mission one sentence; core_values 3 to 5 short values as a list.\n"
+            "Rules: tagline under 8 words; vision one sentence; mission one sentence; core_values 3 to 5 short values as a list; "
+            "service_descriptions one plain sentence for each service named in services, what it is and who it is for.\n"
             "Use only these facts: " + _json.dumps({k: v for k, v in brief.items() if k != "fields" and v}, ensure_ascii=False) + "\n"
-            'Reply as {"tagline": "...", "vision": "...", "mission": "...", "core_values": ["...", "..."]} with only the fields asked for.')
+            'Reply as {"tagline": "...", "vision": "...", "mission": "...", "core_values": ["...", "..."], "service_descriptions": {"service name": "..."}} '
+            'with only the fields asked for.')
 
 
 def apply_brand(data: dict, drafted: dict, now: datetime | None = None) -> list[str]:
@@ -373,6 +381,17 @@ def apply_brand(data: dict, drafted: dict, now: datetime | None = None) -> list[
         p[f] = v
         prov[f] = {"source": "Suggested by the Agent", "at": now.isoformat(), "suggestion": True, "value": v}
         filled.append(f)
+    described = drafted.get("service_descriptions") if isinstance(drafted.get("service_descriptions"), dict) else {}
+    for s in p.get("services") or []:
+        if not isinstance(s, dict) or not _blank(s.get("service_description")) or not _blank(s.get("description")):
+            continue
+        name = str(s.get("service_name") or "").strip()
+        text = next((v for k, v in described.items() if str(k).strip().lower() == name.lower()), None)
+        if not text or re.search("[–—]", str(text)):
+            continue
+        s["service_description"] = tidy(re.split(r"(?<=[.!?])\s", str(text).strip())[0])      # the field the workspace form shows
+        s["description_suggested"] = True      # "Suggested by the Agent": the owner keeps or changes it
+        filled.append(f"services.{name}")
     if filled:
         had = (data.get("profile_filled") or {}).get("fields") or []
         data["profile_filled"] = {"fields": list(dict.fromkeys(had + filled)), "source": "Suggested by the Agent", "at": now.isoformat()}

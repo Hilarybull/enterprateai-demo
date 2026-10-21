@@ -70,6 +70,19 @@ def _money(key: str, label: str, **extra: Any) -> dict:
 
 
 _FUNDING_AMOUNTS = [{"value": v, "label": f"£{v:,}"} for v in (10000, 25000, 50000, 100000, 250000)]
+# Quick amounts in the chat's currency (the owner's brief, 20 Oct: ₦1m, ₦5m, ₦10m, ₦25m on a naira workspace), short labels.
+AMOUNT_CHIPS = {"GBP": (10000, 25000, 50000, 100000, 250000), "NGN": (1_000_000, 5_000_000, 10_000_000, 25_000_000),
+                "USD": (10000, 25000, 50000, 100000, 250000), "EUR": (10000, 25000, 50000, 100000, 250000),
+                "GHS": (50000, 100000, 250000, 500000), "KES": (500000, 1_000_000, 2_500_000, 5_000_000)}
+
+
+def _short_money(sign: str, v: float) -> str:
+    """"₦5m", "£25k": a quick amount as people say it."""
+    if v >= 1_000_000:
+        return f"{sign}{v / 1_000_000:g}m"
+    if v >= 1000:
+        return f"{sign}{v / 1000:g}k"
+    return f"{sign}{v:g}"
 
 
 # The homepage's suggestions and what each resolves to. `path` lists capabilities in the order
@@ -160,9 +173,10 @@ def _choice(key: str, label: str, options: list[tuple[str, str]], **extra: Any) 
 
 
 _CONVERSATIONS: dict[str, dict[str, Any]] = {
-    "need_funding": {"value": "I'll check how funding-ready you are and show you the gaps.", "questions": [
+    "need_funding": {"value": "A few quick questions, then you'll get a score out of 100 for how ready you are to ask for funding, and the first things to fix.", "questions": [
         _money("amount", "How much funding do you think you need?", required=True, chips=_FUNDING_AMOUNTS, unsure=_NOT_SURE, q=1, noun="amount"),
-        _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose"),
+        _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose",
+           chips=[{"value": v, "label": v} for v in ("Equipment", "Stock", "Hiring staff", "Marketing", "Working capital")]),
         _choice("stage", "What stage is the business at?", [("idea", "Just an idea"), ("pre_revenue", "Not trading yet"), ("trading", "Trading"), ("growing", "Trading and growing")], required=True, q=3, noun="stage"),
         _choice("route", "What funding route are you considering?", [("equity", "Equity"), ("loan", "Loan"), ("grant", "Grant"), (UNSURE, _NOT_SURE)], required=True, q=4, noun="route"),
         _f("timing", "When do you need the funding?", "text", required=True, q=5, noun="timing", unsure=_NOT_SURE,
@@ -172,7 +186,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         # Where the business trades: read from what they say ("a car wash in Abuja"), never asked on its own.
         _f("where", "Where does the business trade?", "text", hidden=True, noun="place"),
     ]},
-    "test_idea": {"value": "I'll give you a first look at whether the idea can work, from your own numbers.", "questions": [
+    "test_idea": {"value": "A few quick questions, then you'll see whether the idea can make money, worked out from your own numbers.", "questions": [
         _f("description", "What is your product or service idea?", "textarea", required=True, q=1, noun="idea"),
         _f("customer", "Who is it for, and where?", "text", required=True, q=2, noun="customer"),
         # Where it will run: read from what they say ("a mobile car wash in Abuja"), never asked on its own.
@@ -185,7 +199,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _choice("demand", "What evidence of demand do you already have?", [("assumption", "None yet, it is my assumption"), ("research", "Research"), ("enquiries", "Enquiries"),
                 ("lois", "Letters of intent"), ("pilot", "A paid pilot"), ("paying", "Paying customers"), ("repeat", "Repeat customers")], required=True, q=6, noun="demand evidence"),
     ]},
-    "launch": {"value": "I'll check how ready the launch is and show you what is missing.", "questions": [
+    "launch": {"value": "A few quick questions, then you'll see how ready you are to launch and what to sort out first.", "questions": [
         _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
         _f("sell", "Briefly describe it.", "textarea", required=True, q=2, noun="description"),
         _choice("stage", "What stage is it at?", [("idea", "Idea"), ("prototype", "Prototype"), ("testing", "Testing"), ("ready", "Ready")], required=True, q=3, noun="stage"),
@@ -199,7 +213,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("cost", "Cost per sale", "number", hidden=True, noun="cost"),
         _f("evidence", "What customer testing or demand evidence do you already have?", "textarea", required=True, q=6, noun="demand evidence", unsure="None yet", unsure_value="None yet"),
     ]},
-    "price_offer": {"value": "I'll show what your price means for your margin, from your own numbers.", "questions": [
+    "price_offer": {"value": "A few quick questions, then you'll see how much each sale earns you and whether your price works.", "questions": [
         _f("sell", "What are you pricing?", "text", required=True, q=1, noun="what you are pricing"),
         _f("customer", "Who are you selling it to?", "text", required=True, unsure=_NOT_SURE, q=2, noun="customer"),
         _money("price", "What price are you considering or charging now?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
@@ -207,7 +221,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("monthly_sales", "How many could you realistically sell each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="monthly sales"),
         _choice("positioning", "How do you want to position it?", [("affordable", "Affordable"), ("mid", "Mid-market"), ("premium", "Premium"), (UNSURE, _NOT_SURE)], required=True, q=6, noun="positioning"),
     ]},
-    "more_customers": {"value": "I'll check what is in place for winning customers and show you the gaps.", "questions": [
+    "more_customers": {"value": "A few quick questions, then you'll see what is holding back new customers and what to do first.", "questions": [
         _f("sell", "What do you sell?", "text", required=True, q=1, noun="what you sell"),
         _f("customer", "Who do you believe your ideal customers are?", "text", required=True, unsure="I'm not sure", q=2, noun="ideal customer"),
         _f("where", "Where do you want to find customers?", "text", required=True, unsure=_NOT_SURE, q=3, noun="where"),
@@ -795,8 +809,16 @@ DEFAULT_CURRENCY = "GBP"
 
 def _in_currency(session: dict, fields: list[dict]) -> list[dict]:
     """Amount fields carry the sign of the currency the visitor wrote ("$300" shows $, not £)."""
-    sign = SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£")
-    return [{**f, "prefix": sign} if f.get("prefix") else f for f in fields]
+    code = session.get("currency") or DEFAULT_CURRENCY
+    sign = SIGNS.get(code, "£")
+    out = []
+    for f in fields:
+        if f.get("prefix"):
+            f = {**f, "prefix": sign}
+            if f.get("key") == "amount" and f.get("chips") and code in AMOUNT_CHIPS:
+                f["chips"] = [{"value": v, "label": _short_money(sign, v)} for v in AMOUNT_CHIPS[code]]
+        out.append(f)
+    return out
 
 
 def _summary(session: dict) -> list[dict]:
@@ -858,6 +880,8 @@ def public(session: dict) -> dict:
                       for f in _in_currency(session, _questions(session))],
         # A currency other than the default was written: kept, said ("In USD"), and theirs to switch.
         "currency": session.get("currency") or DEFAULT_CURRENCY,
+        # Figures given in another currency than the workspace's, to settle once (keep and convert, or meant as the workspace's).
+        "currency_question": session.get("currency_question"),
         "currency_note": f"In {session['currency']}" if session.get("currency") and session["currency"] != DEFAULT_CURRENCY else "",
         "currency_options": [session["currency"], DEFAULT_CURRENCY] if session.get("said_currency") and session["said_currency"] != DEFAULT_CURRENCY else [],
         "verification": ({"sent": True, "masked": mask_email(session["email"]), "expires_at": session["verify"]["expires_at"],
@@ -870,11 +894,11 @@ def public(session: dict) -> dict:
         # The Agent's last turn: what it captured, said back in one line, and its next question (or a check to confirm).
         "agent_turn": session.get("agent_turn"),
         # The thread as it happened: each message as typed, each Agent reply once. Nothing made up for slots never asked.
-        "turns": [{k: t.get(k) for k in ("role", "content", "next") if t.get(k) is not None} for t in (session.get("turns") or [])[-12:]],
+        "turns": [{k: t.get(k) for k in ("role", "content", "next") if t.get(k) is not None} for t in (session.get("turns") or [])[-MAX_TURNS:]],
         "questions_avoided": len([k for k in (session.get("from_message") or session.get("proposed") or [])]) + int(session.get("questions_avoided") or 0),
         # Answers that could not be used, by field, with why: the page goes back to the first one.
         "rejected": dict(session.get("rejected") or {}),
-        "choose": session.get("choose"), "confirm": session.get("confirm"), "preparing_label": _PREPARING.get(res.get("start_capability") or "", "Preparing your task"),
+        "choose": session.get("choose"), "case_changes": session.get("case_changes") or [], "confirm": session.get("confirm"), "preparing_label": _PREPARING.get(res.get("start_capability") or "", "Preparing your task"),
         "clarify": res.get("clarify"), "inputs": answers, "proposed": proposed, "summary": _summary(session), "missing": missing,
         "authenticated": bool(session.get("user_id")), "business_id": session.get("business_id"),
         "handoff": session.get("handoff"), "problem": session.get("problem"), "expires_at": session["expires_at"], "retention_days": SESSION_DAYS,
@@ -1018,11 +1042,36 @@ def _asking(session: dict) -> dict | None:
                  and not (f["key"] in given and f.get("unsure"))), None)
 
 
+def _summed_up(session: dict) -> bool:
+    """The chat already reached its summary ("Here's where you stand"): what comes now is a change to it."""
+    return any(t.get("role") == "assistant" and t.get("next") is None and str(t.get("content") or "").startswith(("Here's where you stand", "Here's what I'll use", "Got it"))
+               for t in session.get("turns") or [])
+
+
+def _got_it(ack: str) -> str:
+    """An acknowledgement said as a change: 'Thanks, noted: X.' becomes 'Got it, X.'"""
+    text = re.sub(r"^(?:thanks|nice|good|great|ok(?:ay)?)[,!.]?\s*(?:noted[:,.]?\s*)?", "", ack.strip(), flags=re.I)
+    text = re.sub(r",?\s*noted\.?$", "", text, flags=re.I).strip().rstrip(".")
+    return f"Got it, {text[:1].lower() + text[1:] if text[:1].isalpha() and not text[:2].isupper() else text}." if text else "Got it."
+
+
 def _agent_turn(session: dict, ack: str, now: datetime, extra: str = "") -> dict:
     """The Agent's one reply: what it captured, anything it answered, then its next question (or nothing more to ask)."""
     q = _asking(session)
-    text = " ".join(x for x in (extra.strip(), ack.strip(), (q or {}).get("label", "") or "That's everything I need.") if x)
+    if not q:
+        # The last message before the result is one line (the owner's brief, 17 Oct): never findings or formulas in the chat.
+        # A change made at the recap is acknowledged instead ("Got it, ₦5,000,000 for 2 more washing bays"), then the recap
+        # shows again (the owner's QA, 21 Oct).
+        if _summed_up(session) and ack.strip():
+            return {"role": "assistant", "content": f"{_got_it(ack)} Here's what I'll use now.", "at": now.isoformat(), "next": None}
+        return {"role": "assistant", "content": "Here's what I'll use:", "at": now.isoformat(), "next": None}
+    text = " ".join(x for x in (extra.strip(), ack.strip(), q.get("label", "")) if x)
     return {"role": "assistant", "content": text[:1000], "at": now.isoformat(), "next": (q or {}).get("key")}
+
+
+# A whole conversation, kept: the opening request and every question and answer (the owner's QA, 21 Oct: a six-question
+# chat lost its first two turns to a cap of 12).
+MAX_TURNS = 60
 
 
 def _opening_turns(session: dict, text: str | None, key: str | None, now: datetime) -> list[dict]:
@@ -1033,7 +1082,7 @@ def _opening_turns(session: dict, text: str | None, key: str | None, now: dateti
     return [{"role": "user", "content": said[:1000], "at": now.isoformat()}, _agent_turn(session, ack, now)]
 
 
-async def start(store: SessionStore, *, text: str | None, key: str | None, entry_mode: str, clock=None) -> dict:
+async def start(store: SessionStore, *, text: str | None, key: str | None, entry_mode: str, clock=None, currency: str | None = None) -> dict:
     now = _now(clock)
     began = time.perf_counter()
     from app.shared import people
@@ -1049,6 +1098,9 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
                "handoff": None, "events": [], "created_at": now.isoformat(), "updated_at": now.isoformat(),
                "expires_at": (now + timedelta(days=SESSION_DAYS)).isoformat()}
     _take_currency(session)
+    if not session.get("currency") and str(currency or "").upper() in SIGNS:
+        # The browser's hint: the workspace's currency when signed in, else the visitor's country's; never £ by default.
+        session["currency"] = str(currency).upper()
     session["from_message"] = sorted(session["proposed"])      # read from their own first message: shown once, never asked (QA P5-1)
     _event(session, "HomepageGoalSubmitted", now)
     _event(session, "GoalOutcomeResolved", now, resolution_class=res["resolution_class"])
@@ -1061,13 +1113,15 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
     else:
         session["state"] = COLLECTING if (_missing(session) or session["proposed"]) else AWAITING_IDENTITY
         _event(session, "CompositeGoalPathPresented" if res["resolution_class"] in (COMPOSITE, PARTIAL) else "TaskIntentResolved", now)
+    # The opening message and the first question are saved with the session (the owner's QA, 21 Oct: they were added after
+    # the save, so the first answer loaded a thread without them and both disappeared).
+    session["turns"] = _opening_turns(session, text, key, now)
     await store.put(session)
     await track(store, "goal_or_task_submitted", session, clock=clock)
     await track(store, "goal_outcome_resolved", session, clock=clock)
     await track(store, "capability_match_classified", session, clock=clock)
     if session.get("proposed"):      # each answer read from the first message is a question not asked (PRD 16)
         await track(store, "questions_avoided", session, clock=clock, count=len(session["proposed"]))
-    session["turns"] = _opening_turns(session, text, key, now)
     session["first_question_ms"] = int((time.perf_counter() - began) * 1000)
     logger.info("task session %s: first question ready in %sms (goal %s)", session["id"][:8], session["first_question_ms"], session.get("goal_key"))
     return session
@@ -1086,7 +1140,48 @@ def first_value_of(session: dict, data: dict | None = None, clock=None) -> dict 
     if versions:
         latest = max(versions, key=lambda v: str(v.get("created_at") or ""))
         return first_value.after_review(goal, latest["full_result"], latest)
-    return first_value.assess(goal, answers, data, now=_now(clock), sign=SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£"))
+    sign = SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£")
+    # A new chat about the same need keeps what was adopted before (the owner's QA, 21 Oct: after "Looks right" the adopted
+    # forecast and use of funds were drafts again and the score fell from 58 to 48). A changed need (the amount or what it
+    # is for) starts from its own answers.
+    earlier = [v for v in ((data or {}).get("assessment_datasets") or {}).get(goal) or [] if isinstance(v, dict) and v.get("adopted")]
+    if earlier:
+        latest = max(earlier, key=lambda v: str(v.get("created_at") or ""))
+        if same_need(latest.get("answers") or {}, answers):
+            from app.modules.agent import research
+            adopted = research.research_inputs(latest.get("adopted") or [])
+            own = {k: v for k, v in (latest.get("inputs") or {}).items() if (latest.get("inputs_from") or {}).get(k) == "your answer"}
+            return _partly_there(first_value.assess(goal, {**answers, **own, "research": adopted}, data, now=_now(clock), sign=sign), answers, sign)
+    return _partly_there(first_value.assess(goal, answers, data, now=_now(clock), sign=sign), answers, sign)
+
+
+def same_need(before: dict, now: dict) -> bool:
+    """The same need: the same amount and the same purpose (what was said for it), as far as both say."""
+    def amount(a):
+        try:
+            return float(str(a.get("amount")).replace(",", "")) if a.get("amount") not in (None, "") else None
+        except ValueError:
+            return None
+    words = lambda a: " ".join(str(a.get("use") or a.get("purpose") or "").lower().split())      # noqa: E731
+    a1, a2 = amount(before), amount(now)
+    if a1 is not None and a2 is not None and abs(a1 - a2) > 0.005:
+        return False
+    return not (words(before) and words(now) and words(before) != words(now))
+
+
+def _partly_there(result: dict | None, answers: dict, sign: str) -> dict | None:
+    """What the traction answer already says, on the step it helps (the owner's brief, 20 Oct): "300 cars a month, ₦1.2m
+    revenue" is a price of about ₦4,000, so the price step is partly there and only the cost per sale is asked. Shown on
+    the step only: the score is the check's own, unchanged."""
+    if not result:
+        return result
+    from app.modules.agent.research import said_figures
+    said = said_figures(answers.get("traction"))
+    price = (said.get("price") or (None,))[0]
+    for b in result.get("blockers") or []:
+        if b.get("key") == "economics" and price:
+            b["prefill"] = {"price": price, "text": f"About {sign}{price:,.0f} a sale, worked out from what you told me. Only your cost per sale is missing."}
+    return result
 
 
 # ── saving a task: the email is verified with a code, in place ───────────────
@@ -1206,6 +1301,20 @@ async def load(store: SessionStore, session_id: str, clock=None) -> dict | None:
     return session
 
 
+def _recap_choice(slots: list[dict], message: str) -> tuple[str, str, str] | None:
+    """(slot, value, label) when the message names one option of one choice question alone ("a loan" is the route's Loan)."""
+    words = set(re.findall(r"[a-z]+", str(message or "").lower()))
+    hits = []
+    for q in slots:
+        for o in q.get("options") or []:
+            label = str(o.get("label") or "")
+            names = {str(o.get("value") or "").lower().replace("_", " "), label.lower()}
+            if any(n and (n in words or (" " in n and n in " ".join(re.findall(r"[a-z]+", str(message).lower())))) for n in names) \
+                    and not re.search(r"\b(not|no)\b", label.lower()):
+                hits.append((q["key"], o["value"], label))
+    return hits[0] if len(hits) == 1 else None
+
+
 async def _take_turn(session: dict, answers: dict, message: str, asked: str | None, now: datetime, rules_only: bool = False) -> dict:
     """The Agent's intake turn on the reply as typed (intake_turn): every slot it gives a value for, checked; the
     acknowledgement and the next question; the record of what was read, for audit. The answers are returned to keep."""
@@ -1227,6 +1336,14 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
                                ai_turns=intake_turn.MAX_AI_TURNS if rules_only else int(session.get("ai_turns") or 0),
                                recent=list(session.get("recent_slots") or []))
     turns.append({"role": "user", "content": message[:1000], "at": now.isoformat()})
+    if not asked and not r["values"] and _summed_up(session):
+        # A change typed at the recap ("actually make it a loan"): read against each choice question, kept when one option
+        # alone says it, and acknowledged as that change (the owner's QA, 21 Oct: "Thanks, that's useful evidence").
+        picked = _recap_choice(slots, message)
+        if picked:
+            slot, value, label = picked
+            r = {**r, "values": {slot: value}, "corrected": [slot], "intent": "answer", "next": None,
+                 "ack": f"{'an' if label[:1].lower() in 'aeiou' else 'a'} {label.lower()}" if slot == "route" else label}
     out = {k: v for k, v in answers.items() if k != asked}
     if r["intent"] == "answer" and intake_turn.rule_intent(message) == "answer" and asked and asked in answers and asked not in r["values"]             and not r["confirm"] and not r["values"]:
         out[asked] = answers[asked]      # an answer nothing else read: as given (the form's own readers check it); never a question or an aside
@@ -1239,6 +1356,8 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
         prov[k] = "user_corrected" if k in r["corrected"] else "user_said"
     if r["confirm"]:
         session["pending_confirm"] = r["confirm"]
+    if asked and (asked in r["values"] or r["intent"] in ("question_to_agent", "not_sure", "off_topic", "change_goal")):
+        (session.get("rejected") or {}).pop(asked, None)      # handled: the earlier "Please enter a number" no longer applies
     session["agent_turn"] = {"ack": r["ack"], "reply": r["reply"], "answer": r["answer"], "confirm": r["confirm"], "intent": r["intent"], "next": r["next"]}
     session["ai_turns"] = int(session.get("ai_turns") or 0) + (1 if r["ai_turn"] else 0)
     # PRD 16: the AI cost of each intake, in tokens (priced when the intake completes, from the model's own rate).
@@ -1249,7 +1368,7 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
     if r["fallback_used"]:
         session.setdefault("fallbacks", []).append({"why": r["fallback_used"], "at": now.isoformat()})
     turns.append({"role": "assistant", "content": r["reply"][:1000], "at": now.isoformat(), "next": r["next"]})
-    session["turns"] = turns[-12:]
+    session["turns"] = turns[-MAX_TURNS:]
     return out
 
 
@@ -1308,6 +1427,7 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
     for k, v in answers.items():
         if k in allowed and allowed[k].get("unsure") and str(v).strip().lower() in (UNSURE, str(allowed[k]["unsure"]).lower()):
             session["inputs"][k] = allowed[k]["unsure_value"] if "unsure_value" in allowed[k] else UNSURE      # said, and stored as said: never guessed, never treated as a fact
+            session.get("rejected", {}).pop(k, None)
             continue
         if k in allowed and allowed[k]["type"] == "email" and v not in (None, ""):
             if not _ADDRESS.match(str(v).strip()):
@@ -1336,7 +1456,7 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         kept = {k: session["inputs"][k] for k in picked_turn if k in session["inputs"]}
         every = {f["key"]: f for f in _questions(session)}
         session["turns"].append(_agent_turn(session, intake_turn.acknowledgement(kept, every, session["inputs"], session.get("currency")), now))
-        session["turns"] = session["turns"][-12:]
+        session["turns"] = session["turns"][-MAX_TURNS:]
     elif message and session.get("turns") and session["turns"][-1].get("role") == "assistant":
         # The Agent's reply, set against what was actually kept (its next question is the session's own next one).
         last = session["turns"][-1]
@@ -1348,7 +1468,11 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
             session["turns"][-1] = _agent_turn(session, t.get("ack") or "", now, extra=t.get("answer") or "")
         elif not q:
             t = session.get("agent_turn") or {}
-            session["turns"][-1] = {**last, "content": " ".join(x for x in ((t.get("answer") or ""), (t.get("ack") or "")) if x) or "Thanks, that's everything I need.", "next": None}
+            earlier = {**session, "turns": session["turns"][:-2]}      # before this message and its reply
+            if _summed_up(earlier) and (t.get("ack") or "").strip():
+                session["turns"][-1] = {**last, "content": f"{_got_it(t['ack'])} Here's what I'll use now.", "next": None}
+            else:
+                session["turns"][-1] = {**last, "content": "Here's what I'll use:", "next": None}      # one line, then the recap (the owner's QA, 21 Oct)
     if session.get("goal_key") == "launch":
         _split_where_when(session)
     if session["inputs"]:
@@ -1403,6 +1527,9 @@ def _prefill(session: dict) -> dict:
 def _answers_for_task(session: dict) -> dict:
     """The homepage answers as the task's own answers: who, their email, the lines, VAT and the due date."""
     a = session.get("inputs") or {}
+    if session.get("goal_key") == "prepare_proposal":
+        cur = said_currency(session)
+        return {"currency": str(cur).upper()} if cur and str(cur).upper() in SIGNS else {}
     if session.get("goal_key") not in ("create_invoice", "create_quotation"):
         return {}
     out: dict[str, Any] = {}
@@ -1417,6 +1544,11 @@ def _answers_for_task(session: dict) -> dict:
         out["items"] = [{"name": str(a["item"]), "quantity": qty, "unit_price": a["amount"]}]
     if isinstance(a.get("vat_rate"), (int, float)):
         out["vat_rate"] = a["vat_rate"]
+    # The currency the owner priced it in ("£500"), carried to the document (the owner's QA, 20 Oct: £500 became ₦500).
+    # Stored as given, never converted: the customer is billed £500; totals in the workspace currency convert it.
+    cur = said_currency(session) or (session.get("currency") if session.get("currency_confirmed") else None)
+    if cur and str(cur).upper() in SIGNS:
+        out["currency"] = str(cur).upper()
     if isinstance(a.get("due_days"), (int, float)) and a["due_days"] > 0:
         out["payment_terms_days" if session.get("goal_key") == "create_invoice" else "validity_days"] = int(a["due_days"])
     return out
@@ -1456,6 +1588,22 @@ def _keep_answers(d: dict, session: dict, now: datetime) -> None:
                       currency=session.get("said_currency") or session.get("currency"), now=now)
 
 
+async def settle_currency(store: SessionStore, session: dict, choice: str, clock=None) -> dict:
+    """The answer to "You said £10,000; your workspace uses naira": "keep" converts the figures at the day's rate (said
+    so, with the rate and its date); "meant" takes them as the workspace's currency. Either way the currency is settled."""
+    q = session.get("currency_question")
+    if not q:
+        return session
+    # Amounts are stored in the currency the owner gave, never converted (the owner's brief, 20 Oct: £100,000 was stored
+    # as ₦177,303,000). "keep": the figures stay in that currency, and so does this case; "meant": the workspace's.
+    code = q["shown"] if choice == "keep" else q["workspace"]
+    session.pop("currency_question", None)
+    session["currency"], session["currency_confirmed"] = code, True
+    session["updated_at"] = _now(clock).isoformat()
+    await store.put(session)
+    return session
+
+
 async def resume(store: SessionStore, session: dict, orch, user_id: str, *, business_name: str | None = None, business_id: str | None = None, clock=None) -> dict:
     """Connect the session to the user's business: the one they already have, else a new one
     (only ever after sign-in). The workspace is marked as set up through a goal, so the
@@ -1474,6 +1622,9 @@ async def resume(store: SessionStore, session: dict, orch, user_id: str, *, busi
             data: dict[str, Any] = {"onboarding": {"via": "goal_first", "goal": session.get("goal_key"), "at": now.isoformat()}}
             if name:
                 data["workspace_profile"] = {"company_name": name}
+            signed_up = str(session.get("email") or user_id or "").strip()
+            if _ADDRESS.match(signed_up):      # the sign-up email: the workspace's contact email until changed
+                data.setdefault("workspace_profile", {})["email"] = signed_up
             session["business_id"] = await orch.rt.business.create(user_id, name or "My workspace", data)
             session["new_workspace"] = True
             _event(session, "CanonicalRecordLinkedOrCreated", now, record="business", how="created")
@@ -1484,11 +1635,27 @@ async def resume(store: SessionStore, session: dict, orch, user_id: str, *, busi
             d.setdefault("workspace_profile", {})["company_name"] = name
         _keep_answers(d, session, now)
     await orch.rt.business.mutate(session["business_id"], _mark)
-    if not session.get("said_currency") and not session.get("currency_confirmed"):
-        # No currency said: the workspace's own (Nigeria: NGN), never the visitor default (the owner's QA, 15 Oct).
+    if not session.get("currency_confirmed"):
         biz = await orch.rt.business.load(session["business_id"]) or {}
         code = bz.currency_of(biz)
-        if code in SIGNS:
+        shown = session.get("currency") or DEFAULT_CURRENCY
+        figures = {f["key"]: (session.get("inputs") or {}).get(f["key"]) for f in _questions(session) if f.get("prefix")}
+        figures = {k: v for k, v in figures.items() if isinstance(v, (int, float)) and v > 0}
+        if code in SIGNS and code != shown and figures and session.get("goal_key") in ("need_funding", "launch", "test_idea", "price_offer", "more_customers"):
+            # A check follows the workspace's currency, so its figures are settled once (a quick reply in £ counts as said
+            # in £). A document task ("an invoice for $300") keeps the currency it was given: never asked.
+            # Figures were given in the chat's currency ("£10,000") and the workspace uses another: asked once, never
+            # relabelled (the owner's QA, 20 Oct: "£10,000" became "₦10,000"). Keep them (converted at the day's rate),
+            # or say they were meant in the workspace's currency.
+            rate = None
+            try:
+                from app.modules.agent import credibility
+                rate = await credibility.dated_rate(shown, code, now.date())
+            except Exception:      # noqa: BLE001 - asked without the converted figure
+                rate = None
+            session["currency_question"] = {"shown": shown, "workspace": code, "figures": figures, "rate": rate}
+        elif code in SIGNS and not session.get("said_currency"):
+            # Nothing given in money yet: the workspace's own (a country's currency), never the visitor default (QA, 15 Oct).
             session["currency"] = code
     # A choice still to make is where it stopped: never skipped by picking the task up again.
     session["state"] = COLLECTING_REQUIRED if session.get("choose") else READY if not _missing(session) else COLLECTING_REQUIRED
@@ -1598,7 +1765,7 @@ async def edit_answers(store: SessionStore, session: dict, orch, user_id: str, c
         before = row.get("data") or {}
         if kind == rules.FUNDING:
             biz = await orch.rt.business.load(session["business_id"]) or {}
-            money = session.get("currency") or said_currency(session) or bz.currency_of(biz)
+            money = case_currency(session, biz)
             wanted = case_fields(a, currency=money if money in rules.SUPPORTED_CURRENCIES else None, where=a.get("where"), today=now.date())
             changed = {d["path"].split(".")[0] for d in case_diff(before, wanted)}
             only = {k: v for k, v in {**wanted, "title": need_title(wanted)}.items() if k in changed or (k == "title" and changed & {"target_amount", "purpose", "route_preference"})}
@@ -1683,6 +1850,17 @@ def launch_date(said: Any, today: date | None = None) -> str | None:
     return end_of_month(text, today)
 
 
+def case_currency(session: dict, biz: dict | None) -> str | None:
+    """The case's currency (the owner's QA, 20 Oct: the case flipped £/₦ across runs): the one typed in this chat ("£250,000"),
+    else one chosen in it, else the workspace's own. Never a page's guess or a default."""
+    said = said_currency(session)
+    if said:
+        return said
+    if session.get("currency_confirmed") and session.get("currency"):
+        return session["currency"]
+    return bz.currency_of(biz or {}) or session.get("currency")
+
+
 def case_fields(a: dict, *, currency: str | None, where: str | None = None, country: str | None = None, today: date | None = None) -> dict:
     """The funding chat's answers, each in its own case field (the owner's QA, 15 Oct): amount to the target, use to the
     purpose, timing to the receipt date, route to the route considered, stage, traction (their sentence, with the customers
@@ -1692,6 +1870,7 @@ def case_fields(a: dict, *, currency: str | None, where: str | None = None, coun
     amount = a.get("amount")
     if isinstance(amount, (int, float)) and amount > 0:
         out["target_amount"] = float(amount)
+        out["timing_confirmed"] = True      # said in the chat: confirmed from it, never asked again (the owner's brief, 20 Oct)
     if currency:
         out["currency"] = currency
     if a.get("use") and str(a["use"]).strip().lower() not in ("unknown", "not sure"):
@@ -1711,12 +1890,9 @@ def case_fields(a: dict, *, currency: str | None, where: str | None = None, coun
         m = _CUSTOMERS.search(said)
         if m:
             traction["customers"] = int(m.group(1).replace(",", ""))
-        for money in re.finditer(r"(?:[£$€₦]\s?)?\d[\d,.]*\s*(?:k|m|million|thousand|bn)?\b(?:\s*(?:naira|pounds|dollars|euros|cedis|shillings|rand))?", said, re.I):
-            if is_revenue(said, money.start(), money.end()) and re.search(r"month|monthly|/\s?m", said[money.end():money.end() + 40] + said[max(0, money.start() - 30):money.start()], re.I):
-                n = _number(money.group(0))
-                if n and n >= 10 and not (m and money.start() == m.start()):
-                    traction["monthly_revenue"] = n
-                    break
+        from app.modules.agent.research import traction_figures
+        if traction_figures(said).get("monthly_revenue"):
+            traction["monthly_revenue"] = traction_figures(said)["monthly_revenue"]      # "300 cars a month" is never revenue
         out["traction"] = traction
     place = str(where or a.get("where") or "").strip()
     if place:
@@ -1741,14 +1917,17 @@ def short_money(v: Any, currency: str | None) -> str:
 
 
 def need_title(fields: dict) -> str:
-    """The case named from its need: "Two pressure washers and a second van · ₦8m loan" (editable)."""
-    use = re.sub(r"^to\s+", "", str(fields.get("purpose") or "").strip(), flags=re.I).rstrip(".")
-    use = use[:1].upper() + use[1:] if use else "Funding"
+    """The case named in plain words (the owner's brief, 20 Oct): "₦5m loan for 2 more washing bays" (editable)."""
+    use = re.sub(r"^(?:to|for)\s+", "", str(fields.get("purpose") or "").strip(), flags=re.I).rstrip(".")
     use = use if len(use) <= 48 else use[:45].rsplit(" ", 1)[0] + "…"
     money = short_money(fields.get("target_amount"), fields.get("currency")) if fields.get("target_amount") else ""
-    route = {"loan": "loan", "grant": "grant", "equity": "equity"}.get(str(fields.get("route_preference") or ""), "")
-    tail = " ".join(x for x in (money, route) if x)
-    return f"{use} · {tail}"[:120] if tail else use[:120]
+    route = {"loan": "loan", "grant": "grant", "equity": "equity investment"}.get(str(fields.get("route_preference") or ""), "funding")
+    head = " ".join(x for x in (money, route) if x)
+    head = head[:1].upper() + head[1:]
+    if not use:
+        return head[:120] if money else "Funding"
+    from app.modules.agent.intake_turn import purpose_phrase
+    return f"{head} {purpose_phrase(use)}"[:120]
 
 
 # What makes it a different funding need (not just new details): the amount, its currency, what it is for, the route, where.
@@ -1779,7 +1958,7 @@ def case_diff(before: dict, wanted: dict) -> list[dict]:
     return out
 
 
-def _said(path: str, value: Any, currency: str | None) -> str:
+def _said(path: str, value: Any, currency: str | None, full: bool = False) -> str:
     if value in (None, ""):
         return "not set"
     if path == "target_amount":
@@ -1794,7 +1973,8 @@ def _said(path: str, value: Any, currency: str | None) -> str:
         except ValueError:
             return str(value)
     text = str(value)
-    return text if len(text) <= 40 else text[:37].rsplit(" ", 1)[0] + "…"
+    # In the update table, the whole value (it wraps there); shortened only where it is said in one line.
+    return text if full or len(text) <= 40 else text[:37].rsplit(" ", 1)[0] + "…"
 
 
 def diff_line(diff: list[dict], before: dict, wanted: dict) -> str:
@@ -1811,18 +1991,62 @@ def need_summary(data: dict) -> str:
     return ", ".join(x for x in (" ".join(x for x in parts[:2] if x), parts[2]) if x)
 
 
+def plain_changes(diff: list[dict], data: dict, wanted: dict, session: dict) -> list[dict]:
+    """What the chat changes on the case, in the words the chat used ("Investment", never "equity"; "Not trading yet",
+    never "pre_revenue"): [{"field", "before", "now"}], five at most."""
+    labels: dict[str, dict] = {}
+    for q in _questions(session):
+        for o in q.get("options") or []:
+            labels.setdefault(q["key"], {})[str(o.get("value") or "").lower()] = str(o.get("label") or "")
+    path_key = {"route_preference": "route", "stage": "stage", "receipt_date": "timing"}
+
+    def word(path, value, currency):
+        key = path_key.get(path)
+        named = (labels.get(key) or {}).get(str(value or "").lower()) if key else None
+        if named:
+            return named
+        text = _said(path, value, currency, full=True)
+        if text == "not set":
+            return "Not set"
+        return (text.replace("_", " ")[:1].upper() + text.replace("_", " ")[1:]) if "_" in text else text      # a code said in words
+    return [{"field": d["label"], "before": word(d["path"], d["before"], data.get("currency")),
+             "now": word(d["path"], d["after"], wanted.get("currency") or data.get("currency"))} for d in diff][:5]
+
+
+async def case_changes(orch, session: dict, user_id: str, email: str | None = None) -> list[dict]:
+    """For the recap, before anything is written: what this chat would change on the business's funding case."""
+    from app.modules.agent import credibility
+    from app.modules.readiness import rules
+    from app.modules.readiness.service import service_for
+    if session.get("goal_key") != "need_funding" or not session.get("business_id"):
+        return []
+    svc = service_for(orch)
+    rows = sorted((r for r in await svc.store.list("subjects", session["business_id"], kind=rules.FUNDING, limit=50)
+                   if r.get("status") not in ("cancelled", "archived")), key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    if not rows:
+        return []
+    a = session.get("inputs") or {}
+    biz = await orch.rt.business.load(session["business_id"]) or {}
+    profile = biz.get("workspace_profile") or {}
+    where = a.get("where") or profile.get("city") or ""
+    country = (credibility.country_of(where) or credibility.country_of(profile.get("country")) or "").title() or None
+    money = case_currency(session, biz)
+    wanted = case_fields(a, currency=money if money in rules.SUPPORTED_CURRENCIES else None, where=a.get("where"), country=country, today=_now(None).date())
+    data = rows[0].get("data") or {}
+    return plain_changes(case_diff(data, wanted), data, wanted, session)
+
+
 def _replace_or_update(row: dict, diff: list[dict], wanted: dict) -> dict:
+    """One case per business (the owner's brief, 20 Oct): never "Replace". The case is updated; when the need itself changes
+    (the amount, the purpose), the previous version is kept in History automatically. Shown as a clean list of what changes:
+    Field | Before | Now, five rows at most, in plain words."""
     data = row.get("data") or {}
-    line = diff_line(diff, data, wanted)
-    if any(d["core"] for d in diff):
-        label = (f"This looks like a new funding need. Replace '{data.get('title') or 'your funding case'}' ({need_summary(data) or 'as it is'}) with this one "
-                 f"({need_summary(wanted) or 'the new details'})? Your previous version stays in History. {line}")
-        options = [{"value": f"replace:{row['id']}", "label": "Replace"}, {"value": f"update:{row['id']}", "label": "Just update the changed details"},
-                   {"value": f"cancel:{row['id']}", "label": "Cancel"}]
-    else:
-        label = f"Update your funding case? {line}"
-        options = [{"value": f"update:{row['id']}", "label": "Update"}, {"value": f"cancel:{row['id']}", "label": "Cancel"}]
-    return {**_f("subject_choice", label, "choice", required=True, options=options), "diff": diff}
+    rows = [{"field": d["label"], "before": _said(d["path"], d["before"], data.get("currency"), full=True),
+             "now": _said(d["path"], d["after"], wanted.get("currency") or data.get("currency"), full=True)} for d in diff][:5]
+    how = "replace" if any(d["core"] for d in diff) else "update"      # "replace" keeps the old version in History; same button
+    options = [{"value": f"{how}:{row['id']}", "label": "Update my case"}, {"value": f"cancel:{row['id']}", "label": "Cancel"}]
+    return {**_f("subject_choice", "I'll update your funding case", "choice", required=True, options=options), "diff": diff, "rows": rows,
+            "default": f"{how}:{row['id']}"}
 
 
 def _brand_later(orch, business_id: str, user_id: str | None) -> None:
@@ -1971,7 +2195,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 where = a.get("where") or profile.get("city") or ""
                 country = (credibility.country_of(where) or credibility.country_of(profile.get("country")) or "").title() or None
                 # The currency the owner typed ("£250,000") wins over the workspace's own; the workspace's only when none was said.
-                money = session.get("currency") or said_currency(session) or bz.currency_of(biz)
+                money = case_currency(session, biz)
                 wanted = case_fields(a, currency=money if money in rules.SUPPORTED_CURRENCIES else None, where=a.get("where"), country=country, today=now.date())
                 every = sorted((r for r in await svc.store.list("subjects", session["business_id"], kind=kind, limit=50) if r.get("status") != "cancelled"),
                                key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -1982,14 +2206,10 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     current = await svc.store.get("subjects", every[0]["id"]) or every[0]
                     if not choice:
                         diff = case_diff(current.get("data") or {}, wanted)
-                        if diff:
-                            # Said before anything is written, with what would change: [Replace] [Just update] [Cancel].
-                            session["choose"] = _replace_or_update(current, diff, wanted)
-                            session["state"] = COLLECTING_REQUIRED
-                            session["updated_at"] = now.isoformat()
-                            await store.put(session)
-                            return session
-                        choice = f"update:{current['id']}"
+                        # Said in the recap before anything is written (case_changes), confirmed by "Looks right": one
+                        # confirmation, never a second screen. A changed need keeps the earlier one in History.
+                        choice = f"{'replace' if any(d['core'] for d in diff) else 'update'}:{current['id']}"
+                        session["case_changes"] = plain_changes(diff, current.get("data") or {}, wanted, session)
             if not choice:
                 existing = await _open_subjects(svc, session["business_id"], kind)
                 if existing:
@@ -2051,6 +2271,10 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     made = await svc.update_subject(user_id, session["business_id"], kind, choice, row["revision"], payload, email)
                     did = f'I updated "{(row.get("data") or {}).get(name_field) or noun}" with what you told me'
                 created_s = time.perf_counter() - clocked
+                # The case remembers the chat that set it up, so its page shows the very result the chat ended on (one record,
+                # the same score, count, coverage and steps; the owner's QA, 20 Oct).
+                sid_made = made["id"]
+                await orch.rt.business.mutate(session["business_id"], lambda d: d.setdefault("chat_sessions", {}).__setitem__(str(sid_made), session["id"]))
                 handoff.update({"to": f"/{'funding' if kind == rules.FUNDING else 'launch'}/{made['id']}", "subject_id": made["id"], "updated_existing": choice != NEW,
                                 "message": f"{did}{': ' + told if told else ''}. Run the check to see where you stand."})
                 # First value is the result, not an empty case: the readiness check is run now. It is

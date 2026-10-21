@@ -300,7 +300,9 @@ def region_note(source_region: str | None, business_country: str | None, busines
     if theirs and theirs != ours:
         return False, f"This source covers {source_region}, not {business_country}: not used as {business_country} evidence."
     if business_city and business_city.lower() not in str(source_region).lower():
-        return True, f"A {source_region} figure, used for a {business_city} business."
+        # "an Abuja business", "a UK figure", "an MP": an acronym by how its first letter is said, a word by its first letter.
+        art = lambda w: ("an" if str(w)[:1] in "AEFHILMNORSX" else "a") if str(w or "").isupper() and len(str(w)) <= 5             else ("an" if str(w or "")[:1].lower() in "aeio" else "a")      # noqa: E731
+        return True, f"{art(source_region).capitalize()} {source_region} figure, used for {art(business_city)} {business_city} business."
     return True, ""
 
 

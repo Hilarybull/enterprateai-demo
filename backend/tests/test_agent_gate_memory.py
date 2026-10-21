@@ -253,7 +253,7 @@ def test_the_memory_and_settings_endpoints(monkeypatch):
             assert client.delete(f"/businesses/A/agent/memory/{fact['id']}").json() == {"removed": True}
             policy = client.get("/businesses/A/agent/policy").json()
             assert len(policy["events"]) == 18 and {c["capability"] for c in policy["capabilities"]} == set(WORKFLOWS)
-            assert all(c["minimum_plan_label"] in ("Explorer", "Starter") and c["available"] for c in policy["capabilities"])
+            assert all(c["minimum_plan_label"] in ("Explorer", "Starter") and c["available"] for c in policy["capabilities"] if c["capability"] != "funding_pack_draft")      # the funding pack: Decision Engine
             asked = client.post("/agent/requests", json={"business_id": "A", "text": "remember that we close at 5pm"}).json()
             assert asked["kind"] == "remember" and asked["fact"] == "we close at 5pm"
             app.dependency_overrides[get_current_user] = lambda: {"id": OUTSIDER, "email": OUTSIDER}

@@ -2358,11 +2358,15 @@ class DirectoryService:
                 # A profile under another business's name can't go live unverified, whether or not the real one is visible.
                 raise Conflict("verification_required", f"Another Marketplace profile already uses the name {same[0]['name']}. If it is your business, claim it. "
                                "If it isn't, verify your own business before publishing.", {"profile": same[0], "profiles": same})
-        if publish and self._plan_of and await self._plan_of(ctx["owner_id"]) == "explorer":
-            others = [b for b in await self.business.owned_by(ctx["owner_id"]) if b["id"] != business_id and ((b["data"] or {}).get("marketplace") or {}).get("is_active")]
-            if others:
-                # The claim and the profile stay; only publishing a second listing needs a plan that includes it.
-                raise Conflict("entitlement", "The Explorer plan includes 1 Marketplace listing. Unlist your other business or upgrade for more. Your profile and settings are saved.")
+        if publish and self._plan_of:
+            from app.modules.plans.capabilities import PLAN_LABEL, quota
+            plan = await self._plan_of(ctx["owner_id"])
+            limit = quota(plan, "marketplace_listings")      # Explorer 1, Starter 10, Decision Engine no limit (the pricing PDF)
+            others = [b for b in await self.business.owned_by(ctx["owner_id"]) if b["id"] != business_id and ((b["data"] or {}).get("marketplace") or {}).get("is_active")] if limit is not None else []
+            if limit is not None and len(others) >= limit:
+                # The claim and the profile stay; only publishing one more listing needs a plan that includes it.
+                raise Conflict("entitlement", f"The {PLAN_LABEL.get(plan, 'Explorer')} plan includes {limit} Marketplace listing{'' if limit == 1 else 's'}. "
+                               "Unlist another business or upgrade for more. Your profile and settings are saved.")
         now = self.clock().isoformat()
         first = {"value": False}
         pd = (profile or {}).get("data") or {}

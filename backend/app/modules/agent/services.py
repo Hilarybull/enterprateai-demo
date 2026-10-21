@@ -307,10 +307,14 @@ class CreditMeter(Meter):
         if int(credits or 0) <= 0:
             return False
         tag = f"[{key}]"
-        earlier = await get_transactions(user_id, limit=200, transaction_type="refund")
+        # A member's charge came from the team's pool: given back there, and to their allowance.
+        from app.modules.plans.team import payer_for, record_use
+        payer, team = await payer_for(user_id)
+        earlier = await get_transactions(payer, limit=200, transaction_type="refund")
         if any(tag in str(t.get("description") or "") for t in earlier or []):
             return False
-        await grant_credits(user_id, int(credits), "refund", f"{reason} {tag}")
+        await grant_credits(payer, int(credits), "refund", f"{reason} {tag}")
+        await record_use(team, -int(credits))
         return True
 
     @asynccontextmanager
@@ -641,7 +645,7 @@ class ModuleStudio(Studio):
         from app.modules.blueprint.schemas import BlueprintGenerateRequest
         from app.modules.blueprint.service import generate_blueprint
         res = await generate_blueprint(BlueprintGenerateRequest(
-            type="sales_letter", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id,
+            type="sales_letter", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, word_count=int(idea.get("word_count") or 450),
             industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
             target_market=idea.get("customer") or None, **owner_words(idea)), user_id=user_id)
         return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Sales letter",

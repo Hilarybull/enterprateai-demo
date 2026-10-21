@@ -107,7 +107,7 @@ def test_a_customer_read_out_of_the_description_is_confirmed_with_the_text_there
 # ══ C-1 ═══════════════════════════════════════════════════════════════════════
 
 def test_every_agent_tile_opens_the_record_it_describes():
-    env = Env()
+    env = Env(plan="decision_engine")
     svc, lid = launch(env)
     assess(svc, lid, L)
     _, cid = funding_case(env)

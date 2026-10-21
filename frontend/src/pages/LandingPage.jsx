@@ -27,7 +27,7 @@ const PLANS = [
     name: "Starter", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
     desc: "Plan, launch and grow. For founders and solo businesses",
     ctaLabel: "Choose Starter",
-    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "Scenario Simulations", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
+    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "4 Scenario Simulations a month", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
     highlight: false,
   },
   {
@@ -162,6 +162,16 @@ function RecentActivity({ running }) {
 
 export default function LandingPage() {
   const goalFlow = useGoalFlow();      // the goal started in the hero: the launcher on the left, its task card on the right
+  // One task card on the page (the owner's QA, 21 Oct: a hidden second copy showed the recap twice): under the launcher
+  // from 768 to 1023px, in the right column (or a sheet) otherwise.
+  const [midWidth, setMidWidth] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 768px) and (max-width: 1023px)").matches);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const m = window.matchMedia("(min-width: 768px) and (max-width: 1023px)");
+    const on = () => setMidWidth(m.matches);
+    m.addEventListener?.("change", on);
+    return () => m.removeEventListener?.("change", on);
+  }, []);
   // From 1024px the preview's box (and so the task card that takes its place) starts level with the Agent card's top.
   const heroRight = useRef(null);
   const heroStage = useRef(null);
@@ -387,7 +397,8 @@ export default function LandingPage() {
               ))}
             </ul>
             <button type="button" onClick={() => goToApp()} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</button>
-            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
+            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
+
           </div>
         </div>
       )}
@@ -414,7 +425,7 @@ export default function LandingPage() {
               {/* The way in: say what you want done, pick a business goal, or start a task (PRD-GO-001). The card is as wide as the text column. */}
               <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onTouch={demo ? () => closeDemo(false) : null} /></div>
               {/* 768 to 1023px: the goal opens right here, under the launcher. (Wider, it is in the right column; narrower, a sheet.) */}
-              {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
+              {goalFlow.session && midWidth && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
             </div>
 
             {/* The right column. It always holds the product preview's space, so opening a goal never changes the hero's height:
@@ -424,7 +435,7 @@ export default function LandingPage() {
                 same top and the same height as the preview, so nothing moves when it opens or closes; the two crossfade. */}
             <div className="relative" ref={heroStage} style={stageTop ? { marginTop: stageTop } : undefined} data-hero-stage>
             {/* Keyed by the task: a new or resumed task never shows another one's thread. */}
-            {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
+            {goalFlow.session && !midWidth && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
             {/* While the first question is on its way (or a saved task is fetched on reload): the card's own shell, with the
                 Agent typing in its first bubble. */}
             {(goalFlow.busy || goalFlow.resuming) && !goalFlow.session && (

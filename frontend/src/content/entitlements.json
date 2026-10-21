@@ -1,11 +1,12 @@
 {
   "adds": {
-    "decision_engine": [],
+    "decision_engine": [
+      "funding_pack_draft"
+    ],
     "explorer": [
       "add_catalogue_item",
       "add_customer",
       "add_vendor",
-      "business_plan_draft",
       "enquiry_to_quote",
       "idea_validation",
       "marketplace_offering",
@@ -19,12 +20,11 @@
       "registration_checklist",
       "update_record"
     ],
-    "growth_navigator": [],
     "starter_insight": [
+      "business_plan_draft",
       "capacity_check",
       "credit_note",
       "expansion_scenario",
-      "funding_pack_draft",
       "launch_evidence_gaps",
       "market_size",
       "new_proposal",
@@ -37,8 +37,7 @@
       "sales_letter_draft",
       "scenario_help",
       "supplier_bill"
-    ],
-    "strategic_business_os": []
+    ]
   },
   "plans": [
     {
@@ -52,14 +51,6 @@
     {
       "key": "decision_engine",
       "label": "Decision Engine"
-    },
-    {
-      "key": "growth_navigator",
-      "label": "Growth Navigator"
-    },
-    {
-      "key": "strategic_business_os",
-      "label": "Strategic Business OS"
     }
   ],
   "quotas": {
@@ -71,17 +62,9 @@
       "marketplace_listings": 1,
       "scenario_help": 0
     },
-    "growth_navigator": {
-      "marketplace_listings": null,
-      "scenario_help": null
-    },
     "starter_insight": {
-      "marketplace_listings": null,
+      "marketplace_listings": 10,
       "scenario_help": 4
-    },
-    "strategic_business_os": {
-      "marketplace_listings": null,
-      "scenario_help": null
     }
   }
 }

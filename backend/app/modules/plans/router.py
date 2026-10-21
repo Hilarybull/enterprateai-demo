@@ -14,7 +14,7 @@ from app.modules.plans.schemas import (
     SubscriptionOut,
 )
 from app.shared.auth.deps import get_current_user
-from app.modules.credits.service import provision_plan_credits, reset_monthly_credits
+from app.modules.credits.service import normalise_plan_key, provision_plan_credits, reset_monthly_credits
 from app.modules.referral import service as ref_svc
 from app.modules.plans.access import resolve_subscription
 from app.modules.addons import service as addon_svc
@@ -33,15 +33,6 @@ _PRICE_ATTR = {
     ("starter_insight", "annual"):  "stripe_price_insight_starter_annual",
     ("decision_engine", "monthly"): "stripe_price_decision_engine_monthly",
     ("decision_engine", "annual"):  "stripe_price_decision_engine_annual",
-    ("growth_navigator", "monthly"): "stripe_price_strategic_intelligence_monthly",
-    ("growth_navigator", "annual"):  "stripe_price_strategic_intelligence_annual",
-    ("strategic_business_os", "monthly"): "stripe_price_strategic_business_os_monthly",
-    ("strategic_business_os", "annual"):  "stripe_price_strategic_business_os_annual",
-    # Legacy aliases
-    ("insight_starter", "monthly"): "stripe_price_insight_starter_monthly",
-    ("insight_starter", "annual"):  "stripe_price_insight_starter_annual",
-    ("strategic_intelligence", "monthly"): "stripe_price_strategic_intelligence_monthly",
-    ("strategic_intelligence", "annual"):  "stripe_price_strategic_intelligence_annual",
 }
 
 
@@ -58,6 +49,7 @@ def _stripe_client():
 
 def _get_price_id(plan_key: str, billing_period: str) -> str:
     settings = get_settings()
+    plan_key = normalise_plan_key(plan_key)
     attr = _PRICE_ATTR.get((plan_key, billing_period))
     if not attr:
         raise HTTPException(status_code=400, detail="Invalid plan or billing period.")
@@ -142,6 +134,8 @@ ADDONS = [
     # RFQ credit packs — one-time
     {"key": "addon_rfq_20",      "label": "RFQ Credits — 20",              "price": 10,  "currency": "gbp", "mode": "payment",      "desc": "20 RFQ response credits. Use to respond to buyer requests.",      "price_attr": "stripe_price_addon_rfq_20"},
     {"key": "addon_rfq_50",      "label": "RFQ Credits — 50",              "price": 20,  "currency": "gbp", "mode": "payment",      "desc": "50 RFQ response credits. Best value for active suppliers.",       "price_attr": "stripe_price_addon_rfq_50"},
+    # Decision Engine: an extra seat, £15 a month, with 250 AI credits each month (the pricing PDF, 19 Oct 2026).
+    {"key": "addon_seat",        "label": "Extra seat",                    "price": 15,  "currency": "gbp", "mode": "subscription", "desc": "One more team member on Decision Engine, with 250 AI credits each month.", "price_attr": "stripe_price_addon_seat", "min_plan": "decision_engine"},
     {"key": "addon_rfq_100",     "label": "RFQ Credits — 100",             "price": 35,  "currency": "gbp", "mode": "payment",      "desc": "100 RFQ response credits. Maximum pack for high-volume sellers.", "price_attr": "stripe_price_addon_rfq_100"},
 ]
 
@@ -164,6 +158,10 @@ async def addon_checkout(
     addon = _ADDON_BY_KEY.get(addon_key)
     if not addon:
         raise HTTPException(status_code=400, detail="Unknown add-on.")
+    if addon.get("min_plan"):
+        from app.modules.plans.access import plan_meets, refusal
+        if not await plan_meets(user["id"], addon["min_plan"]):
+            raise HTTPException(status_code=403, detail=await refusal(user["id"], addon["min_plan"], addon["label"]))
 
     client = _stripe_client()
     settings = get_settings()
@@ -236,7 +234,7 @@ async def _fulfil_addon_session(session) -> dict:
             period_start, period_end = _period_iso(_stripe_client().subscriptions.retrieve(sub_id))
         except Exception as e:
             logger.error("Add-on %s: could not read subscription period: %s", sub_id, e)
-    return await addon_svc.fulfil_addon(
+    out = await addon_svc.fulfil_addon(
         user_id=user_id,
         addon_key=addon_key,
         session_id=session_id,
@@ -244,6 +242,9 @@ async def _fulfil_addon_session(session) -> dict:
         period_start=period_start,
         period_end=period_end,
     )
+    if addon_key == "addon_seat":
+        await addon_svc.grant_seat_credits(user_id, 1, session_id)      # the first month's 250 credits, once
+    return out
 
 
 @router.post("/addons/activate")
@@ -272,9 +273,10 @@ async def activate_addon(payload: dict, user=Depends(get_current_user)):
 @router.post("/waitlist", response_model=SubscribeResponse)
 async def subscribe_interest(payload: SubscribeRequest) -> SubscribeResponse:
     """Capture subscription interest (used when Stripe is not yet configured)."""
+    plan_key = normalise_plan_key(payload.plan_key)
     existing = await sb_select(
         "plan_waitlist",
-        filters=[("email", "eq", payload.email), ("plan_key", "eq", payload.plan_key)],
+        filters=[("email", "eq", payload.email), ("plan_key", "eq", plan_key)],
         single=True,
     )
     if not existing:
@@ -282,7 +284,7 @@ async def subscribe_interest(payload: SubscribeRequest) -> SubscribeResponse:
             "plan_waitlist",
             {
                 "email": payload.email,
-                "plan_key": payload.plan_key,
+                "plan_key": plan_key,
                 "billing_period": payload.billing_period,
                 "joined_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -300,7 +302,8 @@ async def create_subscription(
     """Create a Stripe Subscription and return a PaymentIntent client_secret
     for confirmation via Stripe Elements on the frontend."""
     client = _stripe_client()
-    price_id = _get_price_id(payload.plan_key, payload.billing_period)
+    plan_key = normalise_plan_key(payload.plan_key)
+    price_id = _get_price_id(plan_key, payload.billing_period)
 
     # Reuse existing Stripe customer if we have one
     existing = await sb_select(
@@ -324,7 +327,7 @@ async def create_subscription(
         "expand": ["latest_invoice.payment_intent"],
         "metadata": {
             "user_id": str(user["id"]),
-            "plan_key": payload.plan_key,
+            "plan_key": plan_key,
             "billing_period": payload.billing_period,
         },
     }
@@ -388,7 +391,7 @@ async def activate_subscription(
         try:
             stripe_sub = client.subscriptions.retrieve(subscription_id)
             meta = getattr(stripe_sub, "metadata", {}) or {}
-            plan_key = meta.get("plan_key")
+            plan_key = normalise_plan_key(meta.get("plan_key"))
             billing_period = meta.get("billing_period", "monthly")
             customer_id = getattr(stripe_sub, "customer", None)
             owner_id = meta.get("user_id")
@@ -400,7 +403,7 @@ async def activate_subscription(
         try:
             session = client.checkout.sessions.retrieve(session_id)
             meta = getattr(session, "metadata", {}) or {}
-            plan_key = meta.get("plan_key")
+            plan_key = normalise_plan_key(meta.get("plan_key"))
             billing_period = meta.get("billing_period", "monthly")
             customer_id = getattr(session, "customer", None)
             owner_id = meta.get("user_id")
@@ -491,14 +494,15 @@ async def create_checkout_session(
     user=Depends(get_current_user),
 ) -> CheckoutResponse:
     client = _stripe_client()
-    price_id = _get_price_id(payload.plan_key, payload.billing_period)
+    plan_key = normalise_plan_key(payload.plan_key)
+    price_id = _get_price_id(plan_key, payload.billing_period)
     base = _frontend_url()
 
     current = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True) or {}
     if (
         current.get("status") == "active"
         and current.get("stripe_subscription_id")
-        and current.get("plan_key") == payload.plan_key
+        and current.get("plan_key") == plan_key
         and current.get("billing_period") == payload.billing_period
     ):
         raise HTTPException(status_code=409, detail="You're already on this plan.")
@@ -508,7 +512,7 @@ async def create_checkout_session(
         "line_items": [{"price": price_id, "quantity": 1}],
         "metadata": {
             "user_id": user["id"],
-            "plan_key": payload.plan_key,
+            "plan_key": plan_key,
             "billing_period": payload.billing_period,
         },
         "success_url": f"{base}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}",
@@ -634,7 +638,7 @@ async def stripe_webhook(request: Request):
         session = event["data"]["object"] if isinstance(event, dict) else event.data.object
         meta = session.get("metadata", {}) if isinstance(session, dict) else session.metadata
         user_id = meta.get("user_id")
-        plan_key = meta.get("plan_key")
+        plan_key = normalise_plan_key(meta.get("plan_key"))
         billing_period = meta.get("billing_period", "monthly")
 
         if user_id and meta.get("addon_key"):
@@ -720,6 +724,10 @@ async def stripe_webhook(request: Request):
                 period_start, period_end = _period_iso(_stripe_client().subscriptions.retrieve(inv_sub_id))
                 await addon_svc.renew_addon_subscription(inv_sub_id, period_start, period_end)
                 logger.info("Renewed add-on subscription %s", inv_sub_id)
+                seat = await sb_select("user_addons", filters=[("stripe_subscription_id", "eq", inv_sub_id), ("kind", "eq", "extra_seat")], single=True)
+                if seat and seat.get("user_id"):
+                    # Each month's 250 credits for an extra seat, once per invoice.
+                    await addon_svc.grant_seat_credits(seat["user_id"], int(seat.get("quantity") or 1), str(_obj_get(invoice, "id") or inv_sub_id))
             except Exception as e:
                 logger.error("Failed to renew add-on subscription %s: %s", inv_sub_id, e)
         elif billing_reason == "subscription_cycle" and customer_id:
@@ -835,12 +843,12 @@ async def agent_tasks_by_plan() -> dict:
     from app.modules.plans import capabilities as plan_map
     title = lambda c: WORKFLOWS[c].title if c in WORKFLOWS else c.replace("_", " ").title()      # noqa: E731
     plans, before = {}, frozenset()
-    for key in plan_map.PLAN_ORDER:
+    for key in plan_map.PUBLIC_PLAN_ORDER:
         now = plan_map.PLAN_CAPABILITIES[key]
         plans[key] = {"label": plan_map.PLAN_LABEL[key], "adds": sorted(title(c) for c in now - before), "includes": len(now),
                       "quotas": {k: v for k, v in (plan_map.QUOTAS.get(key) or {}).items()}}
         before = now
-    return {"plans": plans, "order": list(plan_map.PLAN_ORDER)}
+    return {"plans": plans, "order": list(plan_map.PUBLIC_PLAN_ORDER)}
 
 
 # ── Authenticated: get current subscription ───────────────────────────────────

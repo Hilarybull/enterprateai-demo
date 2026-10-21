@@ -29,7 +29,8 @@ def add_profile_services(data: dict, now: datetime | None = None) -> list[str]:
         key = _norm(name)
         if len(key) < 2 or key in have or key in synced:
             continue
-        products.insert(0, {"id": str(uuid.uuid4()), "name": name, "type": "service",
+        category = str(s.get("category") or "").strip() if isinstance(s, dict) else ""
+        products.insert(0, {"id": str(uuid.uuid4()), "name": name, "type": "service", **({"category": category} if category and category.lower() != "other" else {}),
                             "description": str((s.get("service_description") or s.get("description") or "") if isinstance(s, dict) else "")[:600],
                             "base_price": 0, "cost_of_sales": None, "discount": 0, "freight_cost": 0, "marketplace_listed": False, "archived": False,
                             "created_at": now.isoformat(), "from_profile": True, "provenance": f"From your business profile, {now.day} {now.strftime('%b')}"})

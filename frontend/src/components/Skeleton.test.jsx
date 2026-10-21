@@ -12,6 +12,7 @@ import { QuestionForm } from "./agent/AgentBits";
 import AgentRunPage from "../pages/AgentRunPage";
 import ReadinessPage from "../pages/ReadinessPage";
 import { useWorkspaceStore } from "../store/workspace";
+import { useAuthStore } from "../store/auth";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -118,7 +119,7 @@ const RUN = {
 };
 
 describe("the Agent task page", () => {
-  beforeEach(() => { localStorage.setItem("ea_token", "test"); });
+  beforeEach(() => { localStorage.setItem("ea_token", "test"); useAuthStore.setState({ subscription: { plan_key: "starter_insight", status: "active", billing_period: "monthly" }, platformGrants: [] }); });
   const mount = () => render(<MemoryRouter initialEntries={["/agent/runs/run-1"]}><Routes><Route path="/agent/runs/:runId" element={<AgentRunPage />} /></Routes></MemoryRouter>);
 
   it("shows its skeleton while the task is loading, then the task in the same container", async () => {

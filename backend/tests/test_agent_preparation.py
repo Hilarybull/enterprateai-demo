@@ -39,7 +39,7 @@ def test_each_checks_the_plan_like_every_other_agent_task(plan, capability):
 
 
 def test_with_nothing_on_record_each_says_exactly_what_it_needs_and_prepares_nothing():
-    env = Env()
+    env = Env(plan="decision_engine")
     said = {c: env.submit(capability=c, channel="ui_action")["run"]["summary"] for c in PREP}
     assert said["readiness_refresh"] == "Your readiness checks are up to date: nothing has changed since the last check."
     assert said["launch_evidence_gaps"] == "Launch evidence is checked against a launch plan, and you haven't started one yet."
@@ -93,7 +93,7 @@ def test_a_check_that_goes_out_of_date_is_run_again_without_being_asked():
 
 
 def test_a_funding_case_gets_its_pack_drafted_when_asked_and_nothing_is_sent():
-    env = Env()
+    env = Env(plan="decision_engine")
     svc, cid = funding_case(env)
     only(env, "funding_pack_draft")
     assert "funding_pack_draft" not in started(env)                        # §4: generation is suggested, never started by itself
@@ -110,7 +110,7 @@ def test_a_funding_case_gets_its_pack_drafted_when_asked_and_nothing_is_sent():
 # ══ the Agent card: outcomes, questions and status ════════════════════════════
 
 def test_the_tiles_say_what_the_agent_needs_is_doing_or_has_done():
-    env = Env()
+    env = Env(plan="decision_engine")
     d = _pre(env)
     assert _suggestion(d, "stage_funding")["text"] == "I need a funding case before the funding pack can be drafted."      # only the owner can supply that
     assert _suggestion(d, "stage_register")["text"] == "Prepare my registration checklist"      # nothing running yet: an offer (QA P1-5)
@@ -132,7 +132,7 @@ def test_the_tiles_say_what_the_agent_needs_is_doing_or_has_done():
 
 
 def test_a_tile_for_work_the_owner_switched_off_is_not_shown_as_an_instruction_instead():
-    env = Env()
+    env = Env(plan="decision_engine")
     funding_case(env)
     run(env.store.set_policy("A", {"automation": {"auto_start": True, "items": {"funding_pack_draft": False, "registration_checklist": False}}}, OWNER))
     d = _pre(env)
@@ -143,7 +143,7 @@ def test_a_tile_for_work_the_owner_switched_off_is_not_shown_as_an_instruction_i
 
 
 def test_each_new_item_has_its_own_switch_and_the_plan_it_needs():
-    env = Env()
+    env = Env(plan="decision_engine")
     rows = {e["key"]: e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]}
     for key in PREP:
         if rows[key]["capability"] == "funding_pack_draft":      # §4: generation is suggested, never automatic

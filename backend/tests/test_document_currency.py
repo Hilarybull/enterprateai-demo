@@ -49,7 +49,7 @@ def test_every_converted_total_says_its_rate_date_and_an_old_rate_is_flagged():
     d = _data()
     d["fx_rates"] = {"base": "NGN", "date": "2026-10-16", "rates": {"GBP": 2000.0, "USD": 1500.0}, "dates": {"GBP": "2026-10-16", "USD": "2026-10-16"}}
     t = bz.total_of(d, d["financials"]["invoices"], bz.invoice_outstanding)
-    assert bz.fmt_total(t, "NGN").endswith(" at 16 Oct rate")
+    assert bz.fmt_total(t, "NGN").startswith("≈ ₦5,982,500.00 at 16 Oct rate")      # "which may be out of date" follows once it is old
     assert bz.rate_words("2026-10-12", date(2026, 10, 16)) == " at 12 Oct rate, which may be out of date"
     assert bz.rate_words("2026-10-15", date(2026, 10, 16)) == " at 15 Oct rate"
 

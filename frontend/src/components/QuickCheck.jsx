@@ -112,7 +112,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{meta.title}</p>
-          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro} You get a provisional score, what looks ready and what is missing.</p>
+          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro} You get a score, what looks ready and what is missing.</p>
         </div>
         {!open && <button type="button" onClick={() => setOpen(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Start the quick check</button>}
       </div>

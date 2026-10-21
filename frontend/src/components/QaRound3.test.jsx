@@ -52,7 +52,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
   it("cost first, one press only, then each finding reviewed and the check run again: before and after", async () => {
     const calls = mockApi({ quote: ALLOWED });
     await toResult();
-    const cta = screen.getByRole("button", { name: "Resolve my 1 launch blocker" });
+    const cta = document.querySelector("[data-do-all]")      /* the one research button, under the steps (the owner, 20 Oct) */;
     await act(async () => { fireEvent.click(cta); fireEvent.click(cta); });      // a double click: one quote, never two
     expect(calls.filter((c) => /\/premium\/quote$/.test(c.path)).length).toBe(1);
     const confirm = await screen.findByRole("dialog", { name: "Before I start" });      // a modal on the page (F-2, F-3)
@@ -61,18 +61,22 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(calls.some((c) => /\/premium$/.test(c.path))).toBe(false);          // nothing has started yet
     await click(within(confirm).getByRole("button", { name: "Start" }));
     expect(calls.filter((c) => /\/premium$/.test(c.path)).length).toBe(1);
+    // The drafts in the step cards (the owner's QA, 21 Oct: one result block); the full review folded under them, one press away.
+    expect(document.querySelector("[data-next-steps]")).toBeTruthy();
+    if (document.querySelector("[data-research-detail-toggle]")) await click(document.querySelector("[data-research-detail-toggle]"));
+    if (document.querySelector("[data-see-everything]")) await click(document.querySelector("[data-see-everything]"));
     const review = screen.getByRole("region", { name: "Review the research" });
     const items = review.querySelectorAll("[data-research-item]");
-    expect([...items].map((i) => i.querySelector("[data-research-state]").textContent)).toEqual(["Researched", "Estimated"]);
-    expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clients · Mar 2026");
+    expect([...items].map((i) => i.querySelector("[data-research-state]").textContent)).toEqual(["Found online", "My estimate"]);
+    expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clientsDated Mar 2026");
     expect(items[0].querySelector("a").getAttribute("rel")).toContain("noopener");
     expect(items[1].querySelector("[data-research-sources]")).toBeNull();      // an estimate with no source shows none
-    // A researched finding is its source's words: accepted or rejected, never rewritten (QA, 15 Oct).
-    expect(within(items[0]).queryByRole("button", { name: "Edit" })).toBeNull();
+    // Every result is the owner's to edit (QA, 17 Oct), a researched finding too.
+    expect(within(items[0]).getByRole("button", { name: "Edit" })).toBeTruthy();
     await click(within(items[0]).getByRole("button", { name: "Accept" }));
     await click(within(items[1]).getByRole("button", { name: "Reject" }));
     await click(within(review).getByRole("button", { name: "Use what I adopted and check again" }));
-    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "accept" }, i2: { decision: "reject" } } });
+    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "accept", pressed: true }, i2: { decision: "reject" } } });
     const done = document.querySelector("[data-research-adopted]");
     expect(done.querySelector("[data-score-change]").textContent).toBe("38 → 43 out of 100");
     expect(done.querySelector("[data-coverage-change]").textContent).toBe("45% → 55%");
@@ -82,7 +86,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
   it("shows the plan gate before any cost, and nothing starts", async () => {
     const calls = mockApi({ quote: () => ({ allowed: false, gate: { allowed: false, reason: "plan", message: "This is available on an eligible plan.", primary: { label: "Upgrade to continue", to: "/pricing" }, secondary: [] } }) });
     await toResult();
-    await click(screen.getByRole("button", { name: "Resolve my 1 launch blocker" }));
+    await click(document.querySelector("[data-do-all]")      /* the one research button, under the steps (the owner, 20 Oct) */);
     await waitFor(() => expect(document.querySelector("[data-fv-gate]").textContent).toContain("eligible plan"));
     expect(document.querySelector("[data-fv-cost]")).toBeNull();
     expect(calls.some((c) => /\/premium$/.test(c.path))).toBe(false);
@@ -104,16 +108,20 @@ describe("PF3 the premium research, walked through in the browser", () => {
     const calls = mockApi({ quote: () => ({ ...ALLOWED(), cost: 0, not_connected: "Research isn't connected yet. What can be worked out from your figures, and asked, still is; nothing is charged." }),
       start: () => ({ started: true, research: withQuestions }), review: () => ({ research: adopted, result: RESULT }) });
     await toResult();
-    await click(screen.getByRole("button", { name: "Resolve my 1 launch blocker" }));
+    await click(document.querySelector("[data-do-all]")      /* the one research button, under the steps (the owner, 20 Oct) */);
     const confirm = await screen.findByRole("dialog", { name: "Before I start" });      // a modal on the page (F-2, F-3)
     expect(confirm.querySelector("[data-not-connected]").textContent).toMatch(/^Research isn't connected yet/);
     expect(confirm.querySelector("[data-fv-cost]").textContent).toBe("Research your gaps. Free.");
     await click(within(confirm).getByRole("button", { name: "Start" }));
+    // The drafts in the step cards (the owner's QA, 21 Oct: one result block); the full review folded under them, one press away.
+    expect(document.querySelector("[data-next-steps]")).toBeTruthy();
+    if (document.querySelector("[data-research-detail-toggle]")) await click(document.querySelector("[data-research-detail-toggle]"));
+    if (document.querySelector("[data-see-everything]")) await click(document.querySelector("[data-see-everything]"));
     const review = screen.getByRole("region", { name: "Review the research" });
     expect(review.querySelector("[data-research-error]").textContent).toContain("Research isn't available right now. Nothing was charged.");
-    expect(review.querySelector("[data-research-counts]").textContent).toBe("0 researched · 0 estimated · 0 already on record · 1 calculated · 2 to answer · 0 sources");
+    expect(review.querySelector("[data-research-counts]").textContent).toBe("0 found online · 0 my estimates · 0 already on record · 1 worked out · 2 to answer · 0 sources");
     // The draft first, on its own; the inputs open with "Check or review inputs".
-    expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up Loans · 2026");
+    expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up LoansDated 2026");
     expect(review.querySelector("[data-research-item]")).toBeNull();
     expect(review.querySelector("[data-review-prompt]").textContent).toBe("1 input to adopt or edit and 2 questions for you. The gaps above update once you adopt them: until then nothing counts.");
     // With questions open, the one-press button opens the inputs to answer them first.
@@ -122,10 +130,13 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(review.querySelector("[data-funding-drafts]")).toBeNull();
     expect(review.querySelector('[data-research-item="cash_needed"] [data-working]').textContent).toBe("Three months of fixed costs: 3 × £900 = £2,700");
     const adopt = within(review).getByRole("button", { name: "Use what I adopted and check again" });
-    expect(adopt.disabled).toBe(true);                                       // two questions open
+    expect(adopt.disabled).toBe(false);                                      // pressable: it says what is left (QA, 17 Oct)
     expect(review.querySelector("[data-questions-left]").textContent).toBe("2 questions left: answer or skip each.");
+    // Never blocked by a question left open (the owner's QA, 21 Oct); the count follows each press at once.
     fireEvent.change(within(review).getByLabelText("Who owns the launch? (a name or a role)"), { target: { value: "Hilary" } });
+    expect(review.querySelector("[data-questions-left]").textContent).toBe("1 question left: answer or skip each.");
     await click(within(review.querySelector('[data-research-item="dry_run"]')).getByRole("button", { name: "Skip" }));
+    expect(review.querySelector("[data-questions-left]")).toBeNull();
     expect(adopt.disabled).toBe(false);
     expect(review.querySelector("[data-undecided]").textContent).toBe("1 not adopted yet: they won't count unless you adopt them.");
     await click(within(review).getByRole("button", { name: "Adopt all (1)" }));
@@ -134,7 +145,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(document.querySelector("[data-research-adopted] [data-funding-drafts]")).toBeTruthy();      // after adopting: the draft again
     await click(within(document.querySelector("[data-research-adopted]")).getByRole("button", { name: "Check or review inputs" }));
     const rows = [...document.querySelectorAll("[data-criteria-changes] tbody tr")].map((r) => r.textContent);
-    expect(rows).toEqual(["Launch controlNot known yetMet", "Operational processNot known yetNot known yet", "Cash preparationNot known yetPartly met"]);
+    expect(rows).toEqual(["Launch controlNeed from youMet", "Operational processNeed from youNeed from you", "Cash preparationNeed from youPartly met"]);
   });
 });
 
@@ -170,8 +181,12 @@ describe("F-4 research that finds nothing", () => {
         routes: ["equity", "loan", "grant"].map((r) => ({ route: r, name: r, what_it_is: "", local: null, sources: [], preferred: false })) } };
     mockApi({ quote: ALLOWED, start: () => ({ started: true, research: empty }) });
     await toResult();
-    await click(screen.getByRole("button", { name: "Resolve my 1 launch blocker" }));
+    await click(document.querySelector("[data-do-all]")      /* the one research button, under the steps (the owner, 20 Oct) */);
     await click(within(await screen.findByRole("dialog", { name: "Before I start" })).getByRole("button", { name: "Start" }));
+    // The drafts in the step cards (the owner's QA, 21 Oct: one result block); the full review folded under them, one press away.
+    expect(document.querySelector("[data-next-steps]")).toBeTruthy();
+    if (document.querySelector("[data-research-detail-toggle]")) await click(document.querySelector("[data-research-detail-toggle]"));
+    if (document.querySelector("[data-see-everything]")) await click(document.querySelector("[data-see-everything]"));
     const review = screen.getByRole("region", { name: "Review the research" });
     expect(review.querySelector("[data-research-empty]").textContent).toBe("I couldn't find anything useful this time, so nothing was charged.");
     expect(review.querySelector("[data-routes]")).toBeNull();

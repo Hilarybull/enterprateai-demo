@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     stripe_price_strategic_business_os_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_STRATEGIC_BUSINESS_OS_ANNUAL",))
     # Marketplace add-ons
     stripe_price_addon_featured_1: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_1",))
+    # Decision Engine's extra seat: £15 a month, with 250 AI credits each month (the pricing PDF, 19 Oct 2026).
+    stripe_price_addon_seat: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_SEAT",))
     stripe_price_addon_featured_5: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_5",))
     stripe_price_addon_featured_20: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_20",))
     stripe_price_addon_rfq_20: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_RFQ_20",))

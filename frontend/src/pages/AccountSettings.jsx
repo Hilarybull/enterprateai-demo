@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { welcomeWords } from "../lib/creditCopy";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, getApiBaseUrl } from "../api/client";
 import { accessLabel } from "../lib/plans";
@@ -282,7 +283,7 @@ export function PlanSection() {
       <dl className="grid gap-4 sm:grid-cols-3">
         <div><dt className="text-[13px] text-slate-500">Current plan</dt><dd className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{accessLabel(subscription)}</dd></div>
         <div><dt className="text-[13px] text-slate-500">AI credits remaining</dt><dd className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{typeof info?.available_credits === "number" ? info.available_credits.toLocaleString() : "—"}</dd></div>
-        <div><dt className="text-[13px] text-slate-500">{free ? "Allocation" : "Renews"}</dt><dd className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-200">{free ? "Free trial allocation" : when || "See billing"}</dd></div>
+        <div><dt className="text-[13px] text-slate-500">{free ? "Allocation" : "Renews"}</dt><dd className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-200">{free ? welcomeWords(info) : when || "See billing"}</dd></div>
       </dl>
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className={primary} onClick={() => navigate("/pricing")}>{free ? "Upgrade" : "Change plan"}</button>

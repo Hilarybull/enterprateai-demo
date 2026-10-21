@@ -86,7 +86,7 @@ function CashFacts({ result, feature, currency }) {
   );
 }
 
-export function ResultView({ assessment, feature, currency, onOpenSection, historic = false }) {
+export function ResultView({ assessment, feature, currency, onOpenSection, historic = false, summary = null }) {
   const [open, setOpen] = useState({});
   const result = assessment?.result;
   if (!result) return null;
@@ -98,7 +98,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
       {fresh.status === "stale" && !historic && (
         <Notice tone="amber"><span className="font-semibold">This result is out of date.</span> {staleReason(fresh.reason)} It is being updated for you; until then it is kept as it was on {dateLabel(assessment.as_of)}.</Notice>
       )}
-      <Panel>
+      {summary ? <Panel>{summary}</Panel> : <Panel>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <Pill tone={cls.tone} mark={cls.mark} className="!text-sm">{cls.label}</Pill>
@@ -123,7 +123,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
           Checked on {dateLabel(assessment.as_of)} · {result.profile_title}, version {result.ruleset_version}
           {result.data_basis?.label ? ` · figures: ${result.data_basis.label}` : ""}. {result.status_note}
         </p>
-      </Panel>
+      </Panel>}
 
       <Panel title={meta.gatesTitle} description="Checked separately from the score. A confirmed failure means not ready, whatever the score.">
         <ul className="space-y-2">
@@ -133,7 +133,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
               <li key={g.code} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <p className="min-w-0 flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{g.label}</p>
-                  <Pill tone={st.tone} mark={st.mark}>{g.state === "failed" ? "Blocking" : g.state === "passed" ? "Clear" : st.label}</Pill>
+                  <Pill tone={st.tone} mark={st.mark}>{g.state === "failed" ? "Must fix" : g.state === "passed" ? "Clear" : st.label}</Pill>
                 </div>
                 {g.reason && <p className="mt-1 break-words text-[13px] text-slate-600 dark:text-slate-300">{g.reason}</p>}
                 {g.state === "failed" && <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200"><span className="font-semibold">To clear it:</span> {g.remedy}</p>}
@@ -151,7 +151,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
                 className="flex w-full flex-wrap items-center justify-between gap-2 text-left">
                 <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{c.title} <span className="font-normal text-slate-400">· weight {c.weight}</span></span>
                 <span className="flex items-center gap-2">
-                  <span className="text-[13px] tabular-nums text-slate-600 dark:text-slate-300">{c.score === null ? "Not known yet" : `${c.score} / 100`}</span>
+                  <span className="text-[13px] tabular-nums text-slate-600 dark:text-slate-300">{c.score === null ? "Need from you" : `${c.score} / 100`}</span>
                   <span aria-hidden="true" className="text-slate-400">{open[c.code] ? "▾" : "▸"}</span>
                 </span>
               </button>
@@ -379,6 +379,8 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
 export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
   const [state, setState] = useState({ loading: true, kinds: [], items: [] });
   const [openDoc, setOpenDoc] = useState(null);
+  const [showOld, setShowOld] = useState(false);      // earlier versions, replaced by a newer one
+  const [editingDoc, setEditingDoc] = useState(false);      // the document as a page first; Edit for its plain text
   const [sharing, setSharing] = useState(null);      // the document being shared by link or email
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState("");
@@ -415,7 +417,9 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
       </div>
       {problem && <Notice tone="rose" role="alert">{problem} Nothing was duplicated; you can try again.</Notice>}
       <ul className="space-y-2">
-        {state.items.map((m) => (
+        {/* The latest of each document only (the owner's QA, 21 Oct: "if you replace, you remove the old one"); earlier
+            versions are kept, behind one link. */}
+        {(showOld ? state.items : state.items.filter((m) => m.status !== "superseded")).map((m) => (
           <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{m.title} <span className="font-normal text-slate-400">· version {m.version}</span></p>
@@ -431,6 +435,10 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
           </li>
         ))}
       </ul>
+      {state.items.filter((m) => m.status === "superseded").length > 0 && (
+        <button type="button" onClick={() => setShowOld((v) => !v)} aria-expanded={showOld} className="text-[12.5px] font-semibold text-brand-700 hover:underline" data-earlier-versions>
+          {showOld ? "Hide earlier versions" : `Show earlier versions (${state.items.filter((m) => m.status === "superseded").length})`}</button>
+      )}
       {sharing && (
         <DocumentShareModal title={`Share ${sharing.title}`} subtitle="Choose who can use this link before generating it."
           onClose={() => setSharing(null)}
@@ -458,7 +466,15 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
               {can[`${feature}.edit`] && <Btn kind="primary" disabled={Boolean(busy) || body === (openDoc.body || "")} onClick={() => act("save", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { body, revision: openDoc.revision }); setOpenDoc(d); await load(); })}>Save changes</Btn>}
             </>
           ) : null}>
-          <textarea aria-label={`${openDoc.title} text`} rows={22} className={`font-mono !text-[12px] ${inputClass}`} value={body} readOnly={openDoc.status === "superseded" || !can[`${feature}.edit`]} onChange={(e) => setBody(e.target.value)} />
+          <div className="mb-2 flex flex-wrap justify-end gap-2">
+            {can[`${feature}.edit`] && openDoc.status !== "superseded" && (
+              <Btn onClick={() => setEditingDoc((v) => !v)} data-doc-edit>{editingDoc ? "Done editing" : "Edit"}</Btn>
+            )}
+            <Btn disabled={Boolean(busy)} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, openDoc.id, "pdf"))}>Download PDF</Btn>
+          </div>
+          {editingDoc
+            ? <textarea aria-label={`${openDoc.title} text`} rows={22} className={`!text-[13px] ${inputClass}`} value={body} onChange={(e) => setBody(e.target.value)} />
+            : <DocView text={body} />}
         </Popup>
       )}
     </div>
@@ -534,6 +550,39 @@ export function ScenarioPanel({ businessId, feature, subject, currency }) {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
+/** A prepared document as a page, like a PDF or Word file (the owner's QA, 21 Oct: it opened as raw text): a heading for
+ *  each section in capitals, "Label: value" lines and bullets as a list, the rest as paragraphs. */
+export function DocView({ text }) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  let list = null;
+  const flush = () => { if (list) { blocks.push({ kind: "list", items: list }); list = null; } };
+  lines.forEach((raw, n) => {
+    const line = raw.trim();
+    if (!line) { flush(); return; }
+    if (n === 0) { blocks.push({ kind: "title", text: line }); return; }
+    if (/^[A-Z0-9][A-Z0-9 &,/()'-]{2,}$/.test(line) && line === line.toUpperCase()) {
+      flush(); blocks.push({ kind: "heading", text: line.charAt(0) + line.slice(1).toLowerCase() }); return;
+    }
+    const bullet = line.match(/^[-*\u2022]\s+(.*)$/);
+    if (bullet) { (list ||= []).push(bullet[1]); return; }
+    flush(); blocks.push({ kind: "para", text: line });
+  });
+  flush();
+  const labelled = (t) => {
+    const m = t.match(/^([^:]{2,40}):\s+(.*)$/);
+    return m ? <><span className="font-semibold text-slate-900 dark:text-slate-100">{m[1]}:</span> {m[2]}</> : t;
+  };
+  return (
+    <article className="max-h-[60vh] overflow-y-auto rounded-lg border border-slate-200 bg-white px-8 py-7 text-[14px] leading-6 text-slate-700 shadow-inner dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" data-doc-view>
+      {blocks.map((b, i) => b.kind === "title" ? <h2 key={i} className="mb-4 text-[20px] font-bold text-slate-900 dark:text-slate-100">{b.text}</h2>
+        : b.kind === "heading" ? <h3 key={i} className="mb-2 mt-5 text-[15px] font-bold text-slate-900 dark:text-slate-100">{b.text}</h3>
+        : b.kind === "list" ? <ul key={i} className="mb-3 list-disc space-y-1 pl-5">{b.items.map((t, j) => <li key={j}>{labelled(t)}</li>)}</ul>
+        : <p key={i} className="mb-3">{labelled(b.text)}</p>)}
+    </article>
+  );
+}
+
 /** "···": Open, Download PDF, Download text, Share (by link or email). Closes on a choice, a click outside or Esc. */
 function MaterialMenu({ canExport, onOpen, onPdf, onText, onShare }) {
   const [open, setOpen] = useState(false);
@@ -576,10 +625,12 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
   if (problem) return <Notice tone="rose" role="alert">{problem}</Notice>;
   if (!items) return <p className="text-[13px] text-slate-500" role="status">Loading history…</p>;
   if (!items.length) return <p className="text-[13px] text-slate-500">No checks have been run yet.</p>;
+  // Only the versions that changed something (the owner's brief, 20 Oct): a check run again with nothing new is left out.
+  const changed = items.filter((h, n) => n === 0 || !/^No changes since the last check/.test(String(h.what_changed || "")));
   return (
     <div className="space-y-3">
       <ul className="space-y-2">
-        {items.map((h) => {
+        {changed.map((h) => {
           const cls = CLASSIFICATION[h.classification];
           return (
             <li key={h.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">

@@ -55,22 +55,16 @@ describe("the homepage chat", () => {
     fireEvent.change(screen.getByLabelText("What do you want EnterprateAI to do for your business?"), { target: { value: SAID } });
     await act(async () => { fireEvent.click(document.querySelector("[data-goal-launcher] form button[type='submit']")); });
     const card = screen.getByRole("region", { name: "Your task" });
-    const line = () => card.querySelector("[data-said-line]");
-    expect(line().textContent).toBe("From what you said: A service · dog walking · Bristol · March · 3 mates who said they'd pay (Edit)");
-    expect(card.querySelectorAll("[data-said]").length).toBe(1);                 // shown once
+    // The owner's brief (20 Oct): what the first message said is used, never echoed in the thread; the recap before the
+    // hand-off shows it, with "Change something".
+    expect(card.querySelector("[data-said-line]")).toBeNull();
     expect(card.querySelector("[data-question-turn]").textContent).toContain("What stage is it at?");      // only what is left is asked
     expect(card.textContent).not.toContain("Briefly describe it.");
     expect(card.querySelector("[data-thread]")).toBeNull();                      // no reply bubbles for what they said
     await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Just an idea" })); });
-    // The next turn: the line again, the stage they just gave as their reply, and nothing from the message as a bubble.
-    expect(line().textContent).toBe("From what you said: A service · dog walking · Bristol · March · 3 mates who said they'd pay (Edit)");
     expect([...card.querySelectorAll("[data-answer]")].map((b) => b.getAttribute("data-answer"))).toEqual(["stage"]);
     expect(card.textContent).not.toContain("Briefly describe it.");
     expect(card.querySelector("[data-question-turn]").textContent).toContain("Who is it for?");
-    // Edit lists each one, to pick the one to change; that one is then asked.
-    await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "(Edit)" })); });
-    await act(async () => { fireEvent.click(card.querySelector('[data-said-change="where"]')); });
-    expect(card.querySelector("[data-question-turn]").textContent).toContain("Where do you want to launch?");
   });
 });
 

@@ -1,4 +1,5 @@
 import { ContentSkeleton } from "./Skeleton";
+import { welcomeWords } from "../lib/creditCopy";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
@@ -584,12 +585,19 @@ export default function Layout() {
     }
 
     fetchCredits();
-    const id = setInterval(fetchCredits, 60000);
+    // One balance everywhere (the owner's QA, 21 Oct: the sidebar said 479 while a price said 454): refreshed every 20 s,
+    // on coming back to the page, and whenever a price or a spend is shown.
+    const id = setInterval(fetchCredits, 20000);
+    const onBack = () => { if (document.visibilityState !== "hidden") fetchCredits(); };
     window.addEventListener("ea:credits:refresh", fetchCredits);
+    window.addEventListener("focus", onBack);
+    document.addEventListener("visibilitychange", onBack);
     return () => {
       cancelled = true;
       clearInterval(id);
       window.removeEventListener("ea:credits:refresh", fetchCredits);
+      window.removeEventListener("focus", onBack);
+      document.removeEventListener("visibilitychange", onBack);
     };
   }, [token]);
 
@@ -923,7 +931,7 @@ export default function Layout() {
                         setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
                         setDecisionStatus(ws.data?.decision_status || null);
                         setServiceDecisionStatus(ws.data?.service_decision_status || null);
-                        setCurrency(workspaceCurrencyOf(ws.data) || "GBP");
+                        setCurrency(workspaceCurrencyOf(ws.data) || null);
                         clearMemberMode();
                         invalidateWorkspaceCache();
                         window.dispatchEvent(new Event("ea:workspace:refresh"));
@@ -1011,7 +1019,7 @@ export default function Layout() {
                   : <span className="inline-block h-3.5 w-16 rounded bg-brand-200 dark:bg-slate-600 animate-pulse" />}
               </div>
               {creditInfo?.plan_code === "explorer" && platformGrants.length === 0 && (
-                <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5">Free trial allocation</div>
+                <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5" data-welcome-credits>{welcomeWords(creditInfo)}</div>
               )}
             </button>
             {showInviteUpgrade ? (
@@ -1074,7 +1082,7 @@ export default function Layout() {
         ) : null}
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
             {/* Sandbox mode banner */}
             {isDemoUser && (
               <div className="flex items-center justify-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-[11.5px] font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300">

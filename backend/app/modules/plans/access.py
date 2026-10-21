@@ -79,7 +79,10 @@ async def has_paid_access(user_id: str) -> bool:
         return True
     if sub.status == "active" and _plan_rank(sub.plan_key) >= _plan_rank("starter_insight"):
         return True
-    return is_full_access(await module_grants(user_id))      # an admin's full-access grant is paid access
+    if is_full_access(await module_grants(user_id)):      # an admin's full-access grant is paid access
+        return True
+    from app.modules.plans.team import team_of
+    return bool(await team_of(user_id))      # a member of a team on Decision Engine or above works under the team's plan
 
 
 # The modules "Grant Full Access" has always given. A user holding all of them has full access:
@@ -118,11 +121,18 @@ async def effective_access(user_id: str) -> dict:
     full = is_full_access(grants)
     subscribed = TOP_PLAN if sub.status == "grandfathered" else (normalise_plan_key(sub.plan_key) if sub.status == "active" else "explorer")
     plan = TOP_PLAN if full else subscribed
+    # A member of a team on Decision Engine or above works under the team's plan (the pricing PDF, 19 Oct 2026).
+    from app.modules.plans import team as team_mod
+    t = await team_mod.team_of(user_id)
+    on_team = bool(t and _plan_rank(t["plan"]) > _plan_rank(plan))
+    if on_team:
+        plan = t["plan"]
     paid = _plan_rank(plan) >= _plan_rank("starter_insight")
     return {
         "subscription_plan": normalise_plan_key(sub.plan_key), "subscription_status": sub.status,
         "effective_plan": plan, "full_access": full,
-        "source": "admin full-access grant" if full and subscribed != TOP_PLAN else ("early-access account" if sub.status == "grandfathered" else "subscription"),
+        "team_owner": t["owner_id"] if on_team else None, "team_workspace": t["workspace_id"] if on_team else None,
+        "source": "your team's plan" if on_team else "admin full-access grant" if full and subscribed != TOP_PLAN else ("early-access account" if sub.status == "grandfathered" else "subscription"),
         "agent_tasks": paid or "agent" in grants,
         "marketplace_rfqs": paid or "marketplace_rfq" in grants,
         "grants": sorted(grants),
@@ -152,7 +162,16 @@ async def plan_meets(user_id: str, minimum_plan: str, *, grant_module: str | Non
 
 
 async def effective_plan_key(user_id: str) -> str:
-    """Normalised plan key; grandfathered accounts and accounts with an admin full-access
+    """The plan this user works under: their own, or, as a member of a team on Decision Engine or above, the team's
+    (the pricing PDF, 19 Oct 2026: the plan covers the seats it includes)."""
+    own = await own_plan_key(user_id)
+    from app.modules.plans import team as team_mod
+    t = await team_mod.team_of(user_id)
+    return t["plan"] if t and team_mod.rank(t["plan"]) > team_mod.rank(own) else own
+
+
+async def own_plan_key(user_id: str) -> str:
+    """The user's own plan, never a team's: grandfathered accounts and accounts with an admin full-access
     grant count as the top plan."""
     from app.modules.credits.service import normalise_plan_key
     sub = await resolve_subscription(user_id)

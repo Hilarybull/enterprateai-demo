@@ -37,9 +37,9 @@ def test_one_checked_source_gives_its_own_figure_never_the_models():
 
 
 def test_an_estimate_adopted_without_sources_is_not_reused():
-    data = {"shared_answers": {"monthly_sales": {"value": 37000, "state": "accepted", "basis": "estimate", "goal": "need_funding", "offering": "",
+    data = {"shared_answers": {"monthly_sales": {"value": 3700, "state": "accepted", "basis": "estimate", "goal": "need_funding", "offering": "",
                                                  "source": "From your funding review (an estimate you adopted)", "at": "2026-10-13T10:00:00+00:00"}}}
     assert "monthly_sales" not in research.inputs_of("need_funding", {}, data)
     assert "monthly_sales" not in planned.figures(data, today=date(2026, 10, 14))
     data["shared_answers"]["monthly_sales"]["sources"] = [{"url": "https://www.ons.gov.uk/a", "quote": QUOTE}]
-    assert research.inputs_of("need_funding", {}, data)["monthly_sales"] == 37000
+    assert research.inputs_of("need_funding", {}, data)["monthly_sales"] == 3700

@@ -75,7 +75,7 @@ def test_a_launch_with_a_blocker_keeps_its_warning():
 
 
 def test_every_stage_tile_carries_a_look_that_matches_its_state():
-    env = Env()
+    env = Env(plan="decision_engine")
     funding_case(env)
     d = _pre(env)
     moods = {s["key"]: (s.get("mood"), s.get("tone"), s.get("icon")) for s in d["agent"]["suggestions"] if s["key"].startswith("stage_")}

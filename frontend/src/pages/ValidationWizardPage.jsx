@@ -386,7 +386,7 @@ function ResumeButton({ entry, onEdit }) {
 export default function ValidationWizardPage() {
   const navigate = useNavigate();
   const { triggerDemoGate } = useDemoTour() || {};
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
   const fromOtherModule = searchParams.get("from") === "module";
   const isCreateWorkspace = fromOtherModule;
@@ -1286,7 +1286,10 @@ export default function ValidationWizardPage() {
     setContentTab("builder");
     if (requestedHistoryType === "service_validation") setMode("fill");
     if (requestedHistoryId) {
-      editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true, requestedEditMode);
+      // Opened from a link (the Agent's task, History): its result if it has one, else its form with the saved answers;
+      // then the link's id leaves the address, so the "Loading" spinner never stays (the owner's QA, 21 Oct).
+      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, false, true))
+        .finally(() => setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); return next; }, { replace: true }));
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry
       (async () => {

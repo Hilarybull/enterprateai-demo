@@ -45,7 +45,8 @@ describe("the in-app quick check", () => {
     expect(calls.find((c) => c.method === "POST")).toMatchObject({ path: expect.stringMatching(/\/businesses\/ws1\/quick-check\/launch$/),
       body: { answers: { kind: "service", where: "Leeds, United Kingdom", evidence: "None yet" } } });
     const card = await screen.findByRole("region", { name: "Initial Launch Readiness" });
-    expect(within(card).getByText(/Resolve my 2 launch blockers/)).toBeTruthy();
+    expect(card.querySelector("[data-step-do-it]")).toBeNull();      // no button on a card: one "Do all for me" does every step (20 Oct)
+    expect(card.querySelector("[data-do-all]").textContent).toMatch(/^Do all for me/);
   });
 
   it("a required answer left blank is said, not skipped", async () => {

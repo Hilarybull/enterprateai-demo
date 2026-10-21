@@ -99,3 +99,6 @@ class WorkspaceProfileResponse(BaseModel):
     workspace_id: str
     profile: WorkspaceProfile
     updated_at: datetime
+    # After a rename: the unsent drafts still showing the old name, for the owner to update or leave (never changed unasked).
+    renamed_from: str | None = None
+    unsent_drafts: list[dict] | None = None

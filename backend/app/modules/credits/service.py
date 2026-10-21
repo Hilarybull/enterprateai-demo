@@ -4,6 +4,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anyio
@@ -224,28 +225,97 @@ async def _initial_credits_for_user(user_id: str) -> tuple[int, str]:
     return credits, plan_code
 
 
+# Explorer's 50 welcome AI credits are valid for 60 days (the pricing PDF, 19 Oct 2026). What is left of them then
+# expires; credits bought or refunded never do, and a paid plan's credits follow that plan.
+WELCOME_CREDITS = 50
+WELCOME_DAYS = 60
+WELCOME_EXPIRED_REASON = "Welcome credits expired after 60 days"
+
+
+def welcome_expires_at(wallet: dict | None) -> datetime | None:
+    try:
+        opened = datetime.fromisoformat(str((wallet or {}).get("created_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return opened + timedelta(days=WELCOME_DAYS)
+
+
+def welcome_left(wallet: dict | None) -> int:
+    """What is left of the 50 welcome credits: 50 less what has been used, never more than the balance."""
+    w = wallet or {}
+    return max(0, min(int(w.get("available_credits") or 0), WELCOME_CREDITS - int(w.get("lifetime_credits_used") or 0)))
+
+
+async def expire_welcome_credits(user_id: str, wallet: dict | None, plan_code: str, now: datetime | None = None) -> dict | None:
+    """On Explorer, after 60 days, what is left of the welcome credits expires, once. Returns the wallet as it is now."""
+    now = now or datetime.now(timezone.utc)
+    ends = welcome_expires_at(wallet)
+    left = welcome_left(wallet)
+    if plan_code != "explorer" or not wallet or not ends or now < ends or left <= 0:
+        return wallet
+    try:
+        # The ledger keeps the reason in `description` (grant_credits / admin_deduct_credits write it there).
+        done = await sb_select("credit_transactions", filters=[("user_id", "eq", user_id), ("description", "eq", WELCOME_EXPIRED_REASON)], columns="id")
+        if done:
+            return wallet
+        await deduct_credits_admin(user_id, left, WELCOME_EXPIRED_REASON)
+        return {**wallet, "available_credits": int(wallet.get("available_credits") or 0) - left}
+    except Exception:      # noqa: BLE001 - the balance is shown as it stands; tried again on the next read
+        logger.warning("welcome credits could not be expired for %s", user_id, exc_info=True)
+        return wallet
+
+
 async def get_balance(user_id: str) -> int:
-    """The credits available. An account with no wallet yet is given its starting allocation here:
+    """The credits available (for a member under a team plan: the team's pool, within their allowance). An account with no wallet yet is given its starting allocation here:
     a brand-new account that goes straight to a task (from the homepage) must not be told it is out
     of credits just because no page has opened its wallet yet."""
+    from app.modules.plans.team import allowance_of, payer_for
+    payer, team = await payer_for(user_id)
+    if team:
+        pool = await get_wallet(payer)
+        left = allowance_of(team["member"])["left"]
+        have = int((pool or {}).get("available_credits") or 0)
+        return have if left is None else min(have, left)
     wallet = await get_wallet(user_id)
     if not wallet:
         try:
             wallet = await ensure_wallet(user_id)
         except Exception:      # noqa: BLE001 - the balance is then reported as it stands
             logger.warning("credit wallet could not be opened for %s", user_id, exc_info=True)
+    if wallet and int(wallet.get("available_credits") or 0) > 0:
+        ends = welcome_expires_at(wallet)
+        if ends and datetime.now(timezone.utc) >= ends:
+            sub = await _get_subscription(user_id)
+            wallet = await expire_welcome_credits(user_id, wallet, normalise_plan_key((sub or {}).get("plan_key") or "explorer"))
     return wallet["available_credits"] if wallet else 0
 
 
 async def get_balance_info(user_id: str) -> dict:
     """Return full credit info: balance + plan allocation + reset date."""
+    from app.modules.plans.team import allowance_of, payer_for
+    payer, team = await payer_for(user_id)
+    if team:
+        # A member: the team's pool and their own monthly allowance from it.
+        pool = await get_wallet(payer) or {}
+        a = allowance_of(team["member"])
+        have = int(pool.get("available_credits") or 0)
+        return {"available_credits": have if a["left"] is None else min(have, a["left"]), "held_credits": 0,
+                "lifetime_credits_issued": 0, "lifetime_credits_used": a["used"], "next_reset_at": pool.get("next_reset_at"),
+                "monthly_allocation": a["monthly"] or 0, "plan_code": team["plan"], "plan": team["plan"],
+                "pooled": True, "allowance": a["monthly"], "allowance_used": a["used"], "pool_available": have,
+                "welcome_expires_at": None, "welcome_left": 0}
     wallet, sub = await asyncio.gather(get_wallet(user_id), _get_subscription(user_id))
     if not wallet:
         wallet = await ensure_wallet(user_id)
     plan_code = normalise_plan_key((sub or {}).get("plan_key") or "explorer")
+    wallet = await expire_welcome_credits(user_id, wallet, plan_code)
     plan_cfg = await _get_plan_config(plan_code)
     monthly_allocation = int((plan_cfg or {}).get("credits_per_period") or 0)
+    ends = welcome_expires_at(wallet) if plan_code == "explorer" else None
     return {
+        # Explorer: when what is left of the 50 welcome credits expires (60 days after they were given).
+        "welcome_expires_at": ends.isoformat() if ends and ends > datetime.now(timezone.utc) and welcome_left(wallet) > 0 else None,
+        "welcome_left": welcome_left(wallet) if plan_code == "explorer" else 0,
         "available_credits": wallet["available_credits"] if wallet else 0,
         "held_credits": wallet["held_credits"] if wallet else 0,
         "lifetime_credits_issued": wallet["lifetime_credits_issued"] if wallet else 0,
@@ -348,7 +418,17 @@ async def reserve_credits(
         return {"ok": False, **not_entitled_detail(feature_code, config, plan_code)}
 
     gen_id = generation_uuid(generation_id)
-    idempotency_key = f"{user_id}:{feature_code}:{gen_id}"
+    # A member under a team plan draws on the team's pooled credits, within the allowance the owner set (the pricing
+    # PDF, 19 Oct 2026: "2,000 pooled AI credits"). Anyone else pays from their own wallet.
+    from app.modules.plans.team import allowance_of, payer_for
+    payer, team = await payer_for(user_id)
+    idempotency_key = f"{payer}:{feature_code}:{gen_id}"
+    if team and _is_credit_controlled(config) and credit_cost > 0:
+        a = allowance_of(team["member"])
+        if a["monthly"] is not None and a["used"] + credit_cost > a["monthly"]:
+            return {"ok": False, "error": "MEMBER_ALLOWANCE_USED", "available": a["left"], "required": credit_cost,
+                    "message": f"You've used {a['used']} of the {a['monthly']} AI credits your team gives you this month. "
+                               "Ask the workspace owner for more. Nothing was charged."}
 
     if not _is_credit_controlled(config) or credit_cost <= 0:
         return {
@@ -363,7 +443,7 @@ async def reserve_credits(
         }
 
     result = await _rpc("reserve_credits", {
-        "p_user_id": user_id,
+        "p_user_id": payer,
         "p_feature_code": feature_code,
         "p_credit_cost": credit_cost,
         "p_generation_id": gen_id,
@@ -376,6 +456,7 @@ async def reserve_credits(
         result["credit_controlled"] = True
         result["plan"] = plan_code
         result["minimum_plan"] = config.get("minimum_plan") or DEFAULT_MIN_PLAN
+        result["payer"] = payer
     return result
 
 
@@ -388,12 +469,21 @@ async def commit_credits(
     """Confirm a successful AI generation — finalize credit deduction."""
     if no_hold:
         return {"ok": True, "no_hold": True}
+    from app.modules.plans.team import payer_for, record_use
+    payer, team = await payer_for(user_id)
     generation_id = generation_uuid(generation_id)
-    idempotency_key = f"{user_id}:{feature_code}:{generation_id}"
-    return await _rpc("commit_credits", {
+    idempotency_key = f"{payer}:{feature_code}:{generation_id}"
+    out = await _rpc("commit_credits", {
         "p_generation_id": generation_id,
         "p_idempotency_key": idempotency_key,
     })
+    if team and isinstance(out, dict) and out.get("ok") and not out.get("already_committed"):
+        try:      # what a member used, counted against their monthly allowance
+            cfg = await get_feature_config(feature_code)
+            await record_use(team, charged((cfg or {}).get("credit_cost")))
+        except Exception:      # noqa: BLE001 - the charge stands; the count is caught up on the next one
+            logger.warning("member credit use not recorded for %s", user_id, exc_info=True)
+    return out
 
 
 async def release_credits(
@@ -405,8 +495,10 @@ async def release_credits(
     """Return held credits if generation failed."""
     if no_hold:
         return {"ok": True, "no_hold": True}
+    from app.modules.plans.team import payer_for
+    payer, _team = await payer_for(user_id)
     generation_id = generation_uuid(generation_id)
-    idempotency_key = f"{user_id}:{feature_code}:{generation_id}"
+    idempotency_key = f"{payer}:{feature_code}:{generation_id}"
     return await _rpc("release_credits", {
         "p_generation_id": generation_id,
         "p_idempotency_key": idempotency_key,
@@ -573,6 +665,8 @@ async def credit_guard(user_id: str, feature_code: str, generation_id: str | Non
 
     if not reservation.get("ok"):
         err = reservation.get("error", "UNKNOWN")
+        if err == "MEMBER_ALLOWANCE_USED":
+            raise HTTPException(status_code=402, detail={**{k: v for k, v in reservation.items() if k != "ok"}, "feature_code": feature_code})
         if err == "INSUFFICIENT_CREDITS":
             available = reservation.get("available", 0)
             required = reservation.get("required", 0)

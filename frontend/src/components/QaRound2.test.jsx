@@ -75,7 +75,9 @@ describe("R3 on the result card", () => {
       blockers: [{ key: "demand", label: "Demand evidence is early", kind: "partial", state: "partially_met" },
         { key: "competitors", label: "Competitor pricing is unknown", kind: "unknown", state: "unknown" }] };
     render(<MemoryRouter><FirstValueCard result={result} /></MemoryRouter>);
-    expect(document.querySelector("[data-blocker='partial']").textContent).toBe("Early evidenceDemand evidence is early");
-    expect(document.querySelector("[data-blocker='unknown']").textContent).toBe("Not known yetCompetitor pricing is unknown");
+    // One count on the card (the owner's brief, 20 Oct): the steps carry the labels; partly there is never "not known yet".
+    const badges = [...document.querySelectorAll("[data-next-step]")].map((li) => li.querySelector("span").textContent);
+    expect(badges).toContain("Partly there");
+    expect(badges).toContain("Need from you");
   });
 });

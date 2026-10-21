@@ -1,5 +1,6 @@
+import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
 import { OPEN_APPROVAL_EVENT } from "../components/agent/AgentPanel";
-import { useFirstResult } from "../components/FirstValueCard";
+import { latestOf, openOf, useFirstResult } from "../components/FirstValueCard";
 import { compactFigure, isFigure } from "../lib/figures";
 import { CountText } from "../components/Motion";
 import { enter } from "../lib/motion";
@@ -8,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import InlineAlert from "../components/InlineAlert";
 import { apiRequest, apiRequestCached } from "../api/client";
-import { useWorkspaceStore, workspaceStatusOf } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf, workspaceStatusOf } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber, invoiceNumbers } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
@@ -17,7 +18,8 @@ import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
 import { hasPaidAccess, planRank } from "../lib/plans";
 import FirstResultPanel from "../components/FirstResultPanel";
-import PinnedCards, { usePinned } from "../components/dashboard/PinnedCards";
+import PinnedCards, { stripStatus, usePinned } from "../components/dashboard/PinnedCards";
+import { stepsOf } from "../components/ResultSummary";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
 import { agentErrorMessage, getAgentSummary, submitAgentRequest } from "../lib/agent";
@@ -110,8 +112,6 @@ export default function DashboardPage() {
   const [error, setError] = useState(null);
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
   const [livePlanSummary, setLivePlanSummary] = useState(null);
-  const [fxRates, setFxRates] = useState({});
-  const [fxDates, setFxDates] = useState({});      // the provider's date for each rate, said with the converted figures
   const [agentSummary, setAgentSummary] = useState(() => (ADAPTIVE_DASHBOARD ? recallDashboard(workspaceId)?.agent || null : null));
   // The first result sits inside the Agent card (never a card of its own above it), until it is dismissed or saved for later.
   const firstResult = useFirstResult();
@@ -119,6 +119,19 @@ export default function DashboardPage() {
   const resultAssessment = firstResult?.result?.assessment || {};
   const resultCase = resultAssessment.case_id || resultAssessment.initiative_id || null;      // the case the result card is about
   const resultPinned = pinned.isPinned(resultCase);
+  // A case's result (funding, launch): the full card only right after a fresh run, then a strip. Any other result stays a card until dismissed.
+  const resultCard = Boolean(firstResult?.result) && (firstResult.fresh || !resultCase);
+  const resultStrip = useMemo(() => {
+    const r = firstResult?.result;
+    if (!r || resultCard || resultPinned) return null;
+    const latest = latestOf(r);
+    const named = latest.full || latest.unscoredCheck;
+    const open = openOf(r)?.to?.replace(/\?tab=results$/, "");
+    if (!open || !named?.title) return null;
+    const n = typeof latest.score === "string" ? Number(String(latest.score).split("/")[0]) : NaN;
+    return { item: { id: resultCase || "result", kind: named.kind || "funding", title: named.title, status: stripStatus(Number.isFinite(n) ? n : null, stepsOf(r).length),
+      open, again: `${open}?check=again`, answers: `${open}?tab=answers` }, onRemove: firstResult.dismiss };
+  }, [firstResult, resultCard, resultPinned, resultCase]);
   const [rangeKey, setRangeKey] = useState("3m");
   const [rangeOpen, setRangeOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
@@ -292,6 +305,10 @@ export default function DashboardPage() {
     catalogue: { products: [], customers: [], vendors: [] }
   });
   const [acceptedValidation, setAcceptedValidation] = useState(null);
+  const [docCurrency, setDocCurrency] = useState(null);      // the workspace's own, once loaded (never the app's GBP start)
+  const fxIso = fxIsoOf(docCurrency || currency) || "GBP";
+  // The same rates as Business Operations, from the one conversion service (lib/fx): never two answers for one figure.
+  const { rates: fxRates, dates: fxDates } = useFxRates(foreignOf([...(snapshot?.invoices || []), ...(snapshot?.expenses || [])], fxIso), docCurrency ? fxIso : "");
 
 
   useEffect(() => {
@@ -316,27 +333,7 @@ export default function DashboardPage() {
           catalogue: data?.catalogue || { products: [], customers: [], vendors: [] }
         });
         setAcceptedValidation(getAcceptedWorkspaceValidation(data));
-
-        // Fetch FX rates for any foreign-currency invoices/expenses
-        try {
-          const wsIso = (String(ws?.data?.settings?.currency || currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(currency || "GBP")).toUpperCase().slice(0, 3);
-          const allRecs = [...(data?.financials?.invoices || []), ...(data?.financials?.expenses || [])];
-          const foreign = [...new Set(allRecs.map(r => {
-            const c = String(r.currency || r.source_currency || "").trim();
-            return (c.match(/\(([A-Z]{3})\)/)?.[1] || c.match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
-          }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
-          if (foreign.length && alive) {
-            const rates = {};
-            const days = {};
-            await Promise.all(foreign.map(async from => {
-              try {
-                const d = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-                if (d?.rate != null) { rates[from] = d.rate; days[from] = d.date || null; }
-              } catch {}
-            }));
-            if (alive) { setFxRates(rates); setFxDates(days); }
-          }
-        } catch {}
+        setDocCurrency(workspaceCurrencyOf(data) || null);
 
         // Live plan assumptions arrive quietly — Decision Engine+ only. Not awaited here,
         // so the figures above show as soon as they are ready.
@@ -380,11 +377,11 @@ export default function DashboardPage() {
     .filter((c) => c && c !== wsCurrencyCode))], [snapshot, wsCurrencyCode]);
   const snapshotKpis = useMemo(() => {
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     const rawAmt = r => Number(r?.total_amount || r?.subtotal_amount || 0);
@@ -400,23 +397,23 @@ export default function DashboardPage() {
       return rawAmt(inv);
     };
 
-    const paidRevenue = paidInvs.reduce((s, i) => s + toWs(actualReceived(i), i.currency), 0);
+    const paidRevenue = paidInvs.reduce((s, i) => s + toWs(actualReceived(i), i.currency, i), 0);
     const paidCoS = paidInvs.reduce((s, i) => {
       const total = rawAmt(i); const received = actualReceived(i);
       const lineItemCos = Array.isArray(i.line_items) ? i.line_items.reduce((ls, li) => ls + (Number(li.qty) || 1) * Number(li.cost_of_sales || 0), 0) : 0;
       const cos = Number(i.cost_of_sales != null ? i.cost_of_sales : lineItemCos);
-      return s + toWs(cos * (total > 0 ? received / total : 1), i.currency);
+      return s + toWs(cos * (total > 0 ? received / total : 1), i.currency, i);
     }, 0);
-    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency, e), 0);
     const cashBalance = paidRevenue - paidExpTotal - paidCoS;
     const partialRemaining = paidInvs
       .filter(i => actualReceived(i) < rawAmt(i))
-      .reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - actualReceived(i)), i.currency), 0);
-    const deliveredTotal = deliveredInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+      .reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - actualReceived(i)), i.currency, i), 0);
+    const deliveredTotal = deliveredInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
     const receivables = deliveredTotal + partialRemaining;
-    const paidFullTotal = paidInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+    const paidFullTotal = paidInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
     const totalRevenue = paidFullTotal + deliveredTotal;
-    const totalCosts = allExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency), 0) + paidCoS;
+    const totalCosts = allExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency, e), 0) + paidCoS;
 
     return { totalRevenue, cashBalance, receivables, totalCosts };
   }, [snapshot, fxRates, currency]);
@@ -436,11 +433,11 @@ export default function DashboardPage() {
     const curYear = now.getFullYear(); const curMonth = now.getMonth();
     const isThisMonth = (dateStr) => { if (!dateStr) return false; const d = new Date(dateStr); return d.getFullYear() === curYear && d.getMonth() === curMonth; };
     const wsIso2 = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs2 = (amount, cur) => {
+    const toWs2 = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso2) return num;
-      const rate = fxRates[iso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     // Use stable status-stamp dates — updated_at is refreshed by server on every fetch
@@ -464,11 +461,11 @@ export default function DashboardPage() {
     };
     const monthlyCoS = monthlyPaidInvs.reduce((s, i) => {
       const total = rawAmt2(i); const rcvd = getReceived(i);
-      return s + toWs2(Number(i.cost_of_sales || 0) * (total > 0 ? rcvd / total : 1), i.currency);
+      return s + toWs2(Number(i.cost_of_sales || 0) * (total > 0 ? rcvd / total : 1), i.currency, i);
     }, 0);
-    const actualRev = monthlyPaidInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency), 0)
-                    + monthlyDeliveredInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency), 0);
-    const actualCost = monthlyExps.reduce((s, e) => s + toWs2(Number(e.price || e.total_amount || 0), e.currency), 0) + monthlyCoS;
+    const actualRev = monthlyPaidInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency, i), 0)
+                    + monthlyDeliveredInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency, i), 0);
+    const actualCost = monthlyExps.reduce((s, e) => s + toWs2(Number(e.price || e.total_amount || 0), e.currency, e), 0) + monthlyCoS;
     const actualMargin = actualRev > 0 ? ((actualRev - actualCost) / actualRev) * 100 : 0;
     const revPct = planRev > 0 ? (actualRev / planRev) * 100 : null;
     const costPct = planCost > 0 ? (actualCost / planCost) * 100 : null;
@@ -483,11 +480,11 @@ export default function DashboardPage() {
 
   const trends = useMemo(() => {
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     return buildKpiTrends({ invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey });
@@ -509,11 +506,11 @@ export default function DashboardPage() {
   const kpiDetail = useMemo(() => {
     if (!openKpi || !kpiDetailsOpen) return null;
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     return kpiBreakdown({ kind: openKpi.kind, invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey,
@@ -788,10 +785,11 @@ export default function DashboardPage() {
         <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
       </div>
 
-      {/* The first result: its own card under the Agent row (the Agent card keeps the same height with or without it). */}
-      {firstResult?.result && <div data-first-result-card><FirstResultPanel firstResult={firstResult} pinned={resultPinned ? { onUnpin: () => pinned.unpin(pinned.items.find((x) => x.id === resultCase)) } : null} /></div>}
-      {/* Pinned, directly under the result card: never the same case twice (the result card carries the pin). */}
-      <PinnedCards pinned={pinned} excludeId={firstResult?.result ? resultCase : null} />
+      {/* The first result: the full card only right after a fresh run (the owner's brief, 20 Oct). Dismissed, or on the next
+          visit, it is a strip like every pinned item: never a full card once pinned. */}
+      {resultCard && <div data-first-result-card><FirstResultPanel firstResult={resultCase ? { ...firstResult, dismiss: firstResult.collapse } : firstResult} /></div>}
+      {/* Pinned, directly under it: never the same case twice. */}
+      <PinnedCards pinned={pinned} excludeId={resultCard ? resultCase : null} lead={resultStrip} />
 
       {actionCards}
 
@@ -807,13 +805,16 @@ export default function DashboardPage() {
           </h2>
           {otherCurrencies.length > 0 && (
             // Documents keep their own currency; these totals include them converted at today's rate (the owner's QA, 16 Oct).
+            // Said the same way as Business Operations (the owner's QA, 21 Oct): converted ones with their rate's date; any
+            // with no rate yet said apart, as not counted. Never both in one phrase.
             <p className="w-full text-[12px] text-slate-500 sm:order-last" data-converted-note>
-              ≈ Includes {otherCurrencies.map((c) => {
-                const day = fxDates[c] ? new Date(`${fxDates[c]}T00:00:00`) : null;
-                if (!day || Number.isNaN(day.getTime())) return fxRates[c] != null ? c : `${c} (no rate yet, not counted)`;
-                const old = (Date.now() - day.getTime()) / 86400000 > 3;
-                return `${c} at ${day.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate${old ? " (may be out of date)" : ""}`;
-              }).join(", ")} amounts converted to {wsCurrencyCode}. Each document keeps its own currency.
+              {(() => {
+                const day = (c) => { const d = fxDates[c] ? new Date(`${fxDates[c]}T00:00:00`) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
+                const done = otherCurrencies.filter((c) => fxRates[c] != null);
+                const missing = otherCurrencies.filter((c) => fxRates[c] == null);
+                const at = done.map((c) => { const d = day(c); return d ? `${c} at ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate${(Date.now() - d.getTime()) / 86400000 > 3 ? " (may be out of date)" : ""}` : c; });
+                return `${at.length ? `≈ Includes ${at.join(", ")} amounts converted to ${wsCurrencyCode}. ` : ""}${missing.length ? `Not counted yet: ${missing.join(", ")} amounts (no rate yet). ` : ""}Each document keeps its own currency.`;
+              })()}
             </p>
           )}
           <div className={`relative ${hasTrendTiles ? "" : "hidden"}`}>

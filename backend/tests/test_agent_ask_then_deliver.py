@@ -320,7 +320,7 @@ def test_settings_list_every_capability_with_its_plan_cost_and_automatic_switch(
     finally:
         app.dependency_overrides.pop(get_current_user, None)
     assert set(listed) == set(WORKFLOWS) == set(config.CAPABILITY_MIN_PLAN)
-    assert all(c["minimum_plan_label"] in ("Explorer", "Starter") and c["credits"] and isinstance(c["automatic"], list) for c in listed.values())
+    assert all(c["minimum_plan_label"] in ("Explorer", "Starter", "Decision Engine") and c["credits"] and isinstance(c["automatic"], list) for c in listed.values())
     assert listed["new_invoice"]["credits"] == "2 credits to prepare the invoice, 2 when it is sent" and listed["new_invoice"]["needs_approval"] is True
     assert listed["add_customer"]["credits"] == "2 credits" and listed["add_customer"]["automatic"] == [] and listed["add_customer"]["needs_approval"] is False
     assert listed["payment_followup"]["automatic"] and all({"key", "label", "on"} <= set(a) for a in listed["payment_followup"]["automatic"])

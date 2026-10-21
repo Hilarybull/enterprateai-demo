@@ -17,7 +17,7 @@ from app.modules.agent.models import A3_EXECUTE_WITH_APPROVAL, Done, Next, StepD
 from app.modules.agent.newdocs import (
     _EMAIL, _TRIGGERS, _amount_in, _customer, _customer_fields, _invoice_named, _new_customer, _prefill, _record, _said,
 )
-from app.modules.agent.tools import _currency, _customers, _products, product_cost, product_price, valid_email
+from app.modules.agent.tools import _asked_currency, _currency, _customers, _products, product_cost, product_price, valid_email
 
 
 def _doc(key: str, title: str, noun: str, details, kind: str, send_tool: str, id_key: str, after: str) -> WorkflowDefinition:
@@ -261,6 +261,7 @@ async def supplier_bill_step(ctx):
             {"key": "date", "label": "Bill date", "type": "date", "required": True, "default": str(a.get("date") or today.isoformat())},
             {"key": "due_date", "label": "Due date", "type": "date", "default": str(a.get("due_date") or (today + timedelta(days=30)).isoformat())}])
     now = ctx.now()
+    cur = _asked_currency(ctx, data)      # the bill's own currency, as given (QA, 20 Oct)
     total = bz.money(sum(float(i["quantity"]) * float(i["unit_price"]) for i in lines))
     if total <= 0:
         return WaitForInput("The bill must come to more than 0. What did they bill for?", [
@@ -273,10 +274,10 @@ async def supplier_bill_step(ctx):
                          "description": ", ".join(i["name"] for i in lines), "amount": total, "total_amount": total,
                          "line_items": [{"id": new_id()[:8], "description": i["name"], "qty": str(i["quantity"]), "unit_price": str(bz.money(i["unit_price"]))} for i in lines],
                          "date": str(a.get("date") or today.isoformat())[:10], "due_date": str(a.get("due_date") or "")[:10] or None, "status": "pending",
-                         "currency": bz.currency_of(d), "source": "EnterprateAI Agent", "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
+                         "currency": cur, "source": "EnterprateAI Agent", "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
         return ref
     ref = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    return Done(f"Saved: supplier bill {ref} from {vendor} for {fmt_money(total, bz.currency_of(data))}, to pay"
+    return Done(f"Saved: supplier bill {ref} from {vendor} for {fmt_money(total, cur)}, to pay"
                 + (f" by {a['due_date']}." if a.get("due_date") else "."),
                 next_action="When you've paid it, mark it as paid in Business Operations.",
                 outcome={"reference": ref, "amount": total, "links": [{"label": "Supplier bills", "to": "/operations?tab=Procurement"}]})

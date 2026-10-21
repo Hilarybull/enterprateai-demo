@@ -447,7 +447,8 @@ export default function BlueprintPage() {
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
-    if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
+    // Business plans, proposals and sales letters are on Starter and above (the pricing PDF, 19 Oct 2026).
+    if ((docId === "business_plan" || docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }

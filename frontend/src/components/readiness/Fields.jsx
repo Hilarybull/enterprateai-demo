@@ -1,11 +1,13 @@
 import UkDateInput from "../UkDateInput";
+import { useState } from "react";
+import { getCurrencySymbol } from "../../lib/currencies";
 import { TONE, dateLabel, getPath, newKey } from "../../lib/readiness";
 
 // Small building blocks shared by the readiness screens, and the fields the guided sections
 // are drawn from. The sections themselves come from the checklist profile, so a new profile
 // version changes the questions without changing this file.
 
-export const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+export const inputClass = "min-w-0 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
 export function Panel({ title, description, actions, children, className = "", id }) {
   return (
@@ -55,9 +57,26 @@ function Label({ field, htmlFor, children }) {
   return (
     <label htmlFor={htmlFor} className="block">
       <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">{field.label}</span>
-      {field.help && <span className="mt-0.5 block text-[12px] text-slate-500 dark:text-slate-400">{field.help}</span>}
+      {field.help && <span className="mt-0.5 block whitespace-normal break-words text-[12px] text-slate-500 dark:text-slate-400">{field.help}</span>}
       {children}
     </label>
+  );
+}
+
+/** An amount with its currency symbol and separators ("₦ 5,000,000"); typed as digits, kept as typed while editing.
+ *  Blank stays blank (unknown), never zero. */
+export function MoneyInput({ value, currency, onChange, className = "", ...rest }) {
+  const [typing, setTyping] = useState(null);
+  const plain = value === null || value === undefined || value === "" ? "" : String(value);
+  const shown = typing !== null ? typing : /^-?\d+(\.\d+)?$/.test(plain) ? Number(plain).toLocaleString("en-GB", { maximumFractionDigits: 2 }) : plain;
+  const sign = currency ? getCurrencySymbol(currency) : "";
+  return (
+    <span className="relative block" data-money-input>
+      {sign && <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 mt-0.5 -translate-y-1/2 text-[14px] text-slate-500">{sign}</span>}
+      <input {...rest} type="text" inputMode="decimal" value={shown} className={`${className} ${sign ? "pl-8" : ""}`}
+        onFocus={() => setTyping(plain)} onBlur={() => setTyping(null)}
+        onChange={(e) => { const raw = e.target.value.replace(/(\d),(?=\d)/g, "$1").replace(/^\s+|\s+$/g, ""); setTyping(e.target.value); onChange(raw); }} />
+    </span>
   );
 }
 
@@ -74,6 +93,7 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
     case "textarea":
       return <textarea {...common} rows={3} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
     case "money":
+      return <MoneyInput {...common} value={value} currency={data?.currency} onChange={onChange} />;
     case "number":
       // Text, not a number input: blank stays blank (unknown) and is never turned into zero.
       return <input {...common} type="text" inputMode="decimal" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
@@ -118,8 +138,10 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
 }
 
 function Provenance({ entry }) {
-  if (!entry) return null;
-  return <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Reused from {entry.source} · copied {dateLabel(entry.as_of)}. Change it here to use your own figure for this check only.</p>;
+  // Where an answer came from is said once, on its section (the owner's brief, 20 Oct); here only "Changed by you", on a
+  // field you edited yourself.
+  if (!entry || !/\b(you|your edit|edited|changed)\b/i.test(String(entry.source || "")) || /chat|agent|records|profile|research|invoices|expenses|catalogue/i.test(String(entry.source || ""))) return null;
+  return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-changed-by-you>Changed by you</p>;
 }
 
 function ListField({ field, items, onChange, disabled, data, errors, evidence, idBase }) {

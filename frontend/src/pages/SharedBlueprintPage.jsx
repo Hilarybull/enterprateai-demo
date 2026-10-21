@@ -140,8 +140,8 @@ function markdownToHtml(md) {
     const bullet =
       line.startsWith("- ") ? line.slice(2) :
       line.startsWith("* ") ? line.slice(2) :
-      line.startsWith("â€¢ ") ? line.slice(2) :
-      line.startsWith("â€“ ") ? line.slice(2) :
+      line.startsWith("• ") ? line.slice(2) :
+      line.startsWith("– ") ? line.slice(2) :
       null;
 
     if (bullet != null) {

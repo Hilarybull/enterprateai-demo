@@ -98,7 +98,7 @@ def run(coro):
 
 # What each plan may do: (feature, the cheapest plan it is on).
 PAID = [
-    ("business_plan_full", "explorer"),          # Blueprints: business plan
+    ("business_plan_full", "starter_insight"),   # Blueprints: business plan (Starter, the pricing PDF)
     ("proposal_full", "starter_insight"),        # Blueprints: proposal
     ("sales_letter_full", "starter_insight"),
     ("scenario_ai_interpretation", "starter_insight"),      # Simulation: the AI explanation (the run itself is free)
@@ -235,6 +235,12 @@ def test_the_catalogue_is_migration_016_as_written_with_042_s_prices_on_top():
     for cost, uncontrolled, code in re.findall(r"SET credit_cost = (\d+)(, credit_controlled = FALSE)? WHERE feature_code = '([a-z_]+)'", v2):
         name, _, enabled, minimum, refundable, controlled = expected.get(code) or catalogue.FEATURES[code]
         expected[code] = (name, int(cost), enabled, minimum, refundable, False if uncontrolled else controlled)
+    # 043 (the pricing PDF): features moved to another plan.
+    v3 = (here / "043_pricing_pdf_plans.sql").read_text(encoding="utf-8")
+    for plan, codes in re.findall(r"SET minimum_plan = '([a-z_]+)'[^;]*?feature_code IN \(([^)]*)\)", v3):
+        for code in re.findall(r"'([a-z_]+)'", codes):
+            name, cost, enabled, _minimum, refundable, controlled = expected[code]
+            expected[code] = (name, cost, enabled, plan, refundable, controlled)
     for code, want in expected.items():
         assert catalogue.FEATURES[code] == want, code
 

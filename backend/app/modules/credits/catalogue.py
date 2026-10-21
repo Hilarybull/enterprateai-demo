@@ -21,8 +21,8 @@ FEATURES: dict[str, tuple[str, int, bool, str, bool, bool]] = {
     "idea_validation": ("Idea Validation", 0, True, "explorer", True, False),      # Basic: deterministic, free (042)
     "idea_validation_comprehensive": ("Idea Validation (Comprehensive)", 25, True, "starter_insight", True, True),
     "market_data_refresh": ("Market Data Refresh", 4, True, "explorer", True, True),
-    "business_plan_full": ("Complete Business Plan", 40, True, "explorer", True, True),
-    "business_plan_section": ("Regenerate Business Plan Section", 5, True, "explorer", True, True),
+    "business_plan_full": ("Complete Business Plan", 40, True, "starter_insight", True, True),      # Starter (the pricing PDF)
+    "business_plan_section": ("Regenerate Business Plan Section", 5, True, "starter_insight", True, True),
     "proposal_full": ("Complete Business Proposal", 10, True, "starter_insight", True, True),
     "proposal_section": ("Regenerate Proposal Section", 2, True, "starter_insight", True, True),
     "sales_letter_full": ("Complete Sales Letter", 4, True, "starter_insight", True, True),

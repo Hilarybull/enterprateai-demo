@@ -14,6 +14,7 @@ import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
 import QuickCheck from "../QuickCheck";
+import { NextLine } from "../WhatNext";
 
 // A button elsewhere on the dashboard (an insight card) hands its task to the Agent box, so its
 // question or result shows here and the owner stays on the page.
@@ -77,6 +78,16 @@ export function blockedReply(res) {
       detail: "Nothing was started." };
   }
   return { tone: "amber", text: res.message, upgrade: res.upgrade };
+}
+
+/** "₦5m loan": the case in two words, for the Agent card's next line. */
+function fundingWhat(result) {
+  const a = result?._edit?.answers || {};
+  const n = Number(a.amount);
+  const sign = result?.currency_sign || "";
+  const amt = Number.isFinite(n) && n > 0 ? `${sign}${n >= 1e6 ? `${Math.round(n / 1e5) / 10}m` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : n}` : "";
+  const route = { loan: "loan", grant: "grant", equity: "investment" }[String(a.route || "").toLowerCase()] || "funding case";
+  return `${amt} ${route}`.trim();
 }
 
 export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null }) {
@@ -326,6 +337,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       </p>
       <p data-m="fadeUp" style={{ "--m-delay": "60ms" }} data-agent-briefing data-briefing-kind={told.kind} title={told.text}
         className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{showResult ? "Your first result is below." : told.text}</p>
+      {firstResult?.result?.assessment_type === "funding_readiness_initial" && firstResult.result.research?.state === "adopted" && (firstResult.result._session || firstResult.sessionId) && (
+        <div className="mt-1.5"><NextLine sessionId={firstResult.result._session || firstResult.sessionId} what={fundingWhat(firstResult.result)} /></div>
+      )}
       {ent && (
         <div className="mt-2 flex min-w-0 flex-wrap gap-2 empty:hidden" data-agent-notices>
           {counted && ent.is_paid && ent.agent_tasks !== false && (

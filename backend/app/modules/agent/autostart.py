@@ -336,6 +336,12 @@ async def _sweep(orch, business_id: str, limit: int, visit: bool, related: set |
     except Exception:      # noqa: BLE001
         logger.warning("could not close unanswered tasks for %s", business_id, exc_info=True)
     if not enabled(policy):
+        # The owner's own tasks waiting on a question the profile now answers carry on even with automatic starting off:
+        # that starts nothing new (the owner's QA, 16 Oct: asked for a business email already on the workspace form).
+        try:
+            await answer_from_profile(orch, business_id, await orch.rt.business.load(business_id), await orch.rt.store.list_runs(business_id, limit=500))
+        except Exception:      # noqa: BLE001
+            logger.warning("could not re-check waiting tasks for %s", business_id, exc_info=True)
         return []
     _last_sweep[business_id] = time.monotonic()
     ent = await orch.entitlement(business_id)

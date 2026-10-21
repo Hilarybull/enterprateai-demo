@@ -153,7 +153,7 @@ def test_at04_allocations_short_of_the_target_fail_g2_whatever_the_score():
     env = Env()
     svc, cid = funding_case(env, use_of_funds=[{"id": "u1", "category": "People", "amount": "90000", "purpose": "Team", "period": "2026-10"}])
     r = assess(svc, cid)["result"]
-    assert gate(r, "G2")["state"] == "failed" and "10,000.00 is not allocated" in gate(r, "G2")["reason"]
+    assert gate(r, "G2")["state"] == "failed" and "£10,000 is not allocated" in gate(r, "G2")["reason"]
     assert r["classification"] == "not_ready" and r["score"] == 92.5 and r["blocker_count"] == 1
     assert r["gaps"][0]["code"] == "G2" and r["gaps"][0]["group"] == 1
     # The target is never changed to make the totals agree.
@@ -1019,6 +1019,9 @@ def test_the_api_covers_the_journey_and_maps_errors(http):
     assert started.json()["result"]["classification"] == "insufficient_evidence" and gate(started.json()["result"], "G1")["state"] == "passed"
     assert client.post(f"/businesses/A/funding-cases/{cid}/assessments", json={"idempotency_key": "one"}).json()["id"] == started.json()["id"]
     assert len(client.get(f"/businesses/A/funding-cases/{cid}/assessments").json()["items"]) == 1
+    locked = client.post(f"/businesses/A/funding-cases/{cid}/materials", json={"kind": "readiness_report"})      # Starter: the pack is Decision Engine
+    assert locked.status_code == 403 and locked.json()["detail"]["minimum_plan_label"] == "Decision Engine"
+    env.meter.plans[OWNER] = "decision_engine"
     doc = client.post(f"/businesses/A/funding-cases/{cid}/materials", json={"kind": "readiness_report"})
     assert doc.status_code == 201
     pdf = client.get(f"/businesses/A/funding-cases/{cid}/materials/{doc.json()['id']}/download")
@@ -1383,7 +1386,7 @@ def test_c3_the_launch_suggestion_is_worded_and_routed_from_the_launch_summary()
 
 
 def test_c4_funding_pack_opens_the_funding_case_materials():
-    env = Env()
+    env = Env(plan="decision_engine")
     d = _pre(env)
     assert _suggestion(d, "stage_funding")["action"] == {"to": "/funding"} and _shortcut(d, "funding_pack")["action"] == {"to": "/funding"}
     _, cid = funding_case(env)
@@ -1407,7 +1410,7 @@ def test_c5_add_it_links_open_the_forecast_that_holds_the_figure():
 
 
 def test_c6_c7_the_old_checklist_is_the_setup_checklist_and_no_link_leaves_its_subject():
-    env = Env()
+    env = Env(plan="decision_engine")
     _, lid = launch(env, prerequisite="not_completed")
     _, cid = funding_case(env, demand=False)
     d = _pre(env)

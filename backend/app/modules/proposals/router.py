@@ -177,6 +177,12 @@ async def submit_proposal(
     user=Depends(get_current_user),
 ):
     await _require_paid_for_proposals(user["id"], "Submitting a proposal")
+    if getattr(body, "request_id", None):
+        # Answering another business's posted request is "Access to RFP Leads", on Decision Engine (the pricing PDF,
+        # 19 Oct 2026). Posting your own request, and sending a proposal direct, stay on Starter.
+        if not await plan_meets(user["id"], "decision_engine", grant_module="marketplace"):
+            from app.modules.plans.access import refusal
+            raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=await refusal(user["id"], "decision_engine", "Answering RFP leads"))
     payload = body.model_dump()
     payload["proposer_email"] = user.get("email")
     return await service.submit_proposal(user["id"], workspace_id, payload)

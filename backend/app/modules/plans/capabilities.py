@@ -10,17 +10,18 @@ Plans are cumulative: each one includes everything in the plans before it.
 from __future__ import annotations
 
 PLAN_ORDER = ("explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os")
+PUBLIC_PLAN_ORDER = ("explorer", "starter_insight", "decision_engine")
 PLAN_LABEL = {"explorer": "Explorer", "starter_insight": "Starter", "decision_engine": "Decision Engine",
               "growth_navigator": "Growth Navigator", "strategic_business_os": "Strategic Business OS"}
 
 # What each plan adds to the one before it.
 _ADDS: dict[str, tuple[str, ...]] = {
-    # Explorer: the everyday documents and records, a first look at an idea, a plan, registration
-    # guidance and one Marketplace listing.
+    # Explorer (the pricing PDF, 19 Oct 2026): invoices, quotes, receipts and contracts, expense, customer and product
+    # records, basic idea validation, registration guidance and one Marketplace listing.
     "explorer": (
         "new_invoice", "receipt_send", "new_contract", "record_expense", "record_payment",
         "add_customer", "add_catalogue_item", "add_vendor", "update_record",
-        "idea_validation", "business_plan_draft", "registration_checklist",
+        "idea_validation", "registration_checklist",
         "marketplace_profile", "marketplace_offering",
         # Quotations too: Invoice, Quotation and Contract are free tools by hand, and the Agent may prepare
         # them on any plan for AI Credits (First-Value PRD 4.2). Reading an inbound Marketplace request's
@@ -28,16 +29,18 @@ _ADDS: dict[str, tuple[str, ...]] = {
         "enquiry_to_quote", "quote_to_cash",
     ),
     # Starter: proposals, chasing payments, scenarios (a few a month), risk
-    # and the fragility index, funding and launch preparation, and the wider document set.
+    # and the fragility index, readiness checks and launch preparation, and the wider document set.
+    # The AI Business Plan Generator is Starter (the pricing PDF), as are launch and funding readiness, proposals and
+    # sales letters, pricing and customer growth insights, and scenario simulations.
     "starter_insight": (
-        "new_proposal", "sales_letter_draft", "payment_followup",
+        "business_plan_draft", "new_proposal", "sales_letter_draft", "payment_followup",
         "scenario_help", "expansion_scenario", "risk_concentration",
-        "funding_pack_draft", "readiness_refresh", "launch_evidence_gaps",
+        "readiness_refresh", "launch_evidence_gaps",
         "market_size", "price_test", "capacity_check", "offer_review",
         "credit_note", "new_purchase_order", "supplier_bill",
     ),
-    # Decision Engine and above add no new Agent tasks: they lift the monthly quotas below.
-    "decision_engine": (),
+    # Decision Engine: preparing the funding pack (the owner, 16 Oct), and the monthly quotas below lifted.
+    "decision_engine": ("funding_pack_draft",),
     "growth_navigator": (),
     "strategic_business_os": (),
 }
@@ -51,8 +54,10 @@ for _plan in PLAN_ORDER:
 # How many of a thing a plan includes in a calendar month (or in all, for listings). None: no limit.
 # A task counted here is blocked, not charged, once the plan's number is used.
 QUOTAS: dict[str, dict[str, int | None]] = {
+    # The pricing PDF: Explorer 1 listing; Starter up to 10 listings and 4 scenario simulations a month (the owner,
+    # 20 Oct 2026); Decision Engine unlimited listings and scenarios.
     "explorer":              {"scenario_help": 0, "marketplace_listings": 1},
-    "starter_insight":       {"scenario_help": 4, "marketplace_listings": None},
+    "starter_insight":       {"scenario_help": 4, "marketplace_listings": 10},
     "decision_engine":       {"scenario_help": None, "marketplace_listings": None},
     "growth_navigator":      {"scenario_help": None, "marketplace_listings": None},
     "strategic_business_os": {"scenario_help": None, "marketplace_listings": None},
@@ -98,9 +103,9 @@ def alternative(plan: str | None, capability: str) -> dict | None:
 def public_registry() -> dict:
     """What the public site shows of this table (QA U6): each plan's name, what it adds and its monthly numbers.
     The site reads it from frontend/src/content/entitlements.json, which a test keeps equal to this."""
-    return {"plans": [{"key": p, "label": PLAN_LABEL[p]} for p in PLAN_ORDER],
-            "adds": {p: sorted(_ADDS[p]) for p in PLAN_ORDER},
-            "quotas": {p: dict(QUOTAS[p]) for p in PLAN_ORDER}}
+    return {"plans": [{"key": p, "label": PLAN_LABEL[p]} for p in PUBLIC_PLAN_ORDER],
+            "adds": {p: sorted(_ADDS[p]) for p in PUBLIC_PLAN_ORDER},
+            "quotas": {p: dict(QUOTAS[p]) for p in PUBLIC_PLAN_ORDER}}
 
 
 if __name__ == "__main__":      # python -m app.modules.plans.capabilities > ../frontend/src/content/entitlements.json

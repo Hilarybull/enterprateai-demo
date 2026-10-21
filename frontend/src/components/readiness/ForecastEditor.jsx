@@ -1,8 +1,9 @@
 import UkDateInput from "../UkDateInput";
 import { useEffect, useMemo, useState } from "react";
-import { dateLabel, linkForecast, listForecasts, moneyLabel, monthLabel, newKey, readinessError, saveForecast } from "../../lib/readiness";
+import { dateLabel, getSubject, linkForecast, listForecasts, moneyLabel, monthLabel, newKey, readinessError, saveForecast } from "../../lib/readiness";
+import { apiRequest } from "../../api/client";
 import { todayLocal } from "../../lib/format";
-import { Btn, Notice, inputClass } from "./Fields";
+import { Btn, MoneyInput, Notice, inputClass } from "./Fields";
 
 // The monthly cash forecast both checks share. Blank means unknown and stays blank. The
 // baseline counts only money that is received, or committed with evidence; anything proposed
@@ -15,7 +16,8 @@ function addMonths(key, n) {
 
 function startingPoint(subject, feature) {
   const f = subject.forecast;
-  const data = f?.data || {};
+  // No forecast saved yet: the one the Agent filled in from the workspace and research, to check and save (the owner, 20 Oct).
+  const data = f?.data || subject.forecast_draft || {};
   const first = data.start_month || todayLocal().slice(0, 7);
   const needed = f?.required_months?.length ? f.required_months : Array.from({ length: feature === "funding" ? 12 : 6 }, (_, i) => addMonths(first, i));
   const byMonth = Object.fromEntries((data.months || []).map((m) => [m.month, m]));
@@ -32,6 +34,19 @@ function startingPoint(subject, feature) {
 export default function ForecastEditor({ businessId, feature, subject, evidence, onSaved, disabled }) {
   const [form, setForm] = useState(() => startingPoint(subject, feature));
   const [dirty, setDirty] = useState(false);
+  const [typical, setTypical] = useState("");
+  const [choosing, setChoosing] = useState(false);
+  // The right figure chosen: kept on the case, and the forecast drafted again from it.
+  async function choose(field, value) {
+    setChoosing(true);
+    try {
+      await apiRequest(`/businesses/${businessId}/assessment/funding/use-figures`, "POST", { figures: { [field]: Number(value) } });
+      onSaved(await getSubject(businessId, feature, subject.id));
+    } catch (e) {
+      setProblem(readinessError(e, "That couldn't be saved just now. Nothing was changed. Try again."));
+    } finally { setChoosing(false); }
+  }      // "What do you expect to earn in a typical month?", when the records are too thin
+  const drafted = !subject.forecast && Boolean(subject.forecast_draft);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState(null);
   const [others, setOthers] = useState([]);
@@ -75,18 +90,53 @@ export default function ForecastEditor({ businessId, feature, subject, evidence,
   const money = (i, key, label, value, onChange) => (
     <label className="block">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:sr-only">{label}</span>
-      <input type="text" inputMode="decimal" aria-label={`${label}, ${monthLabel(form.months[i]?.month) || ""}`.replace(/, $/, "")} disabled={disabled}
-        className={inputClass} value={value ?? ""} onChange={(e) => onChange(e.target.value)} placeholder="Not known" />
+      {/* ₦331,425, with its sign and commas (the owner's QA, 21 Oct); stored as the plain figure. */}
+      <MoneyInput aria-label={`${label}, ${monthLabel(form.months[i]?.month) || ""}`.replace(/, $/, "")} disabled={disabled}
+        className={inputClass} value={value ?? ""} currency={currency} onChange={onChange} placeholder="Not known" />
     </label>
   );
 
   return (
     <div className="space-y-4">
+      {drafted && (
+        <p className="rounded-lg bg-indigo-50 px-3 py-2 text-[12.5px] text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100" data-forecast-drafted>
+          {subject.forecast_draft.from}{(subject.forecast_draft.assumptions || []).length ? `: ${subject.forecast_draft.assumptions.map((x) => x.text).join("; ")}` : ""}. Check the figures, change any, then save to confirm them.</p>
+      )}
+      {drafted && (subject.forecast_draft.asks || []).filter((q) => q.conflict).map((q) => (
+        // "Your case says ₦60 cost per sale; your catalogue says ₦1,500. Which is right?": asked before the forecast is drafted.
+        <div key={q.field} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30" data-forecast-conflict={q.field}>
+          <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">{q.question}</p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {(q.choices || []).map((v) => (
+              <button key={v} type="button" disabled={disabled || choosing} onClick={() => choose(q.field, v)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-300 disabled:opacity-60">
+                {moneyLabel(v, currency)}</button>
+            ))}
+          </div>
+        </div>
+      ))}
+      {drafted && (subject.forecast_draft.asks || []).filter((q) => q.field === "monthly_revenue" && !q.conflict).map((q) => (
+        // Too little on record to say a month on its own (the owner's QA, 21 Oct): asked, and the answer used as their estimate.
+        <label key={q.field} className="block rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30" data-forecast-ask>
+          <span className="block text-[12.5px] text-amber-900 dark:text-amber-100">{q.why}</span>
+          <span className="mt-0.5 block text-[13px] font-semibold text-slate-800 dark:text-slate-100">{q.question}</span>
+          <span className="mt-1 block max-w-xs"><MoneyInput className={inputClass} disabled={disabled} currency={currency} aria-label={q.question} placeholder="A typical month"
+            value={typical} onChange={(v) => {
+              setTypical(v);
+              const shown = String(v ?? "").replace(/,/g, "");
+              // Its payments too, from the price, cost per sale and fixed costs (the owner's QA, 21 Oct: they stayed blank)
+              const f = subject.forecast_draft.figures || {};
+              const paid = shown && f.price > 0 && f.cost != null && f.fixed_costs != null ? String(Math.round((Number(shown) / f.price) * f.cost + f.fixed_costs)) : null;
+              change({ months: form.months.map((m) => (m.basis === "actual" ? m : { ...m, receipts: shown, ...(paid != null ? { payments: paid } : {}), basis: shown ? "estimate" : m.basis })),
+                assumptions: form.assumptions.map((x) => (x.applies_to === "receipts" ? { ...x, text: shown ? "A typical month, your estimate" : "", source: shown ? q.label : "" } : x)) });
+            }} /></span>
+        </label>
+      ))}
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="block">
           <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Opening cash</span>
           <span className="mt-0.5 block text-[12px] text-slate-500">Cash you actually have. Not funding you hope for.</span>
-          <input type="text" inputMode="decimal" className={`mt-1 ${inputClass}`} disabled={disabled} value={form.opening_cash} onChange={(e) => change({ opening_cash: e.target.value })} placeholder="Not known" />
+          <span className="mt-1 block"><MoneyInput className={inputClass} disabled={disabled} value={form.opening_cash} currency={currency} onChange={(v) => change({ opening_cash: v })} placeholder="Not known" aria-label="Opening cash" /></span>
         </label>
         <label className="block">
           <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Cash figure is from</span>
@@ -209,7 +259,7 @@ export default function ForecastEditor({ businessId, feature, subject, evidence,
       <div className="flex flex-wrap items-center gap-3">
         {!disabled && <Btn kind="primary" disabled={saving} onClick={save}>{saving ? "Saving…" : problem ? "Try saving again" : "Save and confirm these figures"}</Btn>}
         <span className="text-[12px] text-slate-500" role="status">
-          {dirty ? "You have unsaved changes." : forecast?.data?.confirmed_at ? `Confirmed on ${dateLabel(forecast.data.confirmed_at)}.` : "Not saved yet."}
+          {dirty ? "You have unsaved changes." : forecast?.data?.confirmed_at ? `Confirmed on ${dateLabel(forecast.data.confirmed_at)}.` : drafted ? "Filled in for you. Not saved yet." : "Not saved yet."}
         </span>
         {!disabled && others.length > 0 && (
           <label className="ml-auto flex items-center gap-2 text-[12px] text-slate-500">

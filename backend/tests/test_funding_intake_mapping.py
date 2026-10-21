@@ -12,7 +12,7 @@ A = {"amount": 8000000.0, "use": "buy two pressure washers and a second van", "s
 
 def test_every_slot_maps_to_its_case_field():
     f = goals.case_fields(A, currency="NGN", where="Abuja", country="Nigeria", today=date(2026, 10, 15))
-    assert f == {"target_amount": 8000000.0, "currency": "NGN", "purpose": "buy two pressure washers and a second van", "receipt_date": "2027-06-30",
+    assert f == {"target_amount": 8000000.0, "timing_confirmed": True, "currency": "NGN", "purpose": "buy two pressure washers and a second van", "receipt_date": "2027-06-30",
                  "route_preference": "loan", "stage": "trading", "jurisdiction": "Nigeria", "market": {"location": "Abuja"},
                  "traction": {"summary": A["traction"], "customers": 40, "monthly_revenue": 1200000.0}}
 
@@ -48,13 +48,16 @@ def test_a_new_need_is_said_as_a_diff_and_core_changes_ask_replace():
     line = goals.diff_line(diff, before, wanted)
     assert line.startswith("Amount £100,000 → ₦8,000,000 · Currency GBP → NGN · Purpose hiring → buy two pressure washers and a")
     assert "Timing Dec 2026 → Jun 2027 · Route equity → loan" in line and "Market not set → Abuja" in line
+    # One case per business (the owner's brief, 20 Oct): never "Replace". "Update my case" keeps the old version in History
+    # when the need itself changes; the changes are a clean list, five rows at most.
     choose = goals._replace_or_update({"id": "c1", "data": before}, diff, wanted)
-    assert [o["value"] for o in choose["options"]] == ["replace:c1", "update:c1", "cancel:c1"]
-    assert choose["label"].startswith("This looks like a new funding need. Replace 'QA Seed round' (£100k equity) with this one (₦8m loan, Abuja)?")
-    assert goals.need_title(wanted) == "Buy two pressure washers and a second van · ₦8m loan"
+    assert [(o["value"], o["label"]) for o in choose["options"]] == [("replace:c1", "Update my case"), ("cancel:c1", "Cancel")]
+    assert choose["label"] == "I'll update your funding case"
+    assert choose["rows"][0] == {"field": "Amount", "before": "£100,000", "now": "₦8,000,000"} and len(choose["rows"]) <= 5
+    assert goals.need_title(wanted) == "₦8m loan to buy two pressure washers and a second van"
     # Only details: a plain update, no Replace.
     small = goals._replace_or_update({"id": "c1", "data": {**before, "stage": "pre_revenue"}}, goals.case_diff({**before, "stage": "pre_revenue"}, {"stage": "trading"}), {"stage": "trading"})
-    assert [o["label"] for o in small["options"]] == ["Update", "Cancel"]
+    assert [o["label"] for o in small["options"]] == ["Update my case", "Cancel"] and small["options"][0]["value"] == "update:c1"
 
 
 def test_a_loan_case_is_labelled_and_investor_only_documents_never_block():
@@ -64,7 +67,7 @@ def test_a_loan_case_is_labelled_and_investor_only_documents_never_block():
             "timing_confirmed": True, "purpose": "a second van"}
     equity = engine.assess(rules.FUNDING, {"subject": base, "forecast": None, "evidence": []}, rules.FUNDING_EQUITY_V1, _d(2026, 10, 15))
     loan = engine.assess(rules.FUNDING, {"subject": {**base, "route_preference": "loan"}, "forecast": None, "evidence": []}, rules.FUNDING_EQUITY_V1, _d(2026, 10, 15))
-    assert loan["route_note"] == "You're considering a loan. This check uses our equity preparation checklist for now, without the investor-only materials."
+    assert loan["route_note"] == "Loan checklist coming soon, using general checks."
     assert equity["route_note"] is None
     said = lambda r: " ".join(str(x) for x in (r.get("missing"), r.get("gaps"), r.get("criteria")))      # noqa: E731
     assert "Team and ownership summary" in said(equity) and "Team and ownership summary" not in said(loan)

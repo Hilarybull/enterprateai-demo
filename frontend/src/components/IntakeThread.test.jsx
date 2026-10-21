@@ -30,7 +30,7 @@ it("shows the owner's message once, one acknowledgement, and 5 of 6", async () =
   await act(async () => { fireEvent.change(box, { target: { value: "Help me price my cupcake boxes" } }); });
   await act(async () => { fireEvent.submit(box.closest("form")); });
   await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
-  const input = column().querySelector("[data-question-turn] input");
+  const input = column().querySelector("[data-composer] input");
   await act(async () => { fireEvent.change(input, { target: { value: MSG } }); });
   await act(async () => { fireEvent.submit(input.closest("form")); });
   await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
@@ -80,7 +80,7 @@ it("opening the card, answering and closing it never scrolls the page", async ()
     await act(async () => { fireEvent.change(box, { target: { value: "Help me price my cupcake boxes" } }); });
     await act(async () => { fireEvent.submit(box.closest("form")); });
     await act(async () => { await new Promise((r) => setTimeout(r, 700)); });
-    const input = column().querySelector("[data-question-turn] input");
+    const input = column().querySelector("[data-composer] input");
     await act(async () => { fireEvent.change(input, { target: { value: MSG } }); });
     await act(async () => { fireEvent.submit(input.closest("form")); });
     await act(async () => { await new Promise((r) => setTimeout(r, 700)); });

@@ -30,8 +30,8 @@ function Where() { const l = useLocation(); return <p data-testid="where">{l.pat
 const page = () => render(<MemoryRouter initialEntries={["/"]}><Routes><Route path="/" element={<><LandingPage /><Where /></>} /><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
 const wait = (ms = 700) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 const replyBox = () => {
-  const card = [...document.querySelectorAll("[data-task-card]")].find((c) => c.querySelector("[data-question-turn] input"));
-  return card?.querySelector("[data-question-turn] input");
+  const card = [...document.querySelectorAll("[data-task-card]")].find((c) => c.querySelector("[data-composer] input"));
+  return card?.querySelector("[data-composer] input");
 };
 async function say(box, text) {
   await act(async () => { fireEvent.change(box, { target: { value: text } }); });

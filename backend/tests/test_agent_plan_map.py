@@ -85,9 +85,9 @@ def test_the_pricing_page_is_given_the_same_map_the_agent_checks():
     import asyncio
     from app.modules.plans.router import agent_tasks_by_plan
     out = asyncio.run(agent_tasks_by_plan())
-    assert out["order"] == list(plan_map.PLAN_ORDER)
+    assert out["order"] == list(plan_map.PUBLIC_PLAN_ORDER)      # the three plans on sale (the pricing PDF)
     assert "New Invoice" in out["plans"]["explorer"]["adds"] and "Scenario Help" in out["plans"]["starter_insight"]["adds"]
-    assert "Scenario Help" not in out["plans"]["explorer"]["adds"] and out["plans"]["decision_engine"]["adds"] == []
+    assert "Scenario Help" not in out["plans"]["explorer"]["adds"] and out["plans"]["decision_engine"]["adds"] == ["Funding Pack Draft"]
     assert out["plans"]["starter_insight"]["quotas"]["scenario_help"] == 4 and out["plans"]["decision_engine"]["quotas"]["scenario_help"] is None
     assert sum(len(p["adds"]) for p in out["plans"].values()) == len(WORKFLOWS)      # every task appears once, on the plan that first includes it
 

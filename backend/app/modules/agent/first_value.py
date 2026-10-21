@@ -28,7 +28,7 @@ UNSURE = "unknown"      # what "Not sure" is stored as: an answer, and never a f
 ASSESSMENT_OF = {"test_idea": "idea_viability_initial", "launch": "launch_readiness_initial", "need_funding": "funding_readiness_initial",
                  "price_offer": "pricing_health_initial", "more_customers": "customer_growth_foundation"}
 HEADLINE = {"idea_viability_initial": "Initial Idea Viability", "launch_readiness_initial": "Initial Launch Readiness",
-            "funding_readiness_initial": "Initial Funding Preparation", "pricing_health_initial": "Pricing Health",
+            "funding_readiness_initial": "Funding readiness", "pricing_health_initial": "Pricing Health",
             "customer_growth_foundation": "Customer Growth Foundation"}
 # The premium next action, and what it will do (said before any upgrade is asked for: PRD 12.3).
 PREMIUM = {
@@ -400,11 +400,15 @@ def covered(goal_key: str | None) -> bool:
     return goal_key in _RUN
 
 
-def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datetime | None = None, sign: str = "£") -> dict | None:
+def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datetime | None = None, sign: str | None = None) -> dict | None:
     """The first-value result for a goal, or None for a goal that has none (a document, say)."""
     run = _RUN.get(goal_key)
     if not run:
         return None
+    if sign is None:
+        # The workspace's currency (its country's when none is saved), never £ by default for a business elsewhere.
+        from app.modules.agent import business as bz
+        sign = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}.get(bz.currency_of(data or {}), "£") if data else "£"
     out = run(dict(answers or {}), data, now, sign)
     if offering_on_record(answers, data, priced_only=_amount((answers or {}).get("price")) is not None):
         out["free_next_actions"] = [x for x in out["free_next_actions"] if x.get("label") != "Add it to your catalogue"]
@@ -505,6 +509,9 @@ def _amount(value: Any) -> float | None:
     return n if n > 0 else None
 
 
+_CODE_OF_SIGN = {"£": "GBP", "$": "USD", "€": "EUR", "₦": "NGN"}
+
+
 def _doable(action: dict, answers: dict, sign: str = "£") -> dict:
     """A free next action that does the thing, not only opens the page: the catalogue ones save what this check was
     told (the offering, its price and cost), and "Create a quotation" opens a new quotation."""
@@ -516,11 +523,11 @@ def _doable(action: dict, answers: dict, sign: str = "£") -> dict:
             price, cost = _amount(answers.get("price")), _amount(answers.get("cost"))
             if price is None:
                 return action      # no price to save: the catalogue page, to add it there
-            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {})})
+            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {}), **({"currency": _CODE_OF_SIGN[sign]} if sign in _CODE_OF_SIGN else {})})
         elif _amount(answers.get("price")) is not None:
             # A price said in the chat goes with it, said on the button (QA, 15 Oct): "Add 'Car wash subscription · ₦15,000 a month'".
             price, cost = _amount(answers.get("price")), _amount(answers.get("cost"))
-            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {})})
+            item.update({"base_price": price, **({"cost_of_sales": cost} if cost is not None else {}), **({"currency": _CODE_OF_SIGN[sign]} if sign in _CODE_OF_SIGN else {})})
             per = f" a {answers['price_per']}" if answers.get("price_per") else ""
             shown = name[:1].upper() + name[1:]
             return {**action, "label": f"Add '{shown} · {_money(price, sign)}{per}' to your catalogue", "catalogue": item}
@@ -643,7 +650,10 @@ def premium_gate(result: dict, *, entitled: bool, credits: int | None = None, fe
     """What happens when the premium next action is chosen. The plan is checked first; credits only
     for someone whose plan includes it (PRD 4.1). Declining leaves Save for later and the free tools (SIF-07).
     The words are the credit templates: "{Feature} is on the {plan} plan." and "This needs {cost} credits and you have {balance}." """
-    action = result["premium_next_action"]
+    action = result.get("premium_next_action")
+    if not action:
+        # Adopted: nothing paid is offered (the owner's QA, 21 Oct: this crashed the case page after every apply).
+        return {"allowed": True, "reason": None, "message": ""}
     if not entitled:
         return {"allowed": False, "reason": "plan",
                 "message": f"{feature or action['label']} is on the {plan or 'Starter'} plan.",

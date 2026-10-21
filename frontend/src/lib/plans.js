@@ -46,7 +46,7 @@ export const PLANS = [
       "Proposals & Sales Letters Generator",
       "Pricing & Customer Growth Insights",
       "Up to 10 Marketplace Listings*",
-      "Scenario Simulations",
+      "4 Scenario Simulations a month",
       "Request for Proposal",
       "RFQ-to-Quote Workflow",
       "AI-Powered Decision Recommendations",
@@ -140,11 +140,11 @@ export const PLAN_MODULE_ACCESS = {
   // Explorer (free): core tools. Proposals, integrations and the live plan are paid.
   explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "operations"],
   // Starter: everything on Explorer + proposals.
-  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "readiness"],
   // Decision Engine: everything on Starter + integrations and Live Business Plan Intelligence.
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
@@ -153,6 +153,7 @@ export const MODULE_MIN_PLAN = {
   integrations: "decision_engine",
   live_plan: "decision_engine",
   funding_pack: "decision_engine",      // preparing the funding pack (the owner, 16 Oct)
+  readiness: "starter_insight",      // Launch and Funding Readiness (the pricing PDF, 19 Oct 2026)
   proposals: "starter_insight",
 };
 
@@ -199,6 +200,12 @@ export function hasFundingPack(subscription, platformGrants) {
     || isPlatformModuleGranted("funding_pack", platformGrants);
 }
 
+/** Launch and Funding Readiness: Starter and above (the pricing PDF); a team member works under the team's plan. */
+export function hasReadiness(subscription, platformGrants) {
+  return planHasModuleAccess(subscription?.plan_key ?? "explorer", "readiness", subscription?.status ?? "trial")
+    || isPlatformModuleGranted("readiness", platformGrants);
+}
+
 export function getPlan(key) {
   return PLANS.find((p) => p.key === normalisePlanKey(key)) ?? null;
 }
@@ -228,6 +235,7 @@ export function accessLabel(subscription) {
   const source = subscription?.access_source;
   if (source === "admin full-access grant") return "Full access (test grant)";
   if (source === "early-access account" || subscription?.status === "grandfathered") return "Early Access";
+  if (source === "your team's plan") return `${planLabel(subscription?.plan_key, "active")} (team)`;      // a member works under the team's plan
   return planLabel(subscription?.plan_key, subscription?.status);
 }
 

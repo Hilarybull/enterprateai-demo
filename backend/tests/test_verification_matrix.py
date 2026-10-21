@@ -227,6 +227,7 @@ def test_an_automatic_trigger_with_the_budget_almost_used_up_waits_and_starts_on
 
 def test_a_forced_worker_failure_retries_releases_every_hold_and_refunds_once():
     env, _ = _workspace(*WORKSPACES[0])
+    env.meter.plans[OWNER] = "starter_insight"      # the Business Plan Generator is Starter (the pricing PDF)
     env.orch.rt.studio.fail = True
     r = env.submit(capability="business_plan_draft", channel="business_event", source_reference="idea:plan")["run"]
     if r.get("pending_question"):
@@ -238,6 +239,7 @@ def test_a_forced_worker_failure_retries_releases_every_hold_and_refunds_once():
     assert r["status"] == "failed" and env.meter.charges == []              # every hold given back: nothing taken
     # Charged, then never delivered (cancelled): given back once, however often it is looked at.
     env2, _ = _workspace(*WORKSPACES[0])
+    env2.meter.plans[OWNER] = "starter_insight"      # the Business Plan Generator is Starter (the pricing PDF)
     env2.meter.costs["business_plan_full"] = 40                            # as on the live price list (F1: 40 credits)
     ok = env2.submit(capability="business_plan_draft", channel="business_event", source_reference="idea:plan")["run"]
     if ok.get("pending_question"):

@@ -124,7 +124,6 @@ FUNDING_EQUITY_V1 = {
             _f("target_amount", "How much do you want to raise?", "money", help="Leave blank if you don't know yet. The forecast can help you work it out."),
             _f("currency", "Currency", "select", options=list(SUPPORTED_CURRENCIES)),
             _f("receipt_date", "When do you expect to receive it?", "date"),
-            _f("timing_confirmed", "I confirm this amount and date", "boolean"),
             _f("purpose", "What is the funding for?", "textarea"),
             _f("route_preference", "Route you're considering", "select", options=["equity", "loan", "grant", "unsure"],
                labels={"equity": "Equity", "loan": "Loan", "grant": "Grant", "unsure": "Not sure yet"}),

@@ -434,3 +434,8 @@
   [data-m-idle="true"] .m-agent-border, [data-m-idle="true"] .m-pulse-ring, [data-m-idle="true"] .m-glow-soft ,
   [data-agent-shell][data-m-idle="true"] > .m-agent-border { animation-play-state: paused; }
 }
+
+/* While a form is open on a phone, the floating chat button stays out of the way of its buttons. */
+@media (max-width: 767px) {
+  body[data-form-open] button[aria-label="Ask about your business"] { display: none; }
+}

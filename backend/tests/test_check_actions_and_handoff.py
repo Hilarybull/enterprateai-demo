@@ -15,7 +15,7 @@ def _actions(result):
 
 def test_the_pricing_actions_carry_what_to_save_and_where_to_go():
     a = _actions(first_value.assess("price_offer", PRICING, {}))
-    assert a["Save the price in your catalogue"]["catalogue"] == {"name": "Deep clean", "base_price": 120.0, "cost_of_sales": 45.0}
+    assert a["Save the price in your catalogue"]["catalogue"] == {"name": "Deep clean", "base_price": 120.0, "cost_of_sales": 45.0, "currency": "GBP"}
     assert a["Create a quotation"]["to"] == "/operations?tab=Sales&sub=Quotations&new=quote"
     no_price = _actions(first_value.assess("price_offer", {"sell": "Deep clean"}, {}))
     assert "catalogue" not in no_price["Save the price in your catalogue"]      # nothing to save: the page, to add it there

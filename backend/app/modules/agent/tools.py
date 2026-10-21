@@ -378,6 +378,14 @@ def _sender(tc: ToolContext, data: dict) -> dict:
         company["name"] = str(answers["business_name"]).strip()
     if not company["email"] and valid_email(answers.get("business_email")):
         company["email"] = str(answers["business_email"]).strip()
+    if not company["email"]:
+        # The default contact email (the owner's QA, 16 Oct): another address the business keeps on its profile, else the
+        # address the owner signed up with. Asked only when there is neither.
+        profile, contact = data.get("workspace_profile") or {}, data.get("contact") if isinstance(data.get("contact"), dict) else {}
+        kept = next((str(x).strip() for x in (profile.get("contact_email"), profile.get("business_email"), profile.get("support_email"),
+                                              data.get("email"), contact.get("email")) if valid_email(x)), "")
+        signed_up = str((tc.run or {}).get("requester_email") or getattr(getattr(tc, "actor", None), "email", "") or (tc.run or {}).get("requester_id") or "").strip()
+        company["email"] = kept or (signed_up if valid_email(signed_up) else None)
     if company["name"] and company["email"]:
         return company
     # One step for the missing business details: customers must see who it's from, and

@@ -10,9 +10,10 @@ const base = { assessment_type: "launch_readiness_initial", headline: "Launch re
   strengths: [], blockers: [], metrics: [], premium_next_action: { label: "Check my launch", explains: "" }, free_next_actions: [] };
 
 describe("the first-value card's score", () => {
-  it("is Provisional before the full assessment, with coverage beside it", () => {
+  it("shows no Provisional label before the full assessment, with coverage beside it (the owner, 17 Oct)", () => {
     render(<MemoryRouter><FirstValueCard result={{ ...base, provisional: true }} /></MemoryRouter>);
-    expect(document.querySelector("[data-fv-provisional]").textContent).toBe("Provisional");
+    expect(document.querySelector("[data-fv-provisional]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Provisional");
     expect(document.querySelector("[data-fv-coverage]").textContent).toContain("40%");
   });
 
@@ -21,7 +22,10 @@ describe("the first-value card's score", () => {
     render(<MemoryRouter><FirstValueCard result={{ ...base, provisional: true, assessment }} /></MemoryRouter>);
     expect(document.querySelector("[data-fv-score]").textContent.startsWith("62")).toBe(true);
     expect(document.querySelector("[data-fv-score]").textContent).not.toContain("No score yet");
-    expect(document.querySelector("[data-fv-earlier]").textContent).toContain("Full check: not enough evidence to score yet (40% evidence)");
-    expect(document.querySelector("[data-fv-source]").textContent).toBe("Market · £250k · From your answers");
+    // One score and one coverage figure (A6, the owner's brief): no "Full check" line beside it on the main view.
+    expect(document.querySelector("[data-fv-earlier]")).toBeNull();
+    expect(document.querySelector("[data-fv-coverage]").textContent).toBe("I know 40% of what a launch needs");
+    expect(document.querySelector("[data-fv-title]").textContent).toBe("Market · £250k");
+    expect(document.querySelector("[data-fv-source]").textContent).toBe("Funding readiness");
   });
 });

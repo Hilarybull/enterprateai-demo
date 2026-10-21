@@ -33,7 +33,9 @@ class Search:
         self.queries.update(queries)
         if self.empty:
             return {k: [] for k in queries}
-        return {k: [{"title": f"Guide: {q[:40]}", "url": f"https://source-{k}.example/{i}", "snippet": f"Evidence about {q}", "date": "2026"} for i in (1, 2)]
+        # A funding route's pages name a product (the owner's QA, 21 Oct: an article's title is not a finding).
+        return {k: [{"title": (f"Business Growth Fund {i}" if k.startswith("route_") else f"Guide: {q[:40]}"), "url": f"https://source-{k}.example/{i}",
+                     "snippet": f"Evidence about {q}", "date": "2026"} for i in (1, 2)]
                 for k, q in queries.items()}
 
 
@@ -51,7 +53,7 @@ class Pages:
         self.asked.append(url)
         if url in self.broken:
             return {"ok": False, "url": url, "reason": "HTTP 404"}
-        return {"ok": True, "url": url, "title": f"Guide {url}", "publisher": url.split("/")[2], "published": "2026-09-01",
+        return {"ok": True, "url": url, "title": (f"Business Growth Fund {url[-1]}" if "source-route_" in url else f"Guide {url}"), "publisher": url.split("/")[2], "published": "2026-09-01",
                 "text": f"Introduction. {quote_for(url)} More detail follows about prices and providers."}
 
 
@@ -149,25 +151,31 @@ def test_every_gap_answered_first_for_every_workspace_and_check(ws, goal):
     if r["context"].get("country"):
         assert set(topics) <= set(found), (ws, goal, set(topics) - set(found))
     else:
-        known_now = {k for k, v in (r["inputs"] or {}).items() if v not in (None, "")}
-        assert not found and {x["field"] for x in items if x["kind"] == "question"} >= set(topics) - known_now, (ws, goal)
+        # Nothing found is not a card or a question of its own (the owner's QA, 21 Oct): no finding, and no "found nothing".
+        assert not found and not any("found nothing" in str(x.get("question") or "") for x in items), (ws, goal)
     assert all(x["sources"] and all(s["site"] and s["url"] and s["title"] for s in x["sources"]) for x in found.values())
-    # At most three blank questions when the workspace has basic data.
-    blank = [x for x in items if x["kind"] == "question"]
+    # At most three blank questions when the workspace has basic data; who the customers are is always the owner's to say
+    # (the owner's QA, 21 Oct: never a market report in its place), so it is not counted among them.
+    blank = [x for x in items if x["kind"] == "question" and x["field"] != "customers"]
     if WORKSPACES[ws]["basic"]:
         assert len(blank) <= 3, (ws, goal, [x["field"] for x in blank])
     # No question for a fact the workspace already has.
     known = {k for k, v in (r["inputs"] or {}).items() if v not in (None, "")}
     assert not {x["field"] for x in blank} & known, (ws, goal, {x["field"] for x in blank} & known)
-    # Credit allocation v2: the check's one price, charged once for the run when something met the Researched standard.
+    # Credit allocation v2: charged once for the run when something met the Researched standard; a run that looks up fewer
+    # topics than a full check pays their share, never more than the check's price (the owner's QA, 21 Oct).
     price = {"launch": 50, "need_funding": 60, "price_offer": 40, "more_customers": 40, "test_idea": 25}[goal]
+    share = min(price, sum(research.shares(price, list(r["topics"]), goal).values()))
     if any(x["kind"] == research.RESEARCHED for x in items):
-        assert r["charged"] == price and [c[2] for c in meter.charges] == [price]
+        net = sum(c[2] for c in meter.charges) - sum(g[1] for g in getattr(meter, "refunds", []))
+        assert 0 < r["charged"] <= share and len(meter.charges) == 1 and net == r["charged"]      # what the run says is what was paid
     else:
         assert r["charged"] == 0 and meter.charges == []
-    # Every gap has an answer of some kind.
+    # Every gap has an answer of some kind, or was looked up and nothing useful was found (said on its step, never as a
+    # junk card or a "found nothing" question: the owner's QA, 21 Oct).
     covered = {c for x in items for c in [x["criterion"], *(x.get("also") or [])]}
-    assert set(research.blockers_of(first_value.assess(goal, answers, data))) <= covered | {c for c in covered}
+    looked = {c for c, steps in research.PLAN.get(goal, {}).items() for kind, key in steps if kind == research.R and key in r["topics"]}
+    assert set(research.blockers_of(first_value.assess(goal, answers, data))) <= covered | looked
 
 
 @pytest.mark.parametrize("ws", list(WORKSPACES))
@@ -241,8 +249,8 @@ def test_facts_adopted_in_one_review_prefill_the_others():
 def test_nothing_found_is_said_honestly_and_not_charged():
     r, orch, meter, *_ = _start("uk_home_services_pre_launch", "launch", search=Search(empty=True))
     assert r["charged"] == 0 and meter.charges == []
-    asked = [x for x in r["items"] if x.get("tag") == research.COULD_NOT_FIND]
-    assert asked and all(x["question"].startswith("I looked, and found nothing") for x in asked)
+    # Nothing found is said once for the run, never as a "found nothing" question per topic (the owner's QA, 21 Oct).
+    assert not any("found nothing" in str(x.get("question") or "") for x in r["items"])
     assert not [x for x in r["items"] if x.get("tag") == research.ONLY_YOU_KNOW and x["field"] in research.TOPICS]
 
 
@@ -416,8 +424,10 @@ def test_the_same_research_twice_is_one_charge_and_the_second_press_opens_it(wor
     assert state["state"] == "review" and state["findings"] > 0 and state["run_id"] == first["research"]["id"]
     saved = client.get("/businesses/A/research-runs?goal=need_funding").json()["runs"]
     assert [r["id"] for r in saved] == [first["research"]["id"]]      # kept on the case's Research tab, free to open
-    # The answers change: the research is stale and offered again at its price.
-    changed = {**ASK, "amount": 35000}
+    # A figure changes (the amount): worked out again for free, the same research (the owner's QA, 17 Oct).
+    assert client.post("/businesses/A/quick-check/need_funding", json={"answers": {**ASK, "amount": 35000}}).json()["result"]["research"]["state"] in ("review", "adopted")
+    # What the research searches on changes (the route): stale, and offered again at its price.
+    changed = {**ASK, "route": "loan"}
     state = client.post("/businesses/A/quick-check/need_funding", json={"answers": changed}).json()["result"]["research"]
     assert state["state"] == "stale" and state["max"] == 60 and state["why"] == "Your answers changed since the last research."
     assert "reuse" not in client.post("/businesses/A/quick-check/need_funding/premium/quote", json={"answers": changed}).json()

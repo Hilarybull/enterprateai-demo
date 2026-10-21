@@ -949,7 +949,9 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
                 offer(x, "")
                 x["action"] = {"to": f"/funding/{case['case_id']}?tab=documents"}
             else:
-                x["text"], x["action"] = off("Funding pack drafting"), {"to": f"/funding/{case['case_id']}?tab=documents"}
+                x["text"], x["action"] = (("The funding pack is included on the Decision Engine plan and above.", {"to": "/pricing"})
+                                          if not agent_config.plan_allows(plan, "funding_pack_draft")
+                                          else (off("Funding pack drafting"), {"to": f"/funding/{case['case_id']}?tab=documents"}))
                 look(x, "idle")
         elif x["key"] == "stage_register":
             done = latest("registration_checklist")

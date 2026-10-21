@@ -279,16 +279,20 @@ async def publish_workspace(*, user: dict, workspace_id: str | None = None) -> d
     draft["workspace_profile"] = profile
     draft["marketplace"] = {**existing_marketplace, "profile": public_profile}
 
-    if not await has_paid_access(user_id):
+    from app.modules.plans.access import effective_plan_key
+    from app.modules.plans.capabilities import PLAN_LABEL, quota
+    plan = await effective_plan_key(user_id)
+    limit = quota(plan, "marketplace_listings")      # Explorer 1, Starter 10, Decision Engine no limit (the pricing PDF)
+    if limit is not None:
         published = await sb_select(
             "workspaces",
             filters=[("user_id", "eq", user_id), ("data", "cs", {"marketplace": {"is_active": True}})],
             columns="id",
         )
-        if any(str(w["id"]) != ws_id for w in (published or [])):
+        if len([w for w in (published or []) if str(w["id"]) != ws_id]) >= limit:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="The Explorer plan includes 1 marketplace listing. Unlist your other business or upgrade for multiple listings.",
+                detail=f"The {PLAN_LABEL.get(plan, 'Explorer')} plan includes {limit} marketplace listing{'' if limit == 1 else 's'}. Unlist another business or upgrade for more.",
             )
     from app.modules.marketplace.directory import activation_of, marketplace_settings
     check = activation_of(marketplace_settings(draft), verified_claim=bool((draft.get("marketplace") or {}).get("claim_state") == "verified"))

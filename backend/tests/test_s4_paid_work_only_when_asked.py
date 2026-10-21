@@ -24,7 +24,7 @@ def test_mentioning_a_new_idea_in_chat_is_a_suggestion_only_and_costs_nothing(mo
 
 
 def test_research_and_generation_are_never_started_by_the_agent_and_free_checks_still_are():
-    env = Env()
+    env = Env(plan="decision_engine")
     run(env.store.set_policy("A", {"automation": {"auto_start": True, "items": {}}}, OWNER))
     rows = {e["capability"]: e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["capability"]}
     for cap in config.SUGGEST_ONLY:

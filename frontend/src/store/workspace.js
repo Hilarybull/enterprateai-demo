@@ -67,7 +67,8 @@ export const useWorkspaceStore = create(
       draftServiceIdea: null,
       validation: null,
       validationEntryId: null,
-      currency: "GBP",
+      currency: null,      // the workspace's own (saved, else its country's); null until it has loaded, never a guessed GBP
+      currencyWorkspaceId: null,
       workspaceDataRefreshTrigger: 0,
 
       // Session-only workspace document data — set by Layout after fetch, never persisted.
@@ -83,7 +84,9 @@ export const useWorkspaceStore = create(
       memberPermissions: null,     // { modules: [...] } or { features: {...} }
       memberWorkspaceName: null,
 
-      setWorkspaceId: (workspaceId) => set({ workspaceId: workspaceId ?? null }),
+      // Another workspace: its currency is its own, read when it loads (never the last one's).
+      setWorkspaceId: (workspaceId) => set((st) => ({ workspaceId: workspaceId ?? null,
+        ...(st.currencyWorkspaceId && st.currencyWorkspaceId !== (workspaceId ?? null) ? { currency: null, currencyWorkspaceId: null } : {}) })),
       setWorkspaceName: (workspaceName) => set({ workspaceName: workspaceName || null }),
       setWorkspaceLogo: (workspaceLogo) => set({ workspaceLogo: workspaceLogo || null }),
       setWorkspaceCompanyName: (workspaceCompanyName) => set({ workspaceCompanyName: workspaceCompanyName || null }),
@@ -97,7 +100,7 @@ export const useWorkspaceStore = create(
       setDraftServiceIdea: (draftServiceIdea) => set({ draftServiceIdea: draftServiceIdea ?? null }),
       setValidation: (validation) => set({ validation: validation ?? null }),
       setValidationEntryId: (validationEntryId) => set({ validationEntryId: validationEntryId ?? null }),
-      setCurrency: (currency) => set({ currency: currency || "GBP" }),      refreshWorkspaceData: () => set((state) => ({ workspaceDataRefreshTrigger: state.workspaceDataRefreshTrigger + 1 })),
+      setCurrency: (currency) => set((st) => ({ currency: currency || null, currencyWorkspaceId: currency ? st.workspaceId : null })),      refreshWorkspaceData: () => set((state) => ({ workspaceDataRefreshTrigger: state.workspaceDataRefreshTrigger + 1 })),
       setMemberMode: (membershipId, permType, perms, workspaceName) =>
         set({
           isMemberMode: true,
@@ -137,7 +140,8 @@ export const useWorkspaceStore = create(
           draftServiceIdea: null,
           validation: null,
           validationEntryId: null,
-          currency: "GBP",
+          currency: null,      // the workspace's own (saved, else its country's); null until it has loaded, never a guessed GBP
+          currencyWorkspaceId: null,
           isMemberMode: false,
           membershipId: null,
           memberPermissionType: null,
@@ -157,7 +161,8 @@ export const useWorkspaceStore = create(
         decisionStatus: state.decisionStatus,
         serviceDecisionStatus: state.serviceDecisionStatus,
         workspaceLoadedAt: state.workspaceLoadedAt,
-        currency: state.currency || "GBP",
+        currency: state.currency || null,
+        currencyWorkspaceId: state.currencyWorkspaceId || null,
         isMemberMode: state.isMemberMode,
         membershipId: state.membershipId,
         memberPermissionType: state.memberPermissionType,

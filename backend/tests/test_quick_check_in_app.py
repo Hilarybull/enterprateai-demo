@@ -39,7 +39,7 @@ def test_the_other_three_have_their_own_check(world):  # noqa: F811
     env, _store, client, who = world
     _profile(env)
     who["user"] = OWNER
-    for goal, headline in (("need_funding", "Initial Funding Preparation"), ("price_offer", "Pricing Health"), ("more_customers", "Customer Growth Foundation")):
+    for goal, headline in (("need_funding", "Funding readiness"), ("price_offer", "Pricing Health"), ("more_customers", "Customer Growth Foundation")):
         assert client.get(f"/businesses/A/quick-check/{goal}").json()["headline"] == headline
         assert client.post(f"/businesses/A/quick-check/{goal}", json={"answers": {}}).json()["result"]["headline"] == headline
     stage = {q["key"]: q for q in client.get("/businesses/A/quick-check/need_funding").json()["questions"]}["stage"]

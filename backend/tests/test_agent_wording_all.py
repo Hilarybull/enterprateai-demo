@@ -210,5 +210,5 @@ def test_every_capability_has_a_plan_a_cost_and_a_switch():
     assert all(agent_config.cost_of(c) for c in WORKFLOWS)                # and every one states what it costs
     env = Env()
     rows = [e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]]
-    assert len(rows) == len(autostart.ITEMS) and all(e["credits"] and e["minimum_plan_label"] in ("Explorer", "Starter")
+    assert len(rows) == len(autostart.ITEMS) and all(e["credits"] and e["minimum_plan_label"] in ("Explorer", "Starter", "Decision Engine")
                                                       and (e["switchable"] or e["capability"] in agent_config.SUGGEST_ONLY) for e in rows)

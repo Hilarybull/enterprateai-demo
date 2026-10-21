@@ -1,3 +1,4 @@
+import { pinnedRate } from "../lib/fx";
 import { useMemo, useState } from "react";
 
 // Financial overview tiles with a click-to-expand breakdown of the records
@@ -50,11 +51,11 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
 
   const k = useMemo(() => {
     const wsIso = isoOf(wsCurrency || "GBP");
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const from = cur ? isoOf(cur) : "";
       if (!from || from === wsIso) return num;
-      const rate = fxRates[from];
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[from];
       return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
 
@@ -70,12 +71,12 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
       return costOfSales(i) * (total > 0 ? receivedOf(i) / total : 1);
     };
 
-    const paidRevenue = paid.reduce((s, i) => s + toWs(receivedOf(i), i.currency), 0);
-    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(expAmt(e), e.currency), 0);
-    const paidCoS = paid.reduce((s, i) => s + toWs(cosShare(i), i.currency), 0);
-    const revenuePaidTotal = paid.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
-    const recDeliveredTotal = delivered.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
-    const recPartialTotal = partial.reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - receivedOf(i)), i.currency), 0);
+    const paidRevenue = paid.reduce((s, i) => s + toWs(receivedOf(i), i.currency, i), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(expAmt(e), e.currency, e), 0);
+    const paidCoS = paid.reduce((s, i) => s + toWs(cosShare(i), i.currency, i), 0);
+    const revenuePaidTotal = paid.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
+    const recDeliveredTotal = delivered.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
+    const recPartialTotal = partial.reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - receivedOf(i)), i.currency, i), 0);
 
     const now = new Date();
     const thisMonth = (d) => {
@@ -83,7 +84,7 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
       return Number.isFinite(dt.getTime()) && dt.getFullYear() === now.getFullYear() && dt.getMonth() === now.getMonth();
     };
     const monthPaid = paid.filter((i) => thisMonth(paidDate(i))).sort(byRecent(paidDate));
-    const monthlyRev = monthPaid.reduce((s, i) => s + toWs(receivedOf(i), i.currency), 0);
+    const monthlyRev = monthPaid.reduce((s, i) => s + toWs(receivedOf(i), i.currency, i), 0);
     const overdue = delivered.filter((i) => i.due_date && new Date(i.due_date) < now);
 
     // Rows for each breakdown: { id, name, detail, date, amount (workspace currency), status, partial }
@@ -94,7 +95,7 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
         name: i.customer_name || i.recipient || i.counterparty_name || "Invoice",
         detail: (Array.isArray(i.product_names) ? i.product_names.join(", ") : i.product_names) || i.product_name || i.description || "",
         date: i.due_date && st(i.status) !== "paid" ? `Due ${fmtDate(i.due_date)}` : fmtDate(paidDate(i)),
-        amount: toWs(amount, i.currency),
+        amount: toWs(amount, i.currency, i),
         note: extra || null,
         status: isPartial ? "partial" : st(i.status) || "—",
         partial: isPartial,
@@ -110,13 +111,13 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
         name: e.vendor_name || e.counterparty_name || e.description || "Expense",
         detail: e.description || e.expense_type || e.item || "Expense",
         date: fmtDate(expDate(e)),
-        amount: -toWs(expAmt(e), e.currency),
+        amount: -toWs(expAmt(e), e.currency, e),
         status: "cash out",
         _d: expDate(e),
       })),
       ...paid.filter((i) => cosShare(i) > 0).map((i) => ({
         ...invRow(i, 0), id: `out-cos-${i.id}`, detail: "Cost of sales", date: fmtDate(paidDate(i)),
-        amount: -toWs(cosShare(i), i.currency), status: "cash out", partial: false, _d: paidDate(i),
+        amount: -toWs(cosShare(i), i.currency, i), status: "cash out", partial: false, _d: paidDate(i),
       })),
     ].sort((a, b) => new Date(b._d || 0) - new Date(a._d || 0));
 
@@ -137,7 +138,7 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
         name: e.vendor_name || e.counterparty_name || e.description || "Expense",
         detail: e.description || e.expense_type || "",
         date: e.due_date ? `Due ${fmtDate(e.due_date)}` : fmtDate(expDate(e)),
-        amount: toWs(expAmt(e), e.currency),
+        amount: toWs(expAmt(e), e.currency, e),
         status: st(e.status) || "pending",
       })),
       "invoices-overdue": overdue.sort(byRecent((i) => i.due_date)).map((i) => invRow(i, rawAmt(i))),
@@ -147,7 +148,7 @@ export default function FinancialOverviewCards({ invoices = [], expenses = [], f
     const totalRevenue = revenuePaidTotal + recDeliveredTotal;
     const cashBalance = paidRevenue - paidExpTotal - paidCoS;
     const pendingRec = recDeliveredTotal + recPartialTotal;
-    const pendingPay = unpaidExps.reduce((s, e) => s + toWs(expAmt(e), e.currency), 0);
+    const pendingPay = unpaidExps.reduce((s, e) => s + toWs(expAmt(e), e.currency, e), 0);
 
     const tiles = [
       { type: "kpi-arr", label: "Annual Recurring Revenue", value: money(arr), sub: "annualised from this month's run rate", tone: "slate",

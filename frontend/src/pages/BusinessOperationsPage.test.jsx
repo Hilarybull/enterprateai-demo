@@ -460,7 +460,8 @@ describe("money in the workspace currency (QA, 16 Oct)", () => {
     expect(cells.some((t) => t === "₦50,000.00")).toBe(true);      // already in the workspace currency: one amount
     expect(document.body.textContent).not.toMatch(/£237|\(\$315\.00\)/);
     expect(document.querySelector("[data-converted-note]").textContent).toContain("≈ Totals include");
-    const label = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    // The rate's own date, as served above (UTC), never the local clock: they differ just after midnight.
+    const label = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
     expect(document.querySelector("[data-converted-note]").textContent).toContain(`USD at ${label} rate`);      // the rate's date, said
     expect(cells.some((t) => t.includes(`at ${label} rate`))).toBe(true);
     const tiles = [...document.querySelectorAll("p, span, div")].map((n) => n.textContent).filter((t) => /^≈ ₦/.test(t || ""));
