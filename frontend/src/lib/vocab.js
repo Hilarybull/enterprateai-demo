@@ -40,11 +40,17 @@ export function statusWords(result, latest) {
   const kind = kindOf(result);
   const gaps = Array.isArray(result?.case_steps) ? result.case_steps.length : (result?.blockers || []).length;
   const failed = (result?.blockers || []).filter((b) => b.kind === "failed").length;
-  const n = typeof latest?.score === "string" ? Number(String(latest.score).split("/")[0]) : Number(result?.score);
-  const ready = Number.isFinite(n) ? n >= 70 && failed === 0 : gaps === 0;
+  let n = typeof latest?.score === "string" ? Number(String(latest.score).split("/")[0]) : Number(result?.score);
+  // Not enough known for the check's own score: the score from what is known, with its basis (never "no score").
+  // Always a score (the owner, 22 Oct): the points from what is known when the check can't give its own
+  const partial = !Number.isFinite(n) && Number.isFinite(Number(result?.partial_score)) && result?.partial_score !== null;
+  if (partial) n = Number(result.partial_score);
+  // The one "ready" threshold, as the checklist sets it (22 Oct: 75), sent with the result
+  const readyAt = Number.isFinite(Number(result?.ready_at)) ? Number(result.ready_at) : 75;
+  const ready = !partial && (Number.isFinite(n) ? n >= readyAt && failed === 0 : gaps === 0);
   const sentence = ready ? READY[kind] : `${NOT_YET[kind]}${gaps ? ` ${gaps} ${gaps === 1 ? "thing" : "things"} to do first.` : ""}`;
   const coverage = Math.max(0, Math.min(100, Math.round(Number(latest?.coverage ?? result?.evidence_coverage ?? 0))));
-  const known = `I know ${coverage}% ${(WORDS.coverage[kind] || WORDS.coverage.other)}`;
+  const known = `${partial ? "Based on" : "I know"} ${coverage}% ${(WORDS.coverage[kind] || WORDS.coverage.other)}`;
   const score = Number.isFinite(n) ? `${n}/100` : String(result?.score ?? "");
   return { score, sentence, known, ready, kind };
 }

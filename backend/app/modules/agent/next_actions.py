@@ -126,7 +126,8 @@ def recommend(result: dict, answers: dict, data: dict | None, *, plan: str | Non
     # a word count. The owner's QA, 21 Oct.)
     # i. Ready: where to apply.
     score = result.get("score")
-    if isinstance(score, (int, float)) and score >= 70:
+    from app.modules.readiness import rules as _rules
+    if isinstance(score, (int, float)) and score >= _rules.ready_at():      # the one threshold (22 Oct: 75)
         add("options", "See funding options that fit", "You are close to ready to apply", "Funding options", "open", to=f"{case}?tab=research", time="options")
 
     # Fewer than three: other features that strengthen the case, whatever the chat's first result said (the owner's QA,

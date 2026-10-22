@@ -326,16 +326,16 @@ def test_at16_a_new_profile_version_keeps_history_reproducible_and_labels_the_co
     env = Env()
     svc, cid = funding_case(env)
     old = assess(svc, cid)
-    v2 = copy.deepcopy(rules.FUNDING_EQUITY_V1)
-    v2["version"] = "0.2"
+    v2 = copy.deepcopy(rules.FUNDING_EQUITY_V2)
+    v2["version"] = "0.3"
     v2["thresholds"] = {"conditionally_ready": 60, "ready": 101 - 1}
     monkeypatch.setitem(rules.PROFILES, rules.profile_key(v2), v2)
     monkeypatch.setitem(rules.CURRENT, F, rules.profile_key(v2))
     assert run(svc.get_subject(OWNER, "A", F, cid))["summary"]["freshness"] == "stale"                     # a newer checklist exists
     new = assess(svc, cid)
-    assert new["profile"].endswith("@0.2") and old["profile"].endswith("@0.1")
+    assert new["profile"].endswith("@0.3") and old["profile"].endswith("@0.2")
     history = run(svc.history(OWNER, "A", F, cid))
-    assert [h["profile"][-3:] for h in history] == ["0.2", "0.1"]
+    assert [h["profile"][-3:] for h in history] == ["0.3", "0.2"]
     assert history[0]["comparable"] is False and "a new version of the checklist" in history[0]["changed_because"]
     kept = run(svc.get_assessment(OWNER, "A", F, cid, old["id"]))
     assert kept["result"] == old["result"]                                                                 # the old result is untouched
@@ -351,20 +351,20 @@ def test_thresholds_at_exactly_60_and_80(points, expected):
     assert (out["score"], out["classification"]) == (float(points), expected)
 
 
-def test_a_score_that_is_not_whole_is_shown_to_one_decimal_never_rounded_across_a_threshold():
+def test_a_score_is_shown_as_a_whole_number_never_rounded_across_a_threshold():
     criteria = [{"weight": 79, "score": 100}, {"weight": 1, "score": 50}, {"weight": 20, "score": 0}]
     out = engine.classify(rules.FUNDING_EQUITY_V1, criteria, [])
-    assert out["score"] == 79.5 and out["score_display"] == 79.5 and out["classification"] == "conditionally_ready"
+    assert out["score"] == 79.5 and out["score_display"] == 79 and out["classification"] == "conditionally_ready"      # never "80" beside it
     low = engine.classify(rules.FUNDING_EQUITY_V1, [{"weight": 59, "score": 100}, {"weight": 1, "score": 50}, {"weight": 40, "score": 0}], [])
-    assert (low["score_display"], low["classification"]) == (59.5, "not_ready")          # never "60" beside "Not ready"
-    assert [engine.display_score(x) for x in (100.0, 52.5, 60, None)] == [100, 52.5, 60, None]
+    assert (low["score_display"], low["classification"]) == (59, "not_ready")            # never "60" beside "Not ready"
+    assert [engine.display_score(x) for x in (100.0, 52.5, 47.5, 60, 74.5, None)] == [100, 53, 48, 60, 74, None]      # whole numbers (22 Oct)
     env = Env()                                                                          # the header, the list and the dashboard show the same figure
     svc, cid = funding_case(env, use_of_funds=[{"id": "u1", "category": "People", "amount": "90000", "purpose": "Team", "period": "2026-10"}])
     a = assess(svc, cid)
     svc.store.rows["assessments"][a["id"]]["data"]["result"]["score_display"] = 93       # as saved before this change
     case = run(svc.get_subject(OWNER, "A", F, cid))
-    assert case["assessment"]["result"]["score_display"] == case["summary"]["score"] == 92.5
-    assert run(svc.history(OWNER, "A", F, cid))[0]["score"] == 92.5
+    assert case["assessment"]["result"]["score_display"] == case["summary"]["score"] == 93
+    assert run(svc.history(OWNER, "A", F, cid))[0]["score"] == 93      # whole numbers everywhere it is shown (22 Oct)
 
 
 def test_a_failed_gate_overrides_a_perfect_score_and_an_unknown_gate_is_never_ready():
@@ -1030,7 +1030,7 @@ def test_the_api_covers_the_journey_and_maps_errors(http):
     assert client.get(f"/businesses/A/funding-cases/not-a-uuid").status_code == 404
     assert client.post(f"/businesses/A/launch-initiatives/{cid}/decisions", json={"decision": "proceed"}).status_code == 404      # a case is not a launch
     profiles = client.get("/readiness/profiles").json()
-    assert profiles["funding"]["current"]["key"] == "funding.equity.uk_service_software@0.1" and [u["route"] for u in profiles["funding"]["unavailable"]] == ["debt", "grant"]
+    assert profiles["funding"]["current"]["key"] == "funding.equity.uk_service_software@0.2" and [u["route"] for u in profiles["funding"]["unavailable"]] == ["debt", "grant"]
     who.update({"id": OUTSIDER, "email": OUTSIDER})
     for path in (f"/businesses/A/funding-cases/{cid}", "/businesses/A/funding-cases", "/businesses/A/evidence", f"/businesses/A/funding-cases/{cid}/assessments"):
         assert client.get(path).status_code == 404, path
@@ -1231,11 +1231,11 @@ def test_f7_drafts_name_the_checklist_by_title_and_version():
     assess(svc, cid)
     for kind in ("executive_summary", "pitch_outline", "readiness_report"):
         doc = run(svc.generate_material(OWNER, "A", F, cid, kind))
-        assert doc["body"].rstrip().endswith("using the checklist Equity preparation, version 0.1. Figures are as they were on that date."), kind
+        assert doc["body"].rstrip().endswith("using the checklist Equity preparation, version 0.2. Figures are as they were on that date."), kind
         assert "funding.equity.uk_service_software" not in doc["body"] and "@0.1" not in doc["body"]
     _, lid = launch(env)
     assess(svc, lid, L)
-    assert "using the checklist Commercial service launch, version 0.1." in run(svc.generate_material(OWNER, "A", L, lid, "launch_checklist"))["body"]
+    assert "using the checklist Commercial service launch, version 0.2." in run(svc.generate_material(OWNER, "A", L, lid, "launch_checklist"))["body"]
 
 
 # ══ QA round 3 ════════════════════════════════════════════════════════════════

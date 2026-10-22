@@ -124,7 +124,17 @@ def readiness_report(subject: dict, run: dict, actions: list[dict]) -> dict:
             _item("Scope", str(s.get("scope") or "").capitalize()), _item("Target date", s.get("target_date") or "Not set"),
             _item("Where", s.get("geography") or "Not set")])
     return {"title": KINDS[result["subject_type"]]["readiness_report"], "subtitle": s.get("title") or s.get("name"),
-            "sections": [about, _summary_section(result, run["data"]), *_criteria_sections(result), _cash_section(result, cur), *_common_tail(result, actions)]}
+            "sections": [about, _summary_section(result, run["data"]), *_options_section(s), *_criteria_sections(result), _cash_section(result, cur), *_common_tail(result, actions)]}
+
+
+def _options_section(s: dict) -> list[dict]:
+    """The funding options the owner saved to the case, each with its source: what to apply for."""
+    saved = [o for o in s.get("funding_options") or [] if isinstance(o, dict) and o.get("title")]
+    if not saved:
+        return []
+    return [_section("Funding options saved to this case", ["Found by research and saved by you. Check each one is still open before you apply."],
+                     [_item(o["title"], o.get("text") or "", " · ".join(x for x in ((o.get("source") or {}).get("publisher"), (o.get("source") or {}).get("date"),
+                                                                                  (o.get("source") or {}).get("url")) if x) or None) for o in saved[:10]])]
 
 
 def _use_of_funds(s: dict) -> tuple[list[dict], list[str]]:

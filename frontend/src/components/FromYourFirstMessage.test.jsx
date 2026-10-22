@@ -104,7 +104,7 @@ describe("the quick checks", () => {
       { key: "customer", label: "Who is it for?", type: "text", required: true, default: "" },
     ];
     reply = (path, method) => (method === "GET" && /quick-check\/launch/.test(path) ? { questions } : method === "POST" ? { result: null } : undefined);
-    const { container } = render(<QuickCheck businessId="ws1" goalKey="launch" open said="dog walking in Bristol" />);
+    const { container } = render(<MemoryRouter><QuickCheck businessId="ws1" goalKey="launch" open said="dog walking in Bristol" /></MemoryRouter>);
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(calls[0].path).toContain("?said=dog%20walking%20in%20Bristol");
     expect(container.querySelector("[data-said-line]").textContent).toBe("From what you said: dog walking · Bristol (Edit)");

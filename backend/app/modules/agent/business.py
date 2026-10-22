@@ -542,6 +542,21 @@ def fx_rate(data: dict, code: str) -> float | None:
     return float(r) if r else None
 
 
+def convert(data: dict, amount: float | None, frm: str | None, to: str | None) -> float | None:
+    """An amount from one currency into another at the stored rates (through the workspace currency); None when a rate
+    isn't known yet, never the same figure under another sign (the owner's QA, 21 Oct: £600 shown as ₦600)."""
+    if amount is None:
+        return None
+    frm, to = str(frm or currency_of(data)).upper(), str(to or currency_of(data)).upper()
+    if frm == to:
+        return float(amount)
+    a = float(amount) * r if (r := fx_rate(data, frm)) is not None else None
+    if a is None:
+        return None
+    back = fx_rate(data, to)
+    return money(a / back) if back else None
+
+
 def in_base(data: dict, doc: dict, amount: float) -> float | None:
     """A document's amount in the workspace currency: at the rate pinned on it when it was first converted, else the stored
     rate; None when no rate is known yet."""

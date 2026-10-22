@@ -8,8 +8,9 @@ import PageHeader from "../components/PageHeader";
 import FirstValueCard, { PremiumConfirm, latestOf } from "../components/FirstValueCard";
 import ResearchSummary from "../components/ResearchSummary";
 import { premiumFlow } from "../components/ResearchReview";
-import { StatusLine as ResultStatus, stepsOf } from "../components/ResultSummary";
+import { NextSteps, StatusLine as ResultStatus, stepsOf } from "../components/ResultSummary";
 import { caseSteps, sectionCounts } from "../lib/caseSteps";
+import { relatedReady, relatedServices } from "../lib/related";
 import QuickCheck from "../components/QuickCheck";
 import { ButtonSpinner, ContentSkeleton, LoadError, ReadinessDetailSkeleton, ReadinessListSkeleton } from "../components/Skeleton";
 import { Attestation, EvidenceList } from "../components/readiness/Evidence";
@@ -20,7 +21,7 @@ import { confirmDialog } from "../lib/dialog";
 import {
   CLASSIFICATION, FEATURES, LIFECYCLE, createSubject, dateLabel, getPath, getSubject, listSubjects, moneyLabel, newKey, readinessError, runAssessment,
   keepPrevious, setPath, setSubjectStatus, updateSubject,
-  saveForecast, staleReason,
+  attest, reviewDocument, saveForecast, staleReason,
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
@@ -36,32 +37,73 @@ const planWords = (feature) => (feature === "launch" ? ["launch plan", "launch p
 
 /** One score and one plain sentence (the owner's brief, 17 Oct): "42/100 · Not ready for funding yet. 3 things to do first.",
  *  and how much is known, in plain words. Gates, confidence and versions are on the Advanced tab. */
-function StatusLine({ summary, feature, big = false }) {
+/** Coverage and confidence, from the assessment summary only, as plain numbers with one line each: shown here, under
+ *  Advanced, and nowhere else (the owner's UI change, 22 Oct). */
+function CheckBasis({ summary, feature }) {
+  const coverage = summary?.coverage ?? summary?.evidence_coverage;
+  const level = String(summary?.confidence || "").toLowerCase();
+  if ((coverage === null || coverage === undefined) && !CONFIDENCE_WORD[level]) return null;
+  return (
+    <dl className="mb-3 grid gap-1 text-[12.5px] text-slate-600 dark:text-slate-300" data-check-basis>
+      {coverage !== null && coverage !== undefined && <div><dt className="inline font-semibold">Coverage {coverage}%</dt> <dd className="inline">: how much of {feature === "launch" ? "what a launch needs" : "what funders ask for"} is known.</dd></div>}
+      {CONFIDENCE_WORD[level] && <div><dt className="inline font-semibold">Confidence {CONFIDENCE_WORD[level]}</dt> <dd className="inline">: {CONFIDENCE_WHY[level]}</dd></div>}
+    </dl>
+  );
+}
+
+// Confidence, from the assessment summary only: what each level means, in one line.
+const CONFIDENCE_WORD = { low: "Low", medium: "Medium", high: "High" };
+const CONFIDENCE_WHY = {
+  low: "A key source is missing, conflicting or out of date.",
+  medium: "Complete and current, but it relies on your own word.",
+  high: "Backed by records or an independent review.",
+};
+
+/** Anything left to decide in a research run: an option not yet saved or dismissed, or a draft still open. */
+function researchOpen(run) {
+  if ((run?.drafts?.open || 0) > 0) return true;
+  return (run?.items || []).some((i) => /^route_/.test(String(i.topic || "")) && i.value && !["accepted", "rejected", "edited"].includes(i.decision));
+}
+
+/** "Checklist updated: ready is now 75+": said the first time this case is opened after the change, then never again. */
+function ChecklistUpdatedOnce({ id, note }) {
+  const key = `ea:checklist-updated:${id}`;
+  const [seen] = useState(() => { try { return Boolean(localStorage.getItem(key)); } catch { return false; } });
+  useEffect(() => { if (note && !seen) { try { localStorage.setItem(key, "1"); } catch { /* shown this time only */ } } }, [key, note, seen]);
+  if (!note || seen) return null;
+  return <p className="mt-1 text-[12px] text-indigo-800" data-checklist-updated>{note}</p>;
+}
+
+function StatusLine({ summary, feature, big = false, steps = null, generalChecks = false, checking = false }) {
   if (!summary?.classification) {
     // Not scored: said once, with what to do (the owner's brief, 20 Oct). No "I know 0%" until there is a check.
     return <span className="text-[13px] text-slate-500" data-case-status>{summary?.execution_status === "failed" ? "The last check didn't finish. Run it again to see your score." : "Not checked yet. Run the check to see your score."}</span>;
   }
   const scored = summary.score !== null && summary.score !== undefined;
-  const coverage = summary.coverage ?? summary.evidence_coverage;
-  const todo = summary.open_actions || summary.blocker_count || 0;
+
+  // The steps on the page when the case has them (one count with "Your next steps"), else the check's own.
+  const todo = Array.isArray(steps) ? steps.length : (summary.open_actions || summary.blocker_count || 0);
+
   const ready = summary.classification === "ready";
   const sentence = ready ? (feature === "launch" ? "Ready to launch." : "Ready to approach funders.")
     : `${feature === "launch" ? "Not ready to launch yet." : "Not ready for funding yet."}${todo ? ` ${todo} ${todo === 1 ? "thing" : "things"} to do first.` : ""}`;
-  if (!scored && summary.classification === "insufficient_evidence") {
-    return (
-      <span className="text-[14px] font-semibold text-slate-900 dark:text-slate-100" data-case-status>
-        Not enough evidence for a score yet.{todo ? ` ${todo} ${todo === 1 ? "thing" : "things"} to do first.` : ""}
-      </span>
-    );
-  }
-  const score = scored ? `${summary.score}/100` : "Not scored yet";
+  // Always a score (the owner, 22 Oct: "where's the score, remove Insufficient evidence"): the check's own, else the points
+  // from what is known so far.
+  const known = summary.known_score !== null && summary.known_score !== undefined ? summary.known_score : null;
+  const score = scored ? `${summary.score}/100` : known !== null ? `${Math.round(known)}/100` : "Not scored yet";
   return (
     <span className="flex flex-col gap-0.5" data-case-status>
       <span className={`${big ? "text-[20px]" : "text-[14px]"} font-semibold text-slate-900 dark:text-slate-100`}>
-        <span className="tabular-nums">{score}</span> <span className="text-slate-400">·</span> {sentence}
-        {summary.freshness === "stale" && <span className="ml-2 align-middle"><Pill tone="amber" mark="!">Out of date</Pill></span>}
+        <span className="tabular-nums">{score}</span>
+        {generalChecks && (
+          // Never an equity score passed off as a grant or loan score (FR §2): labelled, beside it
+          <span className="ml-1 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-300 align-middle text-[10px] font-bold text-slate-500" role="img"
+            aria-label="Scored against the general checklist; a grant-specific checklist isn't available yet." title="Scored against the general checklist; a grant-specific checklist isn't available yet." data-general-checks>i</span>
+        )}
+        {" "}<span className="text-slate-400">·</span> {sentence}
+        {summary.freshness === "stale" && !checking && <span className="ml-2 align-middle"><Pill tone="amber" mark="!">Out of date</Pill></span>}
       </span>
-      {coverage !== null && coverage !== undefined && <span className="text-[12px] text-slate-500">I know {coverage}% {feature === "launch" ? "of what a launch needs" : "of what funders ask for"}</span>}
+
     </span>
   );
 }
@@ -576,7 +618,7 @@ function Setup({ businessId, feature, subject, data, errors, onField, onChanged,
             </div>
           )}
           {section.documents && (
-            <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="border-t border-slate-100 pt-4 dark:border-slate-800" data-field="required-documents">
               <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">Preparation documents</h3>
               <RequiredDocuments businessId={businessId} subject={subject} onChanged={onChanged} />
             </div>
@@ -620,6 +662,10 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const latest = useRef({});
   const timer = useRef(null);
   const [openSection, setOpenSectionState] = useState(params.get("section") || null);
+  // A link to a section from this same page ("Fill it in" on a step) opens that section, not the one last shown (the
+  // owner's QA, 21 Oct: the forecast's "Fill it in" stayed on the funding goal).
+  const sectionAsked = params.get("section");
+  useEffect(() => { if (sectionAsked) setOpenSectionState(sectionAsked); }, [sectionAsked, params.get("field")]);      // eslint-disable-line react-hooks/exhaustive-deps
   // Arriving from a goal started on the homepage: say once what was set up and what to do next.
   // Kept until it is dismissed (a re-render, a reload or a second mount must not lose it), and only on the case it is about.
   const [arrived, setArrived] = useState(() => {
@@ -654,7 +700,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   // finish, the reason is shown and the button is still there.
   const autoChecked = useRef("");
   const staleKey = subject?.assessment?.freshness?.status === "stale" && subject?.can?.[`${feature}.edit`] && subject.status !== "archived"
-    ? `${subjectId}:${subject.revision}` : "";
+    ? `${subjectId}:${subject.revision}:${subject.assessment?.id || ""}` : "";
   useEffect(() => {
     if (!staleKey || checking || save.state !== "saved" || autoChecked.current === staleKey) return;
     autoChecked.current = staleKey;
@@ -697,7 +743,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
 
   const onChanged = useCallback((detail) => (detail && detail.id === subjectId && detail.data ? accept(detail, true) : load()), [accept, load, subjectId]);
   const setTab = (next) => { const p = new URLSearchParams(params); p.set("tab", next); p.delete("section"); setParams(p, { replace: true }); };
-  const openSectionAt = (key) => { setOpenSectionState(key); const p = new URLSearchParams(params); p.set("tab", "answers"); setParams(p, { replace: true }); };
+  const openSectionAt = (key) => { setOpenSectionState(key); const p = new URLSearchParams(params); p.set("tab", "answers"); p.set("section", key); p.delete("field"); setParams(p, { replace: true }); };
+  // A section picked on the Inputs tab: kept in the address, so the next "Fill it in" always opens where it points.
+  const pickSection = (key) => { setOpenSectionState(key); const p = new URLSearchParams(params); p.set("section", key); p.delete("field"); setParams(p, { replace: true }); };
 
   // The Overview is the very result the chat ended on (one record: the same score, count, coverage and steps).
   const revision = subject?.revision;
@@ -717,9 +765,20 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     setOverview((was) => (was === undefined ? { _failed: true } : was));
   }, [businessId, subjectId]);
   // The steps from the case itself, worked out again on every change to it (no wait for a check).
-  const ownSteps = useMemo(() => caseSteps(subject, { max: 50, currency: subject?.data?.currency || subject?.forecast?.data?.currency }), [subject]);
+  // From what is on the page now, saved or still saving, so a filled step leaves at once (F-9, 22 Oct)
+  const ownSteps = useMemo(() => caseSteps(subject && data ? { ...subject, data } : subject, { max: 50, currency: (data || subject?.data)?.currency || subject?.forecast?.data?.currency }),
+    [subject, data]);
+  // The steps the last check listed that are filled now: "Done, waiting for recheck" until the check runs again.
+  const checkedSteps = useMemo(() => caseSteps(subject, { max: 50, currency: subject?.data?.currency }), [subject?.assessment?.id]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = useMemo(() => {
+    const now = new Set((ownSteps?.steps || []).map((s) => s.key));
+    return (checkedSteps?.steps || []).filter((s) => !now.has(s.key));
+  }, [ownSteps, checkedSteps]);
   const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
-    ...st, run: { label: "Confirm forecast", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); } } } : st)) } : overview),
+    ...st, run: { label: "Confirm forecast", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); } } }
+    : st.attest ? { ...st, run: { label: "Confirm", go: async () => { await attest(businessId, feature, subject.id, { code: st.attest.code, passed: true, rationale: st.attest.rationale }); await load(); } } }
+    : st.review ? { ...st, run: { label: "Mark reviewed", go: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: true }); await load(); } } }
+    : st)) } : overview),
   [overview, ownSteps, subject, businessId, feature, load]);
   useEffect(() => { loadOverview(); }, [loadOverview, revision]);
   const runId = params.get("run") || overview?.research?.run_id;
@@ -754,17 +813,19 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   };
   // "Fill it in" on a step: the very field, in view and focused (the owner's QA, 21 Oct).
   const wantedField = params.get("field");
+  const wantedFocus = params.get("focus");
   useEffect(() => {
-    if (tab !== "answers" || !wantedField || !subject) return undefined;
+    if (tab !== "answers" || (!wantedField && !wantedFocus) || !subject) return undefined;
     const t = setTimeout(() => {
-      const el = wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`);
+      const exact = wantedFocus ? document.getElementById(wantedFocus) : null;
+      const el = exact || (wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : wantedField ? document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`) : null);
       if (!el) return;
       el.scrollIntoView?.({ block: "center", behavior: "smooth" });
-      const input = [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select");
+      const input = exact || [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select");
       input?.focus?.({ preventScroll: true });
     }, 120);
     return () => clearTimeout(t);
-  }, [tab, wantedField, subject?.id, openSection]);      // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, wantedField, wantedFocus, subject?.id, openSection]);      // eslint-disable-line react-hooks/exhaustive-deps
   // Advanced holds Evidence, Research, Materials and the full check: an old address opens it at that part.
   useEffect(() => {
     if (tab !== "advanced" || asked === "advanced" || !subject) return;
@@ -834,7 +895,13 @@ function SubjectDetail({ businessId, feature, subjectId }) {
           <p className="text-[12px] text-slate-500" data-case-eyebrow>{feature === "launch" ? "Launch readiness" : "Funding readiness"}{archived ? " · Archived" : ""}</p>
           <h1 className="mt-0.5 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-slate-100" data-case-title>{subject.title}</h1>
           {/* The status, once per page: here (the owner's brief, 20 Oct). From the chat's own record when there is one. */}
-          <div className="mt-1.5">{shown && !shown._failed ? <ResultStatus result={shown} latest={latestOf(shown)} basis /> : overview === undefined ? <span className="text-[13px] text-slate-500">Loading your score…</span> : <StatusLine summary={subject.summary} feature={feature} />}</div>
+          {/* One source (F-1, 22 Oct): the case's own summary, shown as soon as the case is (F-5: never waiting on the
+              chat's result). The chat's result is used only for a case never checked. */}
+          <div className="mt-1.5">{subject.summary?.classification || !shown || shown._failed
+            ? <StatusLine summary={subject.summary} feature={feature} steps={ownSteps?.steps} generalChecks={Boolean(subject.checklist_note)}
+                checking={checking || subject.assessment?.execution_status === "running" || subject.assessment?.execution_status === "queued"} />
+            : <ResultStatus result={shown} latest={latestOf(shown)} />}</div>
+          <ChecklistUpdatedOnce id={subject.id} note={subject.checklist_updated} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {can[`${feature}.edit`] && archived ? <Btn kind="primary" onClick={() => changeStatus("reactivate")}>Reactivate</Btn>
@@ -923,16 +990,10 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             earlier need stays in History. */}
         {tab === "answers" && (
           <Setup businessId={businessId} feature={feature} subject={subject} data={data} errors={errors} onField={onField} onChanged={onChanged}
-            openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={setOpenSectionState} disabled={!editable} />
+            openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={pickSection} disabled={!editable} />
         )}
         {tab === "overview" && (
           <div className="space-y-4" data-case-overview>
-            {/* The same research summary, with its funding options, whether drafts are still waiting or all were reviewed
-                (the owner's QA, 21 Oct: one case showed it, the other only a one-line banner). */}
-            {["review", "adopted"].includes(researchRun?.status) && (
-              <ResearchSummary businessId={businessId} run={researchRun} score={overview ? latestOf(overview).score : null} onSeeAll={openResearch}
-                onAdopted={(out) => { setResearchRun(out?.research || null); loadOverview(); load(); }} />
-            )}
             {(subject.sections || []).length > 0 && (
               // "Funding goal 6 of 7 · Finances 4 of 5 …" (the owner's brief, 21 Oct)
               <div className="flex flex-wrap gap-2" data-section-counts>
@@ -943,13 +1004,28 @@ function SubjectDetail({ businessId, feature, subjectId }) {
                 ))}
               </div>
             )}
-            {overview === undefined ? <p className="text-[13px] text-slate-500">Loading your result…</p> : overview?._failed ? (
+            {/* The same research summary, with its funding options, whether drafts are still waiting or all were reviewed
+                (the owner's QA, 21 Oct: one case showed it, the other only a one-line banner). */}
+            {["review", "adopted"].includes(researchRun?.status) && researchOpen(researchRun) && (
+              <ResearchSummary businessId={businessId} run={researchRun} score={null} caseId={subject.id}
+                onAdopted={(out) => { setResearchRun(out?.research || null); loadOverview(); load(); }} />
+            )}
+            {overview === undefined ? (
+              // The case's own steps at once (F-5): they come from the case itself, never waiting on the chat's result
+              ownSteps?.steps?.length
+                ? <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" data-steps-first>
+                    <NextSteps result={{ assessment_type: feature === "launch" ? "launch_readiness_initial" : "funding_readiness_initial", blockers: [], criteria: [], case_steps: ownSteps.steps,
+                      assessment: { kind: feature, case_id: subject.id } }} businessId={businessId} />
+                  </div>
+                : <p className="text-[13px] text-slate-500">Loading your result…</p>
+            ) : overview?._failed ? (
               <Panel>
                 <p className="text-sm text-slate-700 dark:text-slate-200">Your result is taking longer than usual to load.</p>
                 <Btn className="mt-2" onClick={() => { setOverview(undefined); loadOverview(); }}>Try again</Btn>
               </Panel>
-            ) : overview ? (
+            ) : overview && ownSteps && !ownSteps.steps?.length ? null : overview ? (
               // The one-page result the chat ended on, from the same record; the status is in the header (said once).
+              // Nothing left in it (no steps, research adopted): not shown, never an empty card (the owner's QA, 22 Oct).
               <FirstValueCard result={shown} hideStatus hideOpen embedded className="border-slate-200"
                 run={["review", "adopted"].includes(researchRun?.status) ? researchRun : null} onRun={setResearchRun}
                 onUpdated={(r) => {
@@ -971,12 +1047,57 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             )}
           </div>
         )}
+        {tab === "overview" && (subject.data?.funding_options || []).length > 0 && (
+          // Saved from the research, used here and in the funding pack (the owner's QA, 22 Oct)
+          <Panel title="Funding options you saved" data-saved-options>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {subject.data.funding_options.map((o) => (
+                <li key={o.id || o.title} className="flex flex-wrap items-baseline justify-between gap-2 py-2.5 text-[13px]">
+                  <span className="min-w-0"><span className="font-semibold text-slate-900 dark:text-slate-100">{o.title}</span>
+                    {o.route && <span className="ml-2 text-[11.5px] text-slate-500">{String(o.route).charAt(0).toUpperCase() + String(o.route).slice(1)}</span>}
+                    {o.text && <span className="block text-[12.5px] text-slate-600 dark:text-slate-300">{o.text}</span>}</span>
+                  {o.source?.url && <a href={o.source.url} target="_blank" rel="noopener noreferrer nofollow" className="shrink-0 text-[12.5px] font-semibold text-brand-700 hover:underline">Open the page</a>}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[12px] text-slate-500">Also in your funding pack's readiness report. Check each one is still open before you apply.</p>
+          </Panel>
+        )}
+        {tab === "overview" && waiting.length > 0 && (
+          // Filled since the last check (F-9): out of "Your next steps" at once, listed here until the check runs again.
+          <details className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] dark:border-slate-800 dark:bg-slate-900" data-waiting-recheck>
+            <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">Done, waiting for recheck ({waiting.length})</summary>
+            <ul className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">{waiting.map((w) => <li key={w.key}>{w.title}</li>)}</ul>
+          </details>
+        )}
+        {tab === "overview" && relatedReady(subject.summary) && (
+          // Ready (the checklist's one threshold, current, nothing blocking): related services for what comes next (F-8)
+          <Panel title="What to do next" data-related>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {relatedServices({ feature, subject, packLocked }).map((r) => (
+                <li key={r.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5" data-related-item={r.key}>
+                  <span className="min-w-0"><span className="block text-[13.5px] font-semibold text-slate-900 dark:text-slate-100">{r.title}</span>
+                    <span className="block text-[12.5px] text-slate-500">{r.why}</span></span>
+                  {r.locked
+                    ? <Btn onClick={() => navigate("/pricing")} data-related-upgrade>Upgrade to use it</Btn>
+                    : <Btn kind={r.done ? undefined : "primary"} onClick={() => navigate(r.to)} data-related-cta>{r.cta}</Btn>}
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        )}
+        {tab === "overview" && feature === "funding" && (
+          // Once, at the foot of the Overview: what the score is and isn't
+          <p className="text-[12px] text-slate-500" data-case-note>This is a look at how prepared you are. It is not a view on whether funding will be given.</p>
+        )}
         {tab === "advanced" && (
           // Every part collapsed by default (the owner's brief, 20 Oct); an old address opens its own part.
           <div className="space-y-3" data-case-advanced>
             {subject.checklist_note && <p className="text-[12.5px] text-slate-500" data-checklist-note>{subject.checklist_note}</p>}
             {a?.result && (
               <Fold id="results" title="The full check" open={asked === "results" || asked === "scenarios"}>
+                <CheckBasis summary={subject.summary} feature={feature} />
+                {subject.checklist_note && <p className="mb-3 text-[12.5px] text-slate-600" data-checklist-label>{subject.checklist_note} Scored against the general checklist; a grant-specific checklist isn't available yet.</p>}
                 <ResultView assessment={a} feature={feature} currency={currency} onOpenSection={openSectionAt}
                   summary={overview ? <ResultStatus result={overview} latest={latestOf(overview)} /> : null} />
               </Fold>
@@ -996,7 +1117,8 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             </Fold>
             <Fold id="evidence" title="Evidence" open={asked === "evidence"}>
               <p className="mb-3 text-[12.5px] text-slate-500">Everything attached to this check, with its source and date.</p>
-              <EvidenceList businessId={businessId} feature={feature} subject={subject} onChanged={onChanged} />
+              <EvidenceList businessId={businessId} feature={feature} subject={subject} onChanged={onChanged}
+                startAdding={params.get("add") === "evidence"} onAddedReturn={() => setTab("overview")} />
             </Fold>
             {Object.keys(data.provenance || {}).length > 0 && (
               <Fold id="sources" title="Where your answers came from" open={asked === "sources"}>

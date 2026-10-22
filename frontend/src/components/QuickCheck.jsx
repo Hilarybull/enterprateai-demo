@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { resultHome } from "../lib/resultHome";
 import { apiRequest } from "../api/client";
 import FirstValueCard from "./FirstValueCard";
 import UkDateInput from "./UkDateInput";
@@ -36,6 +38,10 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
   const [editingSaid, setEditingSaid] = useState(false);      // "Edit" on what was read from their sentence: asked like the rest
   const [linked, setLinked] = useState(null);      // the launch plan these answers went onto      // proposals the owner chose to put on the profile
   const field = useRef(null);
+  const navigate = useNavigate();
+  // A funding or launch result opens on its case page, as everywhere else
+  const home = resultHome(result);
+  useEffect(() => { if (home) navigate(home); }, [home]);      // eslint-disable-line react-hooks/exhaustive-deps
   const meta = QUICK_CHECKS[goalKey];
 
   useEffect(() => {
@@ -55,7 +61,9 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
 
   // What their own sentence already answered is shown once and not asked (QA P5-1); "Edit" asks it like the rest.
   const asked = (questions || []).filter((x) => editingSaid || !x.said);
-  const saidItems = (questions || []).filter((x) => x.said).map((x) => ({ key: x.key, text: x.said_text }));
+  const saidItems = (questions || []).filter((x) => x.said && x.source !== "From your funding case").map((x) => ({ key: x.key, text: x.said_text }));
+  // What the funding case already holds: shown once, not asked (the owner's QA, 22 Oct: "use the current data")
+  const caseItems = (questions || []).filter((x) => x.said && x.source === "From your funding case").map((x) => ({ key: x.key, text: x.said_text }));
   const q = asked[at];
   useEffect(() => { setDraft(q ? String(values[q.key] ?? "") : ""); field.current?.focus({ preventScroll: true }); }, [q?.key]);      // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -83,6 +91,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
   }
 
   if (!meta) return null;
+  if (result && home) return <p className="text-[13px] text-slate-500" role="status" data-opening-case>Opening your case…</p>;
   if (result) {
     const attach = () => apiRequest(`/businesses/${businessId}/quick-check/launch/attach`, "POST", { answers: values });
     // QA PF1/PF3: the premium step, here on the page. The plan first, then the cost (shown before it starts), then
@@ -118,6 +127,9 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       </div>
 
       {open && !questions && !error && <p role="status" className="mt-3 text-[13px] text-slate-500">Loading…</p>}
+      {open && questions && caseItems.length > 0 && (
+        <div className="mt-3" data-from-case><SaidLine title="From your funding case" items={caseItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }} /></div>
+      )}
       {open && questions && saidItems.length > 0 && (
         <div className="mt-3"><SaidLine items={saidItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }} /></div>
       )}

@@ -99,16 +99,14 @@ export function stepsOf(result) {
 const card = "rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60";
 
 /** One score and one plain sentence, and how much is known, in small grey text. No second score, no bar. */
-export function StatusLine({ result, latest, basis = false }) {
+export function StatusLine({ result, latest }) {
   const s = statusWords(result, latest);
-  // "58/100 · …, based on 45% of what funders ask for" (the owner's brief, 21 Oct): the score's basis, said with it.
-  if (basis) s.known = s.known.replace(/^I know /, "Based on ");
   return (
     <div data-result-status>
       <p className="text-[20px] font-semibold leading-7 text-slate-900 dark:text-slate-100">
         <span className="tabular-nums" data-fv-score>{s.score}</span> <span className="text-slate-400">·</span> <span data-status-sentence>{s.sentence}</span>
       </p>
-      <p className="mt-1 text-[12px] text-slate-500" data-fv-coverage>{s.known}</p>
+
     </div>
   );
 }
@@ -195,7 +193,15 @@ const MONEY_INPUTS = new Set(["price", "cost", "fixed_costs", "monthly_revenue",
 
 /** Edit, in the card (the owner's QA, 21 Oct: Edit opened the spending modal): the figures a worked-out draft is built
  *  from, or the draft's own words. Save applies them at once; nothing is researched and nothing is charged. */
-function DraftEditor({ draft, figures, currency, applier, onDone }) {
+// A calculation that is a table (the use of funds): each line said, and changed where the case keeps them (the owner's
+// QA, 21 Oct: "how can I change marketing now?").
+const TABLE_FIELD = { use_of_funds: { section: "finances", field: "use_of_funds", label: "Change the lines" } };
+
+function DraftEditor({ draft, figures, currency, applier, onDone, result = null }) {
+  const navigate = useNavigate();
+  const table = TABLE_FIELD[draft.derive];
+  const lines = Array.isArray(draft.table) ? draft.table : Array.isArray(draft.raw) ? draft.raw : [];
+  const tableTo = table ? `${screenOf(result, `setup:${table.section}`) || "/funding"}${String(screenOf(result, `setup:${table.section}`) || "").includes("?") ? "&" : "?"}field=${table.field}` : null;
   const calc = Boolean(draft.derive);
   const [values, setValues] = useState(() => Object.fromEntries(figures.map((f) => [f.id, f.edited_value ?? f.value ?? ""])));
   const [text, setText] = useState(String(draft.edited_value ?? draft.value ?? ""));
@@ -214,6 +220,18 @@ function DraftEditor({ draft, figures, currency, applier, onDone }) {
   };
   return (
     <div className="mt-2 space-y-2" data-step-editor>
+      {table && (
+        <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60" data-step-editor-lines>
+          {lines.length > 0 && (
+            <ul className="space-y-0.5 text-[12.5px] text-slate-700 dark:text-slate-200">
+              {lines.map((l) => <li key={l.line} className="flex justify-between gap-3"><span>{l.line}</span><span className="tabular-nums">{shortMoney(l.amount, currency)}</span></li>)}
+            </ul>
+          )}
+          {tableTo && <a href={tableTo} onClick={(e) => { e.preventDefault(); navigate(tableTo); }} className="mt-1 inline-block text-[12.5px] font-semibold text-brand-700 hover:underline" data-step-editor-lines-link>
+            {table.label}</a>}
+          <p className="mt-0.5 text-[11.5px] text-slate-500">Or change the figures below to work it out again.</p>
+        </div>
+      )}
       {calc ? (figures.length ? figures.map((f) => (
         <label key={f.id} className="block text-[12px] text-slate-600">{f.label}
           {MONEY_INPUTS.has(f.field)
@@ -294,7 +312,7 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
             {applier && !adopted && <button type="button" disabled={applier.state.busy} onClick={() => applier.apply(draft.id, { decision: "reject" })} aria-pressed={Boolean(dismissed)}
               className="text-[12.5px] font-semibold text-slate-500 underline-offset-2 hover:underline disabled:opacity-70" data-step-dismiss>{dismissed ? "Dismissed" : "Dismiss"}</button>}
           </div>
-          {editing && <DraftEditor draft={draft} figures={figures} currency={currency} applier={applier} onDone={() => setEditing(false)} />}
+          {editing && <DraftEditor draft={draft} figures={figures} currency={currency} applier={applier} onDone={() => setEditing(false)} result={result} />}
           {failed && <p role="alert" className="mt-1 text-[12px] text-rose-700">{failed}</p>}
         </div>
       )}
@@ -337,7 +355,10 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
       {/* While the Agent's drafts wait, no "I'll do it": the draft is the way (the owner's QA, 21 Oct). */}
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-1" data-step-actions>
         {step.run && <StepRun run={step.run} />}
-        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-mine>Fill it in</a>}
+        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-mine data-step-focus={step.focus || undefined}>{step.run ? "See it" : (step.cta || "Fill it in")}</a>}
+        {!draft && !researched && (step.more || []).map((m) => (
+          <a key={m.label} href={m.to} onClick={(e) => { e.preventDefault(); navigate(m.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-more data-step-focus={m.focus || undefined}>{m.label}</a>
+        ))}
       </div>
     </li>
   );
@@ -494,7 +515,8 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
           applier={businessId && run ? applier : null} currency={currency} figures={figuresFor(run, draftFor(run, s.key))} />)}
       </ol>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-        {!researched && onDoIt && (
+        {/* Not on the case's own steps (the owner's QA, 22 Oct: "I already ran do all for me"): each step has its own button */}
+        {!researched && onDoIt && !Array.isArray(result?.case_steps) && (
           // The one research button for every step: its price first, in the spending modal (focus on "Not now").
           <button type="button" onClick={() => onDoIt(null)} disabled={working} aria-busy={working}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
@@ -503,7 +525,7 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
             {working ? "Getting the price…" : `Do all for me${price ? ` · up to ${price} credits` : " · Free"}`}</button>
         )}
         {/* Said plainly why it costs less than the check's price (the owner, 20 Oct: "what's do the rest for me?"). */}
-        {!researched && onDoIt && prices?.spent > 0 && (
+        {!researched && onDoIt && prices?.spent > 0 && !Array.isArray(result?.case_steps) && (
           <span className="text-[12px] text-slate-500" data-research-reused>What I already researched for these answers is reused, free. Only the rest is charged.</span>
         )}
         {steps.length > 3 && (

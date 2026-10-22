@@ -1368,9 +1368,14 @@ CASE_DRAFT_FIELDS = {
 }
 CASE_LIST_FIELDS = {"team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
                     "milestones": ("outcome", "measure", "target")}
-_DRAFT_SYSTEM = ("You fill in a small business's funding case from FACTS only. Write plain, specific sentences a funder can read. "
-                 "Use only what the FACTS say or clearly imply; where they give nothing for a field, return null for it. "
-                 "Never invent customers, sales, partners or figures. Reply with JSON only: {\"fields\": {\"<key>\": \"<text or null>\"}}.")
+_DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, specific sentences a funder can read. "
+                 "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
+                 "where FACTS give none, say so plainly. Plans and assumptions are yours to propose from what FACTS say about the "
+                 "business (its offer, prices, place, customers, team): what sets it apart, how it will win customers (named channels "
+                 "and first steps that suit it), a realistic monthly budget or cost per customer for that (with the currency, said as "
+                 "an assumption), milestones, gaps, risks. Fill every field you can; return null only when nothing sensible can be "
+                 "said. Write only about this business, never about another offering. Reply with JSON only: "
+                 "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
 
 def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, found: list[dict] | None) -> dict:
@@ -1890,7 +1895,7 @@ def research_state(data: dict | None, goal: str, now: datetime | None = None, an
 
 
 async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict, data: dict, llm=None, search=None, fetcher=None,
-                progress_key: str | None = None, only: list[str] | None = None, drafter=None, fresh: bool = False) -> dict:
+                progress_key: str | None = None, only: list[str] | None = None, drafter=None, fresh: bool = False, case_id: str | None = None) -> dict:
     """One run for one check: an answer for every gap, researched, reused, estimated or calculated; asked last."""
     now = _now()
     result = first_value.assess(goal, answers, data)
@@ -1917,7 +1922,8 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
            "created_by": user["id"], "answers": answers, "inputs": {k: v for k, v in i.items() if not k.startswith("_")}, "inputs_from": i.get("_from") or {},
            "context": ctx, "topics": [t["topic"] for t in topics], "blockers": result["blockers"], "before": summary_of(result),
            "items": [], "charged": 0, "research": "connected" if research_on else "not_connected", "base": plan["base"], **({"only": sorted(only)} if only else {}),
-           **({"case_figures": data["case_figures"]} if (data or {}).get("case_figures") else {})}
+           **({"case_figures": data["case_figures"]} if (data or {}).get("case_figures") else {}),
+           **({"case_id": str(case_id)} if case_id else {})}      # the case its adoptions go to (F-1, 22 Oct)
 
     fingerprint = fingerprint_of(answers, run["inputs"], run["topics"], ctx.get("country")) + (":" + ",".join(sorted(only)) if only else "")
     run["fingerprint"] = fingerprint

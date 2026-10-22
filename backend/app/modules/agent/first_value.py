@@ -107,13 +107,23 @@ def _result(kind: str, *, criteria: list[dict], score: Any, score_label: str, cl
         "assessment_type": kind, "headline": HEADLINE[kind], "ruleset_version": RULESET_VERSION, "provisional": True,
         "basis": basis or ["What you told me", "What is already on record for your business"],
         "score": score, "score_label": score_label, "classification": classification,
+        # Never "no score" (the owner's QA, 21 Oct): with too little known for the check's own score, a score from what is
+        # known (met counts in full, partly met half), said with how much it is based on. The check's own score is unchanged.
+        "partial_score": round(100 * sum(c.get("weight", 1) * (1 if c["state"] == MET else 0.5 if c["state"] == PARTIAL else 0)
+                                         for c in criteria) / total) if str(score or "").lower().startswith("insufficient") else None,
         "evidence_coverage": round(100 * covered / total),
         "criteria": [{"key": c["key"], "label": c["label"], "state": c["state"], **({"weight": c["weight"]} if "weight" in c else {})} for c in criteria],
         "strengths": strengths, "blockers": blockers, "metrics": metrics or [],
         "premium_next_action": {"label": label, "explains": f"I can now {does}.", "capability": kind.replace("_initial", "").replace("_foundation", "") + "_intelligence"},
         "free_next_actions": [{"label": a, "to": to} for a, to in FREE_NEXT[kind]] + [{"label": "Save for later", "save": True}],
         "generated_at": (now or datetime.now(timezone.utc)).isoformat(), "currency_sign": sign,
+        "ready_at": _ready_at(kind),      # the one "ready" threshold, as the checklist sets it (22 Oct: 75)
     }
+
+
+def _ready_at(kind: str) -> float:
+    from app.modules.readiness import rules
+    return rules.ready_at(rules.LAUNCH if kind.startswith("launch") else rules.FUNDING)
 
 
 # ── The demand ladder (QA PF6, PRD 5.2): what the owner's own words show, highest rung first ──
@@ -186,6 +196,69 @@ def _with_research(criteria: list[dict], a: dict) -> list[dict]:
             c["gap"] = f"{c['gap']} (to confirm)" if c.get("gap") else None
             c["research"] = {"state": state, "value": got.get("value")}
     return criteria
+
+
+_RANK = {UNKNOWN: 0, UNMET: 0, PARTIAL: 1, MET: 2}
+_NOT_SAID = re.compile(r"\b(?:no|not|none)\b[^.]{0,80}\b(?:described|provided|given|stated|available|known|specified|found)\b"
+                       r"|^\s*(?:pending(?: approval)?|tbc|tbd|to be confirmed|n/?a|todo|\?+|-+)\s*\.?\s*$", re.I)
+
+
+def _said(v: Any) -> bool:
+    """A real answer: not blank, and not a placeholder or a non-answer ("Pending approval", "None are described")."""
+    return _known(v) and not _NOT_SAID.search(str(v))
+
+
+def case_states(case: dict, has_forecast: bool = False) -> dict[str, str]:
+    """What the funding case itself now shows, criterion by criterion (F-3, 22 Oct): its goal, lines, forecast, prices,
+    market and team, so a result never asks for what the case already holds."""
+    c = case or {}
+    g = lambda path: _get_path(c, path)      # noqa: E731
+    target = _num(c.get("target_amount"))
+    lines = [a for a in c.get("use_of_funds") or [] if isinstance(a, dict)]
+    total = sum(_num(a.get("amount")) or 0 for a in lines)
+    people = [p for p in g("team.responsibilities") or [] if isinstance(p, dict)]
+    market = [g(p) for p in ("market.target_segment", "market.differentiation", "market.acquisition_approach")]
+    econ = [g(p) for p in ("economics.price", "economics.direct_cost", "economics.fixed_costs_monthly")]
+    out = {
+        "purpose": MET if target and _said(c.get("purpose")) and _known(c.get("receipt_date")) else PARTIAL if target or _said(c.get("purpose")) else UNKNOWN,
+        "use_of_funds": MET if lines and target and abs(total - target) < 1 and all(_num(a.get("amount")) for a in lines) else PARTIAL if lines else UNKNOWN,
+        "financial": MET if has_forecast else UNKNOWN,
+        "economics": MET if all(_num(x) is not None for x in econ) else PARTIAL if _num(econ[0]) is not None else UNKNOWN,
+        "market": MET if all(_said(x) for x in market) else PARTIAL if any(_said(x) for x in market) else UNKNOWN,
+        "team": MET if people and all(_said(p.get("owner")) for p in people) else PARTIAL if people else UNKNOWN,
+    }
+    return out
+
+
+def _get_path(d: dict, path: str) -> Any:
+    for part in path.split("."):
+        d = d.get(part) if isinstance(d, dict) else None
+    return d
+
+
+def with_case(result: dict, case: dict | None, has_forecast: bool = False) -> dict:
+    """A funding result brought up to the case as it is now: a criterion the case shows as further on is moved on, and its
+    step goes (F-3, 22 Oct). Never moved back: what the result already counts stays counted."""
+    if not case or (result or {}).get("assessment_type") != "funding_readiness_initial":
+        return result
+    states = case_states(case, has_forecast)
+    crit = [dict(c) for c in result.get("criteria") or []]
+    moved = set()
+    for c in crit:
+        now = states.get(c["key"])
+        if now and _RANK.get(now, 0) > _RANK.get(c.get("state"), 0):
+            c["state"] = now
+            moved.add(c["key"])
+    if not moved:
+        return result
+    blockers = [b for b in result.get("blockers") or [] if not (b.get("key") in moved and states.get(b["key"]) == MET)]
+    blockers = [({**b, "kind": "partial", "state": PARTIAL} if b.get("key") in moved else b) for b in blockers]
+    total = sum(c.get("weight", 1) for c in crit) or 1
+    covered = sum(c.get("weight", 1) for c in crit if c["state"] != UNKNOWN)
+    out = {**result, "criteria": crit, "blockers": blockers, "evidence_coverage": round(100 * covered / total)}
+    if isinstance(result.get("score"), (int, float)):
+        out["score"] = _weighted([{**c, "weight": c.get("weight", 1)} for c in crit])
+    return out
 
 
 def _weighted(criteria: list[dict]) -> int:

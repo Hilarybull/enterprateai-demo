@@ -1,5 +1,5 @@
 import UkDateInput from "../UkDateInput";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addEvidence, attachEvidenceFile, attest, dateLabel, downloadEvidenceFile, readinessError, reviewEvidence } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Pill, inputClass } from "./Fields";
@@ -119,8 +119,17 @@ function ReviewForm({ businessId, feature, item, onDone }) {
   );
 }
 
-export function EvidenceList({ businessId, feature, subject, checks, onChanged, emptyText = "No evidence attached yet." }) {
-  const [adding, setAdding] = useState(false);
+export function EvidenceList({ businessId, feature, subject, checks, onChanged, emptyText = "No evidence attached yet.", startAdding = false, onAddedReturn = null }) {
+  const [adding, setAdding] = useState(Boolean(startAdding));
+  const addBox = useRef(null);
+  useEffect(() => {
+    if (!startAdding) return undefined;
+    const t = setTimeout(() => {
+      addBox.current?.scrollIntoView?.({ block: "center" });
+      addBox.current?.querySelector("input, select, textarea")?.focus?.({ preventScroll: true });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [startAdding]);
   const [reviewing, setReviewing] = useState(null);
   const [problem, setProblem] = useState(null);
   const can = subject.can || {};
@@ -181,7 +190,8 @@ export function EvidenceList({ businessId, feature, subject, checks, onChanged, 
       </ul>
       {problem && <Notice tone="rose" role="alert">{problem}</Notice>}
       {editable && !adding && <Btn onClick={() => setAdding(true)}>Add evidence</Btn>}
-      {adding && <AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={checks?.[0]} onCancel={() => setAdding(false)} onAdded={() => { setAdding(false); onChanged(); }} />}
+      {adding && <div ref={addBox} data-add-evidence><AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={checks?.[0]} onCancel={() => setAdding(false)}
+        onAdded={() => { setAdding(false); onChanged(); onAddedReturn?.(); }} /></div>}
     </div>
   );
 }

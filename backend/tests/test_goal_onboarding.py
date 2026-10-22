@@ -132,8 +132,9 @@ def test_no_capability_is_ever_offered_that_is_not_registered():
 def test_the_homepage_offers_goals_first_then_quick_tasks_all_backed_by_a_registered_path():
     s = goals.suggestions()
     assert s["prompt"] == "What do you want EnterprateAI to do for your business?"
-    assert [g["label"] for g in s["goals"]] == ["I need funding", "I need more customers", "Help me price my product/service", "I want to launch a product/service",
-                                              "Test a business idea", "Help me understand my business risks"]
+    # Only funding until the others are ready (the owner, 22 Oct); typed, they are still understood
+    assert [g["label"] for g in s["goals"]] == ["I need funding"]
+    assert goals.resolve(text="Test a business idea")["goal_key"] == "test_idea"
     # Off the chips (13 Oct 2026), still understood when typed.
     assert goals.resolve(text="Improve my cash flow")["goal_key"] == "cash_flow" and goals.resolve(text="Help me grow my business")["goal_key"] == "grow"
     assert [t["label"] for t in s["tasks"]] == ["Create Invoice", "Create Quotation", "Create Business Plan"]      # a proposal is asked for in words, not a homepage shortcut

@@ -121,6 +121,7 @@ FUNDING_EQUITY_V1 = {
     ],
     "sections": [
         {"key": "goal", "title": "Funding goal", "fields": [
+            _f("title", "Case title", help="The name of this funding case. Its amount should match the target below."),
             _f("target_amount", "How much do you want to raise?", "money", help="Leave blank if you don't know yet. The forecast can help you work it out."),
             _f("currency", "Currency", "select", options=list(SUPPORTED_CURRENCIES)),
             _f("receipt_date", "When do you expect to receive it?", "date"),
@@ -333,8 +334,18 @@ for _profile, _covers in ((FUNDING_EQUITY_V1, {"G1": "C1.A", "G2": "C2.A", "G3":
     for _gate in _profile["gates"]:
         _gate["covers"] = _covers.get(_gate["code"])
 
-PROFILES: dict[str, dict] = {f"{p['id']}@{p['version']}": p for p in (FUNDING_EQUITY_V1, LAUNCH_COMMERCIAL_V1)}
-CURRENT = {FUNDING: f"{FUNDING_EQUITY_V1['id']}@{FUNDING_EQUITY_V1['version']}", LAUNCH: f"{LAUNCH_COMMERCIAL_V1['id']}@{LAUNCH_COMMERCIAL_V1['version']}"}
+# 0.2 (22 Oct 2026, a product decision): ready is 75 or above, not 80. Everything else is as in 0.1. Results made under 0.1
+# keep 0.1 and its classification; the next check of each case uses 0.2 (an older version marks a result out of date).
+READY_CHANGE_NOTE = "Checklist updated: ready is now 75+"
+FUNDING_EQUITY_V2 = {**FUNDING_EQUITY_V1, "version": "0.2", "thresholds": {"conditionally_ready": 60, "ready": 75}}
+LAUNCH_COMMERCIAL_V2 = {**LAUNCH_COMMERCIAL_V1, "version": "0.2", "thresholds": {"conditionally_ready": 60, "ready": 75}}
+PROFILES: dict[str, dict] = {f"{p['id']}@{p['version']}": p for p in (FUNDING_EQUITY_V1, LAUNCH_COMMERCIAL_V1, FUNDING_EQUITY_V2, LAUNCH_COMMERCIAL_V2)}
+CURRENT = {FUNDING: f"{FUNDING_EQUITY_V2['id']}@{FUNDING_EQUITY_V2['version']}", LAUNCH: f"{LAUNCH_COMMERCIAL_V2['id']}@{LAUNCH_COMMERCIAL_V2['version']}"}
+
+
+def ready_at(subject_type: str = FUNDING) -> float:
+    """The one "ready" threshold: the current checklist's (the related-services panel and the quick results read it too)."""
+    return PROFILES[CURRENT[subject_type]]["thresholds"]["ready"]
 
 
 class UnsupportedProfile(ValueError):
@@ -360,7 +371,7 @@ def select_profile(subject_type: str, data: dict) -> dict:
         model = str(data.get("business_model") or "service").lower()
         if model not in FUNDING_EQUITY_V1["business_models"]:
             raise UnsupportedProfile("This check supports service and software businesses for now.")
-        return FUNDING_EQUITY_V1
+        return PROFILES[CURRENT[FUNDING]]
     if subject_type == LAUNCH:
         if str(data.get("scope") or "commercial").lower() != "commercial":
             raise UnsupportedProfile(UNAVAILABLE[2]["reason"])
@@ -370,7 +381,7 @@ def select_profile(subject_type: str, data: dict) -> dict:
         model = str(data.get("business_model") or "service").lower()
         if model not in LAUNCH_COMMERCIAL_V1["business_models"]:
             raise UnsupportedProfile(UNAVAILABLE[4]["reason"])
-        return LAUNCH_COMMERCIAL_V1
+        return PROFILES[CURRENT[LAUNCH]]
     raise UnsupportedProfile("Unknown subject.")
 
 

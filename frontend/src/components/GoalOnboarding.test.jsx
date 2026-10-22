@@ -996,29 +996,14 @@ describe("the chat's currency (the owner's brief, 20 Oct)", () => {
   });
 });
 
-describe("signed in, the homepage chat carries on by itself (the owner's QA, 21 Oct)", () => {
-  it("attaches the task to the user, shows the recap, then goes on to the case: never left awaiting an email", async () => {
+describe("signed in, the homepage hands the message to the dashboard's Agent card: one pathway (the owner's choice, 22 Oct)", () => {
+  it("goes to the Agent card with what was asked, and starts no separate chat", async () => {
     useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
     useWorkspaceStore.setState({ workspaceId: "ws1" });
-    const given = [{ key: "amount", label: "How much funding are you looking for?", value: "₦5,000,000", proposed: false },
-      { key: "use", label: "What is it for?", value: "2 more washing bays", proposed: false }];
-    const done = { state: "awaiting_identity", next: "identity", authenticated: false, missing: [], inputs: { amount: 5000000 }, summary: given,
-      turns: [{ role: "user", content: "I need funding" }, { role: "assistant", content: "How much funding are you looking for?", next: "amount" },
-        { role: "user", content: "₦5m" }, { role: "assistant", content: "Here's where you stand.", next: null }] };
-    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding()
-      : /\/inputs$/.test(path) ? funding(done)
-      : /\/attach-user$/.test(path) ? funding({ ...done, state: "resuming", next: "prepare", authenticated: true }) : undefined);
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
-    await click(within(card().querySelector("[data-question-turn]")).getAllByRole("button")[0]);
-    await waitFor(() => expect(posts(/\/task-sessions\/sess-1\/attach-user$/).length).toBe(1));
-    // The recap, with the whole conversation still above it.
-    expect(card().querySelector("[data-recap-line]").textContent).toBe("₦5,000,000 · 2 more washing bays");
-    expect([...card().querySelectorAll("[data-thread] [data-turn]")].map((t) => t.textContent)).toEqual(
-      ["I need funding", "How much funding are you looking for?", "₦5m", "Here's where you stand."]);
-    expect(card().querySelector("[data-checkpoint]")).toBeNull();      // never the email step
-    await click(card().querySelector("[data-recap-ok]"));
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toMatch(/sess-1/));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toMatch(/^\/dashboard/));
+    expect(posts(/task-sessions$/).length).toBe(0);
   });
 });
 

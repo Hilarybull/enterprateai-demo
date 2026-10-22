@@ -1286,9 +1286,10 @@ export default function ValidationWizardPage() {
     setContentTab("builder");
     if (requestedHistoryType === "service_validation") setMode("fill");
     if (requestedHistoryId) {
-      // Opened from a link (the Agent's task, History): its result if it has one, else its form with the saved answers;
-      // then the link's id leaves the address, so the "Loading" spinner never stays (the owner's QA, 21 Oct).
-      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, false, true))
+      // Opened from a link (the Agent's task, History): the form, prefilled with the saved answers, on its first step, even
+      // when the Agent's draft already has a quick score (the owner's QA, 21 Oct: it went to the results instead). The
+      // result is one press away from there. Then the link's id leaves the address, so the "Loading" spinner never stays.
+      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true, true))
         .finally(() => setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); return next; }, { replace: true }));
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry

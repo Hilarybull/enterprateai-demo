@@ -1,5 +1,6 @@
 import { useSignedIn } from "../store/auth";
 import { premiumFlow } from "../components/ResearchReview";
+import { resultHome } from "../lib/resultHome";
 import FirstValueCard, { fetchFirstValue, forgetFirstValue, rememberFirstValue } from "../components/FirstValueCard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -104,14 +105,17 @@ export default function StartPage({ framed = false }) {
 
   // A funding or launch result opens on its own case page (the owner, 21 Oct: "just open the result in the full page"),
   // never a copy of it here with "Open full page".
+  // Only once the new need has been applied to the case (the owner's QA, 22 Oct: "I ran for working capital" and the case
+  // still showed the old need): never while the Replace or Update question is still to come.
+  const [settled, setSettled] = useState(false);
   useEffect(() => {
-    if (stage !== "result" || !result) return;
-    const a = result.assessment || {};
-    const to = a.kind === "funding" && a.case_id ? `/funding/${a.case_id}?tab=overview` : a.kind === "launch" && a.initiative_id ? `/launch/${a.initiative_id}?tab=overview` : null;
+    if (stage !== "result" || !result || !settled || asking.current) return;
+    const to = resultHome(result);
     if (to) navigate(to, { replace: true });
-  }, [stage, result, navigate]);
+  }, [stage, result, settled, navigate]);
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
+    setSettled(false);
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
     // the moment it is ready. The task carries on behind it; nothing waits for it.
     let shown = false;
@@ -119,7 +123,7 @@ export default function StartPage({ framed = false }) {
       fetchFirstValue(sessionId).then((fv) => {
         if (!fv?.result || asking.current) return;
         shown = true;
-        rememberFirstValue(sessionId);
+        if (!resultHome(fv.result)) rememberFirstValue(sessionId);      // a case's result lives on its case only
         setResult(fv.result);
         setStage("result");
       }).catch(() => { /* the task's own hand-off still opens the work */ });
@@ -136,6 +140,7 @@ export default function StartPage({ framed = false }) {
       // (it was skipped there, so the case kept the old need and showed the old research).
       asking.current = Boolean(done.next === "choose" && done.choose);
       if (done.next === "choose" && done.choose) { setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id); setStage("choose"); return; }
+      setSettled(true);      // the need is on the case now (or there was nothing to choose)
       if (shown) {
         setSession(done); if (done.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
         if (/^\/(funding|launch)\/[^/?]+/.test(String(done.handoff?.to || "")) && !notStarted(done.handoff)) navigate(done.handoff.to, { replace: true });
@@ -153,7 +158,7 @@ export default function StartPage({ framed = false }) {
         try {
           const fv = await fetchFirstValue(sessionId);
           if (fv?.result) {
-            rememberFirstValue(sessionId);      // the same result is the first card on the dashboard until it is dismissed or acted on
+            if (!resultHome(fv.result)) rememberFirstValue(sessionId);      // the first card on the dashboard; a case's result lives on its case only
             setResult(fv.result);
             setStage("result");
             return;

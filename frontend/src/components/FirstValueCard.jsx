@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { resultHome } from "../lib/resultHome";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -410,7 +411,12 @@ export function useFirstResult() {
     if (hidden === id) return undefined;
     let live = true;
     // Only on the business it was worked out for: another workspace never shows it (a test task's cupcakes on a cleaning business).
-    fetchFirstValue(id).then((res) => { if (live && res?.result && (!res.business_id || res.business_id === workspaceId)) setResult(res.result); }).catch(() => {});
+    fetchFirstValue(id).then((res) => {
+      if (!live || !res?.result || (res.business_id && res.business_id !== workspaceId)) return;
+      // Its home is its case (the owner's QA, 22 Oct: 70/100 on the dashboard beside 53/100 on the case): not kept here
+      if (resultHome(res.result)) { forget(); return; }
+      setResult(res.result);
+    }).catch(() => {});
     return () => { live = false; };
   }, [id, workspaceId]);
   const adopted = (out) => { if (out?.result) setResult((had) => ({ ...out.result, premium_gate: had?.premium_gate })); };
@@ -440,7 +446,9 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
   const navigate = useNavigate();
   const [edited, setEdited] = useState(null);      // the result after "Save and check again"
   useEffect(() => { setEdited(null); }, [given?._session]);
-  const result = edited || given;
+  // The case's own steps always come from the page (the case as it is now), never from a refreshed copy of the result,
+  // which doesn't carry them (the owner's QA, 22 Oct: after an adopt the old steps came back).
+  const result = edited ? { ...edited, ...(given?.case_steps ? { case_steps: given.case_steps } : {}) } : given;
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
   const [saved, setSaved] = useState(false);
   const [served, setServed] = useState(initialServed);   // the server's answer to the premium step: a gate, a cost to confirm, or the research it did
@@ -548,7 +556,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       {/* No "See all findings": "Review every finding in detail" below is the one way in (the owner, 21 Oct). */}
       {/* No separate "What I found for you" (the owner's QA, 21 Oct): the steps first; every finding and funding option in
           "Review every finding in detail". */}
-      <PackLine result={result} locked={!hasFundingPack(subscription, platformGrants)} businessId={workspaceId} onCreate={act} />
+      {!embedded && <PackLine result={result} locked={!hasFundingPack(subscription, platformGrants)} businessId={workspaceId} onCreate={act} />}
 
       {gate && g && !g.allowed ? (
         <div role="status" data-fv-gate className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-[13px] text-amber-950">
@@ -615,7 +623,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       {saved && <p role="status" className="mt-2 text-[12px] text-slate-600">Saved. You'll find this at the top of your dashboard.</p>}
       {priceModal}
       {/* The disclaimer last, in small grey text (the owner's brief, 20 Oct). */}
-      {result.note && <p className="mt-4 text-[12px] text-slate-500" data-fv-note>{result.note}</p>}
+      {result.note && !embedded && <p className="mt-4 text-[12px] text-slate-500" data-fv-note>{result.note}</p>}
       {onContinue && (
         <div className="mt-4 flex justify-end border-t border-slate-100 pt-3 dark:border-slate-800">
           <button type="button" onClick={onContinue} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">{continueLabel}</button>

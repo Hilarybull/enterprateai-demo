@@ -14,7 +14,7 @@ describe("the first-value card's score", () => {
     render(<MemoryRouter><FirstValueCard result={{ ...base, provisional: true }} /></MemoryRouter>);
     expect(document.querySelector("[data-fv-provisional]")).toBeNull();
     expect(document.body.textContent).not.toContain("Provisional");
-    expect(document.querySelector("[data-fv-coverage]").textContent).toContain("40%");
+    expect(document.querySelector("[data-fv-coverage]")).toBeNull();      // coverage only under Advanced (22 Oct)
   });
 
   it("a full check that can't score yet never hides the score from this request's answers (QA, 15 Oct)", () => {
@@ -24,7 +24,7 @@ describe("the first-value card's score", () => {
     expect(document.querySelector("[data-fv-score]").textContent).not.toContain("No score yet");
     // One score and one coverage figure (A6, the owner's brief): no "Full check" line beside it on the main view.
     expect(document.querySelector("[data-fv-earlier]")).toBeNull();
-    expect(document.querySelector("[data-fv-coverage]").textContent).toBe("I know 40% of what a launch needs");
+    expect(document.body.textContent).not.toMatch(/Based on|Confidence:|I know \d+%/);
     expect(document.querySelector("[data-fv-title]").textContent).toBe("Market · £250k");
     expect(document.querySelector("[data-fv-source]").textContent).toBe("Funding readiness");
   });

@@ -13,7 +13,7 @@ import { agentErrorMessage, cancelRun, clearConversation, getConversation, getRu
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
-import QuickCheck from "../QuickCheck";
+import { AgentGoalChat } from "../GoalLauncher";
 import { NextLine } from "../WhatNext";
 
 // A button elsewhere on the dashboard (an insight card) hands its task to the Agent box, so its
@@ -209,6 +209,26 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   }, []);
 
   const [asked, setAsked] = useState("");      // the owner's own words, shown above the answer
+  /** What the owner types: the landing page's conversation, the one pathway everywhere (22 Oct). */
+  function chat(text) {
+    if (!businessId || busy || paused) return;
+    setAsked(text);
+    setReply({ tone: "plan", text: "", check: { goalKey: "", said: text, at: Date.now() } });
+    setPrompt("");
+  }
+
+  const handed = useRef(false);
+  useEffect(() => {
+    if (handed.current || !businessId) return;
+    const params = new URLSearchParams(window.location.search);
+    const ask = params.get("ask");
+    if (!ask) return;
+    handed.current = true;
+    params.delete("ask");
+    window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+    send({ text: ask, sourceChannel: "text" });
+  }, [businessId]);      // eslint-disable-line react-hooks/exhaustive-deps
+
   async function send(req) {
     if (!businessId || busy || paused) return;
     setBusy(true);
@@ -257,7 +277,8 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       setPrompt("");
     } else if (res.kind === "check") {
       // Funding or launch readiness, customer growth: the Agent runs the check here, in the card (never a dead end).
-      setReply({ tone: "plan", text: res.message, check: { goalKey: res.goal_key, said: res.said } });
+      // The landing page's conversation, here (22 Oct): one line, then its questions in the chat
+      setReply({ tone: "plan", text: "", check: { goalKey: res.goal_key, said: res.said || req?.text || "", at: Date.now() } });
       setPrompt("");
     } else if (res.kind === "unavailable") {
       setReply({ tone: "amber", text: res.message, offers: res.offers });
@@ -369,14 +390,15 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         </div>
       )}
 
-      {/* The first result sits above the Agent's four action cards, which always stay. Dismissed, it is kept in Agent
+      {/* The first result sits above the Agent's four action cards. Dismissed, it is kept in Agent
           Centre > Results, with Undo for 5 seconds. */}
       <ProfileUpdates businessId={businessId} />
       <UndoToast open={Boolean(firstResult?.dismissed)} text="Result dismissed. It stays in Agent Centre, under Results."
         onUndo={() => firstResult.undo()} onDone={() => firstResult.forgetDismissed()} />
       {/* Below 1280px: auto-fit with a 260px minimum (never more than two per row), so the tiles drop
           to one column when two won't fit. From 1280px the desktop layout keeps its two columns. */}
-      <div className="mt-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,max(260px,calc(50%_-_0.375rem))),1fr))] xl:grid-cols-2">
+      {/* Hidden while a conversation is on screen, so the chat reads cleanly (the owner, 22 Oct); back when it is dismissed. */}
+      <div className={`mt-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,max(260px,calc(50%_-_0.375rem))),1fr))] xl:grid-cols-2 ${reply ? "hidden" : ""}`} data-agent-tiles>
         {cards.slice(0, 4).map((c) => (
           <button key={c.key} type="button" disabled={busy || (paused && startsTask(c.action))} title={paused && startsTask(c.action) ? PAUSED_TIP : c.text}
             data-mood={c.mood || undefined}
@@ -459,7 +481,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           {reply.detail && <p className="mt-1 text-[13px]" data-blocked-detail>{reply.detail}</p>}
           {reply.check && businessId && (
             <div className="mt-3 text-left" data-agent-check={reply.check.goalKey}>
-              <QuickCheck key={`${reply.check.goalKey}:${reply.check.said}`} businessId={businessId} goalKey={reply.check.goalKey} open said={reply.check.said} />
+              <AgentGoalChat key={`${reply.check.goalKey}:${reply.check.at}`} text={reply.check.said} />
             </div>
           )}
           {reply.working && <div className="mt-2"><WorkingSteps /></div>}

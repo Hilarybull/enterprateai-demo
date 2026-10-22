@@ -389,6 +389,18 @@ async def _first_value_reply(session: dict, user: dict) -> dict:
     result = goals.first_value_of(session, data)
     if not result:
         raise HTTPException(status_code=404, detail="This task has no first-value result.")
+    # The case as it is now (F-3, 22 Oct): a result never asks for what the case already holds. Read straight from the
+    # store (one row, and its forecast's id), so the Overview never waits on the full case page.
+    case_id = (session.get("handoff") or {}).get("subject_id") or next((cid for cid, sid in ((data or {}).get("chat_sessions") or {}).items() if sid == session.get("id")), None)
+    if case_id and session.get("goal_key") == "need_funding":
+        try:
+            from app.modules.readiness.service import service_for
+            row = await service_for(get_orchestrator()).store.get("subjects", str(case_id))
+            if row and str(row.get("business_id")) == str(session.get("business_id")):
+                case = row.get("data") or {}
+                result = first_value.with_case(result, case, has_forecast=bool(case.get("forecast_id")))
+        except Exception:      # noqa: BLE001 - shown from the answers alone
+            logger.info("case not read for the result of %s", session.get("id"), exc_info=True)
     plan = "explorer"
     try:
         plan = await get_orchestrator().rt.meter.plan(user["id"])
@@ -463,9 +475,26 @@ async def _business_for(user: dict, business_id: str) -> dict:
         return {}
 
 
-def _quick_questions(goal_key: str, data: dict, said: dict | None = None) -> list[dict]:
+# The funding case's fields, as the funding check's answers
+_CASE_ANSWER = {"amount": "target_amount", "use": "purpose", "stage": "stage", "route": "route_preference", "timing": "receipt_date",
+                "traction": "traction.summary", "where": "market.location"}
+
+
+def _case_answers(case: dict) -> dict:
+    out = {}
+    for key, path in _CASE_ANSWER.items():
+        v = case
+        for part in path.split("."):
+            v = v.get(part) if isinstance(v, dict) else None
+        if v not in (None, "", [], {}) and first_value._said(v):
+            out[key] = v
+    return out
+
+
+def _quick_questions(goal_key: str, data: dict, said: dict | None = None, from_case: dict | None = None) -> list[dict]:
     known = first_value.known_sources(goal_key, data)
-    said = said or {}
+    said = {**(from_case or {}), **(said or {})}
+    cased = set(from_case or {}) - set((said or {}).keys() - set(from_case or {}))
     questions = []
     fields = goals.questions_for(goal_key)
     if goal_key == "launch":
@@ -478,6 +507,8 @@ def _quick_questions(goal_key: str, data: dict, said: dict | None = None) -> lis
         if q["key"] in said:
             # QA P5-1: read from the owner's own words. Shown once under "From what you said", not asked again.
             q["default"], q["said"], q["said_text"] = said[q["key"]], True, goals._shown(q, said[q["key"]])
+            if q["key"] in cased:
+                q["source"] = "From your funding case"
         elif q["key"] in known:
             k = known[q["key"]]
             q["default"], q["prefilled"], q["source"] = k["value"], True, k["source"]
@@ -788,6 +819,7 @@ async def quick_check_premium(business_id: str, goal_key: str, body: QuickCheckI
         return {"started": False, "gate": quote["gate"], "quote": quote}
     run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data,
                                progress_key=body.progress_key)
+    _fill_case_later(user, business_id, goal_key, run, None)
     run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     await goals.track(get_store(), "premium_started", {"id": run["id"], "goal_key": goal_key, "events": []})
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"]}
@@ -889,14 +921,17 @@ async def session_premium(session_id: str, body: QuickCheckIn | None = None, use
     quote = await _premium_quote(user, goal, result, answers, data, only=only, fresh=fresh)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
+    case_id = (session.get("handoff") or {}).get("subject_id") or next((cid for cid, sid in (data.get("chat_sessions") or {}).items() if sid == session_id), None)
     run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data,
-                               progress_key=body.progress_key if body else None, only=only, fresh=fresh)
+                               progress_key=body.progress_key if body else None, only=only, fresh=fresh, case_id=case_id)
+    _fill_case_later(user, session["business_id"], goal, run, case_id)
     run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"], "business_id": session["business_id"]}
 
 
 class ResearchReview(BaseModel):
     decisions: dict[str, dict] = Field(default_factory=dict)      # {item id: {"decision": "accept"|"edit"|"reject", "value"?}}
+    case_id: str | None = Field(default=None, max_length=80)      # the case page it was adopted on: the case it goes to
 
 
 class CaseEditIn(BaseModel):
@@ -956,7 +991,11 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
         if not sid:
             return None
         try:
-            return goals.first_value_of(await _session(sid), data)
+            told = goals.first_value_of(await _session(sid), data)
+            # The case as it is now, as on its page (F-3): one count everywhere
+            row = await svc.store.get("subjects", str(case_id))
+            case = (row or {}).get("data") or {}
+            return first_value.with_case(told, case, has_forecast=bool(case.get("forecast_id"))) if told and row else told
         except Exception:      # noqa: BLE001 - the case's own summary stands
             return None
     for kind in (rr.FUNDING, rr.LAUNCH):
@@ -1164,9 +1203,14 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
         mine = {f for f, src in (version.get("inputs_from") or {}).items() if src == "your answer"}      # edited or answered in this review
         accepted = [x for x in out.get("items") or [] if x.get("decision") in ("accepted", "edited") and x.get("kind") == "researched"]
 
+        # Everything adopted reaches the case (F-1, 22 Oct): the figures, the drafts for its fields, the use-of-funds lines,
+        # the answers given, and the funding options saved, each into the case this research belongs to.
+        adopted_items = [x for x in out.get("items") or [] if x.get("decision") in ("accepted", "edited", "answered")]
+
         async def _check() -> dict | None:
             summary = await assessment_summary.feed(orch, user, business_id, goal, inputs, out.get("answers") or {}, f"review:{run_id}:{out.get('dataset_version')}",
-                                                    research=accepted, owner_set=mine)
+                                                    research=accepted, owner_set=mine, subject_id=body.case_id or out.get("case_id"),
+                                                    adopted=adopted_items, case_drafts=out.get("case_drafts") or {})
 
             def _keep(d: dict) -> None:
                 (research._runs(d).get(run_id) or {})["assessment"] = summary
@@ -1186,6 +1230,25 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
             logger.exception("research review %s: the case check failed", run_id)
     return {"research": {k: v for k, v in out.items() if k != "result"}, "result": out["result"], "assessment": out.get("assessment"),
             "checking": bool(out.get("checking"))}
+
+
+def _fill_case_later(user: dict, business_id: str, goal: str, run: dict, case_id: str | None) -> None:
+    """The finished research's drafts on the case: every empty field it drafted, the use-of-funds lines it worked out, and
+    the milestone links; then the case is checked again (its steps close, its score moves). In the background."""
+    from app.modules.agent import assessment_summary
+    if goal not in assessment_summary.KIND_OF_GOAL or not run or run.get("status") not in ("review", "adopted"):
+        return
+    drafted = [x for x in run.get("items") or [] if x.get("derive") == "use_of_funds" and isinstance(x.get("table"), list)]
+
+    async def go() -> None:
+        try:
+            await assessment_summary.feed(get_orchestrator(), user, business_id, goal, {}, run.get("answers") or {}, f"research-fill:{run['id']}",
+                                          subject_id=case_id or run.get("case_id"), adopted=drafted, case_drafts=run.get("case_drafts") or {})
+        except Exception:      # noqa: BLE001 - the drafts stay on the run, to adopt from the page
+            logger.info("research %s not put on the case", run.get("id"), exc_info=True)
+    task = asyncio.ensure_future(go())
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
 
 
 REVIEW_CHECK_SECONDS = 2.5      # then "Saved. Checking your score…", and the page fetches it (the owner's QA: under 5 s)
@@ -1372,8 +1435,15 @@ async def quick_check_questions(business_id: str, goal_key: str, said: str | Non
     read = _read_said(said, goal_key, {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)}) if said and said.strip() else {}
     # QA R8-8: the latest result for this check (and offering), shown on return instead of asking the questions again.
     last = (data.get("quick_check_answers") or {}).get(goal_key) or {}
+    # The conversation as usual, from the current data (the owner's QA, 22 Oct: "it's not using the current data like when
+    # coming from the landing page"): what the funding case already holds is shown once, "From your funding case", and
+    # not asked; only what is missing is asked. What the owner says now wins over the case.
+    from_case = {}
+    if goal_key == "need_funding":
+        case = await _case_of(user, business_id)
+        from_case = {k: v for k, v in _case_answers((case or {}).get("data") or {}).items() if k not in read}
     return {"goal_key": goal_key, "headline": first_value.HEADLINE[kind], "value": goals.value_of(goal_key),
-            "questions": _quick_questions(goal_key, data, read),
+            "questions": _quick_questions(goal_key, data, read, from_case),
             "last": ({"result": last["result"], "answers": last.get("answers") or {}, "at": last.get("at")} if last.get("result") and not said else None)}
 
 

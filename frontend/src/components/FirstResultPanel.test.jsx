@@ -28,7 +28,7 @@ describe("F-1 one result, one set of numbers", () => {
     const panel = document.querySelector("[data-first-result-panel]");
     // One score (the latest check) and one coverage figure; no "Earlier", band or second bar (the owner's brief, 17 Oct).
     expect(panel.querySelector("[data-fv-score]").textContent).toBe("55/100");
-    expect(panel.querySelector("[data-fv-coverage]").textContent).toBe("I know 70% of what funders ask for");
+    expect(panel.querySelector("[data-fv-coverage]")).toBeNull();      // coverage only under Advanced (22 Oct)
     expect(panel.querySelector("[data-result-gaps]")).toBeNull();
     expect(panel.querySelector("[data-result-band]")).toBeNull();
     const labels = [...panel.querySelectorAll("[data-result-actions] button")].map((b) => b.textContent);

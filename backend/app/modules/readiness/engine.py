@@ -207,13 +207,21 @@ def score_criterion(checks: list[dict]) -> tuple[str, int | None]:
     return ("met", 100) if passed == 2 else ("partially_met", 50) if passed == 1 else ("unmet", 0)
 
 
-def display_score(score: float | Decimal | None) -> int | float | None:
-    """The score as shown: a whole number, or one decimal place when it isn't whole. Scores
-    move in halves, so this is exact, and 59.5 can never appear as "60" beside "Not ready"."""
+# The thresholds a shown score must never seem to cross: 59.5 is shown as 59, never "60" beside "Not ready" (and 74.5 as
+# 74 beside "Preparation gaps remain"). Classification always compares the unrounded score.
+_NEVER_ROUNDED_UP_TO = (60, 75, 80)
+
+
+def display_score(score: float | Decimal | None) -> int | None:
+    """The score as shown: a whole number (22 Oct 2026: 47.5 is 48), rounded half up, except where rounding up would
+    reach a threshold the unrounded score is below."""
     if score is None:
         return None
-    d = Decimal(str(score)).quantize(Decimal("0.1"), rounding="ROUND_HALF_UP")
-    return int(d) if d == d.to_integral_value() else float(d)
+    exact = Decimal(str(score))
+    shown = int(exact.quantize(Decimal("1"), rounding="ROUND_HALF_UP"))
+    if shown in _NEVER_ROUNDED_UP_TO and exact < shown:
+        shown -= 1
+    return shown
 
 
 def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:

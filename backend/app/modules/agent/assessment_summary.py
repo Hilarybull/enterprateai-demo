@@ -83,8 +83,55 @@ DEMAND_TOPICS = ("demand", "competitors", "market", "channels")
 DEMAND_CHECK = {"launch": "C1.A", "funding": "C4.A"}
 
 
+# The answers a review asks for, and the case field each fills (F-1, 22 Oct)
+ANSWER_PATH = {"team": "team.responsibilities", "customers": "market.target_segment", "traction": "traction.summary", "use": "purpose",
+               "where": "market.location", "customer": "market.target_segment"}
+
+
+def adopted_fields(adopted: list[dict], case_drafts: dict, today: str) -> dict:
+    """What an adopt puts on the case, by path: the use-of-funds lines, the answers given, the Agent's drafts for the case's
+    fields. Only values; where each goes empty or different is decided by the caller."""
+    out: dict = {}
+    for x in adopted or []:
+        value = x.get("edited_value") if x.get("decision") == "edited" else (x.get("answer") if x.get("decision") == "answered" else x.get("value"))
+        if x.get("derive") == "use_of_funds" and isinstance(x.get("table"), list) and x.get("decision") != "edited":
+            rows = []
+            for n, line in enumerate(x["table"]):
+                name = str(line.get("line") or "")
+                cat = "Reserve" if name.lower().startswith("reserve") else "Operations" if name.lower().startswith("working capital") else "Other"
+                rows.append({"id": f"uof{n + 1}", "category": cat, "amount": str(line.get("amount")), "purpose": name,
+                             **({"rationale": name} if cat == "Reserve" else {})})
+            if rows:
+                out["use_of_funds"] = rows
+        elif x.get("kind") == "question" or x.get("decision") == "answered":
+            path = ANSWER_PATH.get(str(x.get("field") or ""))
+            text = str(value or "").strip()
+            if path and text:
+                out[path] = [{"id": "r1", "area": "Delivery and winning customers", "owner": text}] if path == "team.responsibilities" else text
+    import uuid as _uuid
+    for path, value in (case_drafts or {}).items():
+        if isinstance(value, list):      # list rows with their own ids, so each can be picked and pointed at
+            value = [{**v, "id": v.get("id") or _uuid.uuid4().hex[:12]} if isinstance(v, dict) else v for v in value]
+        out.setdefault(path, value)
+    return out
+
+
+def saved_options(adopted: list[dict], today: str) -> list[dict]:
+    """The funding options the owner saved to the case (F-2, 22 Oct), each with its source."""
+    out = []
+    for x in adopted or []:
+        if not str(x.get("topic") or "").startswith("route_") or x.get("decision") != "accepted":
+            continue
+        src = (x.get("sources") or [{}])[0] or {}
+        out.append({"id": x.get("id"), "route": str(x["topic"]).replace("route_", ""), "title": x.get("label") or src.get("title"),
+                    "text": str(x.get("value") or "")[:600], "source": {"url": src.get("url"), "publisher": src.get("publisher") or src.get("site"),
+                                                                        "date": src.get("date")}, "saved_at": today})
+    return out
+
+
 async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str, float], said: dict, reference: str,
-               research: list[dict] | None = None, owner_set: set[str] | None = None) -> dict | None:
+               research: list[dict] | None = None, owner_set: set[str] | None = None, subject_id: str | None = None,
+               adopted: list[dict] | None = None, case_drafts: dict | None = None) -> dict | None:
     """Accepted figures into the one launch initiative or funding case (made if there is none), into its empty fields
     only, then the case is assessed again. Returns that assessment's summary. A field the case already holds is left as it
     is (the case's own assumption): it is listed, never overwritten."""
@@ -101,6 +148,8 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
     try:
         listed = await svc.list_subjects(user["id"], business_id, subject_type, email, include_archived=True)
         live = [x for x in listed.get("items") or [] if x.get("status") not in ("cancelled", "archived")]
+        # The case this research belongs to, never simply the first one (F-1, 22 Oct)
+        live.sort(key=lambda x: 0 if subject_id and str(x.get("id")) == str(subject_id) else 1)
         if not live and kind == "funding":
             # The business's one funding case, archived: reactivated and updated, never a second one beside it.
             archived = [x for x in listed.get("items") or [] if x.get("status") == "archived"]
@@ -126,6 +175,30 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 elif _differs(held, figures[f]):
                     # R2: the case's own figure is never overwritten: the difference is shown, with a way to use the review's.
                     differences.append({"field": f, "label": FIELD_WORD.get(f, f), "case_value": held, "review_value": figures[f]})
+            # The drafts, lines and answers adopted: into the case's empty fields, each marked where it came from; a field
+            # the case already holds is listed as a difference, never overwritten.
+            said_from: dict = {}
+            from app.modules.agent import first_value as _fv
+            for path, value in adopted_fields(adopted or [], case_drafts or {}, today).items():
+                held = _get(data, path)
+                if held in (None, "", [], {}) or (isinstance(held, str) and not _fv._said(held)):
+                    _put(changes, path, value)
+                    said_from[path] = "Adopted from the Agent's research"
+                elif str(held).strip() != str(value).strip() and not isinstance(value, list):
+                    differences.append({"field": path, "label": path.split(".")[-1].replace("_", " "), "case_value": held, "review_value": value})
+            first = next((m.get("id") for m in (changes.get("milestones") or data.get("milestones") or []) if isinstance(m, dict) and m.get("id")), None)
+            if first and not data.get("purpose_milestone_id"):
+                changes["purpose_milestone_id"] = first
+                said_from["purpose_milestone_id"] = "Adopted from the Agent's research"
+            if first and not _get(data, "market.acquisition_milestone_id"):
+                _put(changes, "market.acquisition_milestone_id", first)
+                said_from["market.acquisition_milestone_id"] = "Adopted from the Agent's research"
+            options = saved_options(adopted or [], today)
+            if options:
+                have = {str(o.get("id")) for o in data.get("funding_options") or [] if isinstance(o, dict)}
+                fresh_options = [o for o in options if str(o["id"]) not in have]
+                if fresh_options:
+                    changes["funding_options"] = [*(data.get("funding_options") or []), *fresh_options]
             if changes.get("economics"):
                 changes["economics"]["confirmed_at"] = today      # the owner accepted them now
             if kind == "launch" and said.get("customer") and not _get(data, "customers.target_segment"):
@@ -134,7 +207,8 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 _put(changes, "customers.problem", str(said["problem"]))
             if changes:
                 merged = {k: {**(data.get(k) or {}), **v} if isinstance(v, dict) else v for k, v in changes.items()}
-                await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email)
+                await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email,
+                                         provenance=said_from or None)
             subject_id = live[0]["id"]
             # The case's forecast follows what was adopted (the owner's QA, 21 Oct: an edited ₦1,200,000 a month left every
             # month at ₦331,425): its months rewritten from the adopted figures, the owner's own edits first.

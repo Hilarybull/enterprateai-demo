@@ -13,7 +13,7 @@ import ResearchSummary from "./ResearchSummary";
 //   A question:  only what nothing else could answer ("Only you know"), or what the research couldn't find.
 // Nothing counts until it is adopted. Then the check runs again, criterion by criterion, with its sources.
 
-const CONFIDENCE = (c) => (c >= 0.7 ? "High" : c >= 0.4 ? "Medium" : "Low");
+import { itemConfidence } from "../lib/itemConfidence";
 const STATE_WORD = { met: "Met", partially_met: "Partly met", unmet: "Not met", unknown: "Need from you" };
 const money = (v) => { const n = Number(String(v ?? 0).replace(/,/g, "")) || 0; return Math.abs(n) >= 100 ? Math.round(n).toLocaleString("en-GB") : n.toLocaleString("en-GB", { maximumFractionDigits: 2 }); };
 // Every figure with its unit: money with its currency, a count with what it counts ("37,000 sales a month").
@@ -514,7 +514,8 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[12px] font-semibold text-slate-500">{i.label}</span>
                 <span data-research-state className={`rounded px-1.5 text-[11px] font-semibold ${tone}`}>{word}</span>
-                {(i.kind === "researched" || i.basis === "benchmark") && <span className="text-[11px] text-slate-500" data-research-confidence>Confidence: {CONFIDENCE(i.confidence)}</span>}
+                {(i.kind === "researched" || i.kind === "estimated" || i.basis === "benchmark") && itemConfidence(i) && (
+                  <span className="text-[11px] text-slate-500" data-research-confidence title={itemConfidence(i).reason}>Confidence: {itemConfidence(i).label}</span>)}
               </div>
               {i.kind === "question" ? (
                 <div className="mt-1.5" data-question>

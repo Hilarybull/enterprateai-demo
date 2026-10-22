@@ -306,7 +306,8 @@ async def publish_workspace(*, user: dict, workspace_id: str | None = None) -> d
         "updated_at": now,
     }
     merged = dict(data)
-    merged["workspace_profile"] = profile
+    # The workspace profile is kept exactly as the owner left it (the owner's QA, 21 Oct: "other", "startup" and "… is
+    # building its business with EnterprateAI" appeared on it): the defaults above are only the listing's.
     merged["marketplace"] = marketplace_data
     updated = await sb_update(
         "workspaces",

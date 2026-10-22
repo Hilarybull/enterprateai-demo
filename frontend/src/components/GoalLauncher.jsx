@@ -367,6 +367,24 @@ export default function GoalLauncher({ className = "" }) {
   return <GoalLauncherView className={className} flow={flow}>{flow.session && <GoalTaskCard key={flow.session.id} flow={flow} placement="inline" />}</GoalLauncherView>;
 }
 
+/** The landing page's own conversation, started from what was typed in the Agent card or bar (the owner's QA, 22 Oct:
+ *  "no chatting, just this?"): the same questions, the same current data, the same recap and result, never a form. */
+export function AgentGoalChat({ text }) {
+  const flow = useGoalFlow();
+  // A new chat for each message sent, from what was just said: never an earlier chat picked up from the browser (the
+  // owner's QA, 22 Oct: "this is not what I just gave it": the same words again showed the earlier chat's £25k).
+  const [mine, setMine] = useState(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!text || started.current) return;
+    started.current = true;
+    flow.startOver();
+    flow.begin({ text, entry_mode: "free_text" }).then((ok) => { if (ok) setMine(true); });
+  }, []);      // eslint-disable-line react-hooks/exhaustive-deps
+  if (!mine || !flow.session) return <p role="status" className="text-[13px] text-slate-500" data-agent-goal-chat-starting>{flow.problem || "One moment…"}</p>;
+  return <div data-agent-goal-chat><GoalTaskCard key={flow.session.id} flow={flow} placement="inline" compact /></div>;
+}
+
 // What the placeholder types out, one after another, while the field is empty and untouched.
 export const EXAMPLES = ["Create an invoice for Mark, $300", "Find grants for my bakery", "Draft a quote for 20 chairs", "Help me price my product"];
 const STATIC_EXAMPLE = "For example: create an invoice for ABC Consulting, or I need more customers";
@@ -446,8 +464,13 @@ export function stepsDone(flow) {
 }
 
 /** The Agent's launcher: who it is, the field to say what you want, and the suggestions. The page holds the flow (the homepage puts the task card in its other column). */
+/** Where a signed-in owner's message goes: the dashboard's Agent card, the one pathway (the owner's choice, 22 Oct). */
+export const agentCardPath = (text) => `/dashboard?ask=${encodeURIComponent(String(text || "").slice(0, 500))}`;
+
 export function GoalLauncherView({ className = "", flow, children = null, onWatch = null, onTouch = null }) {
   const { offer, busy, begin } = flow;
+  const toCard = useNavigate();
+  const signedIn = Boolean(flow.here) && Boolean(chatWorkspace().business_id);
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [shake, setShake] = useState(false);
@@ -490,6 +513,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     setStarting(true);
     // Exactly as typed: the placeholder's typewriter never reaches the value, and its caret is never sent.
     const goal = text.replace(/\|$/, "").trim();
+    if (signedIn) { setStarting(false); setText(""); toCard(agentCardPath(goal)); return; }
     try { if (await begin({ text: goal, entry_mode: "free_text" })) setText(""); } finally { setStarting(false); }
   }
 
@@ -502,6 +526,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     pressed.current = null;
     if (busy || picking) return;
     setStopped(true);
+    if (signedIn) { toCard(agentCardPath(chip.label || chip.key)); return; }
     setPicking(chip.key);
     try { await begin({ key: chip.key, entry_mode: mode }); } finally { setPicking(null); }
   }
@@ -648,7 +673,7 @@ function Field({ f, value, onChange, at = "card" }) {
  *   "below" (the homepage, 768 to 1023px only): directly under the launcher card, full width; the page scrolls to it.
  *   "inline": in the flow of the page, under the launcher, at every width.
  */
-export function GoalTaskCard({ flow, placement = "column" }) {
+export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const { session, busy, answer, startOver, carryOn, here, closed, setClosed } = flow;
   // Never "Working…" for more than 10 seconds without saying so.
   const [slow, setSlow] = useState(false);
@@ -820,7 +845,8 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const said = (session?.summary || []).filter((r) => (recapStep ? true : r.proposed || r.from_message));
   // The whole conversation stays on screen (the owner's brief, 20 Oct): asked, answered, recapped, never replaced.
   const keepThread = ["questions", "identity", "prepare", "currency"].includes(step);
-  const shownTurns = step === "questions" ? past : said_turns;
+  const allTurns = step === "questions" ? past : said_turns;
+  const shownTurns = compact && allTurns?.[0]?.role === "user" ? allTurns.slice(1) : allTurns;
   const chosen = session?.goal_label && step !== "none" && step !== "clarify" ? session.goal_label : res?.original_goal;
   const open = (k) => setEditing((s) => new Set(s).add(k));
 
@@ -943,7 +969,9 @@ export function GoalTaskCard({ flow, placement = "column" }) {
   const resend = () => { setError(""); sendCode(undefined).then((problem) => { setError(problem); setNote(problem ? "" : "A new code is on its way. The last one no longer works."); }); };
 
   const boxed = "rounded-2xl border-2 border-brand-500 bg-white shadow-xl shadow-brand-900/10 ring-4 ring-brand-500/10";
-  const shell = placement === "inline" ? `relative mt-4 flex max-h-[80vh] flex-col ${boxed}`
+  // Compact (in the Agent card): at most this height (the owner's QA, 22 Oct: "this height is okay, with scrollbar"), only
+  // as tall as what it holds below that; more than fits scrolls inside, with its scrollbar, never growing the card
+  const shell = placement === "inline" ? `relative ${compact ? "mt-0 flex max-h-[200px]" : "mt-4 flex max-h-[80vh]"} flex-col ${boxed}`
     : placement === "below" ? `relative mt-4 hidden max-h-[80vh] scroll-mt-20 flex-col md:flex lg:hidden ${boxed}`
     // Under 768px: a full-screen sheet. From 1024px: the right-hand column, where the product preview was, never taller than the hero.
     : `${closed ? "max-md:hidden" : "max-md:flex"} flex-col bg-white max-md:fixed max-md:inset-0 max-md:z-[70] max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out] md:hidden `
@@ -952,6 +980,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
 
   const sheet = (
     <section ref={card} aria-label="Your task" data-task-card data-placement={placement} className={`text-left ${shell}`}>
+      {!compact && (
       <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-base font-bold text-slate-900" data-chosen title={chosen}>{chosen}</p>
@@ -970,6 +999,7 @@ export function GoalTaskCard({ flow, placement = "column" }) {
           )}
         </div>
       </header>
+      )}
 
       {placement === "column" && step !== "none" && (
         <ol aria-label="What the Agent is doing" data-task-steps className="hidden shrink-0 items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2 lg:flex lg:flex-wrap">
@@ -986,10 +1016,12 @@ export function GoalTaskCard({ flow, placement = "column" }) {
         </ol>
       )}
       <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
-        <div ref={body} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3" data-task-body>
-          <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
-            <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{session.value_line || res.message}</p>
-          </div>
+        <div ref={body} className={`min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 ${compact ? "[scrollbar-gutter:stable]" : ""}`} data-task-body>
+          {!compact && (
+            <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+              <p className="min-w-0 flex-1 text-[13px] font-medium text-slate-800" data-says>{session.value_line || res.message}</p>
+            </div>
+          )}
           {res.recommended_path?.length > 1 && (
             <p data-path className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-900">
               Your result comes straight after the questions, and starting is free.

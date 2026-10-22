@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { itemConfidence } from "../lib/itemConfidence";
 import { apiRequest } from "../api/client";
 import { refusalMessage } from "../lib/entitlement";
 import { getCurrencySymbol } from "../lib/currencies";
@@ -106,7 +107,7 @@ const openLine = (fits) => fits?.confirmed ? `Last confirmed open: ${dayOf(fits.
 const btn = "rounded-lg px-3 py-1.5 text-[13px] font-semibold max-sm:w-full";
 const pressed = (on) => (on ? "bg-brand-600 text-white" : "border border-slate-300 bg-white text-slate-700 hover:border-brand-300");
 
-export default function ResearchSummary({ businessId, run, score = null, onAdopted = null, onSeeAll = null }) {
+export default function ResearchSummary({ businessId, run, score = null, onAdopted = null, onSeeAll = null, caseId = null }) {
   const currency = run?.context?.currency || run?.inputs?.currency || "GBP";
   const items = useMemo(() => (run?.items || []).map((i) => ({ ...i, kind: i.kind || i.state })), [run]);
   const [decisions, setDecisions] = useState({});
@@ -123,10 +124,16 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
     .filter(Boolean).slice(0, 3).map((i) => ({ ...i, ...(calc[i.id] || {}) }));
   const routes = run?.deliverables?.routes || [];
   // One scheme per card (the owner's QA, 21 Oct): from the server's options, else one per finding.
-  const options = (run?.deliverables?.options || []).length
+  const allOptions = (run?.deliverables?.options || []).length
     ? run.deliverables.options.slice(0, 3).map((o) => ({ ...o, label: o.title, value: o.text, sources: [o.source] }))
     : items.filter((i) => i.kind === "researched" && /^route_/.test(String(i.topic || "")) && i.value)
       .slice(0, 3).map((i) => ({ ...i, item_id: i.id, fits: (routes.find((r) => r.local === i.value) || {}).fits }));
+  // On a case page, an option already saved or dismissed is not offered again (the owner's QA, 22 Oct)
+  const decidedOn = (o) => ["accepted", "rejected", "edited"].includes(items.find((x) => x.id === (o.item_id || o.id))?.decision);
+  const options = caseId ? allOptions.filter((o) => !decidedOn(o) || picked[o.id]) : allOptions;
+  // Everything found with a source, once each (options already decided included)
+  const found = caseId ? items.filter((i) => (i.kind === "researched" || i.kind === "estimated") && i.value && (i.sources || []).length
+    && !(options.some((o) => (o.item_id || o.id) === i.id))) : [];
 
   const questions = items.filter((i) => i.kind === "question");
   // The figures answered here update the drafts at once (free, nothing saved).
@@ -169,14 +176,16 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
 
   return (
     <section className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm dark:border-indigo-900 dark:bg-slate-900" aria-label="What I did for you" data-research-summary>
-      <p className="text-[17px] font-semibold text-slate-900 dark:text-slate-100" data-summary-head>
-        {run.updated_free && !(run.charged_now > 0)
+      {!(caseId && !found.length && !options.length) && <p className="text-[17px] font-semibold text-slate-900 dark:text-slate-100" data-summary-head>
+        {caseId && found.length
+          ? `What I found for your ${what}`
+          : run.updated_free && !(run.charged_now > 0)
           ? `Updated your drafts · free. ${counted} for your ${what}.`
-          : findings ? `${counted.charAt(0).toUpperCase()}${counted.slice(1)} for your ${what}.` : `Nothing new found for your ${what}, so nothing was charged.`}</p>
+          : findings ? `${counted.charAt(0).toUpperCase()}${counted.slice(1)} for your ${what}.` : `Nothing new found for your ${what}, so nothing was charged.`}</p>}
       {score && <p className="mt-2 text-[13px] text-slate-600 dark:text-slate-300" data-summary-score>Your score now <span className="ml-1 align-middle text-[24px] font-bold tabular-nums text-slate-900 dark:text-slate-100">{score}</span></p>}
-      {run.drafts?.adopted > 0 && run.drafts.open > 0 && <p className="mt-0.5 text-[12.5px] text-slate-600" data-summary-adopted>You adopted {run.drafts.adopted} of {run.drafts.total} drafts.</p>}
+      {!caseId && run.drafts?.adopted > 0 && run.drafts.open > 0 && <p className="mt-0.5 text-[12.5px] text-slate-600" data-summary-adopted>You adopted {run.drafts.adopted} of {run.drafts.total} drafts.</p>}
 
-      {(typeof run.drafts?.open === "number" ? run.drafts.open > 0 : drafts.length > 0) && (
+      {!caseId && (typeof run.drafts?.open === "number" ? run.drafts.open > 0 : drafts.length > 0) && (
         // The drafts are in the step cards below, each with Adopt (the owner's QA, 21 Oct): said here in one line.
         <p className="mt-3 text-[13px] text-slate-700 dark:text-slate-200" data-summary-drafts>
           {(() => {
@@ -186,12 +195,49 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
             return `${open === 1 ? "1 draft is" : `${open} drafts are`} ready in your steps below${names}.`;
           })()}</p>
       )}
+      {caseId && found.length > 0 && (<>
+        {/* What the research found, each with what became of it (the owner's QA, 22 Oct: "show what was found") */}
+        {found.some((f) => !f.decision) && (
+          <p className="mt-1 text-[12.5px] text-slate-600 dark:text-slate-300" data-found-extra>These are extra: your score doesn't depend on them. Save any that help your case.</p>
+        )}
+        <ul className="mt-3 divide-y divide-slate-100 text-[13px] dark:divide-slate-800" data-summary-found>
+          {found.map((f) => {
+            const c = itemConfidence(f);
+            const said = f.decision === "accepted" || f.decision === "edited" ? "Saved to your case" : f.decision === "rejected" ? "Not relevant" : "Not decided yet";
+            const src = (f.sources || [])[0] || {};
+            return (
+              <li key={f.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">{f.label}</span>
+                  <span className="block text-[12.5px] text-slate-600 dark:text-slate-300">{firstSentence(f.value, 240)}</span>
+                  <span className="block text-[11.5px] text-slate-500">{[c && `Confidence: ${c.label}`, src.publisher || src.site, src.date && `Dated ${dayOf(src.date)}`].filter(Boolean).join(" · ")}
+                    {src.url && <> · <a href={src.url} target="_blank" rel="noopener noreferrer nofollow" className="font-semibold text-brand-700 hover:underline">Open the page</a></>}</span>
+                </span>
+                {said === "Not decided yet" && !applier.decided[f.id] ? (
+                  <span className="flex shrink-0 gap-2">
+                    <button type="button" disabled={applier.state.busy} onClick={() => applier.apply(f.id, { decision: "accept", pressed: true })} className={`${btn} ${pressed(false)}`} data-found-save>Save to my case</button>
+                    <button type="button" disabled={applier.state.busy} onClick={() => applier.apply(f.id, { decision: "reject" })} className={`${btn} border border-slate-300 bg-white text-slate-700`} data-found-reject>Not relevant</button>
+                  </span>
+                ) : (
+                  <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${said === "Not relevant" || applier.decided[f.id]?.decision === "reject" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-800"}`}>
+                    {applier.decided[f.id] ? (applier.decided[f.id].decision === "reject" ? "Not relevant" : "Saved to your case") : said}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </>)}
       {options.length > 0 && (
         <div className="mt-5" data-summary-options>
           <h3 className="text-[14px] font-semibold text-slate-900 dark:text-slate-100">{String(run.answers?.route || "").toLowerCase() === "grant" ? "Grants" : "Loans and grants"} that may fit you</h3>
           <ul className="mt-2 grid gap-3 md:grid-cols-3">
             {options.map((i) => {
-              const d = picked[i.id];
+              // As the server has it (F-2, 22 Oct): saved after a reload too; "Saving…" until it is confirmed.
+              const held = items.find((x) => x.id === (i.item_id || i.id))?.decision;
+              const serverSaid = held === "accepted" ? "accept" : held === "rejected" ? "reject" : null;
+              const failedHere = applier.state.failedId === (i.item_id || i.id) && applier.state.error;
+              const d = serverSaid || picked[i.id] || null;
+              const saving = picked[i.id] && picked[i.id] !== serverSaid && applier.state.busy;
               const src = (i.sources || [])[0] || {};
               return (
                 <li key={i.id} className="flex min-w-0 flex-col gap-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/60" data-summary-option>
@@ -202,11 +248,21 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
                   <p className="text-[12.5px] text-slate-600 dark:text-slate-300" data-option-text>{firstSentence(i.value, 10000)}</p>
                   {i.fits?.why && i.fits.fit !== "Different route" && <p className="text-[11.5px] text-slate-500">{i.fits.why}</p>}
                   <p className="text-[11.5px] text-slate-500" data-option-confirmed>{openLine(i.fits)}</p>
+                  {(() => {
+                    // Its own confidence, with the reason (22 Oct): never a level for the whole check here
+                    const c = itemConfidence({ ...(items.find((x) => x.id === (i.item_id || i.id)) || {}), sources: i.sources });
+                    return c ? <p className="text-[11.5px] text-slate-600" data-option-confidence title={c.reason}>Researched · Confidence: {c.label} <span className="text-slate-400">({c.reason})</span></p> : null;
+                  })()}
                   <div className="mt-auto flex flex-wrap items-center gap-2">
-                    <button type="button" aria-pressed={d === "accept"} onClick={() => { setPicked((m) => ({ ...m, [i.id]: "accept" })); applier.apply(i.item_id || i.id, { decision: "accept", pressed: true }); }} className={`${btn} ${pressed(d === "accept")}`}>{d === "accept" ? "Saved to my case" : "Save to my case"}</button>
-                    <button type="button" aria-pressed={d === "reject"} onClick={() => { setPicked((m) => ({ ...m, [i.id]: "reject" })); applier.apply(i.item_id || i.id, { decision: "reject" }); }} className={`${btn} ${d === "reject" ? "bg-slate-200 text-slate-700" : "border border-slate-300 bg-white text-slate-700"}`}>Not relevant</button>
+                    <button type="button" aria-pressed={d === "accept"} onClick={() => { setPicked((m) => ({ ...m, [i.id]: "accept" })); applier.apply(i.item_id || i.id, { decision: "accept", pressed: true }); }} className={`${btn} ${pressed(serverSaid === "accept")}`} data-option-save>{saving && picked[i.id] === "accept" ? "Saving…" : serverSaid === "accept" ? "Saved to my case" : "Save to my case"}</button>
+                    <button type="button" aria-pressed={d === "reject"} onClick={() => { setPicked((m) => ({ ...m, [i.id]: "reject" })); applier.apply(i.item_id || i.id, { decision: "reject" }); }} className={`${btn} ${serverSaid === "reject" ? "bg-slate-200 text-slate-700" : "border border-slate-300 bg-white text-slate-700"}`}>Not relevant</button>
                     <button type="button" onClick={() => setOpen((o) => ({ ...o, [i.id]: !o[i.id] }))} aria-expanded={Boolean(open[i.id])} className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">{open[i.id] ? "Hide source" : "See source"}</button>
                   </div>
+                  {failedHere && (
+                    <p role="alert" className="text-[12px] text-rose-700" data-option-error>{failedHere}{" "}
+                      <button type="button" onClick={() => applier.apply(i.item_id || i.id, { decision: picked[i.id] === "reject" ? "reject" : "accept", pressed: true })}
+                        className="font-semibold underline" data-option-retry>Try again</button></p>
+                  )}
                   {open[i.id] && (
                     <div className="text-[12px] text-slate-600" data-option-source>
                       {src.quote && <q className="block whitespace-normal italic">{src.quote}</q>}

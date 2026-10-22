@@ -41,9 +41,16 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
         profile_out = parsed.model_dump()
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning(
-            "Workspace profile validation failed for workspace %s: %s", ws.id, exc
-        )
+        # A profile not finished yet is normal on a read: said quietly, by field name only (never the values, which hold
+        # the owner's email and details). A value that is there but wrong is a warning.
+        errors = exc.errors() if hasattr(exc, "errors") else []
+        fields = [".".join(str(x) for x in e.get("loc") or ()) for e in errors]
+        wrong = [f for f, e in zip(fields, errors) if e.get("type") != "missing"]
+        log = logging.getLogger(__name__)
+        if wrong:
+            log.warning("Workspace profile for %s has invalid fields: %s", ws.id, ", ".join(wrong))
+        else:
+            log.debug("Workspace profile for %s is not finished yet: %s", ws.id, ", ".join(fields) or type(exc).__name__)
         # Return raw data so the user can still view and fix their profile — never 422 on a read
         profile_out = normalized
     return {"workspace_id": str(ws.id), "profile": profile_out, "updated_at": ws.updated_at}
@@ -106,6 +113,17 @@ async def _sync_catalogue(workspace_id: str) -> None:
         logging.getLogger(__name__).info("catalogue not synced from the profile for %s", workspace_id, exc_info=True)
 
 
+def _with_unlisted(existing: dict | None, saved: dict) -> dict:
+    """The saved profile with everything the form doesn't hold kept as it was: fields set by the Agent or other modules
+    (their sources, the currency, the time zone) and a service's own extra details. A save never deletes them."""
+    out = {**{k: v for k, v in (existing or {}).items() if k not in saved}, **saved}
+    before = {str(s.get("service_name") or "").strip().lower(): s for s in (existing or {}).get("services") or [] if isinstance(s, dict)}
+    if isinstance(out.get("services"), list):
+        out["services"] = [{**{k: v for k, v in (before.get(str(s.get("service_name") or "").strip().lower()) or {}).items() if k not in s}, **s}
+                           if isinstance(s, dict) else s for s in out["services"]]
+    return out
+
+
 async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile, seen: dict | None = None):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
@@ -119,6 +137,10 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
         for k, v in incoming.items():
             if seen is not None and k in seen and seen.get(k) == v and base.get(k) != v:
                 continue      # untouched in a form opened earlier: the newer saved value stays
+            if seen is None and base.get(k) not in (None, "", [], {}):
+                # A save from another page (Idea Validation's own form) fills what is empty, never what is already there
+                # (the owner's QA, 21 Oct: "you are overwriting fields that have values in the workspace profile").
+                continue
             # Only overwrite with incoming value when it's non-empty; keep existing otherwise
             if isinstance(v, list):
                 if v:
@@ -129,11 +151,12 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
             merged_profile = WorkspaceProfile.model_validate(base)
         except Exception as e:
             raise HTTPException(status_code=422, detail=str(e))
+        kept = _with_unlisted(existing, merged_profile.model_dump())
         await update_workspace(
             user_id=user_id,
             workspace_id=str(ws.id),
             data_patch={
-                "workspace_profile": merged_profile.model_dump(),
+                "workspace_profile": kept,
                 "workspace_profile_updated_at": now,
                 "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump()),
                 **_rename_log(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump(), user_id),
@@ -174,7 +197,7 @@ async def patch_profile(*, user_id: str, workspace_id: str | None, profile_patch
         user_id=user_id,
         workspace_id=str(ws.id),
         data_patch={
-            "workspace_profile": validated.model_dump(),
+            "workspace_profile": _with_unlisted(existing, validated.model_dump()),
             "workspace_profile_updated_at": datetime.now(timezone.utc).isoformat(),
             "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, validated.model_dump()),
         },
