@@ -5,7 +5,8 @@ import { relatedReady, relatedServices } from "./related";
 it("shows the related services only for a current, ready case with nothing blocking", () => {
   expect(relatedReady({ classification: "conditionally_ready", score: 74 })).toBe(false);
   expect(relatedReady({ classification: "ready", score: 75, freshness: "current", blockers: [] })).toBe(true);
-  expect(relatedReady({ classification: "ready", score: 75, blockers: [{ code: "G2" }] })).toBe(false);
+  expect(relatedReady({ classification: "not_ready", score: 93, blockers: [{ code: "G2" }] })).toBe(true);      // 93: always shown
+  expect(relatedReady({ classification: "insufficient_evidence", score: null }, 75, 93)).toBe(true);
   expect(relatedReady({ classification: "insufficient_evidence", score: null, known_score: 95 })).toBe(true);
   expect(relatedReady({ classification: "insufficient_evidence", score: null })).toBe(false);
 });

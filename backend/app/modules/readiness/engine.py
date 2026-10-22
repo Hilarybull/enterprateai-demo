@@ -976,7 +976,11 @@ def section_progress(profile: dict, subject: dict, forecast: dict | None) -> lis
     out = []
     for section in profile["sections"]:
         fields = [f for f in section["fields"] if not f.get("when") or all(subject.get(k) == v for k, v in f["when"].items())]
-        answered = sum(1 for f in fields if not blank(get(subject, f["key"])) or (f["type"] == "boolean" and get(subject, f["key"]) is False))
+        # "List them, or confirm there are none" (team gaps, risks, prerequisites): a list with items answers its "none" box
+        # too (the owner's QA, 22 Oct: "Team 2 of 3" beside a check that passed)
+        listed = any(f["type"] == "list" and not blank(get(subject, f["key"])) for f in fields)
+        answered = sum(1 for f in fields if not blank(get(subject, f["key"])) or (f["type"] == "boolean" and get(subject, f["key"]) is False)
+                       or (f["type"] == "boolean" and str(f["key"]).split(".")[-1].startswith("no_") and listed))
         total = len(fields)
         if section.get("forecast"):
             total += 1

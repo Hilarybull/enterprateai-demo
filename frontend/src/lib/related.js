@@ -3,14 +3,12 @@
 // Each opens its tool with this business and case already loaded; something done shows as "Done · View"; a premium
 // service the plan doesn't include shows an upgrade instead of a broken link.
 
-export function relatedReady(summary, readyAt = 75) {
-  if (!summary) return false;
-  if ((summary.blockers || []).length || summary.blocker_count) return false;      // a failed gate: its fix first
-  if (summary.classification === "ready") return true;
-  // The score shown at the ready threshold or above, even while a last step is open (the owner's QA, 22 Oct: "95 yet no
-  // feature recommendation")
-  const shown = summary.score ?? summary.known_score;
-  return Number.isFinite(Number(shown)) && shown !== null && Number(shown) >= readyAt;
+export function relatedReady(summary, readyAt = 75, shownScore = null) {
+  // The score on screen at the ready threshold (75) or above: always (the owner's QA, 22 Oct: "my score is 93!!!"). A step
+  // still open is listed above it; the recommendations never wait on it.
+  if (summary?.classification === "ready") return true;
+  const shown = [summary?.score, summary?.known_score, shownScore].map(Number).find((n) => Number.isFinite(n) && n > 0);
+  return shown !== undefined && shown >= readyAt;
 }
 
 export function relatedServices({ feature, subject, packLocked = false }) {

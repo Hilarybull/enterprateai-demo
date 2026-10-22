@@ -367,10 +367,18 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
 /** A step done with one press on its card ("Confirm forecast"), then the case is read again. */
 function StepRun({ run }) {
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const [problem, setProblem] = useState("");
+  // Said at once that it went through (the owner's QA, 22 Oct: "how will a lay user know"), while the check runs again
+  if (done) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-[12.5px] font-semibold text-emerald-800" role="status" data-step-done>
+        <span aria-hidden="true">✓</span>{run.doneLabel || "Done"}. Updating your score…</span>
+    );
+  }
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <button type="button" disabled={busy} onClick={async () => { setBusy(true); setProblem(""); try { await run.go(); } catch { setProblem("That didn't go through. Try again."); } finally { setBusy(false); } }}
+      <button type="button" disabled={busy} onClick={async () => { setBusy(true); setProblem(""); try { await run.go(); setDone(true); } catch { setProblem("That didn't go through. Try again."); } finally { setBusy(false); } }}
         className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-70" data-step-run>{busy ? "Saving…" : run.label}</button>
       {problem && <span role="alert" className="text-[12px] text-rose-700">{problem}</span>}
     </span>
@@ -515,8 +523,8 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
           applier={businessId && run ? applier : null} currency={currency} figures={figuresFor(run, draftFor(run, s.key))} />)}
       </ol>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-        {/* Not on the case's own steps (the owner's QA, 22 Oct: "I already ran do all for me"): each step has its own button */}
-        {!researched && onDoIt && !Array.isArray(result?.case_steps) && (
+        {/* On a case: only while this need is not researched yet (the owner's QA, 22 Oct: hidden after a run, shown for a new need) */}
+        {!researched && onDoIt && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
           // The one research button for every step: its price first, in the spending modal (focus on "Not now").
           <button type="button" onClick={() => onDoIt(null)} disabled={working} aria-busy={working}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
@@ -525,7 +533,7 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
             {working ? "Getting the price…" : `Do all for me${price ? ` · up to ${price} credits` : " · Free"}`}</button>
         )}
         {/* Said plainly why it costs less than the check's price (the owner, 20 Oct: "what's do the rest for me?"). */}
-        {!researched && onDoIt && prices?.spent > 0 && !Array.isArray(result?.case_steps) && (
+        {!researched && onDoIt && prices?.spent > 0 && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
           <span className="text-[12px] text-slate-500" data-research-reused>What I already researched for these answers is reused, free. Only the rest is charged.</span>
         )}
         {steps.length > 3 && (

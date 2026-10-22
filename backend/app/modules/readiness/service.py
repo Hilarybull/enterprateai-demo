@@ -674,6 +674,15 @@ class ReadinessService:
             return not mine or bool(mine & set(re.findall(r"[a-z]{4,}", text.lower())))
         return True
 
+    @staticmethod
+    async def _free_plan(ctx: dict, user_id: str) -> bool:
+        """The workspace owner is on the free plan (Explorer). Unknown counts as not free."""
+        try:
+            from app.modules.plans.access import effective_plan_key
+            return (await effective_plan_key(str(ctx.get("owner_id") or user_id))) == "explorer"
+        except Exception:      # noqa: BLE001
+            return False
+
     _RATES: dict = {}      # (code, base, day) -> rate: the case currency's rate, looked up at most once a day
 
     async def _case_rate(self, data: dict, case_currency: str | None) -> None:
@@ -772,6 +781,14 @@ class ReadinessService:
                     continue
                 fills[path] = value
                 prov[path] = {"source": f"Suggested by the Agent: {why}. Change it if it isn't right.", "as_of": today.isoformat(), "value": value}
+        # The Agent's own spending lines, worked out again when they no longer add up to the target (the owner's QA, 22 Oct:
+        # a £250k marketing split left on a £100k case for hiring staff). Lines the owner typed are theirs: never touched.
+        if subject_type == rules.FUNDING and "use_of_funds" not in theirs and "use_of_funds" in (case.get("provenance") or {}):
+            redone = self._agent_lines(case)
+            if redone is not None:
+                fills["use_of_funds"] = redone
+                prov["use_of_funds"] = {"source": "Suggested by the Agent: split from your target, what it is for and your fixed costs. Change any line.",
+                                        "as_of": today.isoformat(), "value": redone}
         lines = self._line_and_milestone_fills(case, data, today)
         # Every list item has an id (the owner's QA, 22 Oct: milestones added without one never showed in the milestone
         # dropdown): an item without one is given one.
@@ -824,6 +841,39 @@ class ReadinessService:
         out["provenance"] = {**(out.get("provenance") or {}), **{p: prov[p] for p in fills}, **line_prov}
         out["filled_from_records"] = sorted(done | set(fills))
         return out
+
+    _CATEGORY_OF = ((r"hir|staff|recruit|salar|team|people|employ", "People"), (r"market|advert|promot|brand|sales", "Marketing and sales"),
+                    (r"equip|machine|van|vehicle|tool|kit|bay", "Equipment"), (r"product|software|develop|build", "Product"),
+                    (r"premis|rent|fit.?out|operat|stock|inventory", "Operations"))
+
+    @classmethod
+    def _agent_lines(cls, case: dict) -> list[dict] | None:
+        """The split of the target into what it pays for (the purpose first, then two months of fixed costs as working
+        capital, then one month as a reserve), when the lines there don't add up to the target. None when they do, or when
+        the target, purpose or fixed costs aren't known."""
+        def num(v):
+            try:
+                return float(str(v).replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+        target, fixed = num(case.get("target_amount")), num((case.get("economics") or {}).get("fixed_costs_monthly"))
+        purpose = str(case.get("purpose") or "").strip()
+        lines = [a for a in case.get("use_of_funds") or [] if isinstance(a, dict)]
+        if not target or fixed is None or not purpose:
+            return None
+        if lines and abs(sum(num(a.get("amount")) or 0 for a in lines) - target) <= 1:
+            return None
+        working, reserve = round(2 * fixed), round(fixed)
+        main = max(round(target - working - reserve), 0)
+        category = next((c for pattern, c in cls._CATEGORY_OF if re.search(pattern, purpose, re.I)), "Other")
+        keep = {k: lines[0].get(k) for k in ("period", "milestone_id") if lines and lines[0].get(k)}
+        month = keep.get("period") or str(case.get("receipt_date") or "")[:7] or None
+        out = [{"id": uuid.uuid4().hex[:12], "category": category, "amount": str(main), "purpose": purpose[:1].upper() + purpose[1:], "period": month,
+                **({"milestone_id": keep["milestone_id"]} if keep.get("milestone_id") else {})},
+               {"id": uuid.uuid4().hex[:12], "category": "Operations", "amount": str(working), "purpose": "Working capital: two months of fixed costs", "period": month},
+               {"id": uuid.uuid4().hex[:12], "category": "Reserve", "amount": str(reserve), "purpose": "Reserve: one month of fixed costs",
+                "rationale": "One month of fixed costs, held so the business keeps running while the plan pays back.", "period": month}]
+        return [x for x in out if float(x["amount"]) > 0]
 
     @staticmethod
     def _proposals(case: dict, data: dict) -> dict:
@@ -1004,7 +1054,9 @@ class ReadinessService:
             ctx = await self._ctx(user_id, business_id, email)
             self._need(ctx, subject_type, "read")
             row = await self._row("subjects", business_id, subject_id, subject_type)
-        if row.get("status") not in ("archived", "cancelled") and self.can(ctx["actor"], subject_type).get(f"{FEATURE[subject_type]}.edit"):
+        # The Agent fills and drafts on paid plans only (the owner, 22 Oct: "free users are not allowed to run do it for me,
+        # and it shouldn't populate for them; just the initial deterministic score")
+        if row.get("status") not in ("archived", "cancelled") and self.can(ctx["actor"], subject_type).get(f"{FEATURE[subject_type]}.edit")                 and not await self._free_plan(ctx, user_id):
             await self._case_rate(ctx["data"], (row.get("data") or {}).get("currency"))
             filled = self._fill_blanks(subject_type, row, ctx["data"], ctx["today"])
             if filled is not None:

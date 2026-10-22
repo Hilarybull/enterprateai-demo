@@ -261,3 +261,42 @@ def test_an_empty_month_in_the_forecast_is_filled_by_the_agent():
     out = ReadinessService.extend_months(f, ["2027-09", "2027-10"])
     assert out["months"][1] == {"month": "2027-10", "receipts": "450", "payments": "155", "basis": "estimate"}
     assert out["months"][0] == {"month": "2027-09", "receipts": "450", "payments": "155"}      # theirs untouched
+
+
+def test_the_agent_does_not_fill_a_free_plans_case(monkeypatch):
+    import asyncio
+    from app.modules.plans import access
+
+    async def plan(_u):
+        return "explorer"
+    monkeypatch.setattr(access, "effective_plan_key", plan)
+    assert asyncio.run(ReadinessService._free_plan({"owner_id": "u1"}, "u1")) is True
+
+    async def paid(_u):
+        return "starter_insight"
+    monkeypatch.setattr(access, "effective_plan_key", paid)
+    assert asyncio.run(ReadinessService._free_plan({"owner_id": "u1"}, "u1")) is False
+
+
+
+def test_the_agents_own_lines_are_worked_out_again_for_the_new_target():
+    from app.modules.readiness import rules
+    row = {"data": {"target_amount": "100000", "purpose": "Hiring staff", "receipt_date": "2027-04-30", "economics": {"fixed_costs_monthly": "100"},
+                    "provenance": {"use_of_funds": {"source": "your research"}},
+                    "use_of_funds": [{"id": "a", "category": "Marketing and sales", "amount": "249700", "purpose": "Marketing", "period": "2027-04"},
+                                     {"id": "b", "category": "Operations", "amount": "200", "purpose": "Working capital", "period": "2027-04"}]}}
+    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 22))
+    lines = [(x["category"], x["amount"]) for x in out["use_of_funds"]]
+    assert lines == [("People", "99700"), ("Operations", "200"), ("Reserve", "100")]
+    # typed by the owner (no source on them): never touched
+    mine = {"data": {**row["data"], "provenance": {}}}
+    kept = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, mine, {}, date(2026, 10, 22)) or mine["data"]
+    assert kept["use_of_funds"][0]["amount"] == "249700"
+
+
+def test_a_list_answers_its_none_box_in_the_section_count():
+    from app.modules.readiness import engine, rules
+    prof = rules.PROFILES[rules.CURRENT[rules.FUNDING]]
+    subj = {"team": {"responsibilities": [{"area": "A", "owner": "B"}], "gaps": [{"gap": "x", "action": "y"}]}, "risks": [{"risk": "r", "action": "a"}]}
+    got = {x["key"]: (x["answered"], x["total"]) for x in engine.section_progress(prof, subj, None)}
+    assert got["team"] == (3, 3) and got["documents"] == (2, 2)

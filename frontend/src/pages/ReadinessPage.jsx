@@ -775,9 +775,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     return (checkedSteps?.steps || []).filter((s) => !now.has(s.key));
   }, [ownSteps, checkedSteps]);
   const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
-    ...st, run: { label: "Confirm forecast", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); } } }
-    : st.attest ? { ...st, run: { label: "Confirm", go: async () => { await attest(businessId, feature, subject.id, { code: st.attest.code, passed: true, rationale: st.attest.rationale }); await load(); } } }
-    : st.review ? { ...st, run: { label: "Mark reviewed", go: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: true }); await load(); } } }
+    ...st, run: { label: "Confirm forecast", doneLabel: "Forecast confirmed", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); await check({ quiet: true }); } } }
+    : st.attest ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed", go: async () => { await attest(businessId, feature, subject.id, { code: st.attest.code, passed: true, rationale: st.attest.rationale }); await load(); await check({ quiet: true }); } } }
+    : st.review ? { ...st, run: { label: "Mark reviewed", doneLabel: "Marked as reviewed", go: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: true }); await load(); await check({ quiet: true }); } } }
     : st)) } : overview),
   [overview, ownSteps, subject, businessId, feature, load]);
   useEffect(() => { loadOverview(); }, [loadOverview, revision]);
@@ -816,14 +816,21 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const wantedFocus = params.get("focus");
   useEffect(() => {
     if (tab !== "answers" || (!wantedField && !wantedFocus) || !subject) return undefined;
-    const t = setTimeout(() => {
+    // Tried until the field is on the page (the section and its lists render after the tab opens), for up to 3 s; then
+    // brought to the middle of the screen, focused and outlined for a moment (the owner's QA, 22 Oct: wrong place)
+    let tries = 0;
+    let t = null;
+    const go = () => {
       const exact = wantedFocus ? document.getElementById(wantedFocus) : null;
       const el = exact || (wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : wantedField ? document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`) : null);
-      if (!el) return;
-      el.scrollIntoView?.({ block: "center", behavior: "smooth" });
-      const input = exact || [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select");
-      input?.focus?.({ preventScroll: true });
-    }, 120);
+      if (!el) { if (tries++ < 30) t = setTimeout(go, 100); return; }
+      const input = exact || [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select") || el;
+      input.scrollIntoView?.({ block: "center" });
+      input.focus?.({ preventScroll: true });
+      input.classList?.add("ring-4", "ring-brand-300");
+      setTimeout(() => input.classList?.remove("ring-4", "ring-brand-300"), 2500);
+    };
+    t = setTimeout(go, 150);
     return () => clearTimeout(t);
   }, [tab, wantedField, wantedFocus, subject?.id, openSection]);      // eslint-disable-line react-hooks/exhaustive-deps
   // Advanced holds Evidence, Research, Materials and the full check: an old address opens it at that part.
@@ -1070,7 +1077,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             <ul className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">{waiting.map((w) => <li key={w.key}>{w.title}</li>)}</ul>
           </details>
         )}
-        {tab === "overview" && relatedReady(subject.summary) && (
+        {tab === "overview" && relatedReady(subject.summary, 75, shown && !shown._failed ? Number(String(latestOf(shown).score).split("/")[0]) : null) && (
           // Ready (the checklist's one threshold, current, nothing blocking): related services for what comes next (F-8)
           <Panel title="What to do next" data-related>
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
