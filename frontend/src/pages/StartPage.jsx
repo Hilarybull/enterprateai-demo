@@ -122,6 +122,9 @@ export default function StartPage({ framed = false }) {
     if (known?.first_value) {
       fetchFirstValue(sessionId).then((fv) => {
         if (!fv?.result || asking.current) return;
+        // A funding or launch result is never shown here before its need is on the case (the owner's QA, 22 Oct: "this is
+        // not what I just typed, it's old"): the case opens once prepared, after Replace or Update when asked
+        if (resultHome(fv.result)) return;
         shown = true;
         if (!resultHome(fv.result)) rememberFirstValue(sessionId);      // a case's result lives on its case only
         setResult(fv.result);
@@ -157,6 +160,7 @@ export default function StartPage({ framed = false }) {
       if (done.first_value) {
         try {
           const fv = await fetchFirstValue(sessionId);
+          if (fv?.result && resultHome(fv.result)) { navigate(resultHome(fv.result), { replace: true }); return; }      // the case, now updated
           if (fv?.result) {
             if (!resultHome(fv.result)) rememberFirstValue(sessionId);      // the first card on the dashboard; a case's result lives on its case only
             setResult(fv.result);
@@ -224,6 +228,7 @@ export default function StartPage({ framed = false }) {
         // (the owner's QA, 17 Oct). With no result to show, on to where the task was handed.
         try {
           const fv = await fetchFirstValue(sessionId);
+          if (fv?.result && resultHome(fv.result)) { if (attached.business_id) useWorkspaceStore.getState().setWorkspaceId(attached.business_id); return navigate(resultHome(fv.result), { replace: true }); }
           if (fv?.result) {
             if (attached.business_id) useWorkspaceStore.getState().setWorkspaceId(attached.business_id);
             setResult(fv.result);
