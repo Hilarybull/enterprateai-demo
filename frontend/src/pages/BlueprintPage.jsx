@@ -1,4 +1,5 @@
 import { currencySign } from "../lib/format";
+import { getSubject } from "../lib/readiness";
 import { refusalMessage } from "../lib/entitlement";
 import { STREAMED_DOCS, streamBlueprint } from "../lib/blueprintStream";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -749,6 +750,24 @@ export default function BlueprintPage() {
       if (Array.isArray(i.services) && i.services.length) setSelectedServices(i.services);
     }).catch(() => {});
   }, [reviewId, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Opened from a launch plan (?launch=<id>): the form is about that launch's product, its customer, problem and place,
+  // never the business's own offering (the owner, 23 Oct: "business plan for launch readiness uses the product")
+  const launchFor = useRef("");
+  useEffect(() => {
+    const launchId = bpSearchParams.get("launch");
+    if (!launchId || !workspaceIdStored || launchFor.current === launchId) return;
+    launchFor.current = launchId;
+    getSubject(workspaceIdStored, "launch", launchId).then((out) => {
+      const d = out?.data || {};
+      const pick = (...paths) => paths.map((p) => p.split(".").reduce((x, k) => (x == null ? x : x[k]), d)).find((v) => typeof v === "string" && v.trim());
+      const product = pick("offer.launch_scope") || String(d.name || out?.title || "").split(",")[0].trim();
+      if (product) { setCompanyName(product); setSolution(product); setValueProp(product); setSelectedServices([product]); }
+      const customer = pick("customers.target_segment", "audience", "market.audience");
+      if (customer) setTargetMarket(customer);
+      const problem = pick("customers.problem", "problem");
+      if (problem) setProblem(problem);
+    }).catch(() => {});
+  }, [bpSearchParams, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
   async function decideDraft(decision) {
     if (!reviewId || !workspaceIdStored) return;
     try {

@@ -41,7 +41,8 @@ function relatedAll({ feature, subject, packLocked = false }) {
   if (feature === "launch") {
     return [
       { key: "pricing", title: "Check your price", why: "A launch sells at the price you set: check it covers your costs.", cta: "Open Pricing", to: "/catalogue" },
-      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "The plan behind the launch, in one document.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
+      // For this launch's product, never the business's (the owner, 23 Oct)
+      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "The plan behind the launch, in one document.", cta: "Start a business plan", to: `/blueprint?tab=business-plans${id ? `&launch=${encodeURIComponent(id)}` : ""}` },
       { key: "marketplace", title: "List your business on the Marketplace", why: "So your first customers can find you.", cta: "Open the Marketplace", to: "/marketplace" },
       { key: "invoice", title: "Set up your first quotation and invoice", why: "Ready for the first order.", cta: "Open Business Operations", to: "/operations?tab=Sales" },
       { key: "funding", title: "Check your funding readiness", why: "If the launch needs money, see how prepared you are.", cta: "Open Funding Readiness", to: "/funding" },

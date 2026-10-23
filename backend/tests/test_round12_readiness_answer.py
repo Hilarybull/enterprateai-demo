@@ -16,8 +16,8 @@ def test_readiness_questions_match_the_named_subject_and_always_end_on_buttons(w
     car = ask(client, "How ready is my car wash launch?")
     assert car["message"].startswith("“Monthly car wash subscription") and "/100" in car["message"] and car["offers"]
     grant = ask(client, "How ready am I for a £20k grant?")
-    assert "Start a new funding case for it, or update that one?" in grant["message"]
-    assert [o["label"] for o in grant["offers"]][:1] == ["Start a new funding case"]
+    assert "Replace it with this need, or update its details?" in grant["message"]
+    assert [o["label"] for o in grant["offers"]][:2] == ["Replace with this need", "Update the details"]
     nxt = ask(client, "What should I do next for funding?")
     assert nxt["offers"] and "check" not in nxt["message"].lower().replace("checked", "")
     for out in (drone, car, grant, nxt):

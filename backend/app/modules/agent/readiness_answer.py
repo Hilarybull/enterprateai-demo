@@ -37,13 +37,23 @@ def _amount(text: str) -> float | None:
     return value * (1_000_000 if re.search(r"(m|million)\b", raw) else 1_000 if re.search(r"(k|thousand)\b", raw) else 1)
 
 
+# A request to start or set something up ("I need new launch readiness", "I want a £20k grant"): the flow runs and collects
+# the details, never a status answer in its place (the owner, 23 Oct: "why is it not collecting my details")
+_START = re.compile(r"\b(i|we)\s+(?:need|want|would like|'d like|am looking|are looking)\b|\b(start|new|create|set up|setup|begin|apply|get)\b|^\s*(?:help me|let'?s)\b", re.I)
+_QUESTION = re.compile(r"^\s*(how|what|whats|what's|where|am i|are we|is my|is it|which|do i|can i)\b|\?\s*$", re.I)
+
+
 def asked_about(text: str) -> str | None:
-    """'funding', 'launch' or None: is this a readiness question (or a funding need stated) for the dashboard Agent?"""
-    t = str(text or "")
-    funding, launch = bool(_FUNDING.search(t)), bool(_LAUNCH.search(t))
-    if funding and (_READY.search(t) or _MONEY.search(t)):
+    """'funding', 'launch' or None: is this a question about where a case stands (how ready, what is next)? Only a question:
+    anything asking to start, set up or apply goes to its flow."""
+    t = str(text or "").strip()
+    if not _QUESTION.search(t) or (_START.search(t) and not re.search(r"\b(how ready|ready|score|next|missing|left)\b", t, re.I)):
+        return None
+    if not _READY.search(t):
+        return None
+    if _FUNDING.search(t):
         return "funding"
-    if launch and _READY.search(t):
+    if _LAUNCH.search(t):
         return "launch"
     return None
 
@@ -92,8 +102,9 @@ def answer(text: str, kind: str, subjects: list[dict]) -> dict:
             if differs:
                 return {"kind": "answer", "conversational": False,
                         "message": f"You have “{name_of(current)}” ({_status(current.get('summary') or {}, kind)}). This sounds like a different need. "
-                                   "Start a new funding case for it, or update that one?",
-                        "offers": [new_button, {"label": f"Update “{_short(name_of(current))}”", "to": f"{base}/{current['id']}?tab=answers"},
+                                   "Replace it with this need, or update its details? The current one is kept in History.",
+                        "offers": [{"label": "Replace with this need", "to": f"{base}/{current['id']}?tab=answers&field=title"},
+                                   {"label": "Update the details", "to": f"{base}/{current['id']}?tab=answers"},
                                    {"label": "Not now", "dismiss": True}]}
     if matched or (subjects and not named):
         pick = (matched or subjects)[0]
@@ -106,8 +117,8 @@ def answer(text: str, kind: str, subjects: list[dict]) -> dict:
         others = [s for s in subjects if s is not pick]
         if others:
             offers.append({"label": f"See all {noun}s", "to": base})
-        else:
-            offers.append(new_button)
+        elif kind == "launch":
+            offers.append(new_button)      # several launch plans; one funding case
         return {"kind": "answer", "conversational": False, "message": message, "offers": offers[:3]}
     if not subjects:
         return {"kind": "answer", "conversational": False, "message": f"You don't have a {noun} yet. I can set one up and check it, for free.",

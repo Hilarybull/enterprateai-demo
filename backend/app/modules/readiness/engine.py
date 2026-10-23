@@ -728,7 +728,9 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
 
     def confirmed_within(path: str, limit: int, what: str) -> dict | None:
         at = parse_day(get(s, path))
-        if at is None or (today - at).days > limit:
+        if at is None:      # never confirmed: said so, never "more than 30 days ago" on a plan made today (the owner, 23 Oct)
+            return _res(UNKNOWN, f"{what} are not confirmed yet. Confirm they are right.")
+        if (today - at).days > limit:
             return _res(UNKNOWN, f"{what} were last confirmed more than {limit} days ago. Confirm they are still right.", stale=True)
         return None
 

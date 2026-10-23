@@ -453,7 +453,7 @@ function SubjectList({ businessId, feature }) {
   const [state, setState] = useState({ loading: true });
   // "Start a new launch plan" from the Agent (G6) opens the New form at once
   const [listParams] = useSearchParams();
-  const [creating, setCreating] = useState(() => listParams.get("new") === "1");
+  const [creating, setCreating] = useState(() => listParams.get("new") === "1" && feature !== "funding");
 
   const load = useCallback(async () => {
     try { setState({ loading: false, ...(await listSubjects(businessId, feature)) }); }
@@ -506,8 +506,13 @@ function SubjectList({ businessId, feature }) {
       )}
       {creating && <NewSubject businessId={businessId} feature={feature} profiles={state.profiles} onCancel={() => setCreating(false)} onCreated={(s) => navigate(`${meta.base}/${s.id}`)} />}
       {active.length > 0 && <ul className="space-y-3">{active.map(row)}</ul>}
-      {/* Several funding cases and several launch plans: one for each need or launch (the owner's choice, 23 Oct). */}
-      {items.length > 0 && !creating && canEdit && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
+      {/* One funding case per business, kept to the latest need; several launch plans are fine (the owner, 23 Oct). */}
+      {items.length > 0 && !creating && canEdit && feature !== "funding" && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
+      {items.length > 0 && feature === "funding" && (
+        <p className="text-[12.5px] text-slate-500" data-one-funding-case>
+          Your business has one funding case. A new need replaces it or updates it{archived.length && !active.length ? ", or reactivate it" : ""}; earlier needs are kept in History.
+        </p>
+      )}
       {archived.length > 0 && (
         <details>
           <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">Archived ({archived.length})</summary>

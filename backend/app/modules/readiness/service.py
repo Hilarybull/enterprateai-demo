@@ -1208,8 +1208,15 @@ class ReadinessService:
             data.setdefault("scope", "commercial")
             data.setdefault("business_model", "service")
         data = self._validate(subject_type, data)
-        # A business may hold several funding cases, as it may several launch plans (the owner's choice, 23 Oct): each funding
-        # need is its own case, and a chat asks whether to update one or start another.
+        if subject_type == rules.FUNDING:
+            # One funding case per business, kept to the latest need (the owner, 23 Oct: "the workspace can only have 1 funding
+            # readiness, replace or update with the latest one"); several launch plans are fine. An archived one is reactivated.
+            existing = [r for r in await self.store.list("subjects", business_id, kind=subject_type) if r.get("status") != "cancelled"]
+            if existing:
+                first = sorted(existing, key=lambda r: (r.get("status") == "archived", str(r.get("created_at") or "")))[0]
+                raise Conflict("one_funding_case", "This business already has a funding case. Update it"
+                               + (", or reactivate it first." if first.get("status") == "archived" else "."),
+                               current={"id": first["id"], "status": first.get("status"), "title": (first.get("data") or {}).get("title")})
         self._stamp(subject_type, data, {}, ctx)
         await self._check_references(business_id, data)
         data["profile"] = rules.profile_key(rules.select_profile(subject_type, data))

@@ -396,10 +396,10 @@ def _funding(client, amount=50000, use="hiring"):
     return s["id"], client.post(f"/task-sessions/{s['id']}/prepare").json()
 
 
-def test_a_different_funding_need_asks_update_or_new_and_never_overwrites_the_case_unasked(world):
-    """G2 (23 Oct): "I need funding" turned the £100k grant case into a £50k loan under the same id. A different need (amount,
-    route or purpose) now asks "Start a new funding case, or update that one?", new by default; Update changes only what
-    differs and keeps the title; an archived case is reactivated only when the owner chooses to update it."""
+def test_a_different_funding_need_asks_replace_or_update_on_the_one_case(world):
+    """One funding case per business, kept to the latest need (the owner, 23 Oct). G2: "I need funding" turned the grant case
+    into a loan unasked; a different need (amount, route or purpose) now asks Replace (the default, the old need kept in
+    History) or Update; Update changes only what differs and keeps the title. Never a second case."""
     env, store, client, who = world
     who["user"] = OWNER
     svc = service_for(env.orch)
@@ -408,30 +408,26 @@ def test_a_different_funding_need_asks_update_or_new_and_never_overwrites_the_ca
     data = cases()[0]["data"]
     assert made["state"] == "handed_off" and len(cases()) == 1 and data["title"] == "£50k equity investment for hiring"
     assert (data["target_amount"], data["purpose"], data["route_preference"], data["traction"]["summary"]) == (50000, "hiring", "equity", "Paying customers")
-    assert data["receipt_date"] and data["provenance"]["target_amount"]["source"].startswith("From your funding chat, ")
     first_id = made["handoff"]["subject_id"]
-    # A different need: asked, nothing changed yet
     sid, asked = _funding(client, amount=80000, use="a second site")
-    assert asked["choose"]["key"] == "subject_choice" and asked["choose"]["default"] == "new"
-    assert [o["value"] for o in asked["choose"]["options"]] == ["new", f"update:{first_id}"]
-    assert len(cases()) == 1 and cases()[0]["data"]["target_amount"] == 50000
-    # New (the default): a second case beside the first, the first untouched
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": "new"}})
-    new = client.post(f"/task-sessions/{sid}/prepare").json()
-    assert new["state"] == "handed_off" and new["handoff"]["subject_id"] != first_id and len(cases()) == 2
-    first = run(svc.store.get("subjects", first_id))["data"]
-    assert (first["title"], first["target_amount"], first["purpose"]) == ("£50k equity investment for hiring", 50000, "hiring")
-    # Update, chosen: only what differs changes; the title stays
-    sid, asked = _funding(client, amount=60000, use="hiring")
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
+    assert asked["choose"]["key"] == "subject_choice" and asked["choose"]["default"] == f"replace:{first_id}"
+    assert [o["value"] for o in asked["choose"]["options"]] == [f"replace:{first_id}", f"update:{first_id}"]
+    assert cases()[0]["data"]["target_amount"] == 50000      # nothing changed before the choice
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"replace:{first_id}"}})
     done = client.post(f"/task-sessions/{sid}/prepare").json()
-    first = run(svc.store.get("subjects", first_id))["data"]
-    assert done["handoff"]["subject_id"] == first_id and first["target_amount"] == 60000 and first["title"] == "£50k equity investment for hiring"
-    assert len(cases()) == 2
-    # Archived: reactivated only on Update
-    run(svc.set_status(OWNER, "A", rules.FUNDING, first_id, "archive", OWNER))
-    sid, again = _funding(client, amount=20000, use="Stock for Christmas")
-    assert run(svc.store.get("subjects", first_id))["status"] == "archived"
+    data = cases()[0]["data"]
+    assert done["handoff"]["subject_id"] == first_id and len(cases()) == 1 and (data["target_amount"], data["purpose"]) == (80000, "a second site")
+    assert data["previous_needs"][0]["title"] == "£50k equity investment for hiring"
+    sid, asked = _funding(client, amount=60000, use="a second site")
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
+    client.post(f"/task-sessions/{sid}/prepare")
+    data = cases()[0]["data"]
+    assert data["target_amount"] == 60000 and len(cases()) == 1
+    import pytest
+    from app.modules.readiness.service import Conflict
+    with pytest.raises(Conflict) as e:
+        run(svc.create_subject(OWNER, "A", rules.FUNDING, {"title": "Another"}, OWNER))
+    assert e.value.code == "one_funding_case" and e.value.current["id"] == first_id
     assert env.meter.charges == []
 
 

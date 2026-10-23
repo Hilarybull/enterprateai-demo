@@ -1064,8 +1064,10 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
             told = await chat_result(item["id"])
             if told:
                 # One score everywhere (G5, 23 Oct): the case summary's, or none; never the chat's own figure in its place.
-                # The things to do are the result's own steps.
-                summary["open_actions"] = len(told.get("blockers") or [])
+                # The things to do: the case's own check once it has one (the owner, 23 Oct: "100/100 · 2 things to do" on a
+                # ready case), else the chat result's steps.
+                if not summary.get("classification"):
+                    summary["open_actions"] = len(told.get("blockers") or [])
             cls = summary.get("classification")
             verdict = None
             if kind == rr.FUNDING:

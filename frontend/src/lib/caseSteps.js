@@ -53,7 +53,8 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
   const f = subject.forecast?.data || subject.forecast || null;
   const months = rows(f?.months);
   const forecast = { section: "finances", field: "forecast" };
-  if (!subject.forecast) add("forecast", "Make your 12-month cash forecast", "It shows the money lasts until the plan pays back.", forecast, "Open forecast");
+  // A check that passed is never a step (the owner, 23 Oct: "100/100" beside "Make your 12-month cash forecast")
+  if (!subject.forecast && !passed("C3.A")) add("forecast", "Make your 12-month cash forecast", "It shows the money lasts until the plan pays back.", forecast, "Open forecast");
   else {
     const empty = months.filter((m) => blank(m.receipts) || blank(m.payments));
     if (blank(f.opening_cash)) add("forecast.opening", "Add the cash you start your forecast with", "Every month of the forecast builds on it.", forecast, "Add opening cash");

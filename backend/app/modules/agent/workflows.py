@@ -1759,7 +1759,9 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
     separate = await separate_idea(ctx, data)
     said = owner_said(ctx)
     purpose = (ctx.params or {}).get("purpose")      # who the plan is for, asked before it started
-    plan = data.get("_launch") or {}
+    plan = dict(data.get("_launch") or {})
+    if not plan.get("offering") and plan.get("title"):
+        plan["offering"] = str(plan["title"]).split(",")[0].strip()      # "Monthly car wash subscription, Abuja, January 2027"
     if (ctx.params or {}).get("subject_id") and plan.get("offering"):
         # Started from a launch plan (the owner's QA, 23 Oct: "it should be about the product, I clicked draft business plan
         # on the launch readiness page"): that plan's offering, customer, problem and place. Another offering than the
@@ -1769,8 +1771,11 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
         answers = {k: v for k, v in {"description": plan["offering"], "customer": plan.get("customer"), "problem": plan.get("problem"),
                                      "location": plan.get("location")}.items() if v}
         if not own.get("description") or answer_memory.same_offering(plan["offering"], own.get("description")):
-            return {**idea_of(data, {**answers, **ctx.answers}), "said": said, "purpose": purpose}, False
-        idea = {k: str(ctx.answers.get(k) or answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
+            # The business's own offering: still a plan about the product, named for it, never for the business (the owner, 23 Oct)
+            product = str(plan["offering"]).strip()
+            return {**idea_of(data, {**ctx.answers, **answers}), "description": product, "name": product[:60], "said": said, "purpose": purpose,
+                    "launch_product": True}, False
+        idea = {k: str(answers.get(k) or ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
         idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True, "purpose": purpose})
         return idea, True
     if not separate:
@@ -1897,7 +1902,9 @@ async def business_plan_step(ctx):
             else:
                 await _keep(ctx, "plan", r)
             # Named for what it is about: the launch's offering, else the business (the owner's QA, 23 Oct: "Business plan: Business plan")
-            r["to"] = await _as_draft(ctx, "business_plan", r.get("title") or idea.get("name") or idea.get("description") or "Business plan",
+            # A launch's plan is named for its product (the owner, 23 Oct: "uses the product not the business")
+            named = (idea.get("name") if (ctx.params or {}).get("subject_id") else None) or r.get("title") or idea.get("name") or idea.get("description") or "Business plan"
+            r["to"] = await _as_draft(ctx, "business_plan", named,
                                       "business-plans", r.get("document_id"),
                                       inputs={"company_name": idea.get("name"), "industry": idea.get("industry"), "problem": idea.get("problem"),
                                               "solution": idea.get("description"), "target_market": idea.get("customer"), "location": idea.get("location"),

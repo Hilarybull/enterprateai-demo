@@ -34,7 +34,7 @@ def test_a_paid_plan_runs_comprehensive_and_the_upgrade_keeps_the_same_draft():
     basic = _validate(env)
     first_id = basic["state"]["outcome"]["links"][0]["to"]
     env.meter.plans[OWNER] = "starter_insight"
-    full = _validate(env)
+    full = _validate(env, params={"depth": "comprehensive"})      # asked for (G3, 23 Oct: the paid check only on request)
     assert full["state"]["params"]["depth"] == "comprehensive"
     assert [c[1] for c in env.meter.charges if c[1].startswith("idea_validation") and c[2]] == ["idea_validation_comprehensive"]
     assert full["state"]["outcome"]["links"][0]["to"] == first_id      # the same draft, validated again

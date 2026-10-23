@@ -538,8 +538,10 @@ def test_archived_cases_are_readable_but_need_reactivating_and_prefill_keeps_its
         with pytest.raises(Conflict):
             run(call)
     assert run(svc.set_status(OWNER, "A", F, case["id"], "reactivate"))["status"] == "active"
-    run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))                               # several funding cases (23 Oct)
-    assert sorted(i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]) == ["Bridge round", "Seed"]
+    with pytest.raises(Conflict) as second:                                                        # one funding case per business
+        run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))
+    assert second.value.code == "one_funding_case" and second.value.current["id"] == case["id"]
+    assert [i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]] == ["Seed"]
 
 
 def test_events_carry_scope_and_correlation_and_evidence_files_are_checked_on_download():

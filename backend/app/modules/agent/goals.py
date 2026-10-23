@@ -2272,9 +2272,6 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 every = sorted((r for r in await svc.store.list("subjects", session["business_id"], kind=kind, limit=50) if r.get("status") != "cancelled"),
                                key=lambda r: str(r.get("created_at") or ""), reverse=True)
                 every = sorted(every, key=lambda r: r.get("status") == "archived")
-                # The case this need is about: the one for the same purpose, else the latest
-                aim = str(wanted.get("purpose") or "").strip().lower()
-                every = sorted(every, key=lambda r: not (aim and str((r.get("data") or {}).get("purpose") or "").strip().lower() == aim))
                 if every:
                     current = await svc.store.get("subjects", every[0]["id"]) or every[0]
                     if not choice:
@@ -2285,10 +2282,12 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                             # £100k grant case into a £50k loan under the same id)
                             data_now = current.get("data") or {}
                             title = str(data_now.get("title") or "your funding case").strip()
-                            session["choose"] = _f("subject_choice", f"You already have “{title}”. Start a new funding case for this, or update that one?", "choice",
-                                                   required=True, options=[{"value": NEW, "label": "Start a new funding case"},
-                                                                           {"value": f"update:{current['id']}", "label": f"Update “{title[:60]}”"}])
-                            session["choose"]["default"] = NEW
+                            # One funding case per business (the owner, 23 Oct): replaced by the latest need (the old one kept
+                            # in History), or only its changed details updated; asked, never done unasked
+                            session["choose"] = _f("subject_choice", f"You already have “{title}”. Replace it with this need, or update its details?", "choice",
+                                                   required=True, options=[{"value": f"replace:{current['id']}", "label": "Replace it with this need (the current one is kept in History)"},
+                                                                           {"value": f"update:{current['id']}", "label": "Update only the changed details"}])
+                            session["choose"]["default"] = f"replace:{current['id']}"
                             session["case_changes"] = plain_changes(diff, data_now, wanted, session)
                             session["state"] = COLLECTING_REQUIRED
                             session["updated_at"] = now.isoformat()

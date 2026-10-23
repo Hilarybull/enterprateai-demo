@@ -131,7 +131,7 @@ def test_an_idea_is_scored_sized_and_planned_when_the_owner_asks_never_by_itself
     assert done["business_plan_draft"]["summary"] == "Your business plan is ready to review: 9 sections."
     assert [c[0] for c in env.orch.rt.studio.calls] == ["validate_idea", "size_market", "draft_plan"] or len(env.orch.rt.studio.calls) == 3
     spent = {r["workflow_key"]: agent_router.credits_of(r) for r in run(env.store.list_runs("A"))}
-    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (25, 25, 8)      # Comprehensive on a paid plan (25), market sizing priced the same
+    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (5, 25, 8)      # the free-first Basic check unless the full one is asked for (G3, 23 Oct); market sizing 25
     assert env.businesses["A"]["data"]["validation"]["overall_score"] == 68
     assert not [r for r in run(autostart.sweep(env.orch, "A")) if r["workflow_key"] in done]      # once
 

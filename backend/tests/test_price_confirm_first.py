@@ -26,7 +26,7 @@ def test_basic_idea_validation_is_free_and_needs_no_confirm_and_comprehensive_sh
     assert out["kind"] != "needs_confirmation"
     paid = Env()
     paid.meter.plans[OWNER] = "starter_insight"      # a paid plan: Comprehensive, its price first
-    out = paid.submit(capability="idea_validation", params={"answers": {"description": "Mobile car wash"}}, channel="ui_action", confirmed=False)
+    out = paid.submit(capability="idea_validation", params={"answers": {"description": "Mobile car wash"}, "depth": "comprehensive"}, channel="ui_action", confirmed=False)
     assert out["kind"] == "needs_confirmation" and out["price"] == 25 and out["params"]["depth"] == "comprehensive"
     quick = paid.submit(text="just a quick check of my mobile car wash idea", channel="text", confirmed=False)
     assert quick["kind"] != "needs_confirmation"      # "a quick check": Basic, said so

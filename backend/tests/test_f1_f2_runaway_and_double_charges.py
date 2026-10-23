@@ -93,7 +93,7 @@ def test_a_failure_the_agent_will_still_retry_is_not_refunded_yet_and_asked_for_
 def test_a_plan_asked_for_twice_is_one_document_charged_once():
     env = _env()
     for _ in range(2):
-        r = _answer_all(env, env.submit(text="write a business plan for my office deep cleaning business", capability="business_plan_draft")["run"])
+        r = _answer_all(env, env.submit(text="write a business plan for my office deep cleaning business", capability="business_plan_draft", params={"plan_for": "business", "purpose": "planning"})["run"])
         assert r["status"] == "succeeded", r.get("summary")
     assert [c[0] for c in env.orch.rt.studio.calls].count("draft_plan") == 1
     assert [c[1] for c in env.meter.charges].count("business_plan_full") == 1
@@ -112,7 +112,7 @@ def test_an_automatic_plan_never_makes_a_second_document_for_the_same_business()
 def test_a_plan_for_another_idea_is_titled_for_it_and_kept_on_its_record():
     env = _env()
     data = env.businesses["A"]["data"]
-    r = _answer_all(env, env.submit(text="write a business plan for a mobile dog grooming van")["run"])
+    r = _answer_all(env, env.submit(text="write a business plan for a mobile dog grooming van", params={"plan_for": "new", "idea": "a mobile dog grooming van", "purpose": "planning"})["run"])
     assert r["workflow_key"] == "business_plan_draft"
     assert r["status"] == "succeeded", r.get("summary")
     [call] = [c for c in env.orch.rt.studio.calls if c[0] == "draft_plan"]
