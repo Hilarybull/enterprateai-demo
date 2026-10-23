@@ -984,7 +984,9 @@ def section_progress(profile: dict, subject: dict, forecast: dict | None) -> lis
         total = len(fields)
         if section.get("forecast"):
             total += 1
-            answered += 1 if forecast and (forecast.get("months") or forecast.get("opening_cash") not in (None, "")) else 0
+            # Only real figures count (G5, 23 Oct: "Cash 1 of 1" ticked over empty month rows)
+            figures = any(not blank(m.get(k)) for m in (forecast or {}).get("months") or [] if isinstance(m, dict) for k in ("receipts", "payments"))
+            answered += 1 if forecast and (figures or not blank(forecast.get("opening_cash"))) else 0
         out.append({"key": section["key"], "title": section["title"], "answered": answered, "total": total})
     return out
 

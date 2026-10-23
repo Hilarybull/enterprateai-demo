@@ -192,7 +192,7 @@ const PLAN_ACCENT = {
 function PaymentModal({ plan, billing, onClose }) {
   const [method, setMethod] = useState(null); // null | 'card'
 
-  const price = plan.monthlyPrice;
+  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const billingLabel =
     billing === BILLING.annual
       ? `£${plan.annualTotal}/yr (£${price}/mo, billed annually)`
@@ -425,9 +425,31 @@ function AddonCard({ addon, mode, token }) {
 
 // â”€â”€ Plan card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+// Monthly or annual billing (restored, 23 Oct: removed by the 19 Oct copy change). The saving is the plans' own.
+export function BillingToggle({ billing, onChange, className = "mt-8" }) {
+  const best = Math.max(0, ...PLANS.map((p) => Number(p.annualSaving) || 0));
+  return (
+    <div className={`${className} inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900`} role="group" aria-label="Billing period" data-billing-toggle>
+      {[{ value: BILLING.monthly, label: "Monthly" }, { value: BILLING.annual, label: "Annual" }].map((opt) => (
+        <button key={opt.value} type="button" aria-pressed={billing === opt.value} onClick={() => onChange(opt.value)}
+          className={"relative rounded-xl px-5 py-2 text-sm font-semibold transition " + (billing === opt.value
+            ? "bg-brand-600 text-white shadow" : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100")}>
+          {opt.label}
+          {opt.value === BILLING.annual && best > 0 && (
+            <span className={"ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide " + (billing === BILLING.annual
+              ? "bg-white/25 text-white" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400")}>
+              Save up to £{best}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function PlanCard({ plan, billing, onAction, currentPlanKey }) {
   const isPopular = !!plan.badge;
-  const price = plan.monthlyPrice;
+  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const isFree = plan.monthlyPrice === 0;
   const isCurrent = plan.key === currentPlanKey;
   const accent = PLAN_ACCENT[plan.key] || PLAN_ACCENT.explorer;
@@ -547,7 +569,7 @@ export default function PricingPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const subscription = useAuthStore((s) => s.subscription);
-  const [billing] = useState(BILLING.monthly);
+  const [billing, setBilling] = useState(BILLING.monthly);
   const [activeModal, setActiveModal] = useState(null);
 
   // Deep link from the marketplace "Get featured" button.
@@ -612,9 +634,7 @@ export default function PricingPage() {
           <p className="mx-auto mt-3 max-w-xl text-base text-slate-500 dark:text-slate-400">
             From getting started to making smarter decisions and supporting more businesses.
           </p>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-
-          </p>
+          <BillingToggle billing={billing} onChange={setBilling} />
         </div>
 
 

@@ -38,7 +38,10 @@ def test_write_a_business_plan_starts_the_task_and_is_never_called_unavailable()
         out = env.submit(text=said)
         assert "isn't available as an Agent action" not in str(out.get("message") or ""), said
         assert out.get("run") or out.get("kind") in ("needs_input", "workflow"), (said, out.get("kind"), out.get("message"))
-    plan = env.submit(text="write a business plan")
+    # Asked first, conversationally (23 Oct): what the plan is for; then it starts
+    asked = env.submit(text="write a business plan")
+    assert asked["kind"] == "needs_input" and {f["key"] for f in asked["fields"]} >= {"purpose"}
+    plan = env.submit(capability="business_plan_draft", params={"purpose": "planning"}, channel="ui_action")
     assert plan["run"]["workflow_key"] == "business_plan_draft"
     # Something the Agent really does not do yet is still said plainly.
     tender = env.submit(text="respond to this tender for me")

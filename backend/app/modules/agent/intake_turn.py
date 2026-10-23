@@ -54,7 +54,9 @@ _SYSTEM = (
     "- extracted: every SLOT the latest message gives a value for (not only the current question), each "
     "{slot, value, normalized, currency_or_unit, evidence, confidence}. evidence is copied word for word from the owner's message. "
     "Only slots in SLOTS. Never a value the owner did not say; never the task's own words (\"business proposal\") as a name; "
-    "never the owner's own name as a customer. A figure: normalized is the number; currency_or_unit the ISO currency or the unit.\n"
+    "never the owner's own name as a customer. A figure: normalized is the number; currency_or_unit the ISO currency or the unit. "
+    "The sell slot is only a named product or service (\"home cleaning\", \"a dog-walking app\"); never the check's own words "
+    "(\"launch readiness\", \"readiness of my product\") and never a bare \"product\", \"service\" or \"business\": leave it out and ask.\n"
     "- marked_unknown: only the slots the owner says, in the latest message, they don't know (usually the current question). "
     "Never a slot the message does not mention. \"What if I don't know the amount?\" is not_sure for the amount, and "
     "answer_to_user_question reassures them that it can be left open.\n"
@@ -72,7 +74,10 @@ _SLIM = ("Read one message sent to a small-business assistant during an intake. 
          '{"i": intent, "x": [[slot, value, "exact words copied from the message", confidence 0 to 1]], "u": [only slots the latest message says the owner does not know, usually ASKED; never one it does not mention], '
          '"a": a one or two line answer when the owner asked you something, else null}. intent is one of answer, correction, question_to_agent, '
          "change_goal, off_topic, not_sure. Give every SLOT the message has a value for, not only ASKED. Only slots in SLOTS. Never a value the owner "
-         "did not say; never the task's own words as a name; never the owner's own name as a customer. Figures as numbers.")
+         "did not say; never the task's own words as a name; never the owner's own name as a customer. Figures as numbers. "
+         # What is sold or launched is a named offering (the owner's QA, 23 Oct: "readiness of my product" was taken as one)
+         "The sell slot is only a named product or service ('home cleaning', 'a dog-walking app'); never the check's own words "
+         "('launch readiness', 'readiness of my product') and never a bare 'product', 'service' or 'business': leave it out instead.")
 
 
 def _slim_payload(payload: dict) -> dict:
@@ -242,6 +247,11 @@ def purpose_phrase(value: Any) -> str:
     return f"for {_with_article(text)}"
 
 
+def _count(n: float) -> str:
+    """120.0 as "120", 1500 as "1,500", 2.5 as "2.5"."""
+    return f"{n:,.2f}".rstrip("0").rstrip(".")
+
+
 def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | None) -> str:
     """One short line about what was captured, in plain words: "Cupcake boxes, nice.", "HR teams in Abuja, got it: ₦30,000 a
     box, ₦12,000 to make, about 40 a month.", "Got it: £25,000 for a van, trading, by March." """
@@ -266,7 +276,11 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
         elif key == "cost" and isinstance(value, (int, float)):
             rest.append(f"{_money(value, currency)} to make")
         elif key == "monthly_sales" and isinstance(value, (int, float)):
-            rest.append(f"about {value:g} a month")
+            rest.append(f"about {_count(value)} a month")
+        elif key == "capacity" and isinstance(value, (int, float)):
+            rest.append(f"up to {_count(value)} delivered a month")
+        elif q.get("type") == "number" and isinstance(value, (int, float)) and not q.get("prefix"):
+            rest.append(f"{slot_words(key)}: {_count(value)}")      # every figure with its name (G4: a bare "120.0")
         elif q.get("prefix") and isinstance(value, (int, float)):
             rest.append(_money(value, currency))
         elif key in ("use", "purpose"):
@@ -422,8 +436,13 @@ def rule_read(message: str, slots: list[dict], asked: str | None) -> dict[str, d
     """The fallback reader: the figures said in plain phrases, and the whole answer for a text question asked."""
     out: dict[str, dict] = {}
     keys = {s["key"]: s for s in slots}
+    asked_number = asked in keys and keys[asked].get("type") == "number"
     for key, pattern in (("price", _PRICE), ("cost", _COST), ("monthly_sales", _MONTHLY)):
         m = pattern.search(message)
+        # "About 120 a month", said to another monthly question (capacity): that question's answer, never the sales figure
+        # too (G4, 23 Oct: sales of "about 80 a month" overwritten by a capacity of 120)
+        if key == "monthly_sales" and asked_number and asked != key and not re.search(r"\b(sell|sells|selling|sold|sales)\b", message, re.I):
+            continue
         if key in keys and m and _number(m.group(1)) is not None:
             out[key] = {"slot": key, "value": m.group(1).strip(), "normalized": _number(m.group(1)), "currency_or_unit": currency_of(m.group(0)),
                         "evidence": m.group(1).strip(), "confidence": 0.85}
@@ -661,6 +680,12 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
         if confidence < CONFIRM_BELOW:
             shown = _money(value, c or currency) if slot.get("prefix") and isinstance(value, (int, float)) else str(value)
             confirm.append({"slot": slot["key"], "value": value, "question": f"Just to check: {shown}" + (f" a {_unit_word(known)}" if slot["key"] == "price" else "") + "?"})
+            continue
+        if (known.get(slot["key"]) not in (None, "", UNKNOWN) and known.get(slot["key"]) != value and slot["key"] != asked
+                and intent != "correction" and (_slot_named(message, slots) or {}).get("key") != slot["key"]):
+            # An answer given earlier is kept unless the owner names it or corrects it (G4, 23 Oct): an answer to one
+            # question never overwrites another's
+            records[-1].update({"kept": False, "why": "answered_before"})
             continue
         if known.get(slot["key"]) not in (None, "", UNKNOWN) and known.get(slot["key"]) != value:
             corrected.append(slot["key"])      # the owner changed it: theirs, marked as corrected

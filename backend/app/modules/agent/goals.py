@@ -116,7 +116,8 @@ GOALS: list[dict[str, Any]] = [
      "label": "I want to launch a product/service", "outcome": "Check launch readiness and close the gaps",
      "class": PARTIAL, "start": "launch_readiness", "path": ["launch_readiness", "idea_validation", "launch_evidence_gaps", "scenario_help"],
      "say": "I can assess how ready the launch is, list what is missing and what to do next, and test the idea behind it.",
-     "boundary": "I work from what you tell me and what is on record: I won't invent market evidence.",
+     # No boundary line in the launch chat's header (the owner, 23 Oct: "no need")
+     "boundary": None,
      "questions": [_f("sell", "What are you launching?", "text", required=True), _f("customer", "Who is it for?", "text", required=True),
                    _f("target_date", "When do you want to launch?", "date")]},
     {"key": "cash_flow", "mode": "business_goal", "label": "Improve my cash flow", "chip": False, "outcome": "See what drives cash and act on it",
@@ -155,8 +156,10 @@ GOALS: list[dict[str, Any]] = [
                    _money("amount", "At what price?", required=True)]},
     {"key": "create_business_plan", "mode": "quick_task", "label": "Create Business Plan", "outcome": "A business plan draft to review",
      "class": DIRECT, "start": "business_plan_draft", "path": ["business_plan_draft"], "say": "I'll draft your business plan from what you tell me and show what is still missing.", "boundary": "",
-     "questions": [_f("description", "What does the business do? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text", required=True),
-                   _f("problem", "What problem does it solve for them?", "textarea", required=True)]},
+     # What it is about is asked; who buys it and the problem the Agent works out when left blank (the owner's QA, 23 Oct:
+     # "agent should fill all these things, draft the business plan"), changeable in the plan's inputs afterwards
+     "questions": [_f("description", "What does the business do? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text"),
+                   _f("problem", "What problem does it solve for them?", "textarea")]},
     # Not a homepage shortcut (asked for in words, it still prepares a proposal).
     {"key": "prepare_proposal", "mode": "quick_task", "label": "Prepare Proposal", "outcome": "A proposal ready for your approval", "shortcut": False,
      "class": DIRECT, "start": "new_proposal", "path": ["new_proposal"], "say": "I'll prepare the proposal and have it ready for you to approve. Nothing is sent until you say so.", "boundary": "",
@@ -206,7 +209,8 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
     ]},
     "launch": {"value": "A few quick questions, then you'll see how ready you are to launch and what to sort out first.", "questions": [
         _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
-        _f("sell", "Briefly describe it.", "textarea", required=True, q=2, noun="description"),
+        # What is launched, by name (the owner's QA, 23 Oct: required, and a placeholder is asked again)
+        _f("sell", "What exactly are you launching?", "textarea", required=True, q=2, noun="description"),
         _choice("stage", "What stage is it at?", [("idea", "Idea"), ("prototype", "Prototype"), ("testing", "Testing"), ("ready", "Ready")], required=True, q=3, noun="stage"),
         _f("customer", "Who is it for?", "text", required=True, q=4, noun="customer"),
         # PRD 8.1 question 5 is one question: "Where and when do you want to launch?" The answer is split into the place
@@ -463,6 +467,24 @@ _EVIDENCE = re.compile(r"\b(?:\d+|a\s+few|a\s+couple(?:\s+of)?|some|two|three|fo
                        r"\b(?:pay|paid|buy|bought|use|book|booked|asked|interested|signed\s+up|pre-?ordered)\b", re.I)
 
 
+# The check's own words, not an offering: "launch readiness", "readiness", "a launch" (the owner's QA, 23 Oct)
+_LAUNCH_WORDS = re.compile(r"\s*(?:(?:check|checking)\s+)?(?:(?:my|a|the|new|our)\s+)?(?:(?:launch|lunch)\s*)?(?:readiness|launch|lunch)(?:\s+(?:check|plan|readiness))?(?:\s+(?:of|for)\s+(?:my|a|the|our)\s+(?:product/service|product|service|business|idea|launch|offer))?\s*\.?\s*", re.I)
+
+
+_LAUNCH_ASK_AGAIN = {
+    "sell": "Name the product or service you're launching, for example home cleaning or a dog-walking app.",
+    "customer": "Say who it's for, for example office workers in Leeds or new parents.",
+    "where": "Name the place, for example Leeds or online across the UK.",
+}
+
+
+def _placeholder(key: str, value: Any) -> bool:
+    """A launch answer that names nothing ("customers", "unknown", "readiness of my product")."""
+    from app.modules.readiness.service import _vague
+    text = str(value or "").strip()
+    return bool(text) and (_vague(text) or (key == "sell" and bool(_LAUNCH_WORDS.fullmatch(text))))
+
+
 def _launch_facts(text: str) -> dict[str, Any]:
     """"I want to launch a home cleaning service in Leeds next month": what (and whether it is a product or a
     service), where and when, when they are plainly there (QA P2-2). Anything doubtful is left to be asked."""
@@ -470,7 +492,10 @@ def _launch_facts(text: str) -> dict[str, Any]:
     m = _WHAT.search(text)
     if m:
         what = _tidy(re.sub(r"\s*\b(?:business|biz|company|thing|idea|venture)$", "", m.group(1).strip(), flags=re.I))
-        vague = re.fullmatch(r"(?:it|this|that|something|(?:a |my )?product(?:/service)?|(?:a |my )?service|(?:a |my )?business)", what, re.I)
+        from app.modules.readiness.service import _vague
+        # "launch readiness", "my business": not what is launched (the owner's QA, 23 Oct): asked instead
+        vague = re.fullmatch(r"(?:it|this|that|something|(?:a |my )?product(?:/service)?|(?:a |my )?service|(?:a |my )?business)", what, re.I) \
+            or _vague(what) or _LAUNCH_WORDS.fullmatch(what)
         if len(what) >= 3 and not vague and not re.match(r"(?:in|on|at|by|next|this|before|soon)\b", what, re.I):
             out["sell"] = what
             # A service: said so, or an activity done for someone ("dog walking", "car valeting", "tutoring").
@@ -778,8 +803,14 @@ def _missing(session: dict) -> list[str]:
     """Required answers not given yet. A value read from the visitor's sentence counts as given; they confirm it with the rest."""
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
     given = session.get("inputs") or {}
+    from app.modules.readiness.service import _vague
+    # A placeholder ("readiness", "customers", "unknown") is not an answer to a required question (the owner's QA, 23 Oct):
+    # asked again, never carried onto the plan.
+    launch = session.get("goal_key") == "launch"      # the launch chat's own rule; the other checks keep theirs
+    unsaid = lambda k: answers.get(k) in (None, "") or (launch and k in ("sell", "customer", "where") and isinstance(answers.get(k), str)      # noqa: E731
+                                                          and (_vague(answers[k]) or (k == "sell" and bool(_LAUNCH_WORDS.fullmatch(answers[k].strip())))))
     # An answer of "I'll add it later" is kept as empty: it was answered, so it is not asked again.
-    return [f["key"] for f in _questions(session) if f.get("required") and answers.get(f["key"]) in (None, "") and not (f["key"] in given and f.get("unsure"))]
+    return [f["key"] for f in _questions(session) if f.get("required") and unsaid(f["key"]) and not (f["key"] in given and f.get("unsure"))]
 
 
 _FIGURE = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b", re.I)
@@ -831,7 +862,7 @@ def _summary(session: dict) -> list[dict]:
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
     said = set(session.get("from_message") or [])
     rows = [{"key": f["key"], "label": f["label"], "value": _shown(f, answers[f["key"]]), "proposed": f["key"] not in (session.get("inputs") or {}),
-             "from_message": f["key"] in said}
+             "from_message": f["key"] in said, "from_records": f["key"] in set(session.get("from_records") or [])}
             for f in _in_currency(session, _questions(session)) if answers.get(f["key"]) not in (None, "")]
     if session.get("currency") and session["currency"] != DEFAULT_CURRENCY and any(f.get("prefix") for f in _questions(session)):
         rows.append({"key": "currency", "label": "Currency", "value": session["currency"], "proposed": not session.get("currency_confirmed")})
@@ -951,6 +982,17 @@ FIRST_READ_SECONDS = 1.2
 
 
 async def proposed_from(text: str, goal_key: str | None, owner_name: str | None = None) -> dict[str, Any]:
+    """What the opening sentence gives, less placeholders (the owner's QA, 23 Oct: "launch readiness" read as selling
+    "readiness"): those are asked instead, never prefilled."""
+    from app.modules.readiness.service import _vague
+    got = await _proposed_from(text, goal_key, owner_name=owner_name)
+    if goal_key != "launch":
+        return got
+    return {k: v for k, v in got.items() if not (isinstance(v, str) and k in ("sell", "customer", "where")
+                                                  and (_vague(v) or (k == "sell" and _LAUNCH_WORDS.fullmatch(v.strip()))))}
+
+
+async def _proposed_from(text: str, goal_key: str | None, owner_name: str | None = None) -> dict[str, Any]:
     """What the visitor's sentence answers. A document is read by the shared extractor (the model reads, code checks),
     mapped onto the homepage's questions; when the model can't be reached, the earlier readers answer, and what they
     read is shown to confirm. Where both read something, the model's reading wins."""
@@ -1133,7 +1175,19 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
 
 
 def first_value_of(session: dict, data: dict | None = None, clock=None) -> dict | None:
-    """The free deterministic result for this task, from the answers given and what the Company has on record."""
+    """The free deterministic result for this task, from the answers given and what the Company has on record. An action
+    already done since is not offered again (the owner's QA, 23 Oct: "I have added the product to the catalogue, why is it
+    still here?"): checked each time it is shown, also on a result kept from adopted research."""
+    out = _first_value_of(session, data, clock)
+    if out and data is not None:
+        out = {**out, "free_next_actions": [x for x in out.get("free_next_actions") or []
+                                            if not (isinstance(x.get("catalogue"), dict) and x["catalogue"].get("name")
+                                                    and first_value.offering_on_record({"sell": x["catalogue"]["name"]}, data,
+                                                                                       priced_only=x["catalogue"].get("base_price") is not None))]}
+    return out
+
+
+def _first_value_of(session: dict, data: dict | None = None, clock=None) -> dict | None:
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
     goal = session.get("goal_key") or ""
     # Research adopted since (on this card or the check's page): the result as it left it, with its next step, never
@@ -1455,6 +1509,13 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
                 session.get("rejected", {}).pop(k, None)
                 session["inputs"][k] = figure
                 continue
+            if session.get("goal_key") == "launch" and k in _LAUNCH_ASK_AGAIN and _placeholder(k, v):
+                # "customers", "readiness of my product": kept out and asked again, saying why (the owner's QA, 23 Oct: the
+                # recap showed "Customer: customers" and Continue did nothing)
+                session["inputs"].pop(k, None)
+                session.setdefault("rejected", {})[k] = _LAUNCH_ASK_AGAIN[k]
+                continue
+            session.get("rejected", {}).pop(k, None)
             session["inputs"][k] = str(v).strip()[:2000]
     if picked_turn:
         from app.modules.agent import intake_turn
@@ -1717,10 +1778,12 @@ def _num_or_none(v: Any) -> float | None:
 def launch_fields(a: dict, today: date | None = None) -> dict:
     """The launch chat's answers, each in its own plan field: who it is for, where, a real date, and the price and cost
     said (Offer and pricing, PRD 8.2)."""
-    out = {k: v for k, v in {"audience": a.get("customer"), "target_date": launch_date(a.get("target_date"), today),
-                             "geography": a.get("where") if str(a.get("where") or "").strip().lower() not in ("", "not sure", "not sure yet") else None}.items()
+    from app.modules.readiness.service import _vague      # "unknown", "customers", "readiness": not answers (23 Oct)
+    real = lambda v: None if v in (None, "") or _vague(str(v)) else v      # noqa: E731
+    out = {k: v for k, v in {"audience": real(a.get("customer")), "target_date": launch_date(a.get("target_date"), today),
+                             "geography": real(a.get("where"))}.items()
            if v not in (None, "")}
-    offer = {k: v for k, v in {"launch_scope": a.get("sell"), "price": _num_or_none(a.get("price"))}.items() if v not in (None, "")}
+    offer = {k: v for k, v in {"launch_scope": real(a.get("sell")), "price": _num_or_none(a.get("price"))}.items() if v not in (None, "")}
     econ = {k: v for k, v in {"price_per_unit": _num_or_none(a.get("price")), "variable_cost_per_unit": _num_or_none(a.get("cost"))}.items() if v is not None}
     if offer:
         out["offer"] = offer
@@ -1798,10 +1861,11 @@ async def edit_answers(store: SessionStore, session: dict, orch, user_id: str, c
 def launch_title(a: dict, today: date | None = None) -> str:
     """"Car wash subscription, Abuja, January 2027": what, where and when, as said."""
     import calendar
-    what = str(a.get("sell") or "My launch").strip()
-    what = what[:1].upper() + what[1:]
+    from app.modules.readiness.service import _vague
+    what = str(a.get("sell") or "").strip()
+    what = "My launch" if not what or _vague(what) else what[:1].upper() + what[1:]
     where = str(a.get("where") or "").strip()
-    where = "" if where.lower() in ("not sure", "not sure yet") else where
+    where = "" if _vague(where) else where
     when = launch_date(a.get("target_date"), today)
     month = f"{calendar.month_name[int(when[5:7])]} {when[:4]}" if when else ""
     return ", ".join(x for x in (what, where, month) if x)[:120]
@@ -1813,7 +1877,10 @@ def launch_ack(said: dict, currency: str | None) -> str:
     customer, with 10 customers tried it." Only what was said."""
     from app.modules.agent.intake_turn import _money, _with_article
     what = str(said.get("sell") or "").strip()
-    about = [x for x in ((f"a {said['kind']}" if said.get("kind") in ("product", "service") else "both a product and a service" if said.get("kind") == "both" else ""),
+    from app.modules.readiness.service import _vague
+    if _vague(what) or _LAUNCH_WORDS.fullmatch(what):
+        what = ""      # "readiness of my product" is not what is launched: never said back as if it were (23 Oct)
+    about =[x for x in ((f"a {said['kind']}" if said.get("kind") in ("product", "service") else "both a product and a service" if said.get("kind") == "both" else ""),
                          (f"at {said['stage']} stage" if said.get("stage") else "")) if x]
     head = (_with_article(what) if what else "your launch") + (f" ({', '.join(about)})" if about else "")
     parts = [head + (f" for {said['customer']}" if said.get("customer") else "") + (f" in {said['where']}" if said.get("where") else "")]
@@ -2205,15 +2272,30 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 every = sorted((r for r in await svc.store.list("subjects", session["business_id"], kind=kind, limit=50) if r.get("status") != "cancelled"),
                                key=lambda r: str(r.get("created_at") or ""), reverse=True)
                 every = sorted(every, key=lambda r: r.get("status") == "archived")
+                # The case this need is about: the one for the same purpose, else the latest
+                aim = str(wanted.get("purpose") or "").strip().lower()
+                every = sorted(every, key=lambda r: not (aim and str((r.get("data") or {}).get("purpose") or "").strip().lower() == aim))
                 if every:
-                    if every[0].get("status") == "archived":
-                        await svc.set_status(user_id, session["business_id"], kind, every[0]["id"], "reactivate", email)
                     current = await svc.store.get("subjects", every[0]["id"]) or every[0]
                     if not choice:
                         diff = case_diff(current.get("data") or {}, wanted)
-                        # Said in the recap before anything is written (case_changes), confirmed by "Looks right": one
-                        # confirmation, never a second screen. A changed need keeps the earlier one in History.
-                        choice = f"{'replace' if any(d['core'] for d in diff) else 'update'}:{current['id']}"
+                        if any(d["core"] for d in diff):
+                            # A different need (the amount, the route or what it is for): asked, a new case by default, never
+                            # the existing one overwritten without the owner's choice (G2, 23 Oct: "I need funding" turned the
+                            # £100k grant case into a £50k loan under the same id)
+                            data_now = current.get("data") or {}
+                            title = str(data_now.get("title") or "your funding case").strip()
+                            session["choose"] = _f("subject_choice", f"You already have “{title}”. Start a new funding case for this, or update that one?", "choice",
+                                                   required=True, options=[{"value": NEW, "label": "Start a new funding case"},
+                                                                           {"value": f"update:{current['id']}", "label": f"Update “{title[:60]}”"}])
+                            session["choose"]["default"] = NEW
+                            session["case_changes"] = plain_changes(diff, data_now, wanted, session)
+                            session["state"] = COLLECTING_REQUIRED
+                            session["updated_at"] = now.isoformat()
+                            await store.put(session)
+                            return session
+                        # The same need: what is new is added to the case, nothing it holds is replaced
+                        choice = f"update:{current['id']}"
                         session["case_changes"] = plain_changes(diff, current.get("data") or {}, wanted, session)
             if not choice:
                 existing = await _open_subjects(svc, session["business_id"], kind)
@@ -2254,6 +2336,9 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     row = await svc.store.get("subjects", sid)
                     if not row or row.get("business_id") != session["business_id"] or row.get("kind") != kind:
                         raise PermissionError("That is not one of this workspace's records.")
+                    if how in ("replace", "update") and row.get("status") == "archived":      # updated: back in use first
+                        await svc.set_status(user_id, session["business_id"], kind, sid, "reactivate", email)
+                        row = await svc.store.get("subjects", sid) or row
                     before = row.get("data") or {}
                     if how == "replace":
                         made = await svc.replace_need(user_id, session["business_id"], sid, {**payload, "title": title}, email, provenance=chat_prov,

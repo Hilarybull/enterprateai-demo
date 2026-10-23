@@ -72,3 +72,22 @@ def test_research_again_is_a_new_run_within_60_credits(world):  # noqa: F811
     out = client.post(f"/task-sessions/{sid}/premium", json={"fresh": True}).json()
     assert out["started"] and out["research"]["id"] != "rr_old"
     assert d["research_runs"]["rr_old"]["status"] == "replaced"      # one run waiting for review: the new one
+
+
+def test_a_new_purpose_on_the_case_is_new_research_never_the_old_run_free(world):  # noqa: F811
+    # The owner's QA, 23 Oct: the need changed in the form (a party, not the chat's washing bays): the research is quoted
+    # and charged for the new need, never the old run reopened for free on the chat's old answers.
+    env, store, client, who = world
+    d = env.businesses["A"]["data"]
+    d["settings"] = {"currency": "NGN"}
+    d["workspace_profile"] = {"company_name": "Synthetic Wash", "country": "Nigeria", "city": "Abuja"}
+    sid, _ = _chat(client, who, FIRST)
+    session = client.get(f"/task-sessions/{sid}").json()
+    d.setdefault("research_runs", {})["rr_old"] = _stale_run(session["inputs"])
+    who["user"] = OWNER
+    assert client.post(f"/task-sessions/{sid}/premium/quote", json={}).json().get("reuse") == "rr_old"      # same need: free
+    case = client.get("/businesses/A/funding-cases").json()["items"][0]
+    case = client.get(f"/businesses/A/funding-cases/{case['id']}").json()
+    client.patch(f"/businesses/A/funding-cases/{case['id']}", json={"revision": case["revision"], "changes": {"purpose": "A party for our customers"}})
+    quote = client.post(f"/task-sessions/{sid}/premium/quote", json={}).json()
+    assert not quote.get("reuse") and "existing" not in quote and "per_finding" in quote, quote      # a new, priced run

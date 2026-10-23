@@ -1,4 +1,5 @@
 import { getCurrencySymbol } from "../lib/currencies";
+import { toast } from "../lib/toast";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -99,7 +100,9 @@ export default function WhatNext({ sessionId, businessId, act = null, onChanged 
   const navigate = useNavigate();
   const { items, reload } = useNextActions(sessionId);
   const [open, setOpen] = useState(null);
-  const [saved, setSaved] = useState(null);      // "Saved. Your score is now 62/100.", after the free step
+  // Said by the one toast (22 Oct), never a line in the page
+  const setSaved = (text) => { if (text) toast({ kind: "success", title: "Your figures are saved.", detail: String(text).replace(/^Saved\.\s*/, "") }); };
+  const saved = null;
   if (!items?.length) return saved ? <p role="status" className="mt-5 text-[13px] font-semibold text-emerald-800" data-next-saved>{saved}</p> : null;
   const run = (i) => {
     if (!i.allowed) { navigate(i.upgrade?.to || "/pricing"); return; }

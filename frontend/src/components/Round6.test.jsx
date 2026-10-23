@@ -6,6 +6,12 @@ import ResearchSummary from "./ResearchSummary";
 import { PremiumConfirm } from "./FirstValueCard";
 import WhatNext from "./WhatNext";
 
+// Toasts said by the one toast system (22 Oct), collected for the checks below
+const toasts = [];
+window.addEventListener("ea:toast", (e) => toasts.push(e.detail));
+const lastToast = () => toasts[toasts.length - 1] || {};
+
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const OPTION = (fits) => ({ id: "o1", kind: "estimated", criterion: "options", value: "A scheme for small businesses.", label: "Scheme",
@@ -63,7 +69,7 @@ describe("round 6: the free price step", () => {
     await act(async () => { fireEvent.click(document.querySelector("[data-next-action='catalogue'] [data-next-start]")); });
     fireEvent.change(screen.getByLabelText("What one sale costs you"), { target: { value: "1500" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save and check again" })); });
-    await waitFor(() => expect(document.querySelector("[data-next-saved]")?.textContent).toBe("Saved. Your score is now 64/100."));
+    await waitFor(() => expect(lastToast()).toMatchObject({ kind: "success", title: "Your figures are saved.", message: "Your score is now 64/100." }));
     expect(calls.find((c) => c.path === "/businesses/b1/assessment/funding/use-figures").body).toEqual({ figures: { price: 4000, cost: 1500 } });
     expect(changed).toHaveBeenCalled();
   });

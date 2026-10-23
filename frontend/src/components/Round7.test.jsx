@@ -7,6 +7,12 @@ import * as client from "../api/client";
 import { NextSteps, SavedNotice, announceSaved } from "./ResultSummary";
 import WhatNext from "./WhatNext";
 
+// Toasts said by the one toast system (22 Oct), collected for the checks below
+const toasts = [];
+window.addEventListener("ea:toast", (e) => toasts.push(e.detail));
+const lastToast = () => toasts[toasts.length - 1] || {};
+
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 const wait = (ms) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
@@ -52,20 +58,18 @@ describe("one draft at a time", () => {
     render(<MemoryRouter><NextSteps result={RESULT} run={RUN} businessId="b1" onApplied={applied} /></MemoryRouter>);
     await act(async () => { fireEvent.click(document.querySelector("[data-next-step='financial'] [data-step-adopt]")); });
     await wait(600);
-    expect(document.querySelector("[data-apply-status]").textContent).toBe("Saved. Checking your score…");
+    expect(lastToast()).toMatchObject({ kind: "pending", title: "Saved. Checking your score…" });
     await wait(3100);
-    expect(document.querySelector("[data-apply-status]").textContent).toBe("Saved. Your score is now 32/100, up from 22.");
+    expect(lastToast().kind).toBe("success");
+    expect(lastToast().message).toContain("Score 22 → 32");      // the same toast, updated in place
+    expect(toasts.filter((t) => t.id === lastToast().id).length).toBeGreaterThan(1);
   }, 10000);
 });
 
-it("keeps the saved message on screen for a few seconds wherever the view goes", async () => {
-  vi.useFakeTimers();
+it("says a save in a toast, never a line in the page", async () => {
   announceSaved("Saved. Your score is now 32/100, up from 22.");
+  expect(lastToast()).toMatchObject({ kind: "success", title: "Saved. Your score is now 32/100, up from 22." });
   render(<SavedNotice />);
-  expect(document.querySelector("[data-saved-notice]").textContent).toBe("Saved. Your score is now 32/100, up from 22.");
-  await act(async () => { vi.advanceTimersByTime(5000); });
-  expect(document.querySelector("[data-saved-notice]")).toBeTruthy();
-  await act(async () => { vi.advanceTimersByTime(1200); });
   expect(document.querySelector("[data-saved-notice]")).toBeNull();
 });
 
@@ -83,6 +87,6 @@ it("asks which price and cost are right when the case and the catalogue disagree
   expect(document.querySelector("[data-use-case]").textContent).toBe("Use my case: ₦1,000 and ₦60 cost");
   await act(async () => { fireEvent.click(document.querySelector("[data-use-catalogue]")); });
   expect(calls.find((c) => c.path === "/businesses/b1/assessment/funding/use-figures").body).toEqual({ figures: { price: 4000, cost: 1500 } });
-  expect(document.querySelector("[data-next-saved]").textContent).toBe("Saved. Your score is now 32/100.");
+  expect(lastToast()).toMatchObject({ kind: "success", title: "Your figures are saved.", message: "Your score is now 32/100." });
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });

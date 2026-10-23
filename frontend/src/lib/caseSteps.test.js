@@ -60,7 +60,7 @@ describe("each step opens its own field, and the counts agree", () => {
     expect(steps.find((x) => x.key === "uof.period").to).toBe("/funding/c1?tab=answers&section=finances&field=use_of_funds&focus=finances-use_of_funds-0-period");
     expect(steps.find((x) => x.key === "market.approach").to).toContain("field=market.acquisition_approach");
     expect(sectionCounts({ ...s, sections: [{ key: "finances", title: "Finances and use of funds", answered: 5, total: 5 }] }, steps))
-      .toEqual([{ key: "finances", done: false, text: "Finances: 1 to fix" }]);
+      .toMatchObject([{ key: "finances", done: false, text: "Finances: 1 to fix" }]);
   });
 });
 
@@ -99,4 +99,26 @@ it("the confirmations the score waits on are steps with one press", () => {
   expect(by["confirm.C4.B"].attest.code).toBe("C4.B");
   expect(by["confirm.C5.B"].attest.code).toBe("C5.B");
   expect(by["confirm.docs"].review).toEqual(["use_of_funds_schedule", "forecast"]);
+});
+
+it("confirms the amount and date with one press, saying both, instead of opening the form", () => {
+  const { steps } = caseSteps({ ...subject, data: { ...subject.data, timing_confirmed: false } });
+  const st = steps.find((s) => s.key === "goal.confirm");
+  expect(st).toMatchObject({ confirmGoal: true, title: "Save your amount and date as final" });
+  expect(st.why || st.help || st.detail).toMatch(/^₦5,000,000, needed by /);
+});
+
+it("drops a document from the review step once it is marked reviewed, before the next check", () => {
+  const withDocs = (documents) => ({ ...subject, data: { ...subject.data, documents },
+    summary: { pack: { items: [{ key: "use_of_funds_schedule", label: "Use-of-funds schedule" }, { key: "forecast", label: "Monthly forecast" }] } },
+    assessment: { result: { criteria: [{ code: "C8", checks: [{ code: "C8.A", state: "unknown", reason: "Not reviewed: Use-of-funds schedule, Monthly forecast." }] }] } } });
+  const step = (docs) => caseSteps(withDocs(docs)).steps.find((x) => x.key === "confirm.docs");
+  expect(step({}).review).toEqual(["use_of_funds_schedule", "forecast"]);
+  expect(step({ forecast: { reviewed: true } })).toMatchObject({ title: "Mark as reviewed: Use-of-funds schedule", review: ["use_of_funds_schedule"] });
+  expect(step({ forecast: { reviewed: true }, use_of_funds_schedule: { reviewed: true } })).toBeUndefined();
+});
+
+it("never builds funding steps for a launch plan, so no link points to /funding/<launch id>", () => {
+  expect(caseSteps({ ...subject, id: "l1", type: "launch_initiative" })).toBeNull();
+  expect(caseSteps({ ...subject, id: "c1", type: "funding_case" }).steps.every((s) => !s.to || s.to.startsWith("/funding/c1"))).toBe(true);
 });

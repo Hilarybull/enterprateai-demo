@@ -41,7 +41,7 @@ describe("the result's next steps", () => {
     fireEvent.click(screen.getByRole("button", { name: "Write a business plan" }));
     // F-7: its price first ("Write a business plan. 40 credits."); nothing is asked of the Agent, so nothing is held, until Start.
     await waitFor(() => expect(document.querySelector("[data-price-confirm]")).toBeTruthy());
-    expect(document.querySelector("[data-price-line]").textContent).toBe("Write a business plan. 40 credits.");
+    expect(document.querySelector("[data-price-line]").textContent).toBe("I'll write a business plan. It costs 40 credits.");
     expect(calls.some((c) => c.path === "/agent/requests")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(document.querySelector("[data-fv-started]")).toBeTruthy());

@@ -474,7 +474,19 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
     # Only real approvals, newest first. Risk alerts appear in suggestions and risks instead.
     from app.modules.agent import drafts as _drafts
     # The Agent's drafts waiting for review (a business plan, an idea's validation, a launch plan) sit with the approvals.
-    needs_approval = sorted([*(approval_card(a, now) for a in pending), *(_drafts.card(d) for d in _drafts.pending(data))],
+    # An untitled draft is named by its own document ("Business Plan for Drone Cleaning"), read in one query, never by the
+    # business's name (the owner's QA, 23 Oct: a drone cleaning plan listed as "Business plan: E2E Car Wash Abuja")
+    waiting = _drafts.pending(data)
+    named: dict = {}
+    untitled = [str(d.get("ref")) for d in waiting if _drafts.untitled(d) and d.get("ref")]
+    if untitled:
+        try:
+            from app.core.supabase import sb_select
+            rows = await sb_select("blueprint_documents", filters=[("id", "in", untitled[:50])], columns="id,title") or []
+            named = {str(r.get("id")): r.get("title") for r in rows if r.get("title")}
+        except Exception:      # noqa: BLE001 - listed under its own title
+            named = {}
+    needs_approval = sorted([*(approval_card(a, now) for a in pending), *(_drafts.card(d, named.get(str(d.get("ref")))) for d in waiting)],
                             key=lambda c: c.get("created_at") or "", reverse=True) if actor.can_send or actor.can_prepare else []
 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()

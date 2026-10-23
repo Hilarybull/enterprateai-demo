@@ -24,6 +24,12 @@ FEEDS = {"launch": {"price": "economics.price_per_unit", "cost": "economics.vari
 FIELD_WORD = {"price": "price per sale", "cost": "cost per sale", "fixed_costs": "monthly fixed costs", "amount": "funding amount", "monthly_revenue": "revenue each month"}
 
 
+
+def _vague(v: str) -> bool:
+    """A placeholder ("customers", "unknown") is not an answer (the owner's QA, 23 Oct)."""
+    from app.modules.readiness.service import _vague as vague
+    return vague(v)
+
 def _differs(a: Any, b: Any) -> bool:
     try:
         return abs(float(str(a).replace(",", "")) - float(str(b).replace(",", ""))) > 0.005
@@ -201,7 +207,7 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                     changes["funding_options"] = [*(data.get("funding_options") or []), *fresh_options]
             if changes.get("economics"):
                 changes["economics"]["confirmed_at"] = today      # the owner accepted them now
-            if kind == "launch" and said.get("customer") and not _get(data, "customers.target_segment"):
+            if kind == "launch" and said.get("customer") and not _vague(str(said["customer"])) and not _get(data, "customers.target_segment"):
                 _put(changes, "customers.target_segment", str(said["customer"]))
             if kind == "launch" and said.get("problem") and not _get(data, "customers.problem"):
                 _put(changes, "customers.problem", str(said["problem"]))
@@ -223,7 +229,7 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                     _put(payload, path, str(figures[f]))
             if payload.get("economics"):
                 payload["economics"]["confirmed_at"] = today
-            if kind == "launch" and said.get("customer"):
+            if kind == "launch" and said.get("customer") and not _vague(str(said["customer"])):
                 _put(payload, "customers.target_segment", str(said["customer"]))
             created = await svc.create_subject(user["id"], business_id, subject_type, payload, email)
             subject_id = created.get("id")

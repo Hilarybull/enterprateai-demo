@@ -207,6 +207,7 @@ async def start_session(body: StartIn, request: Request):
         raise HTTPException(status_code=422, detail="Say what you want to do, or pick a suggestion.")
     _allow(request)
     currency = body.currency
+    user, biz = None, None
     if body.business_id:
         # Signed in: the workspace's own currency, never what the browser had kept (the owner's QA, 20 Oct: £ chips on a
         # naira workspace put £250,000 on the case). Signed out, the visitor's country's, as the page sends it.
@@ -214,10 +215,47 @@ async def start_session(body: StartIn, request: Request):
             user = await get_optional_user(request)
             if user:
                 from app.modules.agent import business as bz
-                currency = bz.currency_of(await _business_for(user, body.business_id)) or currency
+                biz = await _business_for(user, body.business_id)
+                currency = bz.currency_of(biz) or currency
         except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
-            pass
-    return goals.public(await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency))
+            user, biz = None, None
+    session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency)
+    if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan"):
+        try:
+            session = await _from_records(session, user, body.business_id, biz)
+        except Exception:      # noqa: BLE001 - asked as usual
+            logger.info("goal start: records not read for %s", session.get("goal_key"))
+    return goals.public(session)
+
+
+async def _from_records(session: dict, user: dict, business_id: str, data: dict) -> dict:
+    """What is already on record is not asked again (G8, 23 Oct: the landing chat re-asked purpose, stage and traction):
+    the business's stage and traction, and for funding the latest case's purpose when no new need was said. Shown as
+    proposals ("from your records"), changeable like the rest; what the owner said always wins."""
+    key = session["goal_key"]
+    said = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    wanted = {f["key"] for f in goals._questions(session)}
+    found = {k: v for k, v in first_value.known_answers(key, data).items() if k in wanted}
+    if key == "create_business_plan":
+        # The business's own description and customer, from the profile (G7): the owner's master data, never rewritten here
+        p = data.get("workspace_profile") or {}
+        about = next((str(p[k]).strip() for k in ("description", "about_company", "business_description") if str(p.get(k) or "").strip()
+                      and not str(p[k]).strip().endswith("with EnterprateAI.")), "")
+        found.update({k: v for k, v in {"description": about[:400], "customer": str(p.get("target_customer") or "").strip()[:200]}.items() if v})
+    if key == "need_funding":
+        case = await _case_of(user, business_id)
+        on_case = _case_answers((case or {}).get("data") or {})
+        found.update({k: v for k, v in on_case.items() if k in ("stage", "traction")})
+        if on_case.get("use") and not (said.get("amount") or said.get("use")):
+            found["use"] = on_case["use"]      # "I need funding", nothing more: the need on record, to confirm or change
+    found = {k: v for k, v in found.items() if k in wanted and said.get(k) in (None, "") and v not in (None, "")}
+    if not found:
+        return session
+    session["proposed"] = {**(session.get("proposed") or {}), **found}
+    session["from_records"] = sorted(set(session.get("from_records") or []) | set(found))
+    session["missing"] = goals._missing(session)
+    await get_store().put(session)
+    return session
 
 
 @router.get("/task-sessions/{session_id}")
@@ -631,6 +669,16 @@ async def _premium_context(user: dict, business_id: str, goal_key: str, raw: dic
     figures = await _case_figures(user, business_id, goal_key)
     if figures:
         data = {**data, "case_figures": figures}
+    if goal_key == "launch":
+        # Who owns the launch, when the profile names nobody: the account's own name, never a question (23 Oct)
+        try:
+            from app.core.supabase import sb_select
+            me = await sb_select("users", filters=[("id", "eq", str(user["id"]))], single=True) or {}
+            name = str(me.get("full_name") or me.get("name") or "").strip()
+            if name:
+                data = {**data, "_owner_name": name}
+        except Exception:      # noqa: BLE001 - asked instead
+            pass
     answers = {**first_value.known_answers(goal_key, data), **_read_answers(goal_key, raw)}
     return data, answers, first_value.assess(goal_key, answers, data)
 
@@ -836,6 +884,12 @@ async def _session_premium_context(session_id: str, user: dict) -> tuple:
     if goal not in research.CAPABILITY:
         raise HTTPException(status_code=404, detail="This task has no premium step.")
     raw = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
+    if goal == "need_funding":
+        # The case as it is now, over what the chat was told (the owner's QA, 23 Oct: a new need started in the form, then
+        # the research ran on the chat's old "Marketing" and reopened that run for free): what the money is for, the route,
+        # the stage and the amount are the case's own (the place is the business's, from its profile).
+        case = await _case_of(user, session["business_id"], (session.get("handoff") or {}).get("subject_id"))
+        raw = {**raw, **{k: v for k, v in _case_answers((case or {}).get("data") or {}).items() if k in ("use", "route", "stage", "amount")}}
     data, answers, result = await _premium_context(user, session["business_id"], goal, raw)
     return session, goal, data, answers, result
 
@@ -1000,17 +1054,17 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
             return None
     for kind in (rr.FUNDING, rr.LAUNCH):
         listed = await svc.list_subjects(user["id"], business_id, kind, user.get("email"), include_archived=False)
-        for item in listed.get("items") or []:
-            if not item.get("pinned"):
-                continue
+        items = [x for x in listed.get("items") or [] if x.get("pinned")]
+        # One of each on the dashboard, the latest (the owner, 23 Oct): the funding case, and the most recent launch plan (a
+        # business has one per service or product; the others are on the Launch readiness page).
+        items = sorted(items, key=lambda x: str(x.get("created_at") or ""), reverse=True)[:1]      # listed newest first: kept on a tie
+        for item in items:
             summary = dict(item.get("summary") or {})
             base = f"/{'funding' if kind == rr.FUNDING else 'launch'}/{item['id']}"
             told = await chat_result(item["id"])
             if told:
-                # The owner's brief (20 Oct): the strip reads what the case page shows: the full check's score when it has
-                # one, else the chat's; the things to do are the result's own steps.
-                if summary.get("score") is None and isinstance(told.get("score"), (int, float)):
-                    summary["score"] = told["score"]
+                # One score everywhere (G5, 23 Oct): the case summary's, or none; never the chat's own figure in its place.
+                # The things to do are the result's own steps.
                 summary["open_actions"] = len(told.get("blockers") or [])
             cls = summary.get("classification")
             verdict = None
@@ -1043,6 +1097,16 @@ async def set_pinned(business_id: str, subject_id: str, action: str, user=Depend
         raise HTTPException(status_code=404, detail="Not found.")
     await svc.update_subject(user["id"], business_id, row["kind"], subject_id, row["revision"], {"pinned": action == "pin"}, user.get("email"))
     return {"ok": True, "pinned": action == "pin"}
+
+
+@router.get("/businesses/{business_id}/agent-drafts/{draft_id}")
+async def get_draft(business_id: str, draft_id: str, user=Depends(get_current_user)):
+    """An Agent draft as its page needs it: its title, status and the inputs it was written from (to change and regenerate)."""
+    data = await _business_for(user, business_id)
+    d = next((x for x in data.get("agent_drafts") or [] if x.get("id") == draft_id), None)
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return {"draft": {k: d.get(k) for k in ("id", "kind", "title", "status", "inputs", "to")}}
 
 
 class DraftDecisionIn(BaseModel):

@@ -1276,11 +1276,61 @@ _IDEA_QUESTIONS = {
 }
 
 
+# What the profile says the business does (G1, 23 Oct: a cleaning plan written as "Industry: Pet grooming" from a profile a
+# dog-grooming idea had written into)
+_PROFILE_ABOUT = ("description", "about_company", "business_description", "what_we_do", "problem", "problem_solved", "target_customer",
+                  "target_market", "ideal_customer", "key_offering_focus")
+_ABOUT_WORDS = {"business", "company", "limited", "service", "services", "customers", "people", "small", "local", "with", "from", "that",
+                "this", "their", "your", "building", "enterprateai", "offer", "offers", "provide", "provides", "help", "helps"}
+
+
+def _about_words(text) -> set:
+    return set(re.findall(r"[a-z]{4,}", str(text or "").lower())) - _ABOUT_WORDS
+
+
+def profile_conflict(data: dict, said: str) -> dict:
+    """The profile fields that speak of something else than what the owner said in this conversation ({field: text}); empty
+    when they agree or nothing was said. Only a description-like field naming another offering counts as a clash."""
+    p = data.get("workspace_profile") or {}
+    # Where the business is ("Leeds") is no sign two descriptions agree: only what they say it does counts
+    place = _about_words(" ".join(str(p.get(k) or "") for k in ("city", "country", "state_or_region", "address_line_1", "address_line_2", "location")))
+    place |= {"suburbs", "city", "town", "area", "region", "nationwide"}
+    mine = _about_words(said) - place
+    if not mine:
+        return {}
+    clash = {k: str(p[k]) for k in _PROFILE_ABOUT if str(p.get(k) or "").strip() and not ((_about_words(p[k]) - place) & mine)}
+    return clash if any(k in clash for k in ("description", "key_offering_focus", "business_description", "what_we_do")) else {}
+
+
+async def _with_owner_words(ctx, data: dict):
+    """What the owner said in this conversation wins over the stored profile (G1): a clash is asked about once ("Your
+    profile says pet grooming; you said cleaning. Which is right?"); their words chosen, the clashing profile fields are left
+    out of this task (the profile itself is changed only by the owner). Returns (data, a question or None)."""
+    said = str(ctx.answers.get("description") or "").strip()
+    if not said or (ctx.params or {}).get("subject_id") or (ctx.run.get("state") or {}).get("idea_from_message"):
+        return data, None      # a launch plan's offering, or a new idea named in the message: its own, not a clash
+    clash = profile_conflict(data, said)
+    if not clash:
+        return data, None
+    choice = str(ctx.answers.get("profile_conflict") or "")
+    stored = next(clash[k] for k in ("description", "key_offering_focus", "business_description", "what_we_do") if k in clash)
+    if not choice:
+        return data, WaitForInput(f"Your profile says “{stored[:90]}”; you said “{said[:90]}”. Which is right?", [{
+            "key": "profile_conflict", "label": "Which is right?", "type": "choice", "required": True, "default": "said",
+            "options": [{"value": "said", "label": f"What I said: {said[:80]}"}, {"value": "profile", "label": f"My profile: {stored[:80]}"}]}])
+    if choice == "profile":
+        ctx.answers.pop("description", None)
+        return data, None
+    clean = dict(data)
+    clean["workspace_profile"] = {k: v for k, v in (data.get("workspace_profile") or {}).items() if k not in clash}
+    return clean, None
+
+
 async def _business_and_launch(ctx) -> dict:
     """The business record, with what its launch plan says about who it is for alongside it."""
     from app.modules.agent import modules
     data = await ctx.rt.business.load(ctx.run["business_id"])
-    data["_launch"] = await modules.launch_facts(ctx.orch, ctx.run["business_id"])
+    data["_launch"] = await modules.launch_facts(ctx.orch, ctx.run["business_id"], (ctx.params or {}).get("subject_id"))
     return data
 
 
@@ -1495,8 +1545,15 @@ def _and_list(items: list[str]) -> str:
 
 async def idea_validation_step(ctx):
     data = await _business_and_launch(ctx)
-    separate = await separate_idea(ctx, data)
-    if separate:
+    data, clash = await _with_owner_words(ctx, data)
+    if clash:
+        return clash
+    from_plan = bool((ctx.params or {}).get("subject_id") and (data.get("_launch") or {}).get("offering"))
+    separate = (await _idea_for(ctx, data))[1] if from_plan else await separate_idea(ctx, data)
+    if from_plan:
+        # A launch plan's offering, chosen before it started (23 Oct): its own words, kept apart when it is not the business's own
+        idea, _ = await _idea_for(ctx, data)
+    elif separate:
         # Only what was said about this idea: nothing from the profile or another plan ("Is this your customer?" from a
         # launch plan for something else), and nothing written back to the business.
         own = idea_of(data, {})
@@ -1504,6 +1561,9 @@ async def idea_validation_step(ctx):
         idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP"})
     else:
         idea = idea_of(data, ctx.answers)
+    idea = await _fill_idea(ctx, idea) if idea.get("description") else idea
+    if idea.pop("_filled", False):
+        idea = {**idea, "customer_guessed": False, "description_guessed": False}      # worked out: nothing to confirm
     ask = _ask_idea(idea, ("description", "customer", "problem"))
     if ask:
         return ask
@@ -1553,14 +1613,14 @@ async def idea_validation_step(ctx):
                 outcome={"score": r["score"], "risks": risks, "next_steps": steps, "form_filled": True, "depth": depth, "links": links})
 
 
-async def _as_draft(ctx, kind: str, title: str, tab: str, document_id: str | None) -> str:
+async def _as_draft(ctx, kind: str, title: str, tab: str, document_id: str | None, inputs: dict | None = None) -> str:
     """The output as a draft in its module, pending the owner's review, with the link that opens it: counted in Needs
     Approval until it is accepted or rejected (the owner's QA, 15 Oct)."""
     from app.modules.agent import drafts
     to = f"/blueprint?tab={tab}" + (f"&document_id={document_id}" if document_id else "")
 
     def _apply(data: dict) -> dict:
-        return drafts.add(data, kind=kind, title=title, to=to, run_id=ctx.run["id"], ref=str(document_id or ctx.run["id"]), now=ctx.now())
+        return drafts.add(data, kind=kind, title=title, to=to, run_id=ctx.run["id"], ref=str(document_id or ctx.run["id"]), now=ctx.now(), inputs=inputs)
     d = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
     ctx.run.setdefault("state", {})["draft"] = {"id": d["id"], "status": d["status"]}
     return to + f"&review={d['id']}"
@@ -1613,7 +1673,12 @@ async def fill_validation_form(ctx, idea: dict) -> None:
 
 async def market_size_step(ctx):
     data = await _business_and_launch(ctx)
+    data, clash = await _with_owner_words(ctx, data)
+    if clash:
+        return clash
     idea, separate = await _idea_for(ctx, data)
+    idea = await _fill_idea(ctx, idea) if idea.get("description") else idea
+    idea.pop("_filled", None)
     ask = _ask_idea(idea, ("description", "industry", "location"))
     if ask:
         return ask
@@ -1693,8 +1758,25 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
     name), and kept on its own record."""
     separate = await separate_idea(ctx, data)
     said = owner_said(ctx)
+    purpose = (ctx.params or {}).get("purpose")      # who the plan is for, asked before it started
+    plan = data.get("_launch") or {}
+    if (ctx.params or {}).get("subject_id") and plan.get("offering"):
+        # Started from a launch plan (the owner's QA, 23 Oct: "it should be about the product, I clicked draft business plan
+        # on the launch readiness page"): that plan's offering, customer, problem and place. Another offering than the
+        # business's own is a separate idea: nothing of the business's own offer is borrowed.
+        from app.modules.agent import answer_memory
+        own = idea_of(data, {})
+        answers = {k: v for k, v in {"description": plan["offering"], "customer": plan.get("customer"), "problem": plan.get("problem"),
+                                     "location": plan.get("location")}.items() if v}
+        if not own.get("description") or answer_memory.same_offering(plan["offering"], own.get("description")):
+            return {**idea_of(data, {**answers, **ctx.answers}), "said": said, "purpose": purpose}, False
+        idea = {k: str(ctx.answers.get(k) or answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
+        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True, "purpose": purpose})
+        return idea, True
     if not separate:
-        return {**idea_of(data, ctx.answers), "said": said}, False
+        # Their own words chosen over a profile that speaks of something else (G1): the writer is told so too
+        clash = ctx.answers.get("profile_conflict") == "said"
+        return {**idea_of(data, ctx.answers), "said": said, "purpose": purpose, **({"profile_clash": True} if clash else {})}, False
     own = idea_of(data, {})
     idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
     idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True})
@@ -1715,12 +1797,72 @@ def owner_said(ctx) -> str:
     return "\n".join(lines)[:3000]
 
 
+_FILL_SYSTEM = ("You fill in the inputs of a small business's plan from a short description. Reply with JSON only: "
+                '{"name": "...", "problem": "...", "customer": "...", "value_prop": "...", "industry": "..."}. name: the idea in two to five words, '
+                "spelled correctly, as the owner meant it (for example 'window cleanig' is 'Window cleaning'). problem: the customer problem it solves, one sentence. "
+                "customer: who buys it, specific (who and where). value_prop: why they would choose it, one sentence. industry: two or three words "
+                "(for example 'Commercial cleaning'). Only about the idea described; never about another business. Plain words, no dashes.")
+
+
+async def _fill_idea(ctx, idea: dict) -> dict:
+    """The plan's inputs the owner did not give, worked out from what the plan is about (the owner's QA, 23 Oct: a window
+    cleaning plan was drafted as "Consulting", with no problem and its name as the value proposition). One short model call;
+    what the owner or a launch plan already gave is kept. Changeable afterwards in the plan's inputs."""
+    missing = [k for k in ("problem", "customer", "value_prop", "industry") if not str(idea.get(k) or "").strip() or idea.get(f"{k}_guessed")]
+    if not idea.get("description"):
+        return idea
+    try:
+        import json
+        from app.modules.agent import research
+        llm = research._default_llm(ctx.actor.user_id)
+        if llm is None:
+            return idea
+        prompt = "IDEA:\n" + json.dumps({k: idea.get(k) for k in ("description", "customer", "problem", "location", "said") if idea.get(k)}, ensure_ascii=False)[:3000]
+        res = await asyncio.wait_for(llm.generate_text(system=_FILL_SYSTEM, prompt=prompt, feature="agent_plan_inputs", max_tokens=400), timeout=25)
+        m = re.search(r"\{.*\}", str(getattr(res, "text", "") or ""), re.S)
+        got = json.loads(m.group(0)) if m else {}
+    except Exception:      # noqa: BLE001 - drafted from what there is
+        logger.info("plan inputs not filled for %s", ctx.run.get("id"), exc_info=True)
+        return idea
+    out = {**idea, "_filled": True}
+    for k in missing:
+        v = " ".join(str(got.get(k) or "").split())[:400]
+        if v and v.lower() not in ("null", "none", "unknown"):
+            out[k] = v
+    # The idea as the owner meant it, spelling corrected (the owner's QA, 23 Oct: "cos I mean cleaning"): only when it is
+    # plainly the same words, never another idea
+    name = " ".join(str(got.get("name") or "").split())[:80]
+    if name and _same_words(name, str(idea.get("description") or "")):
+        if idea.get("separate") or len(str(idea.get("description") or "")) <= 60:
+            out["description"] = name if len(str(idea.get("description") or "")) <= 60 else idea["description"]
+        out["name"] = name if idea.get("separate") else idea.get("name") or name
+    return out
+
+
+def _same_words(a: str, b: str) -> bool:
+    """"Window cleaning" and "window cleanig": the same words, a typo apart."""
+    import difflib
+    wa, wb = re.findall(r"[a-z]+", a.lower()), re.findall(r"[a-z]+", b.lower())
+    if not wa or not wb:
+        return False
+    return difflib.SequenceMatcher(None, " ".join(wa), " ".join(wb)).ratio() >= 0.75
+
+
 async def business_plan_step(ctx):
     data = await _business_and_launch(ctx)
+    data, clash = await _with_owner_words(ctx, data)
+    if clash:
+        return clash
     idea, separate = await _idea_for(ctx, data)
-    ask = _ask_idea(idea, ("description", "customer"))
-    if ask:
-        return ask
+    # The Agent fills and drafts (the owner's QA, 23 Oct: "agent should fill all these things, draft the business plan; I can
+    # still modify the inputs on Blueprints"): its best reading of who the customer is is used as it is, never asked; a
+    # missing one is left to the plan, written from the business. Only an idea with nothing to go on is asked about.
+    if not idea.get("description"):
+        ask = _ask_idea(idea, ("description",))
+        if ask:
+            return ask
+    idea = await _fill_idea(ctx, {**idea, "customer_guessed": False, "description_guessed": False})
+    idea.pop("_filled", None)
     key = _idea_key(idea.get("description")) if separate else None
     import hashlib
     import json as _json
@@ -1754,7 +1896,13 @@ async def business_plan_step(ctx):
                 await _keep_separate_idea(ctx, idea, {"kind": "plan", **r}, plan=r)
             else:
                 await _keep(ctx, "plan", r)
-            r["to"] = await _as_draft(ctx, "business_plan", r.get("title") or "Business plan", "business-plans", r.get("document_id"))
+            # Named for what it is about: the launch's offering, else the business (the owner's QA, 23 Oct: "Business plan: Business plan")
+            r["to"] = await _as_draft(ctx, "business_plan", r.get("title") or idea.get("name") or idea.get("description") or "Business plan",
+                                      "business-plans", r.get("document_id"),
+                                      inputs={"company_name": idea.get("name"), "industry": idea.get("industry"), "problem": idea.get("problem"),
+                                              "solution": idea.get("description"), "target_market": idea.get("customer"), "location": idea.get("location"),
+                                              "value_prop": idea.get("value_prop"), "subject_id": (ctx.params or {}).get("subject_id"),
+                                              "services": [idea["description"]] if idea.get("separate") and idea.get("description") else None})
     if reused:
         return Done("You already have this business plan draft" + (f" ({r['title']})" if r.get("title") else "") + ", so I haven't made another. Nothing was charged.",
                     next_action="Ask me to redraft it when you want a new version.",
@@ -1766,7 +1914,13 @@ async def business_plan_step(ctx):
 
 async def sales_letter_step(ctx):
     data = await _business_and_launch(ctx)
+    data, clash = await _with_owner_words(ctx, data)
+    if clash:
+        return clash
     idea, separate = await _idea_for(ctx, data)
+    idea = await _fill_idea(ctx, idea) if idea.get("description") else idea
+    if idea.pop("_filled", False):
+        idea = {**idea, "customer_guessed": False, "description_guessed": False}
     ask = _ask_idea(idea, ("description", "customer"))
     if ask:
         return ask

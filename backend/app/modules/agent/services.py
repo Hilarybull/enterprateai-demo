@@ -482,10 +482,19 @@ async def update_history_entry(user_id: str, business_id: str, history_id: str, 
             return
 
 
+PLAN_READERS = {"investors": "Written for investors deciding whether to fund it: lead with the opportunity, traction, the funding asked and the return.",
+                "lender": "Written for a bank or lender deciding on a loan: lead with cash flow, repayment ability, security and risks.",
+                "partners": "Written for partners or suppliers: lead with what the business does, its customers and how working together helps both.",
+                "planning": "Written for the owner and team to plan the year: lead with goals, priorities, milestones and the numbers to watch."}
+
+
 def owner_words(idea: dict) -> dict:
-    """What the generators are told from the chat: the owner's words, where it operates, and whether it is a separate idea."""
+    """What the generators are told from the chat: the owner's words, where it operates, whether it is a separate idea, and
+    who the document is for (asked before a business plan starts, 23 Oct)."""
     return {"owner_said": str(idea.get("said") or "")[:3000] or None, "location": str(idea.get("location") or "")[:200] or None,
-            "separate_idea": bool(idea.get("separate"))}
+            # a separate idea, or the owner's words chosen over a profile that clashes: nothing of the stored profile is given
+            "separate_idea": bool(idea.get("separate") or idea.get("profile_clash")),
+            **({"extra_notes": PLAN_READERS[idea["purpose"]]} if idea.get("purpose") in PLAN_READERS else {})}
 
 
 def _first_sentence(text) -> str:
@@ -654,9 +663,13 @@ class ModuleStudio(Studio):
     async def draft_plan(self, *, user_id, business_id, idea):
         from app.modules.blueprint.schemas import BlueprintGenerateRequest
         from app.modules.blueprint.service import generate_blueprint
+        separate = bool(idea.get("separate"))
         res = await generate_blueprint(BlueprintGenerateRequest(
-            type="business_plan", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, include_validation_snapshot=True,
+            # A separate idea is its own: none of the business's own validation figures or services in it (23 Oct)
+            type="business_plan", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, include_validation_snapshot=not separate,
             industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
-            target_market=idea.get("customer") or None, **owner_words(idea)), user_id=user_id)
-        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Business plan",
+            target_market=idea.get("customer") or None, value_proposition=idea.get("value_prop") or None,
+            **({"selected_services": [str(idea.get("description"))[:120]]} if separate and idea.get("description") else {}), **owner_words(idea)), user_id=user_id)
+        # Its own title, never a generic one (the draft is then named for the idea it is about)
+        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or None,
                 "sections": len(getattr(res, "sections", None) or []) or None}

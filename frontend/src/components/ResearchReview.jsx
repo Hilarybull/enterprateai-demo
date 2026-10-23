@@ -639,7 +639,8 @@ export function premiumFlow({ base, body = {}, businessId = null, onError = () =
       }
       const progressKey = `p${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
       const run = async () => {
-        const out = await apiRequest(base, "POST", { ...body, progress_key: progressKey }, { timeoutMs: 180000 });
+        // Up to 6 minutes (the owner's QA, 22 Oct: a run took 183 s on a slow database and the page gave up at 180)
+        const out = await apiRequest(base, "POST", { ...body, progress_key: progressKey }, { timeoutMs: 360000 });
         return out;
       };
       return { confirm: { ...quote, progressKey }, start: async () => {

@@ -483,7 +483,9 @@ def assess(goal_key: str, answers: dict, data: dict | None = None, *, now: datet
         from app.modules.agent import business as bz
         sign = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}.get(bz.currency_of(data or {}), "£") if data else "£"
     out = run(dict(answers or {}), data, now, sign)
-    if offering_on_record(answers, data, priced_only=_amount((answers or {}).get("price")) is not None):
+    if offering_on_record(answers, data, priced_only=_amount((answers or {}).get("price")) is not None) or (
+            goal_key == "test_idea" and not idea_of_this_business(answers, data)):
+        # Already on record, or an idea that is not this business's (G4, 23 Oct): not offered for its catalogue
         out["free_next_actions"] = [x for x in out["free_next_actions"] if x.get("label") != "Add it to your catalogue"]
     out["free_next_actions"] = [_doable(x, answers or {}, sign) for x in out["free_next_actions"]]
     out.update(at_a_glance(out))
@@ -585,12 +587,50 @@ def _amount(value: Any) -> float | None:
 _CODE_OF_SIGN = {"£": "GBP", "$": "USD", "€": "EUR", "₦": "NGN"}
 
 
+_PLAIN = {"business", "company", "service", "services", "people", "customers", "local", "small", "with", "from", "that", "this", "their",
+          "your", "will", "would", "want", "start", "starting", "idea", "offer", "help", "helps", "provide", "selling", "sell"}
+
+
+def _words(text: Any) -> set:
+    return set(re.findall(r"[a-z]{4,}", str(text or "").lower())) - _PLAIN
+
+
+def idea_of_this_business(answers: dict | None, data: dict | None) -> bool:
+    """Does the idea fit what the business already does? True when the business says nothing about itself yet (the idea
+    is the business), else when the idea shares a word with its description, industry or offerings."""
+    said = _words((answers or {}).get("description") or (answers or {}).get("sell"))
+    p = (data or {}).get("workspace_profile") or {}
+    about = " ".join(str(p.get(k) or "") for k in ("description", "about_company", "business_description", "what_we_do", "primary_industry",
+                                                   "primary_industry_other", "custom_industry", "industry", "key_offering_focus"))
+    about += " " + " ".join(str(x.get("name") or "") for x in _company(data)["products"])
+    mine = _words(about)
+    return not mine or not said or bool(said & mine)
+
+
+_NAME_LEAD = re.compile(r"^(?:(?:i|we)\s+(?:want|plan|would like|am going|are going)\s+to\s+(?:start|open|launch|run|sell|offer)\s+|"
+                        r"(?:my|our)\s+idea\s+is\s+(?:to\s+(?:start|open|launch|run|sell|offer)\s+)?|(?:an?|the|my|our)\s+)+", re.I)
+
+
+def item_name(text: Any) -> str:
+    """A catalogue name from what was said: "I want to start a mobile drone cleaning service for offices in Leeds, about
+    £80 a visit" is "Mobile drone cleaning service". The first clause, without the lead-in, who it is for or where."""
+    first = re.split(r"[.,;:!?\n]|\s+-\s+|\s+(?:but|which|so)\s+", str(text or "").strip(), maxsplit=1)[0]
+    name = _NAME_LEAD.sub("", first.strip())
+    name = re.split(r"\s+(?:for|in|around|across|to|at|near|aimed at|targeting)\s+", name, maxsplit=1)[0].strip()
+    name = name[:60].rsplit(" ", 1)[0] if len(name) > 60 else name
+    return name[:1].upper() + name[1:] if len(name) >= 3 else ""
+
+
 def _doable(action: dict, answers: dict, sign: str = "£") -> dict:
     """A free next action that does the thing, not only opens the page: the catalogue ones save what this check was
     told (the offering, its price and cost), and "Create a quotation" opens a new quotation."""
     label = action.get("label")
     name = str(answers.get("sell") or answers.get("description") or "").strip()[:120]
-    if label in ("Save the price in your catalogue", "Add it to your catalogue") and name:
+    from app.modules.readiness.service import _vague
+    if _vague(name):
+        name = ""      # "Readiness", "my business": not an offering to add (the owner's QA, 23 Oct)
+    if label in ("Save the price in your catalogue", "Add it to your catalogue") and item_name(name):
+        name = item_name(name)      # a short product name, never the whole sentence (G4, 23 Oct)
         item = {"name": name}
         if label == "Save the price in your catalogue":
             price, cost = _amount(answers.get("price")), _amount(answers.get("cost"))
@@ -609,7 +649,9 @@ def _doable(action: dict, answers: dict, sign: str = "£") -> dict:
         return {**action, "to": "/operations?tab=Sales&sub=Quotations&new=quote"}
     if label == "Write a business plan":
         # Started when pressed (R4: asked for), from what this check was told; the plans page is where it lands.
-        said = {k: v for k, v in {"description": name, "customer": str(answers.get("customer") or "").strip()[:200]}.items() if v}
+        who = str(answers.get("customer") or "").strip()[:200]
+        from app.modules.readiness.service import _vague
+        said = {k: v for k, v in {"description": name, "customer": "" if _vague(who) else who}.items() if v}
         return {**action, "capability": "business_plan_draft", "params": {"answers": said} if said else {}, "to": "/blueprint?tab=business-plans"}
     return action
 
@@ -703,13 +745,19 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
 # After research is adopted, what the result recommends next: the document the check leads to, started from a button
 # (R4: asked for by the owner, never started by itself).
 AFTER_REVIEW = {"need_funding": {"label": "Draft my funding pack", "capability": "funding_pack_draft"},
-                "launch": {"label": "Draft my business plan", "capability": "business_plan_draft"}}
+                "launch": {"label": "Draft my business plan", "capability": "business_plan_draft", "to": "/blueprint?tab=business-plans"}}
 
 
 def after_review(goal: str, result: dict, version: dict | None = None) -> dict:
     """The result as the adopted research left it, with its next step first."""
     out = dict(result)
     step = AFTER_REVIEW.get(goal)
+    if step and step["capability"] == "business_plan_draft":
+        # Started with what this check was told (the owner's QA, 23 Oct: "make sure these next actions work with the right
+        # details prefilled"): what is launched and for whom, never a placeholder
+        told = (out.get("_edit") or {}).get("answers") or out.get("answers") or {}
+        step = _doable({"label": "Write a business plan"}, told)
+        step = {**step, "label": AFTER_REVIEW[goal]["label"]}
     actions = [x for x in out.get("free_next_actions") or [] if not (step and x.get("capability") == step["capability"])]
     out["free_next_actions"] = ([step] if step else []) + actions
     out["premium_next_action"] = None      # adopted: the research isn't offered again (it reruns only when a figure changes)

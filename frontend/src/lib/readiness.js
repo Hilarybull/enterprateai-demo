@@ -66,6 +66,8 @@ export const generateMaterial = (businessId, feature, id, kind, key) =>
   apiRequest(`${root(businessId, feature)}/${id}/materials`, "POST", { kind, idempotency_key: key }, { timeoutMs: 60000 });
 export const getMaterial = (businessId, feature, id, materialId) => apiRequest(`${root(businessId, feature)}/${id}/materials/${materialId}`, "GET");
 export const updateMaterial = (businessId, feature, id, materialId, body) => apiRequest(`${root(businessId, feature)}/${id}/materials/${materialId}`, "PATCH", body);
+// A new title naming a different need: the case becomes that need, the old one goes to History (23 Oct)
+export const startNewNeed = (businessId, id, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/new-need`, "POST", body);
 export const reviewDocument = (businessId, id, key, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/documents/${key}`, "POST", body);
 export const contradiction = (businessId, id, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/contradictions`, "POST", body);
 export const recordDecision = (businessId, id, body) => apiRequest(`/businesses/${businessId}/launch-initiatives/${id}/decisions`, "POST", body);

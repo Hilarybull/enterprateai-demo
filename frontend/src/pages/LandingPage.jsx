@@ -162,6 +162,7 @@ function RecentActivity({ running }) {
 
 export default function LandingPage() {
   const goalFlow = useGoalFlow();      // the goal started in the hero: the launcher on the left, its task card on the right
+  const [annualBilling, setAnnualBilling] = useState(false);      // the plans' billing period (restored, 23 Oct)
   // One task card on the page (the owner's QA, 21 Oct: a hidden second copy showed the recap twice): under the launcher
   // from 768 to 1023px, in the right column (or a sheet) otherwise.
   const [midWidth, setMidWidth] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 768px) and (max-width: 1023px)").matches);
@@ -770,6 +771,12 @@ export default function LandingPage() {
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
               From getting started to making smarter decisions and supporting more businesses.
             </p>
+            <div className="mt-6 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Billing period" data-billing-toggle>
+              <button type="button" aria-pressed={!annualBilling} onClick={() => setAnnualBilling(false)} className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
+              <button type="button" aria-pressed={annualBilling} onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition ${annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>
+                Annual <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Save 17%</span>
+              </button>
+            </div>
           </div>
           <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch [&>*:last-child]:sm:col-span-2 [&>*:last-child]:sm:mx-auto [&>*:last-child]:sm:w-full [&>*:last-child]:sm:max-w-sm [&>*:last-child]:lg:col-span-1 [&>*:last-child]:lg:mx-0 [&>*:last-child]:lg:max-w-none">
             {PLANS.map(plan => (
@@ -782,10 +789,10 @@ export default function LandingPage() {
                   {plan.free ? (
                     <><span className="text-4xl font-extrabold text-slate-900">£0</span></>
                   ) : (
-                    <><span className="text-4xl font-extrabold text-slate-900">£{plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
+                    <><span className="text-4xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
                   )}
                 </div>
-                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : "Billed monthly"}</p>
+                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
                 {plan.desc && <p className="mt-3 text-center text-xs text-slate-500">{plan.desc}</p>}
                 <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-[11px] font-bold uppercase tracking-widest transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
                   {plan.ctaLabel}

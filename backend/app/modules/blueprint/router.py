@@ -208,9 +208,27 @@ async def blueprint_documents_update(
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def blueprint_documents_delete(
     document_id: str,
+    workspace_id: str | None = Query(default=None, max_length=80),
     user=Depends(get_current_user),
 ) -> Response:
+    doc = await get_document(user_id=user["id"], document_id=document_id)
     await delete_document(user_id=user["id"], document_id=document_id)
+    workspace = (getattr(doc, "workspace_id", None) if doc else None) or workspace_id
+    if workspace and doc:      # only for a document that was this user's
+        # Its Agent draft, if any, leaves Needs Approval with it (the owner's QA, 23 Oct)
+        try:
+            from app.modules.agent import drafts
+            from app.modules.agent.goal_router import get_orchestrator
+
+            def _drop(data: dict) -> dict:
+                drafts.withdraw(data, document_id)
+                return data
+            orch = get_orchestrator()
+            await orch.actor_for(user["id"], str(workspace), user.get("email"))      # only a workspace this user can open
+            await orch.rt.business.mutate(str(workspace), _drop)
+        except Exception:      # noqa: BLE001 - the document is deleted either way
+            import logging
+            logging.getLogger(__name__).info("draft for deleted document %s not withdrawn", document_id, exc_info=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

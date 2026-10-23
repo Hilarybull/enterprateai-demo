@@ -724,6 +724,8 @@ export default function BlueprintPage() {
 
   // The Agent's draft, opened from its link (?document_id=…&review=…): that document itself, with Accept, Edit and Reject.
   const reviewId = bpSearchParams.get("review");
+  // The bar's Edit, or Edit on the dashboard's approvals (?edit=1): the draft opens in the editor
+  const [draftEditing, setDraftEditing] = useState(() => bpSearchParams.get("edit") === "1");
   const openedDraft = useRef("");
   useEffect(() => {
     const id = bpSearchParams.get("document_id");
@@ -731,6 +733,22 @@ export default function BlueprintPage() {
     const doc = savedDocs.find((d) => String(d.id) === String(id));
     if (doc) { openedDraft.current = id; openSavedDocument(doc); }
   }, [bpSearchParams, savedDocs]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // The inputs the Agent wrote this draft from, in the form (the owner's QA, 23 Oct: the form showed the profile's car wash
+  // on a drone cleaning plan), so a change and Regenerate start from them
+  const draftInputsFor = useRef("");
+  useEffect(() => {
+    if (!reviewId || !workspaceIdStored || draftInputsFor.current === reviewId) return;
+    draftInputsFor.current = reviewId;
+    apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}`, "GET").then((out) => {
+      const i = out?.draft?.inputs || {};
+      if (i.company_name) setCompanyName(i.company_name);
+      if (i.industry) setIndustry(i.industry);
+      if (i.problem) setProblem(i.problem);
+      if (i.solution) { setSolution(i.solution); setValueProp(i.value_prop || i.solution); }
+      if (i.target_market) setTargetMarket(i.target_market);
+      if (Array.isArray(i.services) && i.services.length) setSelectedServices(i.services);
+    }).catch(() => {});
+  }, [reviewId, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
   async function decideDraft(decision) {
     if (!reviewId || !workspaceIdStored) return;
     try {
@@ -1274,6 +1292,7 @@ export default function BlueprintPage() {
 
   function closeModal() {
     setIsModalOpen(false);
+    setDraftEditing(false);
     setIsLoading(false);
     setError(null);
     setFromValidation(false);
@@ -2669,7 +2688,8 @@ export default function BlueprintPage() {
     setError(null);
     try {
       try {
-        await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
+        // The workspace too, so the Agent's draft for it leaves Needs Approval (23 Oct)
+        await apiRequest(`/blueprint/documents/${docId}${workspaceIdStored ? `?workspace_id=${encodeURIComponent(workspaceIdStored)}` : ""}`, "DELETE");
       } catch (e) {
         // 404 means document is already gone — treat as success
         if (!String(e?.message || "").includes("404") && !String(e?.message || "").includes("not found")) {
@@ -2832,12 +2852,15 @@ export default function BlueprintPage() {
 
   return (
     <div>
-      {reviewId && (
+      {/* Only on the open draft (the owner's QA, 23 Oct: the bar stayed on the plans list after the draft was closed) */}
+      {reviewId && isModalOpen && (
         <div className="fixed inset-x-0 top-0 z-[80] flex flex-wrap items-center justify-center gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-[13px] text-indigo-900 shadow-sm" data-draft-review>
           <span className="font-semibold">Draft from the Agent · Needs your review</span>
           <button type="button" onClick={() => decideDraft("accept")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700">Accept</button>
-          <button type="button" onClick={() => { const n = new URLSearchParams(bpSearchParams); n.delete("review"); setBpSearchParams(n, { replace: true }); }}
-            className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100">Edit</button>
+          {/* Edit opens the draft in the editor (the owner's QA, 23 Oct: "clicked on Edit and nothing happened"); Accept or
+              Reject stay in the bar for when the edits are saved */}
+          <button type="button" onClick={() => setDraftEditing(true)} aria-pressed={draftEditing}
+            className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100" data-draft-edit>{draftEditing ? "Editing" : "Edit"}</button>
           <button type="button" onClick={() => decideDraft("reject")} className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100">Reject</button>
         </div>
       )}
@@ -4100,7 +4123,8 @@ export default function BlueprintPage() {
                         onSave={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? undefined : saveEdits}
                         hideShare={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
                         readOnly={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
-                        defaultMode="preview"
+                        key={draftEditing ? "editing" : "preview"}
+                        defaultMode={draftEditing ? "edit" : "preview"}
                         compactPreview
                         shareMenuItems={[
                           {

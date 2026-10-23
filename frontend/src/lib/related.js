@@ -7,7 +7,8 @@ export function relatedReady(summary, readyAt = 75, shownScore = null) {
   // The score on screen at the ready threshold (75) or above: always (the owner's QA, 22 Oct: "my score is 93!!!"). A step
   // still open is listed above it; the recommendations never wait on it.
   if (summary?.classification === "ready") return true;
-  const shown = [summary?.score, summary?.known_score, shownScore].map(Number).find((n) => Number.isFinite(n) && n > 0);
+  // The summary's score only (G5, 23 Oct): never the points known so far while the full score waits
+  const shown = [summary?.score ?? shownScore].filter((n) => n !== null && n !== undefined).map(Number).find((n) => Number.isFinite(n) && n > 0);
   return shown !== undefined && shown >= readyAt;
 }
 
@@ -30,7 +31,7 @@ function relatedAll({ feature, subject, packLocked = false }) {
       { key: "pack", title: packDone ? "Your funding pack is ready" : `Your funding pack is ${pct}% ready`,
         why: packDone ? "Everything a funder asks for, from this check." : `Still to do: ${(pack.items || []).filter((i) => !i.ready).map((i) => i.label).join(", ") || "the remaining parts"}.`,
         cta: packDone ? "View funding pack" : "Finish the pack", to: `/funding/${id}?tab=documents`, locked: packLocked },
-      { key: "plan", title: "Write your business plan", why: "Funders ask for one beside the pack.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
+      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "Funders ask for one beside the pack.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
       { key: "launch", title: "Check you're ready to launch", why: "The same checks for putting the money to work.", cta: "Open Launch Readiness", to: "/launch" },
       { key: "invoice", title: "Send your next invoice", why: "Every paid invoice is more evidence of demand for your case.", cta: "Create an invoice", to: "/operations?tab=Sales&new=invoice" },
       { key: "catalogue", title: "Keep your prices up to date", why: "Your case reads its price and cost per sale from your Catalogue.", cta: "Open Catalogue", to: "/catalogue?tab=products" },
@@ -40,7 +41,7 @@ function relatedAll({ feature, subject, packLocked = false }) {
   if (feature === "launch") {
     return [
       { key: "pricing", title: "Check your price", why: "A launch sells at the price you set: check it covers your costs.", cta: "Open Pricing", to: "/catalogue" },
-      { key: "plan", title: "Write your business plan", why: "The plan behind the launch, in one document.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
+      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "The plan behind the launch, in one document.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
       { key: "marketplace", title: "List your business on the Marketplace", why: "So your first customers can find you.", cta: "Open the Marketplace", to: "/marketplace" },
       { key: "invoice", title: "Set up your first quotation and invoice", why: "Ready for the first order.", cta: "Open Business Operations", to: "/operations?tab=Sales" },
       { key: "funding", title: "Check your funding readiness", why: "If the launch needs money, see how prepared you are.", cta: "Open Funding Readiness", to: "/funding" },

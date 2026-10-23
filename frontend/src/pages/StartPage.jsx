@@ -132,7 +132,8 @@ export default function StartPage({ framed = false }) {
       }).catch(() => { /* the task's own hand-off still opens the work */ });
     }
     try {
-      const done = await apiRequest(`/task-sessions/${sessionId}/prepare`, "POST", { confirmed });
+      // Up to 2 minutes (the owner's QA, 22 Oct: prepare took 32 s and the page gave up at 30)
+      const done = await apiRequest(`/task-sessions/${sessionId}/prepare`, "POST", { confirmed }, { timeoutMs: 120000 });
       if (done.confirm && !confirmed) {
         // P0.5c: a paid task's price first ("Write your business plan. 40 credits. You have 90."), Start or Not now.
         setSession(done);
@@ -187,6 +188,11 @@ export default function StartPage({ framed = false }) {
       setProblem(done.problem || "That couldn't be prepared just now. Nothing was lost.");
       setStage("problem");
     } catch (e) {
+      // Slow, not failed: the work may have finished on the server. Its case opens if it did.
+      try {
+        const fv = e?.status === 409 ? null : await fetchFirstValue(sessionId);
+        if (fv?.result && resultHome(fv.result)) { navigate(resultHome(fv.result), { replace: true }); return; }
+      } catch { /* said below */ }
       setProblem(e?.status === 409 ? "A few details are still needed." : "That couldn't be prepared just now. Nothing was lost.");
       setStage("problem");
     }

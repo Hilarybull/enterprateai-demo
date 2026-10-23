@@ -61,6 +61,7 @@ def feature_of(goal: str) -> str:
 ACTION_NAME = {"launch": "Find what you need to launch", "need_funding": "Find evidence for your funding case",
                "price_offer": "Find your best price", "more_customers": "Find customer opportunities", "test_idea": "Validate your idea fully"}
 LLM_TIMEOUT_SECONDS = 30.0      # one synthesis call; retried once on a timeout
+DRAFT_TIMEOUT_SECONDS = 90.0      # the case and plan drafts run in the background: room for a long reply (23 Oct: timed out at 30 s)
 NOT_CONNECTED = "Research isn't connected yet"
 COULD_NOT_FIND = "Couldn't find this, do you know?"
 ONLY_YOU_KNOW = "Only you know"
@@ -271,7 +272,8 @@ def context_of(data: dict | None, i: dict) -> dict:
         place = place.replace(f", {country}", "").strip(", ") or place
     # What this case is about leads (the owner's QA, 17 Oct: one offering researched under another sector because of the
     # workspace's stale industry): the offering said here, then the workspace's industry.
-    sector = (own("sell") or own("description")) or words(p.get("primary_industry")) or words(p.get("business_type")) or offering
+    # then the offering itself (the owner's QA, 22 Oct: a car wash's market searched as "consulting", the profile's industry)
+    sector = (own("sell") or own("description")) or offering or words(p.get("primary_industry")) or words(p.get("business_type"))
     size = words(p.get("company_size")) or (f"{i['team_size']:g}-person" if i.get("team_size") else "small")
     # The case's own currency when the owner said one (₦, naira, NGN), else the business default: never empty.
     currency = str(i.get("currency") or "").upper() or task_currency(data)
@@ -643,6 +645,24 @@ def redraft(run: dict, data: dict | None) -> dict:
     kept = [x for x in items if x.get("decision") or not (nothing_found(x) or (x.get("kind") == QUESTION and "found nothing I could point to" in str(x.get("question") or "")))]
     if len(kept) != len(items):
         items, changed = kept, True
+    if goal == "launch":
+        # What the workspace or my estimates now give is shown, not asked, and the launch's calculations are worked out
+        # (the owner's QA, 23 Oct): free, on opening the run again.
+        est = launch_estimates({**base, "_from": dict(where)})
+        where = {**where, **est.pop("_from")}
+        for n, x in enumerate(items):
+            f = x.get("field")
+            if x.get("kind") == QUESTION and not x.get("decision") and not x.get("conflict") and f and est.get(f) not in (None, "")                     and not _VAGUE.match(str(est.get(f)).strip()):
+                items[n] = {**{k: v for k, v in x.items() if k not in ("question", "why", "type")}, "kind": REUSED, "state": REUSED,
+                            "value": est[f], "number": est[f] if isinstance(est[f], (int, float)) else None, "source_note": where.get(f) or "From your workspace"}
+                changed = True
+        base = {k: v for k, v in est.items() if not str(k).startswith("_")}
+        for key, crit in LAUNCH_DERIVES:
+            if not any(x.get("derive") == key for x in items):
+                dv = derive(key, base, cur)
+                if not dv.get("needs"):
+                    items.append(_derived_item(crit, key, dv, [k for k in DERIVE_INPUTS.get(key, []) if base.get(k) is not None], base, {}))
+                    changed = True
     asked = {x.get("field") for x in items if x.get("kind") == QUESTION}
     extra = conflict_questions(fresh, cur, asked)
     if extra:
@@ -794,6 +814,9 @@ def inputs_of(goal: str, answers: dict, data: dict | None) -> dict[str, Any]:
             take(key, value, where)
     p = data.get("workspace_profile") or {}
     take("company", str(p.get("company_name") or p.get("business_name") or data.get("name") or "").strip() or None, "From your business profile")
+    # Who owns the launch: the person the profile names, else the owner's own name (never asked when the workspace says)
+    who = str(p.get("contact_name") or p.get("owner_name") or data.get("_owner_name") or "").strip()
+    take("launch_owner", who or None, "From your business profile" if p.get("contact_name") or p.get("owner_name") else "You, as the owner")
     team = num(p.get("employee_count"))
     if team:
         take("team_size", team, "From your business profile")
@@ -1366,8 +1389,23 @@ CASE_DRAFT_FIELDS = {
         "milestones": "A list of {outcome, measure, target}: two or three outcomes the funding pays for, how each is measured, and its target",
     },
 }
+# A launch plan's own fields (the owner, 23 Oct: "funding readiness and launch readiness are not the same"): one plan per
+# service or product, drafted for that offering only.
+CASE_DRAFT_FIELDS["launch"] = {
+    "offer.delivery_terms": "How and where the offering is delivered and paid for (for example booking, location, payment timing, cancellation), in one or two sentences",
+    "economics.shared_cost_method": "Only for a new offering in an existing business: how shared costs (rent, staff, utilities) are split onto it, in one sentence",
+    "market.message": "The launch message to the first customers: one or two sentences naming the offering, who it is for, the benefit and the price with its currency",
+    "market.budget": "A realistic monthly budget for the first channel, as a whole number in the plan's currency, no symbol or words (an assumption)",
+    "market.target": "What the first channel should bring in the first month, for example \"20 enquiries and 10 paying customers\"",
+    "planned_volume.amount": "A realistic number of units or customers in the first month of the launch, a whole number only; null when FACTS give no basis",
+    "delivery.capacity_per_unit": "The hours one unit or customer takes to deliver, a number only; null when FACTS give no basis",
+    "control.success_measures": "Two or three measures of a successful launch, with numbers, in one or two sentences",
+    "control.incident_response": "What the business does if a delivery goes wrong or a customer complains, in one or two sentences",
+    "delivery.dependencies": "A list of {name, kind, contingency}: the critical suppliers, people or systems this launch depends on (kind is supplier, person or system) and a backup for each",
+}
 CASE_LIST_FIELDS = {"team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
-                    "milestones": ("outcome", "measure", "target")}
+                    "milestones": ("outcome", "measure", "target"), "delivery.dependencies": ("name", "kind", "contingency")}
+NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit")
 _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, specific sentences a funder can read. "
                  "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
                  "where FACTS give none, say so plainly. Plans and assumptions are yours to propose from what FACTS say about the "
@@ -1376,6 +1414,16 @@ _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, spec
                  "an assumption), milestones, gaps, risks. Fill every field you can; return null only when nothing sensible can be "
                  "said. Write only about this business, never about another offering. Reply with JSON only: "
                  "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
+
+
+_DRAFT_SYSTEM_LAUNCH = ("You fill in a small business's plan to launch one offering. Write plain, specific sentences the owner can act on. "
+                        "Facts about the past (customers, sales, revenue, suppliers, approvals) come only from FACTS: never invent them. Plans and "
+                        "assumptions are yours to propose from what FACTS say about the business and this offering (its price, cost, place, customers, "
+                        "team): delivery terms, the launch message, a realistic channel budget and target, the first month's volume, success "
+                        "measures, what to do when something goes wrong, and the suppliers, people and systems it depends on. Numbers are whole "
+                        "numbers in the plan's currency. Write only about this offering, never about another one or about funding. Fill every "
+                        "field you can; return null only when nothing sensible can be said. Reply with JSON only: "
+                        "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
 
 def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, found: list[dict] | None) -> dict:
@@ -1400,6 +1448,24 @@ def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, fou
             "figures": {k: v for k, v in (i or {}).items() if not str(k).startswith("_") and v not in (None, "")}, "research": seen}
 
 
+def _fields_of(text: str) -> dict:
+    """The "fields" of the model's JSON reply; when the reply is malformed or cut off, every complete "key": "text" pair
+    in it, so one broken field never loses the rest."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0)).get("fields") or {}
+        except ValueError:
+            pass
+    out: dict = {}
+    for k, v in re.findall(r'"([a-z_]+(?:\.[a-z_]+)?)"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
+        try:
+            out[k] = json.loads(f'"{v}"')
+        except ValueError:
+            out[k] = v
+    return out
+
+
 async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = None) -> dict[str, str]:
     """The case's fields drafted from the facts, one model call; {} when there is no model or it fails (never a guess).
     `only`: just these fields (those still blank)."""
@@ -1409,9 +1475,10 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
     prompt = ("FIELDS (key: what to write):\n" + "\n".join(f"- {k}: {v}" for k, v in fields.items())
               + "\n\nFACTS:\n" + json.dumps(facts, default=str, ensure_ascii=False)[:9000])
     try:
-        res = await asyncio.wait_for(llm.generate_text(system=_DRAFT_SYSTEM, prompt=prompt, feature="agent_research", max_tokens=900), timeout=LLM_TIMEOUT_SECONDS)
-        m = re.search(r"\{.*\}", (getattr(res, "text", None) or ""), re.S)
-        raw = (json.loads(m.group(0)) if m else {}).get("fields") or {}
+        # Room for every field (900 tokens cut the reply off mid-way, the owner's QA, 22 Oct)
+        system = _DRAFT_SYSTEM_LAUNCH if goal == "launch" else _DRAFT_SYSTEM
+        res = await asyncio.wait_for(llm.generate_text(system=system, prompt=prompt, feature="agent_research", max_tokens=2400), timeout=DRAFT_TIMEOUT_SECONDS)
+        raw = _fields_of(getattr(res, "text", None) or "")
     except Exception:      # noqa: BLE001 - the drafts are a help; the run carries on without them
         logger.info("case drafts skipped", exc_info=True)
         return {}
@@ -1427,6 +1494,11 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
                 out[k] = rows
             continue
         text = " ".join(str(v or "").split())
+        if k in NUMBER_DRAFTS:
+            m = re.search(r"\d[\d,]*(?:\.\d+)?", text)      # a number only, or nothing
+            if m and float(m.group().replace(",", "")) > 0:
+                out[k] = str(round(float(m.group().replace(",", ""))))
+            continue
         if text and text.lower() not in ("null", "none", "unknown", "n/a") and not NOT_SAID.search(text) and not _NOTHING_FOUND.search(text):
             out[k] = text[:600]
     return out
@@ -1541,6 +1613,24 @@ DERIVE_INPUTS = {"cash_needed": ["fixed_costs", "cost", "monthly_sales"], "capac
                  "forecast": ["price", "cost", "monthly_sales", "fixed_costs", "cash_in_bank", "monthly_revenue", "amount", "loan_rate", "loan_term"]}
 
 
+LAUNCH_DERIVES = (("cash_needed", "cash"), ("capacity", "delivery"))
+
+
+def launch_estimates(i: dict) -> dict:
+    """A launch's figures worked out, not asked, when nothing on record or found gives them (the owner's QA, 23 Oct: "why
+    didn't the agent populate these"): a full-time month for each person, and the sales needed to break even as the first
+    month's expectation. Each labelled as my estimate, to change. For launch calculations only, never a funding forecast."""
+    if i.get("hours_per_person") is None:
+        i["hours_per_person"] = 160.0
+        i.setdefault("_from", {})["hours_per_person"] = "My estimate: a full-time month, about 160 hours. Change it if it's different"
+    if i.get("monthly_sales") is None:
+        price, cost, fixed = (first_value._num(i.get(k)) for k in ("price", "cost", "fixed_costs"))
+        if price and cost is not None and fixed and price > cost:
+            i["monthly_sales"] = float(max(1, -(-fixed // (price - cost))))
+            i.setdefault("_from", {})["monthly_sales"] = "My estimate: the sales a month you need to break even. Change it to what you expect"
+    return i
+
+
 def resolve_derivations(waiting: list[str], i: dict, found: list[dict], currency: str | None) -> tuple[list[dict], list[dict], dict]:
     """Benchmarks fill the figures still missing; every calculation is worked out now. Returns (calculated items, the
     questions for figures nothing could give, the inputs used)."""
@@ -1572,6 +1662,11 @@ def resolve_derivations(waiting: list[str], i: dict, found: list[dict], currency
         q = _question("financial", "monthly_revenue", INPUT_LABEL["monthly_revenue"], used_for="12-month forecast", why=f"{thin['words']}.",
                       for_derive="forecast", question="What do you expect to earn in a typical month?")
         asked.append({**q, "type": "number", "money": True, "estimate": True, "records": thin})
+    # A launch's own figures, worked out rather than asked when nothing on record or found gives them (the owner's QA, 23 Oct:
+    # "why didn't the agent populate these"): a full-time month for each person, and the sales needed to break even as the
+    # first month's expectation. Each is labelled as my estimate, to change. Launch calculations only, never a funding forecast.
+    if any(e.split(":")[1] in ("capacity", "cash_needed") for e in waiting):
+        launch_estimates(i)
     asked_first = set(i.get("_conflicts") or {}) & {"price", "cost", "monthly_revenue"}
     for entry in waiting:
         crit, key = entry.split(":")
@@ -1816,7 +1911,8 @@ REUSE_RESEARCH_DAYS = 30      # the owner's rule (15 Oct): the same research is 
 
 # What the research searches on: the business, the place, the route and the stage. Figures (the amount, a price, a cost) and
 # timing are worked out again from the owner's own numbers for free, so changing one never buys the same research twice
-# (the owner's QA, 17 Oct: an edit, then a refresh, charged 60 credits again).
+# (the owner's QA, 17 Oct: an edit, then a refresh, charged 60 credits again). What the money is for is a new need: its
+# research is new, and charged (the owner's QA, 23 Oct).
 SEARCH_KEYS = ("route", "stage", "use", "where", "sell", "description", "customer", "offering", "growth_goal", "channels")
 
 
@@ -2082,7 +2178,7 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
             continue
         if t.get("number"):
             # A figure the research would have estimated: the owner is asked for it, for what it is used for.
-            if t["number"] not in asked_fields and i.get(t["number"]) is None and t["number"] in ASKS:
+            if t["number"] not in asked_fields and i.get(t["number"]) is None and used.get(t["number"]) is None and t["number"] in ASKS:      # not one I estimated
                 items.append(_question(t["criterion"], t["number"], INPUT_LABEL.get(t["number"], t["label"]), used_for=t.get("used_for"), tag=COULD_NOT_FIND,
                                        field=t["number"]))
                 asked_fields.add(t["number"])

@@ -113,6 +113,19 @@ SELF_PRICED = ("idea_validation", "market_size", "business_plan_draft", "sales_l
 # What the owner gets, in their words, on the price confirm (never a capability key).
 ACTION_NAME = {"idea_validation": "Validate your idea", "market_size": "Size the market for your idea", "business_plan_draft": "Write your business plan",
                "sales_letter_draft": "Write your sales letter", "new_proposal": "Write your proposal"}
+READER_WORDS = {"investors": "investors", "lender": "a lender", "partners": "partners and suppliers", "planning": "you and your team"}
+
+
+def price_sentence(action: str, price: int, balance: int | None, about: str | None = None, reader: str | None = None) -> str:
+    """The price before a paid task, as one sentence (the owner's QA, 23 Oct: "Write your business plan. 40 credits. You have
+    647." didn't make sense): "I'll write your business plan for Drone Cleaning, for investors. It costs 40 credits, and you
+    have 647." What it does, for what and whom, its cost and the balance."""
+    doing = f"I'll {action[:1].lower()}{action[1:]}" if action else "I'll do this"
+    said = doing + (f" for {about}" if about else "") + (f", for {READER_WORDS[reader]}" if reader in READER_WORDS else "")
+    cost = f"It costs {price} credit{'s' if price != 1 else ''}"
+    return f"{said}. {cost}" + (f", and you have {balance}." if balance is not None else ".")
+
+
 BASE_TASK_FEATURE = "agent_task"
 # The price-list feature each self-priced task is charged as (the rest are charged as an Agent task).
 PRICED_AS = {"idea_validation": "idea_validation", "market_size": "idea_validation_comprehensive", "business_plan_draft": "business_plan_full",

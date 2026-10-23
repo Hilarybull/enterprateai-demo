@@ -31,9 +31,10 @@ def _live(rows: list[dict]) -> list[dict]:
         if any((r.get("data") or {}).get("pinned") for r in rows) else sorted(rows, key=lambda r: str(r.get("updated_at") or ""), reverse=True)
 
 
-async def launch_facts(orch, business_id: str) -> dict:
-    """What the owner has already said in a launch plan about who it is for, the problem and where.
-    Empty when there is no launch plan or it can't be read: the question is simply asked."""
+async def launch_facts(orch, business_id: str, subject_id: str | None = None) -> dict:
+    """What the owner has already said in a launch plan about who it is for, the problem and where, and what it launches.
+    `subject_id`: that launch plan, the one a task was started from (the owner's QA, 23 Oct: a business plan drafted from a
+    drone cleaning plan was about the car wash); else the first with any of it. Empty when there is none: the question is asked."""
     try:
         from app.modules.readiness import rules
         from app.modules.readiness.service import service_for
@@ -41,12 +42,15 @@ async def launch_facts(orch, business_id: str) -> dict:
     except Exception:      # noqa: BLE001 - never in the way of the task
         logger.debug("launch plans not read for %s", business_id, exc_info=True)
         return {}
+    if subject_id:
+        rows = [r for r in rows if str(r.get("id")) == str(subject_id)] or rows
     for row in rows:
         d = row.get("data") or {}
-        found = {"customer": _first(d, "customers.target_segment", "audience", "market.audience"),
+        found = {"offering": _first(d, "offer.launch_scope"), "id": str(row.get("id") or ""),
+                 "customer": _first(d, "customers.target_segment", "audience", "market.audience"),
                  "problem": _first(d, "customers.problem", "problem"),
                  "location": _first(d, "geography", "market.geography", "location")}
-        if any(found.values()):
+        if any(found[k] for k in ("customer", "problem", "location", "offering")):
             return {**found, "title": str(d.get("name") or d.get("title") or row.get("title") or "").strip()}
     return {}
 

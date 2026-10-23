@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { resultHome } from "../lib/resultHome";
+import { getRun } from "../lib/agent";
+import { relatedServices } from "../lib/related";
+import { toast } from "../lib/toast";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -170,10 +173,20 @@ export function openOf(result) {
     case "launch_readiness_initial": return { label: "Open launch plan", to: a?.initiative_id ? `/launch/${a.initiative_id}?tab=results` : "/launch" };
     case "pricing_health_initial": return { label: "Open pricing check", to: "/check/pricing" };
     case "customer_growth_foundation": return { label: "Open growth checklist", to: "/check/customers" };
-    case "idea_viability_initial": return { label: "Open in Idea Validation", to: result?.draft_id ? `/validation?draft=${encodeURIComponent(result.draft_id)}` : "/validation" };
+    // The result itself, the idea check's page (G4, 23 Oct: this opened an empty Idea Validation form)
+    case "idea_viability_initial": return { label: "Open idea check", to: "/check/idea" };
     default: return null;
   }
 }
+
+// Why each next action helps, in one line, for its card
+const NEXT_WHY = {
+  "Add it to your catalogue": "Your price and cost per sale, kept in one place for the launch.",
+  "Set up your Marketplace profile": "So your first customers can find you.",
+  "Write a business plan": "The plan behind the launch, in one document.",
+  "Create a quotation": "Ready for the first order.",
+};
+const kindOfResult = (r) => (r?.assessment?.kind || (String(r?.assessment_type || "").startsWith("launch") ? "launch" : String(r?.assessment_type || "").startsWith("funding") ? "funding" : ""));
 
 /** A result's own actions: the retired ones left out, "/funding" links taken to the case this result is about, and its
  *  one "Open …" button (added for a result saved before it had one). */
@@ -201,6 +214,33 @@ export function actionsOf(result) {
   return list;
 }
 
+/** A task started from a page, followed for a little while (the owner's QA, 23 Oct: "I had to click Follow it to know the
+ *  Agent needs something from me"): a question from the Agent, or the draft ready, said in a toast with one button. */
+export function followRun(runId, label, navigate, { every = 4000, tries = 30 } = {}) {
+  let n = 0;
+  const look = async () => {
+    n += 1;
+    let run = null;
+    try { run = (await getRun(runId))?.run; } catch { run = null; }
+    const steps = run?.steps || [];
+    const asking = steps.find((x) => x.state === "awaiting_input");
+    if (asking) {
+      toast({ id: `run-${runId}`, kind: "info", title: "The Agent needs your answer.", detail: asking.question || asking.message || label || "",
+        actions: [{ label: "Answer", onClick: () => navigate(`/agent/runs/${runId}`) }] });
+      return;
+    }
+    if (["succeeded", "awaiting_approval"].includes(run?.status)) {
+      const to = (run?.outcome?.links || [])[0]?.to || `/agent/runs/${runId}`;
+      toast({ id: `run-${runId}`, kind: "success", title: `${label || "Your draft"} is ready to review.`, detail: "",
+        actions: [{ label: "Open it", onClick: () => navigate(to) }] });
+      return;
+    }
+    if (["failed", "cancelled"].includes(run?.status)) return;
+    if (n < tries) setTimeout(look, every);
+  };
+  setTimeout(look, every);
+}
+
 export function useFreeActions(result, { onSaved = () => {}, setServed = () => {} } = {}) {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -213,8 +253,12 @@ export function useFreeActions(result, { onSaved = () => {}, setServed = () => {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const out = await apiRequest("/agent/requests", "POST", { business_id: workspaceId, capability: a.capability, params: a.params || {}, source_channel: "ui_action", background: true, confirmed: true });      // its price was just shown
-      if (out?.run?.id) { setServed({ started: true, run_id: out.run.id, capability: a.capability, label: a.label }); }      // said once, with "Follow it" (never a second line)
+      // Started from a launch plan: that plan's own offering, never another one's (the owner's QA, 23 Oct: a business plan
+      // drafted from the drone cleaning plan was about the car wash)
+      const plan = result?.assessment?.kind === "launch" || String(result?.assessment_type || "").startsWith("launch") ? result?.assessment?.initiative_id : null;
+      const params = { ...(a.params || {}), ...(plan ? { subject_id: plan } : {}) };
+      const out = await apiRequest("/agent/requests", "POST", { business_id: workspaceId, capability: a.capability, params, source_channel: "ui_action", background: true, confirmed: true });      // its price was just shown
+      if (out?.run?.id) { setServed({ started: true, run_id: out.run.id, capability: a.capability, label: a.label }); followRun(out.run.id, a.label, navigate); }      // said once, with "Follow it" (never a second line)
       else setDone({ error: out?.message || "That couldn't be started just now. Nothing was charged." });
     } catch (e) {
       setDone({ error: refusalMessage(e, "That couldn't be started just now. Nothing was charged.") });
@@ -240,7 +284,12 @@ export function useFreeActions(result, { onSaved = () => {}, setServed = () => {
     if (a.capability && workspaceId) {
       // A task: its price first. A free one (0 credits) starts at once.
       let price = null;
-      try { price = await apiRequest(`/businesses/${workspaceId}/agent/price/${a.capability}`, "GET"); } catch { price = null; }
+      // Asked twice before giving up (the owner's QA, 23 Oct: "Its price couldn't be checked" on a slow moment); never a
+      // dead end: without a price, its own page opens, where it starts with its price shown
+      for (let n = 0; n < 2 && !price; n += 1) {
+        try { price = await apiRequest(`/businesses/${workspaceId}/agent/price/${a.capability}`, "GET"); } catch { price = null; }
+      }
+      if (!price && a.to) { navigate(a.to); return; }
       if (!price) { setDone({ error: "Its price couldn't be checked just now, so nothing was started. Try again in a moment." }); return; }
       if (!price.credits) { await start(a); return; }
       setAsking({ action: a, title: a.label || price.title, credits: price.credits, balance: price.balance });
@@ -449,6 +498,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
   // The case's own steps always come from the page (the case as it is now), never from a refreshed copy of the result,
   // which doesn't carry them (the owner's QA, 22 Oct: after an adopt the old steps came back).
   const result = edited ? { ...edited, ...(given?.case_steps ? { case_steps: given.case_steps } : {}) } : given;
+  const asCards = embedded && kindOfResult(result) === "launch";      // a launch plan's page: what to do next as cards
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
   const [saved, setSaved] = useState(false);
   const [served, setServed] = useState(initialServed);   // the server's answer to the premium step: a gate, a cost to confirm, or the research it did
@@ -494,7 +544,15 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
     setServed({ confirm: { pending: true } });
     try {
       // Its price in the modal first, free or not (focus on "Not now"): nothing starts from one press on the card.
-      const out = await flow();
+      // Never a spinner for ever (the owner's QA, 23 Oct: "Getting the price…" stayed): 20 seconds, then said
+      let out;
+      try {
+        out = await Promise.race([flow(), new Promise((_, no) => { setTimeout(() => no(new Error("slow")), 20000); })]);
+      } catch {
+        setServed(null);
+        toast({ kind: "error", title: "The price couldn't be worked out just now.", detail: "Nothing was charged.", actions: [{ label: "Try again", onClick: () => premiumNow(only) }] });
+        return;
+      }
       if (out?.research && out.render && !out.confirm) {
         setRunNow(out.research);
         onRun?.(out.research);
@@ -576,13 +634,43 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-wait disabled:opacity-70 max-sm:w-full">
             {working && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
             {working ? "Working on it…" : result.premium_next_action.label}</button>}
-          {actionsOf(result).filter((a) => !a.save && !/funding pack/i.test(a.label || "") && !(hideOpen && /^Open /.test(a.label || ""))).slice(0, 3).map((a) => (
+          {!asCards && actionsOf(result).filter((a) => !a.save && !/funding pack/i.test(a.label || "") && !(hideOpen && /^Open /.test(a.label || ""))).slice(0, 3).map((a) => (
             <button key={a.label} type="button" onClick={() => act(a)}
               className={a.capability ? `${button} max-sm:w-full` : "text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline max-sm:py-1"}>
               {/^Open /.test(a.label || "") ? "Open full page" : a.label}</button>))}
           {!embedded && <EditAnswers result={result} onDirty={(d) => { setAnswersDirty(d); if (!d) setSaveFirst(false); }} onUpdated={(r) => { setEdited(r); setServed(null); onUpdated?.(r); }} />}
         </div>
       )}
+      {asCards && (() => {
+        // On a launch plan's page: what to do next as cards, as the funding case's Overview shows them (the owner's QA, 23 Oct:
+        // "the recommended next features are not in card"), at most three
+        const own = actionsOf(result).filter((a) => !a.save && !/funding pack/i.test(a.label || "") && !/^Open /.test(a.label || ""));
+        // Always three (the owner's QA, 23 Oct: "it should recommend another related action to replace the done one"): the
+        // result's own first, then the launch's related features, never one already offered in other words
+        const covers = (key) => own.some((a) => (key === "plan" && a.capability === "business_plan_draft") || (key === "marketplace" && /marketplace/i.test(a.label || ""))
+          || (key === "pricing" && a.catalogue));
+        const related = relatedServices({ feature: "launch", subject: { id: result?.assessment?.initiative_id } })
+          .filter((r) => !covers(r.key)).map((r) => ({ label: r.title, why: r.why, to: r.to, ...(r.cost === "Credits apply" ? { capability: null, paid: true } : {}) }));
+        const next = [...own, ...related].slice(0, 3);
+        if (!next.length) return null;
+        return (
+          <section className="mt-6 space-y-3" data-fv-next-cards>
+            <h3 className="text-[16px] font-bold text-slate-900 dark:text-slate-100">What to do next</h3>
+            <ul className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {next.map((a) => (
+                <li key={a.label} className="flex h-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" data-fv-next-card>
+                  <p className="text-[14.5px] font-semibold text-slate-900 dark:text-slate-100">{a.label}</p>
+                  <p className="text-[13px] text-slate-600 dark:text-slate-300">{NEXT_WHY[a.label] || a.why || "The next thing that helps this launch."}</p>
+                  <div className="mt-auto flex items-center justify-between gap-3 pt-2">
+                    <span className="text-[12px] text-slate-500 dark:text-slate-400">{a.capability || a.paid ? "Credits apply" : "Free"}</span>
+                    <button type="button" onClick={() => act(a)} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">Start →</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })()}
       {saveFirst && <p role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900" data-save-first>
         Save your answers first? Your changes in Your answers aren't saved yet. Save and check again, then research.</p>}
       {served?.needs && served.message && !served.started && <div className="mt-3" data-fv-needs>{served.render || <p className="text-[13px] text-slate-700">{served.message}</p>}</div>}
@@ -593,8 +681,15 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
         setWorking(true);
         try {
           const next = await served.start();
-          if (!next) setDone({ error: "The research couldn't finish just now. Nothing was charged. Try again in a moment." });
+          if (!next) toast({ kind: "error", title: "The research couldn't finish just now.", detail: "Nothing was charged.", actions: [{ label: "Try again", onClick: () => premiumNow() }] });
           else if (next.research) {
+            // Said by the one toast (22 Oct): what it cost and what is left, or that nothing new was found
+            const used = Number(next.research.charged_now ?? next.research.charged ?? 0);
+            const found = Number(next.research.findings ?? 0);
+            if (used > 0) toast({ kind: "success", title: `Done. Used ${used} credits.`, detail: typeof next.research.balance === "number" ? `${next.research.balance} left.` : "",
+              actions: [{ label: "See results", onClick: () => document.querySelector("[data-funding-options], [data-next-steps]")?.scrollIntoView?.({ behavior: "smooth", block: "start" }) }] });
+            else if (!found) toast({ kind: "success", title: "Nothing new found.", detail: "No credits used." });
+            else toast({ kind: "success", title: "Done.", detail: "No credits used." });
             // Its drafts in the step cards at once, the one result (the owner's QA, 21 Oct: no reload, never a second block).
             setRunNow(next.research);
             onRun?.(next.research);

@@ -65,7 +65,7 @@ def test_each_attempt_holds_under_one_key_and_a_retry_gets_the_next(monkeypatch)
         async with real(user, feature, key):
             yield
     monkeypatch.setattr(env.meter, "charge", charge)
-    r = env.submit(text="Create a business plan for my bookkeeping business for small cafes")["run"]
+    r = env.submit(text="Create a business plan for my bookkeeping business for small cafes", params={"purpose": "planning"})["run"]      # its questions answered
     if r.get("pending_question"):
         r = run(env.orch.provide_input(r["id"], OWNER, {f["key"]: (f["options"][0]["value"] if f.get("options") else "Independent cafés")
                                                          for f in r["pending_question"]["fields"]}))

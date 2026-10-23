@@ -469,8 +469,6 @@ export const agentCardPath = (text) => `/dashboard?ask=${encodeURIComponent(Stri
 
 export function GoalLauncherView({ className = "", flow, children = null, onWatch = null, onTouch = null }) {
   const { offer, busy, begin } = flow;
-  const toCard = useNavigate();
-  const signedIn = Boolean(flow.here) && Boolean(chatWorkspace().business_id);
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
   const [shake, setShake] = useState(false);
@@ -513,7 +511,8 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     setStarting(true);
     // Exactly as typed: the placeholder's typewriter never reaches the value, and its caret is never sent.
     const goal = text.replace(/\|$/, "").trim();
-    if (signedIn) { setStarting(false); setText(""); toCard(agentCardPath(goal)); return; }
+    // The chat by the side, on this page, signed in or not (the owner's QA, 23 Oct: "you're still jumping into the dashboard
+    // before you load the chat by the side"); it asks its questions here, then carries on to the result.
     try { if (await begin({ text: goal, entry_mode: "free_text" })) setText(""); } finally { setStarting(false); }
   }
 
@@ -526,7 +525,6 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     pressed.current = null;
     if (busy || picking) return;
     setStopped(true);
-    if (signedIn) { toCard(agentCardPath(chip.label || chip.key)); return; }
     setPicking(chip.key);
     try { await begin({ key: chip.key, entry_mode: mode }); } finally { setPicking(null); }
   }
@@ -815,8 +813,12 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const [changingSaid, setChangingSaid] = useState(false);
   useEffect(() => {
     if (!currentQuestion) { setDraftValue(""); return; }
-    setDraftValue(values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || currentQuestion.default || "");      // asked again: the current answer, to change
-  }, [currentQuestion?.key, currentQuestion?.default, values]);
+    // An empty box for each new question (G4, 23 Oct: the last answer stayed in it); the current answer only when the owner
+    // asked to change that one.
+    const changing = editing.has(currentQuestion.key);
+    // (the question's own default, "1" for a quantity, is still offered as a suggestion: QA P2-3)
+    setDraftValue(changing ? (values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || "") : (currentQuestion.default ?? ""));
+  }, [currentQuestion?.key, currentQuestion?.default]);      // eslint-disable-line react-hooks/exhaustive-deps
   const step = session?.next;
   useEffect(() => { if (step !== "identity") { setRecapOk(false); setChangingRecap(false); } }, [step]);
   const turn = session?.agent_turn || null;
@@ -1167,7 +1169,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
               <ul className="mt-1.5 space-y-0.5">
                 {(session.summary || []).filter((r) => r.key !== "currency").map((r) => {
                   const q = questions.find((x) => x.key === r.key) || {};
-                  return <li key={r.key} className="text-[13px] text-slate-700"><span className="text-slate-500">{q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : r.label}:</span> {r.value}</li>;
+                  return <li key={r.key} className="text-[13px] text-slate-700"><span className="text-slate-500">{q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : r.label}:</span> {r.value}{r.from_records ? <span className="text-slate-400" data-from-records> (from your records)</span> : null}</li>;
                 })}
               </ul>
               <div className="mt-2.5 flex flex-wrap items-center gap-3">
@@ -1231,9 +1233,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
             </div>
           )}
 
-          {step === "questions" && session.progress?.total > 0 && (
-            <p className="text-[11px] text-slate-400" data-progress aria-live="polite">{session.progress.answered} of {session.progress.total}</p>
-          )}
+          {/* No "2 of 6" counter under the chat (the owner, 23 Oct: "no need") */}
           {step === "identity" && (recapDone || said.length === 0) && !(here && !newPassword) && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-checkpoint>
               <div className="space-y-2" data-identity-turn>

@@ -5,10 +5,12 @@
 const n = (v) => Number(v || 0).toLocaleString("en-GB");
 const credits = (v) => `${n(v)} credit${Number(v) === 1 ? "" : "s"}`;
 const left = (balance) => (balance == null ? "" : ` You have ${n(balance)}.`);
+const willDo = (action) => { const a = String(action || "").trim(); return a ? `I'll ${a[0].toLowerCase()}${a.slice(1)}` : "I'll do this"; };
 
 export const creditCopy = {
   free: () => "Free",
-  confirmFixed: ({ action, cost, balance }) => (cost ? `${action}. ${credits(cost)}.${left(balance)}` : `${action}. Free.`),
+  // One sentence (the owner's QA, 23 Oct): "I'll write a business plan. It costs 40 credits, and you have 90."
+  confirmFixed: ({ action, cost, balance }) => (cost ? `${willDo(action)}. It costs ${credits(cost)}${balance == null ? "." : `, and you have ${n(balance)}.`}` : `${willDo(action)}. It's free.`),
   confirmVariable: ({ action, max, balance }) =>
     (max ? `${action}. Up to ${credits(max)}, and you only pay for what I find.${left(balance)}` : `${action}. Free.`),
   done: ({ used, balance }) => `Done. Used ${credits(used)}.${balance == null ? "" : ` ${n(balance)} left.`}`,

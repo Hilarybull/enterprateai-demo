@@ -292,7 +292,7 @@ describe("the case page (the owner's brief, 20 Oct)", () => {
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Inputs", "Advanced"]);
     const header = document.querySelector("[data-case-header]");
     expect(header.querySelector("[data-case-eyebrow]").textContent).toBe("Launch readiness");
-    expect([...header.querySelectorAll("button")].filter((b) => !b.hasAttribute("data-case-menu")).map((b) => b.textContent)).toEqual(["Edit inputs"]);
+    expect([...header.querySelectorAll("button")].filter((b) => !b.hasAttribute("data-case-menu") && !b.hasAttribute("data-pill")).map((b) => b.textContent)).toEqual(["Edit inputs"]);
     fireEvent.click(header.querySelector("[data-case-menu]"));
     expect(within(header).getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["Pin to dashboard", "Run the check again", "All launches", "Archive"]);
     expect(document.querySelectorAll("[data-case-status]").length).toBe(1);      // the status once per page

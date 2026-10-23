@@ -238,6 +238,19 @@ def _auto_spent(run: dict) -> int:
     return sum(int(c.get("credits") or 0) for c in (run.get("state") or {}).get("credits") or [])
 
 
+async def _subjects_with_summary(user: dict, business_id: str, kind: str) -> list[dict]:
+    """This business's open funding cases or launch plans, newest first, each with its data and its one summary."""
+    from app.modules.readiness import rules as _rr
+    from app.modules.readiness.service import service_for
+    svc = service_for(get_orchestrator())
+    which = _rr.FUNDING if kind == "funding" else _rr.LAUNCH
+    listed = await svc.list_subjects(user["id"], business_id, which, user.get("email"), include_archived=False)
+    rows = {r["id"]: r for r in await svc.store.list("subjects", business_id, kind=which, limit=50)}
+    out = [{"id": x["id"], "title": x.get("title"), "data": (rows.get(x["id"]) or {}).get("data") or {}, "summary": x.get("summary") or {},
+            "created_at": x.get("created_at")} for x in listed.get("items") or [] if x.get("status") not in ("archived", "cancelled")]
+    return sorted(out, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+
 def _result(res: dict) -> dict:
     out = dict(res)
     if out.get("run"):
@@ -310,6 +323,17 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 cases = []
             if cases:
                 return _result(case_edit.proposal(sorted(cases, key=lambda r: str(r.get("created_at") or ""), reverse=True)[0], change))
+    if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice"):
+        # A readiness question, or a funding need stated: answered from the case summary by rules, with buttons (G6)
+        from app.modules.agent import readiness_answer
+        kind = readiness_answer.asked_about(body.text)
+        if kind:
+            try:
+                subjects = await _subjects_with_summary(user, body.business_id, kind)
+            except Exception:      # noqa: BLE001 - no access or no module: an ordinary message
+                subjects = None
+            if subjects is not None:
+                return _result(readiness_answer.answer(body.text, kind, subjects))
     try:
         res = await get_orchestrator().submit(AgentRequest(
             requesting_actor_id=user["id"], business_id=body.business_id, source_channel=body.source_channel,

@@ -87,7 +87,38 @@ function optionsOf(field, data, selfId) {
   return (field.options || []).map((o) => ({ value: o, label: field.labels?.[o] || (typeof o === "string" ? o.charAt(0).toUpperCase() + o.slice(1).replace(/_/g, " ") : String(o)) }));
 }
 
-function Control({ field, id, value, onChange, disabled, data, selfId, evidence }) {
+function EvidencePick({ common, value, onChange, evidence, upload, label, disabled }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const pick = async (file) => {
+    if (!file || !upload) return;
+    setBusy(true);
+    setProblem("");
+    try { const made = await upload(file, label); if (made) onChange(made); }
+    catch { setProblem("That file couldn't be saved. Try again."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <span className="block">
+      <span className="flex flex-wrap items-center gap-2">
+        <select {...common} className={`${common.className} !w-auto min-w-0 flex-1`} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+          <option value="">No evidence attached</option>
+          {(evidence || []).map((e) => <option key={e.id} value={e.id}>{e.title} ({dateLabel(e.effective_date)})</option>)}
+        </select>
+        {upload && !disabled && (
+          <label className={`mt-1 inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+            {busy ? "Uploading…" : "Upload a file"}
+            <input type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-evidence-upload
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; pick(f); }} />
+          </label>
+        )}
+      </span>
+      {problem && <span role="alert" className="mt-1 block text-[12px] text-rose-700">{problem}</span>}
+    </span>
+  );
+}
+
+function Control({ field, id, value, onChange, disabled, data, selfId, evidence, upload = null, uploadLabel = "" }) {
   const common = { id, disabled, className: `mt-1 ${inputClass}` };
   switch (field.type) {
     case "textarea":
@@ -110,12 +141,9 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
         </select>
       );
     case "evidence":
-      return (
-        <select {...common} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-          <option value="">No evidence attached</option>
-          {(evidence || []).map((e) => <option key={e.id} value={e.id}>{e.title} ({dateLabel(e.effective_date)})</option>)}
-        </select>
-      );
+      // Choose what is on record, or upload it here (the owner's QA, 23 Oct: "no evidence attached yet, no place or option
+      // to attach it"): saved as evidence dated today, and chosen
+      return <EvidencePick common={common} value={value} onChange={onChange} evidence={evidence} upload={upload} label={uploadLabel} disabled={disabled} />;
     case "refs": {
       const chosen = Array.isArray(value) ? value : [];
       const options = optionsOf(field, data, selfId);
@@ -144,7 +172,7 @@ function Provenance({ entry }) {
   return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-changed-by-you>Changed by you</p>;
 }
 
-function ListField({ field, items, onChange, disabled, data, errors, evidence, idBase }) {
+function ListField({ field, items, onChange, disabled, data, errors, evidence, idBase, upload = null }) {
   const list = Array.isArray(items) ? items : [];
   const update = (i, key, value) => onChange(list.map((item, n) => (n === i ? { ...item, [key]: value } : item)));
   return (
@@ -157,6 +185,8 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
           <li key={item.id || i} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
             <div className="grid gap-3 sm:grid-cols-2">
               {field.fields.map((sub) => {
+                // A follow-up only where it is asked for ("Why it does not apply" once it doesn't apply)
+                if (sub.when && !Object.entries(sub.when).every(([k, v]) => item[k] === v)) return null;
                 const id = `${idBase}-${field.key}-${i}-${sub.key}`;
                 const error = errors[`${field.key}.${i}.${sub.key}`];
                 if (sub.type === "boolean") {
@@ -170,7 +200,8 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
                 return (
                   <div key={sub.key}>
                     <Label field={sub} htmlFor={id}>
-                      <Control field={sub} id={id} value={item[sub.key]} onChange={(v) => update(i, sub.key, v)} disabled={disabled} data={data} selfId={item.id} evidence={evidence} />
+                      <Control field={sub} id={id} value={item[sub.key]} onChange={(v) => update(i, sub.key, v)} disabled={disabled} data={data} selfId={item.id} evidence={evidence}
+                        upload={upload ? (file, title) => upload(field.key, file, title) : null} uploadLabel={item.name || item.outcome || field.item || field.label} />
                     </Label>
                     {error && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error}</p>}
                   </div>
@@ -191,11 +222,11 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
 }
 
 /** One field of a guided section. `onChange(path, value)`. */
-export function Field({ field, data, onChange, errors = {}, disabled, evidence, idBase = "f" }) {
+export function Field({ field, data, onChange, errors = {}, disabled, evidence, idBase = "f", upload = null }) {
   if (field.when && !Object.entries(field.when).every(([k, v]) => getPath(data, k) === v)) return null;
   const value = getPath(data, field.key);
   if (field.type === "list") {
-    return <ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} />;
+    return <ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} upload={upload} />;
   }
   const id = `${idBase}-${field.key}`;
   const error = errors[field.key];
@@ -210,7 +241,8 @@ export function Field({ field, data, onChange, errors = {}, disabled, evidence, 
   return (
     <div>
       <Label field={field} htmlFor={id}>
-        <Control field={field} id={id} value={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} evidence={evidence} />
+        <Control field={field} id={id} value={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} evidence={evidence}
+          upload={upload ? (file, title) => upload(field.key, file, title) : null} uploadLabel={field.label} />
       </Label>
       {error && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error}</p>}
       <Provenance entry={data?.provenance?.[field.key]} />

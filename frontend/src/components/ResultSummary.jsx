@@ -6,6 +6,7 @@ import { getCurrencySymbol } from "../lib/currencies";
 import { MoneyInput } from "./readiness/Fields";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
+import { scoreChange, toast } from "../lib/toast";
 import { WORDS, foundWord, gapWord, kindOf, statusWords } from "../lib/vocab";
 
 const money = (sign, n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${sign || ""}${Number(n).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : "");
@@ -24,14 +25,15 @@ const STEPS = {
     materials: { title: () => "Prepare your funding pack", why: "A summary and a plan are what you send to a funder.", mine: "documents" },
   },
   launch: {
-    cash: { title: () => "Work out the cash the launch needs", why: "So you know the launch can be paid for.", doIt: true, mine: "setup" },
+    // Each to its own section and field of the launch plan (the owner's QA, 23 Oct: "Fill it in" opened the first section)
+    cash: { title: () => "Work out the cash the launch needs", why: "So you know the launch can be paid for.", doIt: true, mine: "setup:cash:forecast" },
     demand: { title: () => "Show people want it", why: "Early buyers or signed interest lower the risk.", answer: "evidence", mine: "evidence" },
-    offer: { title: () => "Check your price covers your costs", why: "Each sale has to leave a margin.", doIt: true, mine: "catalogue" },
-    delivery: { title: () => "Check you can deliver the volume", why: "So orders don't outrun what you can do.", mine: "setup" },
-    process: { title: () => "Test an order end to end", why: "From order to delivery to payment, once, before launch.", mine: "setup" },
-    prerequisites: { title: () => "Check licences and registrations", why: "Some launches need these first.", doIt: true, mine: "setup" },
-    route: { title: () => "Choose how you will reach customers", why: "A launch needs a channel.", doIt: true, mine: "setup" },
-    control: { title: () => "Set a launch date and an owner", why: "Someone owns it, by a date.", answer: "target_date", mine: "setup" },
+    offer: { title: () => "Check your price covers your costs", why: "Each sale has to leave a margin.", doIt: true, mine: "setup:economics:economics.price_per_unit" },
+    delivery: { title: () => "Check you can deliver the volume", why: "So orders don't outrun what you can do.", mine: "setup:delivery:planned_volume.amount" },
+    process: { title: () => "Test an order end to end", why: "From order to delivery to payment, once, before launch.", mine: "setup:operations:operations.process" },
+    prerequisites: { title: () => "Check licences and registrations", why: "Some launches need these first.", doIt: true, mine: "setup:operations:prerequisites" },
+    route: { title: () => "Choose how you will reach customers", why: "A launch needs a channel.", doIt: true, mine: "setup:sales:market.channel" },
+    control: { title: () => "Set a launch date and an owner", why: "Someone owns it, by a date.", answer: "target_date", mine: "setup:sales:control.milestones" },
   },
   idea: {
     idea: { title: () => "Describe the idea", why: "What it is, in a line.", answer: "description" },
@@ -69,9 +71,12 @@ function screenOf(result, mine) {
   if (mine === "catalogue") return "/catalogue";
   if (mine === "marketplace") return "/marketplace";
   if (mine === "documents" && base) return `${base}?tab=documents`;
-  if (mine === "evidence" && base) return `${base}?tab=evidence`;
+  if (mine === "evidence" && base) return `${base}?tab=evidence&add=evidence`;      // the form open, ready to attach (23 Oct)
   // The section the step is about (the owner's QA, 21 Oct: "I'll do it" on the forecast opened the funding goal).
-  if (base && String(mine || "").startsWith("setup:")) return `${base}?tab=answers&section=${String(mine).slice(6)}`;
+  if (base && String(mine || "").startsWith("setup:")) {
+    const [, section, field] = String(mine).split(":");      // "setup:section" or "setup:section:field"
+    return `${base}?tab=answers&section=${section}${field ? `&field=${encodeURIComponent(field)}` : ""}`;
+  }
   if (base) return `${base}?tab=setup`;
   return kind === "idea" ? "/validation" : kind === "pricing" ? "/catalogue" : null;
 }
@@ -122,11 +127,14 @@ const isMoney = (q) => Boolean(q?.money) || MONEY_KEYS.has(q?.field);
 const SAVED_FOR = 6000;
 const savedNote = { text: "", at: 0, subs: new Set() };
 export function announceSaved(text) {
+  if (text) toast({ kind: "success", title: text });      // one toast system (22 Oct): never a line in the page
+  return;
   savedNote.text = text;
   savedNote.at = Date.now();
   savedNote.subs.forEach((f) => f());
 }
 export function SavedNotice({ className = "mt-3" }) {
+  if (className !== null) return null;      // said by the toast now
   const [, tick] = useState(0);
   useEffect(() => {
     const f = () => tick((n) => n + 1);
@@ -147,43 +155,70 @@ const scoreLine = (after, before) => {
     : `Saved. Your score is now ${now}/100${before != null && now !== before ? `, ${now > before ? "up" : "down"} from ${before}` : ""}.`;
 };
 
+// What each decision says in its toast (22 Oct): one title, one grey line, and Undo where it can be taken back.
+function toastCopy(item, decision, n) {
+  const route = /^route_/.test(String(item?.topic || ""));
+  const what = String(item?.label || item?.used_for || "Draft").replace(/^./, (c) => c.toUpperCase());
+  const d = decision?.decision;
+  if (n > 1 && d === "accept") return { title: `${n} drafts added to your case.`, detail: "" };
+  if (route && d === "accept") return { title: "Saved to your case.", detail: "Find it under Funding options." };
+  if (route && d === "reject") return { title: "Hidden.", detail: "We won't suggest it again." };
+  if (d === "reject") return { title: "Draft dismissed.", detail: "It won't count." };
+  if (d === "answer") return { title: "Answer saved.", detail: "" };
+  if (d === "edit") return { title: "Your figures are saved.", detail: decision?.value ? `${what} now ${decision.value}.` : "" };
+  return { title: `${what} added to your case.`, detail: "" };
+}
+
 export function useApplyResearch(businessId, run, result, onApplied) {
   const chosen = useRef({});
+  const batch = useRef([]);
   const timer = useRef(null);
   const [decided, setDecided] = useState({});
   const [state, setState] = useState({ busy: false, text: "", error: "", failedId: null });
   useEffect(() => () => clearTimeout(timer.current), []);
   const before = typeof result?.score === "number" ? Math.round(result.score) : null;
-  const send = async (lastId) => {
-    if (!run?.id || !businessId) { setState({ busy: false, text: "", error: "That can't be saved from here. Open the full page to adopt it.", failedId: lastId }); return; }
-    setState((s0) => ({ ...s0, busy: true, error: "", text: "Saving and checking your score…" }));
+  const itemOf = (id) => (run?.items || []).find((x) => x.id === id) || null;
+  const send = async (lastId, ids, undoing = false) => {
+    if (!run?.id || !businessId) {
+      setState({ busy: false, text: "", error: "That can't be saved from here. Open the full page to adopt it.", failedId: lastId });
+      toast({ kind: "error", title: "That couldn't be saved.", detail: "Open the full page to adopt it." });
+      return;
+    }
+    const first = ids[0];
+    const copy = undoing ? { title: "Undone.", detail: "" } : toastCopy(itemOf(first), chosen.current[first], ids.length);
+    // Said at once, turned into the result in place when the case is checked again (one toast, never a line in the page)
+    const id = toast({ kind: "pending", title: "Saved. Checking your score…" });
+    setState((s0) => ({ ...s0, busy: true, error: "" }));
+    const undo = undoing ? null : () => {
+      ids.forEach((x) => { chosen.current = { ...chosen.current, [x]: { decision: "" } }; });
+      setDecided((d) => { const next = { ...d }; ids.forEach((x) => { delete next[x]; }); return next; });
+      send(lastId, ids, true);
+    };
     try {
-      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: chosen.current }, { timeoutMs: 30000 });
-      const after = await onApplied?.(out);
-      if (out?.checking) {
-        // Saved; the case is still being checked (the owner's QA, 21 Oct): said so, and the new score fetched in a moment.
-        setState({ busy: false, error: "", failedId: null, text: "Saved. Checking your score…" });
-        announceSaved("Saved. Checking your score…");
-        [2000, 4500, 9000].forEach((ms) => setTimeout(async () => {
-          const later = await onApplied?.(null);
-          if (later) { const text = scoreLine(later, before); setState((s0) => ({ ...s0, text })); announceSaved(text); }
-        }, ms));
-        return;
+      const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: chosen.current }, { timeoutMs: 60000 });
+      let after = await onApplied?.(out);
+      // Still being checked: the new score fetched in a moment, the same toast updated
+      for (const ms of out?.checking ? [2000, 4500, 9000] : []) {
+        await new Promise((r) => setTimeout(r, ms));
+        const later = await onApplied?.(null);
+        if (later) { after = later; break; }
       }
-      const text = scoreLine(after, before);
-      setState({ busy: false, error: "", failedId: null, text });
-      announceSaved(text);
+      const moved = scoreChange(before, typeof after?.score === "number" ? after.score : null);
+      toast({ id, kind: "success", title: copy.title, detail: [copy.detail, moved].filter(Boolean).join(" "),
+        actions: undo ? [{ label: "Undo", onClick: undo }] : [] });
+      setState({ busy: false, error: "", failedId: null, text: "" });
     } catch (e) {
-      setState({ busy: false, text: "", error: e?.message && !/^HTTP/.test(e.message) ? e.message : "That couldn't be saved just now. Nothing was changed. Try again.", failedId: lastId });
+      const message = e?.message && !/^HTTP/.test(e.message) ? e.message : "That couldn't be saved just now. Nothing was changed. Try again.";
+      setState({ busy: false, text: "", error: message, failedId: lastId });
+      toast({ id, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => send(lastId, ids, undoing) }] });
     }
   };
   const apply = (id, decision) => {
     chosen.current = { ...chosen.current, [id]: decision };
+    batch.current = [...batch.current.filter((x) => x !== id), id];
     setDecided((d) => ({ ...d, [id]: decision }));
-    // Said at once (the owner's QA, 21 Oct: "Saved" took 10 s); the new score follows when the check is done.
-    setState((s0) => ({ ...s0, error: "", text: "Saved. Checking your score…" }));
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => send(id), 150);
+    timer.current = setTimeout(() => { const ids = batch.current; batch.current = []; send(id, ids); }, 150);
   };
   return { apply, decided, state };
 }
@@ -270,7 +305,9 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
     finally { setBusy(false); }
   };
   const mine = draft && applier ? applier.decided[draft.id] : null;
-  const adopted = mine ? (mine.decision === "accept" || mine.decision === "answer") : ["accepted", "edited", "answered"].includes(draft?.decision);
+  // Your edit is the draft now (the owner's QA, 23 Oct: edited and saved, the card still showed the old text): the saved
+  // value, as just saved or as the server holds it, and an edit counts as adopted
+  const adopted = mine ? (mine.decision === "accept" || mine.decision === "answer" || mine.decision === "edit") : ["accepted", "edited", "answered"].includes(draft?.decision);
   const dismissed = mine ? mine.decision === "reject" : draft?.decision === "rejected";
   const failed = applier && draft && applier.state.failedId === draft.id ? applier.state.error : "";
   const saveAnswer = () => {
@@ -279,6 +316,8 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
     applier?.apply(draft.id, { decision: "answer", value: String(answer).trim() });
   };
   const ready = draft && draft.kind !== "question";
+  const edited = mine?.decision === "edit" && mine.value != null ? mine.value : draft?.edited_value;
+  const shownDraft = draft && edited != null && edited !== "" && !draft.derive ? { ...draft, value: edited } : draft;
   // The owner's own answer, or a figure from their records, is said as that (the owner's QA, 21 Oct: "Draft ready: 381.5",
   // "Draft ready: No traction yet"): never as the Agent's draft.
   const theirs = ready && draft.kind === "reused";
@@ -288,20 +327,20 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
   return (
     <li className={`${card} flex h-full flex-col gap-2`} data-next-step={step.key}>
       <div className="flex items-start justify-between gap-2">
-        <p className="text-[14px] font-semibold text-slate-900 dark:text-slate-100" data-step-title>{step.title}</p>
-        <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${adopted && ready ? "bg-emerald-50 text-emerald-800" : ready ? "bg-indigo-50 text-indigo-800" : step.kind === "failed" ? "bg-rose-50 text-rose-700" : step.kind === "partial" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-step-badge>
+        <p className="line-clamp-2 text-[14px] font-semibold text-slate-900 dark:text-slate-100" title={step.title} data-step-title>{step.title}</p>
+        <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${adopted && ready ? "bg-emerald-50 text-emerald-800" : ready ? "bg-indigo-50 text-indigo-800" : step.kind === "failed" ? "bg-rose-50 text-rose-900" : step.kind === "partial" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-step-badge>
           {saysNone ? step.badge : adopted && ready ? "Done" : dismissed ? "Dismissed" : theirs ? "Your answer" : ready ? (draft.new ? "New" : "Draft ready") : step.badge}</span>
       </div>
-      <p className="text-[12.5px] leading-5 text-slate-600 dark:text-slate-300">{step.why}</p>
+      <p className="line-clamp-2 text-[12.5px] leading-5 text-slate-600 dark:text-slate-300">{step.why}</p>
       {step.prefill && !draft && <p className="text-[12.5px] leading-5 text-slate-800 dark:text-slate-100" data-step-prefill>{step.prefill.text}</p>}
       {ready && (
         // The draft in the card (the owner's QA, 21 Oct), with one Adopt: applied at once, then checked again.
         <div className="flex flex-1 flex-col rounded-lg border border-indigo-100 bg-white px-3 py-2 dark:border-indigo-900 dark:bg-slate-900" data-step-draft>
           {/* Every card's buttons on one line at the bottom (the owner, 21 Oct: "align and arrange these buttons"). */}
-          <p className={`text-[12.5px] leading-5 text-slate-800 dark:text-slate-100 ${moreText ? "" : "line-clamp-4"}`} title={draftSummary(draft, currency)} data-step-draft-line><span className="font-semibold">{lead}</span> {draftSummary(draft, currency)}</p>
+          <p className={`text-[12.5px] leading-5 text-slate-800 dark:text-slate-100 ${moreText ? "" : "line-clamp-4"}`} title={draftSummary(shownDraft, currency)} data-step-draft-line><span className="font-semibold">{edited != null && edited !== "" && !draft.derive ? "Your version:" : lead}</span> {draftSummary(shownDraft, currency)}</p>
           {saysNone && <p className="text-[12px] font-medium text-amber-800" data-step-none>Add your first sale or signed interest to fix this.</p>}
           {draft.new && draft.changed?.length > 0 && <p className="text-[12px] text-slate-600" data-step-changed>{draft.changed.join(". ")}.</p>}
-          {String(draftSummary(draft, currency)).length > 180 && (
+          {String(draftSummary(shownDraft, currency)).length > 180 && (
             <button type="button" onClick={() => setMoreText((v) => !v)} className="self-start text-[12px] font-semibold text-brand-700 hover:underline" data-step-more>{moreText ? "Show less" : "Show more"}</button>
           )}
           {draft.warning && <p className="mt-0.5 text-[12px] font-medium text-amber-800">{draft.warning === "cost_above_price" ? "Each sale costs more than you charge." : draft.warning === "cash_below_zero" ? "Cash goes below zero in this forecast." : "Check this: it looks too low to be right."}</p>}
@@ -312,7 +351,7 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
             {applier && !adopted && <button type="button" disabled={applier.state.busy} onClick={() => applier.apply(draft.id, { decision: "reject" })} aria-pressed={Boolean(dismissed)}
               className="text-[12.5px] font-semibold text-slate-500 underline-offset-2 hover:underline disabled:opacity-70" data-step-dismiss>{dismissed ? "Dismissed" : "Dismiss"}</button>}
           </div>
-          {editing && <DraftEditor draft={draft} figures={figures} currency={currency} applier={applier} onDone={() => setEditing(false)} result={result} />}
+          {editing && <DraftEditor draft={shownDraft} figures={figures} currency={currency} applier={applier} onDone={() => setEditing(false)} result={result} />}
           {failed && <p role="alert" className="mt-1 text-[12px] text-rose-700">{failed}</p>}
         </div>
       )}
@@ -355,9 +394,11 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
       {/* While the Agent's drafts wait, no "I'll do it": the draft is the way (the owner's QA, 21 Oct). */}
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-1" data-step-actions>
         {step.run && <StepRun run={step.run} />}
-        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-mine data-step-focus={step.focus || undefined}>{step.run ? "See it" : (step.cta || "Fill it in")}</a>}
+        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} data-step-mine data-step-focus={step.focus || undefined}
+          className={step.run || !step.field ? "self-center text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" : "rounded-lg bg-brand-600 px-3 py-1.5 text-center text-[12.5px] font-semibold text-white hover:bg-brand-700 max-sm:w-full"}>
+          {step.run ? "See it" : (step.cta || "Fill it in")}</a>}
         {!draft && !researched && (step.more || []).map((m) => (
-          <a key={m.label} href={m.to} onClick={(e) => { e.preventDefault(); navigate(m.to); }} className="self-start text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-more data-step-focus={m.focus || undefined}>{m.label}</a>
+          <a key={m.label} href={m.to} onClick={(e) => { e.preventDefault(); navigate(m.to); }} className="self-center text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-more data-step-focus={m.focus || undefined}>{m.label}</a>
         ))}
       </div>
     </li>
@@ -378,8 +419,8 @@ function StepRun({ run }) {
   }
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <button type="button" disabled={busy} onClick={async () => { setBusy(true); setProblem(""); try { await run.go(); setDone(true); } catch { setProblem("That didn't go through. Try again."); } finally { setBusy(false); } }}
-        className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-70" data-step-run>{busy ? "Saving…" : run.label}</button>
+      <button type="button" disabled={busy} onClick={async () => { setBusy(true); setProblem(""); try { const ok = await run.go(); if (ok !== false) setDone(true); } catch { setProblem("That didn't go through. Try again."); } finally { setBusy(false); } }}
+        className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-70 max-sm:w-full" data-step-run>{busy ? "Saving…" : run.label}</button>
       {problem && <span role="alert" className="text-[12px] text-rose-700">{problem}</span>}
     </span>
   );
@@ -514,10 +555,10 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
             You adopted {run.drafts.adopted} of {run.drafts.total} drafts.{left.length ? ` ${left.length} draft${left.length === 1 ? "" : "s"} left: ${left.join(", ")}.` : ""}</p>
         );
       })()}
-      {(applier.state.text || applier.state.error) && (
-        <p role="status" className={`mt-1 text-[13px] ${applier.state.error ? "text-rose-700" : "text-emerald-800"}`} data-apply-status>{applier.state.error || applier.state.text}</p>
+      {false && (
+        <p role="status" data-apply-status />
       )}
-      <ol className="mt-3 grid gap-3 xl:grid-cols-3">
+      <ol className="mt-3 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {steps.slice(0, every ? steps.length : 3).map((s) => <Step key={s.key} result={result} step={s} onAnswered={onAnswered} draft={researched && !s.field ? draftFor(run, s.key) : null}
           researched={researched && !s.field} onReview={onReview} onDoIt={onDoIt} price={prices?.steps?.[s.key]} done={(prices?.done || []).includes(s.key)}
           applier={businessId && run ? applier : null} currency={currency} figures={figuresFor(run, draftFor(run, s.key))} />)}
@@ -538,7 +579,7 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
         )}
         {steps.length > 3 && (
           <button type="button" onClick={() => setEvery((v) => !v)} aria-expanded={every} className="text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-more-steps>
-            {every ? "Show fewer steps" : `See all ${steps.length} steps`}
+            {every ? "Show fewer" : `See ${steps.length - 3} more`}
           </button>
         )}
         {readyToggle && <button type="button" onClick={() => setAll((v) => !v)} aria-expanded={all} className="text-[12.5px] font-semibold text-slate-600 underline-offset-2 hover:underline" data-ready-count>

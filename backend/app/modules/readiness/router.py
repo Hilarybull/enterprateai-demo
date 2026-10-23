@@ -117,9 +117,10 @@ class ForecastLinkIn(BaseModel):
 
 class AttestIn(BaseModel):
     code: str = Field(max_length=20)
-    passed: bool
-    rationale: str = Field(max_length=4000)
+    passed: bool = True
+    rationale: str = Field(default="", max_length=4000)
     independent: bool = False
+    withdraw: bool = False      # Undo: the confirmation taken back, as if never given
 
 
 class AssessIn(BaseModel):
@@ -285,6 +286,8 @@ def _subject_routes(segment: str) -> APIRouter:
 
     @r.post("/{subject_id}/attestations", dependencies=[Depends(_require_readiness_plan)])
     async def attest(business_id: str, subject_id: str, body: AttestIn, user=Depends(get_current_user)):
+        if body.withdraw:
+            return await _run(get_service().withdraw_attestation(user["id"], business_id, _type(segment), subject_id, body.code, user.get("email")))
         return await _run(get_service().attest(user["id"], business_id, _type(segment), subject_id, body.code, body.passed, body.rationale,
                                                body.independent, user.get("email")))
 
@@ -380,6 +383,30 @@ async def previous_need(business_id: str, subject_id: str, body: PreviousNeedIn,
     """[Keep] or [Remove] for something from the funding need this case replaced."""
     _type("funding-cases")
     return await _run(get_service().keep_previous(user["id"], business_id, subject_id, body.item, body.keep, email=user.get("email"), need=body.need))
+
+
+class NewNeedIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    purpose: str = Field(..., min_length=1, max_length=2000)
+    target_amount: float | None = Field(default=None, ge=0)
+    previous_title: str | None = Field(default=None, max_length=200)
+
+
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/new-need", dependencies=[Depends(_require_readiness_plan)])
+async def new_need(business_id: str, subject_id: str, body: NewNeedIn, user=Depends(get_current_user)):
+    """A new title that names a different need (the owner's QA, 23 Oct): the case becomes that need, the old one goes to
+    History with its milestones, allocations, market and traction set aside, exactly as Replace in the funding chat."""
+    _type("funding-cases")
+    from app.modules.agent.goals import need_summary, need_title
+    svc = get_service()
+    row = await svc.store.get("subjects", subject_id)
+    before = (row or {}).get("data") or {}
+    # The form saved the new title already: the old need is named from its own amount, route and purpose
+    was = (body.previous_title or "").strip() or (need_title(before) if str(before.get("title") or "").strip() == body.title.strip() else None)
+    changes = {"title": body.title.strip(), "purpose": body.purpose.strip(), **({"target_amount": body.target_amount} if body.target_amount else {})}
+    return await _run(svc.replace_need(user["id"], business_id, subject_id, changes, user.get("email"),
+                                       provenance={"purpose": "You entered it", **({"target_amount": "You entered it"} if body.target_amount else {})},
+                                       summary=need_summary(before), previous_title=was))
 
 
 @router.post("/businesses/{business_id}/funding-cases/{subject_id}/contradictions", dependencies=[Depends(_require_readiness_plan)])

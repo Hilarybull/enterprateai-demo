@@ -279,7 +279,7 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
       )}
 
       {problem && <p role="alert" className="mt-3 text-[12.5px] text-rose-700">{problem}</p>}
-      {(applier.state.text || applier.state.error) && <p role="status" className={`mt-3 text-[12.5px] ${applier.state.error ? "text-rose-700" : "text-emerald-800"}`} data-summary-status>{applier.state.error || applier.state.text}</p>}
+
       <div className="mt-5 flex flex-wrap items-center gap-3 max-sm:flex-col max-sm:items-stretch">
         {onSeeAll && <button type="button" onClick={onSeeAll} className="text-[12.5px] font-semibold text-slate-600 hover:underline" data-see-everything>See everything I used</button>}
       </div>

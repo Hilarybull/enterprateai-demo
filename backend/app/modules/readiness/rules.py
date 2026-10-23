@@ -272,7 +272,7 @@ LAUNCH_COMMERCIAL_V1 = {
             _f("delivery.dependencies", "Critical suppliers, people and systems", "list", item="dependency", fields=[
                 _f("name", "Name"), _f("kind", "Type", "select", options=["supplier", "person", "system"]),
                 _f("available", "Available by launch", "select", options=["yes", "no"], labels={"yes": "Yes", "no": "No"}),
-                _f("needs_contingency", "Needs a backup", "boolean"), _f("contingency", "Backup arrangement")]),
+                _f("needs_contingency", "Needs a backup", "boolean"), _f("contingency", "Backup arrangement", when={"needs_contingency": True})]),
             _f("delivery.no_dependencies", "The launch does not depend on any critical supplier, person or system", "boolean"),
         ]},
         {"key": "operations", "title": "Operational prerequisites", "fields": [
@@ -285,14 +285,14 @@ LAUNCH_COMMERCIAL_V1 = {
             _f("prerequisites", "What must be in place to launch", "list", item="prerequisite", fields=[
                 _f("name", "Prerequisite"),
                 _f("applicable", "Applies to this launch", "select", options=["yes", "no"], labels={"yes": "Applies", "no": "Does not apply"}),
-                _f("rationale", "Why it does not apply"),
+                _f("rationale", "Why it does not apply", when={"applicable": "no"}),
                 _f("critical", "Required before launch", "boolean"),
                 _f("status", "Status", "select", options=["completed", "not_completed"], labels={"completed": "Completed", "not_completed": "Not completed"}),
                 _f("required_by", "Required by", "date"), _f("valid_until", "Valid until", "date"),
                 _f("source_reference", "Where the requirement comes from"),
                 _f("evidence_id", "Evidence", "evidence")]),
             _f("no_prerequisites", "Nothing has to be in place before this launch", "boolean"),
-            _f("no_prerequisites_rationale", "Why nothing is required"),
+            _f("no_prerequisites_rationale", "Why nothing is required", when={"no_prerequisites": True}),
         ], "attest": ["C6.A"]},
         {"key": "sales", "title": "Sales and launch plan", "fields": [
             _f("market.channel", "First acquisition channel"),

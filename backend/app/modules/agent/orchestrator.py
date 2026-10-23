@@ -47,6 +47,25 @@ _VERSIONED_SENDS = {"send_quotation", "send_contract", "send_invoice", "send_pro
 _MAX_STEPS_PER_ADVANCE = 25
 
 
+
+def _names_an_idea(text: str | None) -> bool:
+    """The message says what the idea is ("validate my idea of a drone cleaning service in Abuja"), read as the task reads it."""
+    try:
+        from app.modules.agent import said
+        return bool(said.idea_in(str(text or "")))
+    except Exception:      # noqa: BLE001 - asked which idea
+        return False
+
+
+def _generic_ask(text: str | None) -> bool:
+    """A bare request ("validate my idea") with nothing about the idea itself: the Agent asks which idea."""
+    import re
+    words = re.findall(r"[a-z']+", str(text or "").lower())
+    plain = {"validate", "check", "test", "my", "an", "a", "the", "idea", "business", "please", "can", "you", "i", "want", "to", "need", "help", "me", "with",
+             "run", "do", "new", "validation", "is", "good", "viable", "it", "this", "how", "would", "like", "could"}
+    return len([w for w in words if w not in plain]) == 0
+
+
 @dataclass
 class Runtime:
     store: Store
@@ -968,6 +987,34 @@ class Orchestrator:
             # a paid plan or a full-access grant. Never Comprehensive on Explorer (the owner's QA, 15 Oct).
             depth = (req.params or {}).get("depth") or await self._idea_depth(req)
             req.params = {**(req.params or {}), "depth": depth}
+        if capability == "business_plan_draft" and req.source_channel in ("text", "voice") and not (req.params or {}).get("purpose")                 and not getattr(req, "essential_handoff", False) and not (req.params or {}).get("answers"):      # the homepage chat asked its own
+            # Conversational first (the owner's QA, 23 Oct: "i need business plan" went straight to its price): which plan and
+            # what it is for, asked once, then its price
+            asked = await self._plan_questions(req)
+            if asked:
+                return {**asked, "capability": capability}
+        if capability == "idea_validation" and req.source_channel in ("text", "voice") and not getattr(req, "essential_handoff", False) \
+                and not {"idea_for", "answers", "subject_id"} & set(req.params or {}) and not _names_an_idea(req.raw_input):
+            # The same for an idea's check (the owner's QA, 23 Oct): which idea, asked before anything is spent
+            asked = await self._idea_questions(req)
+            if asked:
+                return {**asked, "capability": capability}
+        for key in ("plan_for", "idea_for"):
+            chosen = str((req.params or {}).get(key) or "")
+            if capability in ("business_plan_draft", "idea_validation") and chosen.startswith("launch:"):
+                req.params = {**req.params, "subject_id": chosen.split(":", 1)[1]}
+        if capability in ("idea_validation", "business_plan_draft") and "new" in ((req.params or {}).get("idea_for"), (req.params or {}).get("plan_for")) \
+                and (req.params or {}).get("idea"):
+            req.params = {**req.params, "answers": {**((req.params or {}).get("answers") or {}), "description": str(req.params["idea"])[:2000]}}
+        if capability == "business_plan_draft" and not req.confirmed and (req.params or {}).get("existing_plan") != "new":
+            # A plan for the same subject already drafted (G7, 23 Oct): "Open it, or write a new one?" before any price
+            twin = await self._same_plan(req)
+            if twin and (req.params or {}).get("existing_plan") == "open":
+                return {"kind": "answer", "message": f"Here is “{twin['title']}”.", "actions": [{"label": "Open it", "to": twin["to"]}]}
+            if twin:
+                return {"kind": "needs_input", "capability": capability, "message": f"You already have a draft: “{twin['title']}”. Open it, or write a new one?",
+                        "fields": [{"key": "existing_plan", "label": "Open it, or write a new one?", "type": "choice", "required": True, "default": "open",
+                                    "options": [{"value": "open", "label": "Open it"}, {"value": "new", "label": "Write a new one"}]}]}
         if capability in agent_config.SELF_PRICED and not req.confirmed and req.source_channel in ("text", "voice", "ui_action"):
             feature = agent_config.feature_of(capability)
             if capability == "idea_validation" and req.params.get("depth") == "comprehensive":
@@ -975,9 +1022,11 @@ class Orchestrator:
             price = int(await self.rt.meter.cost(feature)) if feature else 0
             if price > 0:
                 balance = await self.rt.meter.balance(req.requesting_actor_id)
+                about = await self._about_for_price(req)
                 return {"kind": "needs_confirmation", "reason_codes": ["price_confirmation_required"], "capability": capability,
                         "params": req.params or {}, "price": price, "balance": balance,
-                        "message": f"{agent_config.ACTION_NAME.get(capability, wf.title)}. {price} credits." + (f" You have {balance}." if balance is not None else "")}
+                        "message": agent_config.price_sentence(agent_config.ACTION_NAME.get(capability, wf.title), price, balance,
+                                                               about=about, reader=(req.params or {}).get("purpose"))}
 
         targets = await self._targets(req, wf, actor)
         if targets.get("switch"):
@@ -1154,6 +1203,97 @@ class Orchestrator:
         await self._audit(run, "delivery_decided_by_user", user_id, {"tool": question.get("tool"), "outcome": outcome, "to": question.get("to")})
         return await self.retry(run_id, user_id, email)
 
+    async def _about_for_price(self, req: AgentRequest) -> str | None:
+        """What a paid task is about, said in its price: the launch chosen, the new idea described, or the business."""
+        p = req.params or {}
+        chosen = str(p.get("plan_for") or p.get("idea_for") or "")
+        if chosen == "new" and p.get("idea"):
+            text = " ".join(str(p["idea"]).split())
+            return f"“{text[:60].rstrip()}{'…' if len(text) > 60 else ''}”"
+        if p.get("subject_id") or chosen.startswith("launch:"):
+            sid = p.get("subject_id") or chosen.split(":", 1)[1]
+            try:
+                _, launches = await self._launch_options(req.business_id)
+                return next((o["label"].removeprefix("A launch: ") for o in launches if o["value"] == f"launch:{sid}"), None)
+            except Exception:      # noqa: BLE001 - said without it
+                return None
+        if chosen == "business":
+            name, _ = await self._launch_options(req.business_id)
+            return name
+        return None
+
+    async def _launch_options(self, business_id: str) -> tuple[str, list[dict]]:
+        """The business's name, and its live launch plans as choices ("A launch: Drone Cleaning, November 2026"), newest first."""
+        try:
+            from app.modules.readiness import rules
+            from app.modules.readiness.service import service_for
+            rows = [r for r in await service_for(self).store.list("subjects", business_id, kind=rules.LAUNCH) if r.get("status") not in ("archived", "cancelled")]
+        except Exception:      # noqa: BLE001 - asked without the launch plans
+            rows = []
+        data = await self.rt.business.load(business_id) or {}
+        name = str(((data.get("workspace_profile") or {}).get("company_name")) or "My business").strip()
+        out, seen = [], set()
+        for r in sorted(rows, key=lambda r: str(r.get("created_at") or ""), reverse=True):
+            label = str((r.get("data") or {}).get("name") or "Launch plan").strip()[:80]
+            if label.lower() in seen:
+                continue      # the same plan twice (two chats made it): listed once, the newest
+            seen.add(label.lower())
+            out.append({"value": f"launch:{r['id']}", "label": f"A launch: {label}"})
+        return name, out[:5]
+
+    async def _idea_questions(self, req: AgentRequest) -> dict | None:
+        """Before an idea's check: which idea, the business's own offer, one of its launches, or a new one described here."""
+        name, launches = await self._launch_options(req.business_id)
+        options = [{"value": "business", "label": f"What {name} offers now"}, *launches, {"value": "new", "label": "A new idea"}]
+        return {"kind": "needs_input", "message": "Happy to check an idea. Which one?", "fields": [
+            {"key": "idea_for", "label": "Which idea?", "type": "choice", "required": True, "default": "business", "options": options},
+            {"key": "idea", "label": "Describe the new idea in a sentence or two", "type": "textarea", "required": True, "show_if": {"idea_for": "new"}}]}
+
+    async def _same_plan(self, req: AgentRequest) -> dict | None:
+        """A business plan draft still in use for what this plan is about (the business, a launch plan, or a new idea), else None."""
+        p = req.params or {}
+        data = await self.rt.business.load(req.business_id) or {}
+        plans = [d for d in data.get("agent_drafts") or [] if d.get("kind") == "business_plan" and d.get("status") in ("pending", "accepted")]
+        if not plans:
+            return None
+        words = lambda t: set(re.findall(r"[a-z]{4,}", str(t or "").lower())) - {"business", "plan", "draft", "with", "from", "this", "that", "for"}   # noqa: E731
+        idea = str(p.get("idea") or (p.get("answers") or {}).get("description") or "")
+        if idea:
+            about = words(idea)
+        elif p.get("subject_id"):
+            about = None
+            for d in plans:
+                if str(p["subject_id"]) in str((d.get("inputs") or {}).get("subject_id") or ""):
+                    return d
+            return None
+        elif p.get("plan_for") == "business":
+            name = str((data.get("workspace_profile") or {}).get("company_name") or "")
+            about = words(name)
+        else:
+            return None
+        if not about:
+            return None
+        for d in sorted(plans, key=lambda d: str(d.get("updated_at") or ""), reverse=True):
+            theirs = words(d.get("title")) | words((d.get("inputs") or {}).get("solution")) | words((d.get("inputs") or {}).get("company_name"))
+            if len(about & theirs) >= min(2, len(about)):
+                return d
+        return None
+
+    async def _plan_questions(self, req: AgentRequest) -> dict | None:
+        """Before a business plan's price: what the plan is about (the business, or one of its launch plans) and what it is for."""
+        p = req.params or {}
+        fields = []
+        if not p.get("plan_for") and not p.get("subject_id"):
+            name, launches = await self._launch_options(req.business_id)
+            # Something new too (the owner's QA, 23 Oct: "no new option?"): a plan for an idea not yet a launch plan
+            options = [{"value": "business", "label": f"The whole business: {name}"}, *launches, {"value": "new", "label": "Something new"}]
+            fields.append({"key": "plan_for", "label": "What is the plan for?", "type": "choice", "required": True, "default": "business", "options": options})
+            fields.append({"key": "idea", "label": "What is it? A sentence or two", "type": "textarea", "required": True, "show_if": {"plan_for": "new"}})
+        fields.append({"key": "purpose", "label": "Who will read it?", "type": "choice", "required": True, "options": [
+            {"value": "investors", "label": "Investors, to raise funding"}, {"value": "lender", "label": "A bank or lender, for a loan"},
+            {"value": "partners", "label": "Partners or suppliers"}, {"value": "planning", "label": "Me and my team, to plan"}]})
+        return {"kind": "needs_input", "message": "Happy to draft your business plan. Two quick questions so it fits.", "fields": fields}
+
     async def _targets(self, req: AgentRequest, wf: WorkflowDefinition, actor: Actor) -> dict:
         """Resolve what the workflow should act on. Never guesses between several candidates."""
         p = dict(req.params or {})
@@ -1323,6 +1463,8 @@ class Orchestrator:
         expected = params.pop("_expected_credits", None)      # A1: what an automatic task will hold, counted in the budget until it is charged
         state: dict[str, Any] = {"params": params, "answers": dict(params.get("answers") or {}) if isinstance(params.get("answers"), dict) else {},
                                  **({"expected_credits": int(expected)} if expected else {})}
+        if "new" in (params.get("idea_for"), params.get("plan_for")) and state["answers"].get("description"):
+            state["idea_from_message"] = True      # a new idea described in the Agent's question: that idea, kept apart (23 Oct)
         if wf.workflow_key == "quote_to_cash" and req.raw_input and intent.says_accepted(req.raw_input):
             # B7: "Customer accepted QUO-1131026" is the owner confirming the acceptance: not asked again.
             state["answers"].setdefault("confirm_acceptance", "yes")

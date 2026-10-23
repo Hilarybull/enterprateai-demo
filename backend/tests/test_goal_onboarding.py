@@ -396,10 +396,10 @@ def _funding(client, amount=50000, use="hiring"):
     return s["id"], client.post(f"/task-sessions/{s['id']}/prepare").json()
 
 
-def test_a_business_has_one_funding_case_and_every_funding_goal_updates_it(world):
-    """One funding case per business, always the current need (QA, 15 Oct): a second funding goal with a different need asks
-    Replace or Update with what would change; Update changes only what differs; Replace snapshots the old need in History
-    and sets its evidence aside. An archived case is reactivated, never a second case beside it."""
+def test_a_different_funding_need_asks_update_or_new_and_never_overwrites_the_case_unasked(world):
+    """G2 (23 Oct): "I need funding" turned the £100k grant case into a £50k loan under the same id. A different need (amount,
+    route or purpose) now asks "Start a new funding case, or update that one?", new by default; Update changes only what
+    differs and keeps the title; an archived case is reactivated only when the owner chooses to update it."""
     env, store, client, who = world
     who["user"] = OWNER
     svc = service_for(env.orch)
@@ -410,27 +410,28 @@ def test_a_business_has_one_funding_case_and_every_funding_goal_updates_it(world
     assert (data["target_amount"], data["purpose"], data["route_preference"], data["traction"]["summary"]) == (50000, "hiring", "equity", "Paying customers")
     assert data["receipt_date"] and data["provenance"]["target_amount"]["source"].startswith("From your funding chat, ")
     first_id = made["handoff"]["subject_id"]
-    # A different need: one confirmation, the recap's "Looks right" (the owner's QA, 21 Oct): never a second "I'll update
-    # your funding case" screen. The one case takes the new need, what changed is said in plain words, and the previous
-    # version is kept in History automatically.
-    sid, updated = _funding(client, amount=80000, use="a second site")
-    assert not updated.get("choose")
-    assert updated["case_changes"][:2] == [{"field": "Amount", "before": "£50,000", "now": "£80,000"}, {"field": "Purpose", "before": "hiring", "now": "a second site"}]
-    data = cases()[0]["data"]
-    assert updated["handoff"]["subject_id"] == first_id and len(cases()) == 1 and (data["target_amount"], data["purpose"]) == (80000, "a second site")
-    prev = data["previous_needs"][0]
-    assert prev["title"] == "£50k equity investment for hiring" and prev["values"]["target_amount"] == 50000
-    # Archived: reactivated and updated.
+    # A different need: asked, nothing changed yet
+    sid, asked = _funding(client, amount=80000, use="a second site")
+    assert asked["choose"]["key"] == "subject_choice" and asked["choose"]["default"] == "new"
+    assert [o["value"] for o in asked["choose"]["options"]] == ["new", f"update:{first_id}"]
+    assert len(cases()) == 1 and cases()[0]["data"]["target_amount"] == 50000
+    # New (the default): a second case beside the first, the first untouched
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": "new"}})
+    new = client.post(f"/task-sessions/{sid}/prepare").json()
+    assert new["state"] == "handed_off" and new["handoff"]["subject_id"] != first_id and len(cases()) == 2
+    first = run(svc.store.get("subjects", first_id))["data"]
+    assert (first["title"], first["target_amount"], first["purpose"]) == ("£50k equity investment for hiring", 50000, "hiring")
+    # Update, chosen: only what differs changes; the title stays
+    sid, asked = _funding(client, amount=60000, use="hiring")
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
+    done = client.post(f"/task-sessions/{sid}/prepare").json()
+    first = run(svc.store.get("subjects", first_id))["data"]
+    assert done["handoff"]["subject_id"] == first_id and first["target_amount"] == 60000 and first["title"] == "£50k equity investment for hiring"
+    assert len(cases()) == 2
+    # Archived: reactivated only on Update
     run(svc.set_status(OWNER, "A", rules.FUNDING, first_id, "archive", OWNER))
     sid, again = _funding(client, amount=20000, use="Stock for Christmas")
-    assert not again.get("choose")
-    assert again["handoff"]["subject_id"] == first_id and len(cases()) == 1 and cases()[0]["status"] != "archived"
-    # And the module itself refuses a second one.
-    import pytest
-    from app.modules.readiness.service import Conflict
-    with pytest.raises(Conflict) as e:
-        run(svc.create_subject(OWNER, "A", rules.FUNDING, {"title": "Another"}, OWNER))
-    assert e.value.code == "one_funding_case" and e.value.current["id"] == first_id
+    assert run(svc.store.get("subjects", first_id))["status"] == "archived"
     assert env.meter.charges == []
 
 
@@ -528,7 +529,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
         client.post(f"/task-sessions/{g['id']}/resume")
         out = client.post(f"/task-sessions/{g['id']}/prepare").json()
         if out.get("confirm"):      # a paid task: its price shown first (P0.5c), then Start
-            assert out["confirm"]["message"].endswith(" credits.") or " credits. You have " in out["confirm"]["message"]
+            assert " credits" in out["confirm"]["message"] and out["confirm"]["message"].startswith("I'll ")
             out = client.post(f"/task-sessions/{g['id']}/prepare", json={"confirmed": True}).json()
         assert out["state"] in ("awaiting_review", "handed_off") and (out["handoff"].get("run_id") or out["handoff"].get("subject_id")), (goal["key"], out["handoff"])
         assert "blocked" not in out["handoff"] and "Upgrade" not in str(out["handoff"].get("message") or "")
@@ -554,7 +555,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     client.post(f"/task-sessions/{n['id']}/attach-user")
     client.post(f"/task-sessions/{n['id']}/resume", json={"business_name": "Brand New Ltd"})
     first = client.post(f"/task-sessions/{n['id']}/prepare").json()
-    assert first["confirm"]["message"] == "Write your business plan. 40 credits. You have 50." and first["handoff"] is None      # its price first (P0.5c)
+    assert first["confirm"]["message"] == "I'll write your business plan. It costs 40 credits, and you have 50." and first["handoff"] is None      # its price first (P0.5c)
     first = client.post(f"/task-sessions/{n['id']}/prepare", json={"confirmed": True}).json()
     assert first["state"] == "awaiting_review" and first["handoff"]["run_id"], first["handoff"]
     done = client.get(f"/workflow-runs/{first['handoff']['run_id']}").json()["run"]
@@ -967,10 +968,8 @@ def test_after_two_replaces_the_first_needs_items_can_still_be_kept(world):
     svc = service_for(env.orch)
     _first, made = _funding(client)
     case_id = made["handoff"]["subject_id"]
-    for amount, use in ((120000, "a new van"), (250000, "a new office")):
-        sid, asked = _funding(client, amount=amount, use=use)
-        client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"replace:{case_id}"}})
-        client.post(f"/task-sessions/{sid}/prepare")
+    for amount, use in ((120000, "a new van"), (250000, "a new office")):      # replaced from the case page (the chat asks update or new)
+        run(svc.replace_need(OWNER, "A", case_id, {"target_amount": amount, "purpose": use, "title": f"£{amount // 1000}k for {use}"}, OWNER))
     needs = run(svc.store.get("subjects", case_id))["data"]["previous_needs"]
     assert len(needs) == 2 and "traction" in needs[1]["set_aside"]
     out = run(svc.keep_previous(OWNER, "A", case_id, "traction", True, OWNER, need=1))

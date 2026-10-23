@@ -5,6 +5,7 @@
 //
 // Every step carries a precise target (F-6, 22 Oct): its section, the field, and for a list the item, resolved by its id,
 // never by position, as the form's own element id ("goal-milestones-0-due_date"). Its button says what it does.
+import { shortDate } from "./format";
 import { getCurrencySymbol } from "./currencies";
 
 // A non-answer ("No acquisition channels are described in the available information") or a placeholder ("Pending
@@ -21,7 +22,9 @@ export const fieldId = (section, field, index = null, sub = null) => (index === 
 
 export function caseSteps(subject, { max = 3, currency = null } = {}) {
   const s = subject?.data;
-  if (!s || subject?.subject_type === "launch" || subject?.kind === "launch") return null;
+  // A launch plan is never a funding case (the owner's QA, 23 Oct: its steps linked to /funding/<launch id>, "can't be found");
+  // the server names it "launch_initiative".
+  if (!s || [subject?.type, subject?.subject_type, subject?.kind].some((k) => k === "launch" || k === "launch_initiative")) return null;
   const sign = getCurrencySymbol(s.currency || currency || "") || "";
   const money = (n) => `${sign}${Number(n).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
   const base = subject.id ? `/funding/${subject.id}` : "/funding";
@@ -96,7 +99,11 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
   // C1: the funding goal (10)
   if (target === null) add("goal.amount", "Say how much you want to raise", "Funders start with the amount.", F("target_amount"), "Add amount");
   if (blank(s.receipt_date)) add("goal.date", `Add when you expect to receive the ${target ? money(target) : "money"}`, "The timing sets the forecast.", F("receipt_date"), "Add date");
-  else if (target !== null && !s.timing_confirmed && !passed("C1.A")) add("goal.confirm", "Save your amount and date as final", "Then the check counts them.", F("receipt_date"), "Confirm date");
+  else if (target !== null && !s.timing_confirmed && !passed("C1.A")) {
+    // One press (the owner's QA, 22 Oct: "Confirm date" opened the form, which has nothing to confirm, and the step stayed)
+    add("goal.confirm", "Save your amount and date as final", `${money(target)}, needed by ${shortDate(s.receipt_date) || s.receipt_date}. Then the check counts them.`, F("receipt_date"), "Change");
+    out[out.length - 1].confirmGoal = true;
+  }
   if (blank(s.purpose)) add("goal.purpose", `Say what the ${target ? money(target) : "funding"} is for`, "Funders want to know what it pays for.", F("purpose"), "Add purpose");
   if (!milestones.length) add("goal.milestone", "Add a milestone the funding pays for", "With a measure and a target.", { section: "goal", field: "milestones" }, "Add milestone");
   else {
@@ -148,11 +155,14 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
   }
   const docsCheck = (subject.assessment?.result?.criteria || []).flatMap((c) => c.checks || []).find((c) => c.code === "C8.A");
   const notReviewed = String(docsCheck?.reason || "").match(/Not reviewed: (.+?)\.?$/);
-  if (docsCheck && docsCheck.state !== "passed" && notReviewed) {
-    add("confirm.docs", `Mark as reviewed: ${notReviewed[1]}`, "You've checked them; the check counts them once they're marked.", { section: "documents", field: "required-documents" }, "Mark reviewed");
-    // the documents the check names, by their labels
-    const named = (subject.summary?.pack?.items || []).filter((i) => notReviewed[1].includes(i.label)).map((i) => i.key);
-    out[out.length - 1].review = named.length ? named : ["use_of_funds_schedule", "forecast"];
+  // the documents the check names, by their labels, less those reviewed since (the owner's QA, 23 Oct: marked reviewed
+  // in the form, the card still asked until the next check)
+  const packItems = (subject.summary?.pack?.items || []).filter((i) => notReviewed && notReviewed[1].includes(i.label));
+  const toReview = (packItems.length ? packItems : [{ key: "use_of_funds_schedule" }, { key: "forecast" }]).filter((i) => !(s.documents || {})[i.key]?.reviewed);
+  if (docsCheck && docsCheck.state !== "passed" && notReviewed && toReview.length) {
+    const names = packItems.length ? toReview.map((i) => i.label).join(", ") : notReviewed[1];
+    add("confirm.docs", `Mark as reviewed: ${names}`, "You've checked them; the check counts them once they're marked.", { section: "documents", field: "required-documents" }, "Mark reviewed");
+    out[out.length - 1].review = toReview.map((i) => i.key);
   }
   // C7: team (10)
   const people = rows(get(s, "team.responsibilities"));
@@ -182,7 +192,7 @@ export function sectionCounts(subject, steps = []) {
   return (subject?.sections || []).map((x) => {
     const open = steps.filter((s) => s.section === x.key).length;
     const name = String(x.title).replace(/ and .*$/, "");
-    return { key: x.key, done: x.answered >= x.total && !open,
+    return { key: x.key, answered: x.answered, total: x.total, done: x.answered >= x.total && !open,
       text: x.answered >= x.total && open ? `${name}: ${open} to fix` : `${name} ${x.answered} of ${x.total}` };
   });
 }

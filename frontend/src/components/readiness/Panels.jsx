@@ -10,6 +10,7 @@ import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Panel, Pill, inputClass } from "./Fields";
 import DocumentShareModal from "../DocumentShareModal";
 import { apiRequest } from "../../api/client";
+import { addEvidence, attachEvidenceFile, downloadEvidenceFile } from "../../lib/readiness";
 
 /** A document or an earlier result, opened in a popup over the page (the owner's QA, 15 Oct), never under the list. */
 export function Popup({ title, subtitle, onClose, footer, children, wide = false }) {
@@ -309,17 +310,103 @@ export function ActionsPanel({ businessId, feature, subject, onChanged, onOpenSe
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 
-export function RequiredDocuments({ businessId, subject, onChanged }) {
+// What is being reviewed, shown before "Mark as reviewed" (the owner's QA, 23 Oct): the case's own spending lines or
+// forecast, the document prepared here, or the owner's own document.
+function DocumentView({ businessId, subject, doc, entry }) {
+  const [prepared, setPrepared] = useState(null);
+  const [problem, setProblem] = useState("");
+  const cur = subject.data?.currency;
+  useEffect(() => {
+    if (!entry.artifact_id || doc.record) return;
+    getMaterial(businessId, "funding", subject.id, entry.artifact_id).then(setPrepared).catch((e) => setProblem(readinessError(e).message));
+  }, [businessId, subject.id, entry.artifact_id, doc.record]);
+  const box = "mt-2 max-h-80 overflow-auto rounded-lg bg-slate-50 p-3 text-[12.5px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200";
+  if (doc.record === "use_of_funds") {
+    const lines = (subject.data?.use_of_funds || []).filter((l) => l && (l.category || l.amount));
+    const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+    if (!lines.length) return <p className={box}>No spending lines yet. Add them under Finances and use of funds.</p>;
+    return (
+      <div className={box} data-document-view>
+        <table className="w-full text-left">
+          <thead><tr className="text-slate-500"><th className="py-1 pr-3 font-semibold">Line</th><th className="py-1 pr-3 text-right font-semibold">Amount</th><th className="py-1 font-semibold">What it pays for</th></tr></thead>
+          <tbody>{lines.map((l, i) => (
+            <tr key={l.id || i} className="border-t border-slate-200 align-top dark:border-slate-700">
+              <td className="py-1 pr-3">{l.category || "Line"}{l.period ? ` · ${monthLabel(l.period)}` : ""}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{moneyLabel(l.amount, cur)}</td>
+              <td className="py-1">{l.purpose || l.rationale || ""}</td>
+            </tr>))}</tbody>
+          <tfoot><tr className="border-t border-slate-300 font-semibold dark:border-slate-600"><td className="py-1 pr-3">Total</td><td className="py-1 pr-3 text-right tabular-nums">{moneyLabel(total, cur)}</td><td /></tr></tfoot>
+        </table>
+      </div>
+    );
+  }
+  if (doc.record === "forecast") {
+    const f = subject.forecast?.data || {};
+    const months = (f.months || []).filter((m) => m && m.month);
+    if (!months.length) return <p className={box}>No forecast months yet. Add them under Finances and use of funds.</p>;
+    const shown = (v) => (v === "" || v == null ? "Not filled" : moneyLabel(v, cur));
+    return (
+      <div className={box} data-document-view>
+        {f.opening_cash != null && f.opening_cash !== "" && <p className="mb-1">Opening cash: <span className="font-semibold tabular-nums">{moneyLabel(f.opening_cash, cur)}</span></p>}
+        <table className="w-full text-left">
+          <thead><tr className="text-slate-500"><th className="py-1 pr-3 font-semibold">Month</th><th className="py-1 pr-3 text-right font-semibold">Money in</th><th className="py-1 text-right font-semibold">Money out</th></tr></thead>
+          <tbody>{months.map((m) => (
+            <tr key={m.month} className="border-t border-slate-200 dark:border-slate-700">
+              <td className="py-1 pr-3">{monthLabel(m.month)}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{shown(m.receipts)}</td>
+              <td className="py-1 text-right tabular-nums">{shown(m.payments)}</td>
+            </tr>))}</tbody>
+        </table>
+      </div>
+    );
+  }
+  if (entry.evidence_id) {
+    const e = (subject.evidence || []).find((x) => x.id === entry.evidence_id) || {};
+    const words = e.summary || e.description || e.notes;
+    return (
+      <div className={box} data-document-view>
+        <p className="font-semibold">{e.title || "Your document"}</p>
+        {words && <p className="mt-1 whitespace-pre-line">{words}</p>}
+        {e.has_file && <button type="button" onClick={() => downloadEvidenceFile(businessId, e.id, e.file_name).catch((x) => setProblem(x.message))} className="mt-2 font-semibold text-brand-700 hover:underline">Download {e.file_name || "the file"}</button>}
+        {problem && <p role="alert" className="mt-1 text-rose-700">{problem}</p>}
+      </div>
+    );
+  }
+  if (entry.artifact_id) {
+    if (problem) return <p role="alert" className={`${box} text-rose-700`}>{problem}</p>;
+    if (!prepared) return <p className={box} role="status">Loading the document…</p>;
+    return <div className={`${box} whitespace-pre-line`} data-document-view>{prepared.body || "This document is empty."}</div>;
+  }
+  return null;
+}
+
+export function RequiredDocuments({ businessId, subject, onChanged, recheck = null }) {
   const docs = subject.profile_definition?.required_documents || [];
   const entries = subject.data?.documents || {};
   const assessed = Object.fromEntries((subject.assessment?.result?.documents || []).map((d) => [d.key, d]));
   const [problem, setProblem] = useState(null);
   const [note, setNote] = useState("");
+  const [viewing, setViewing] = useState({});
+  const [uploading, setUploading] = useState("");
   const can = subject.can || {};
+  // Your own document from your computer (the owner's QA, 23 Oct: the list only offered documents already added as
+  // evidence, so it was empty): saved as evidence dated today, with its file, and used for this document at once.
+  async function upload(d, file) {
+    if (!file) return;
+    setUploading(d.key);
+    await call(async () => {
+      const item = await addEvidence(businessId, "funding", { title: `${d.label}: ${file.name}`.slice(0, 200), type: "document", claim: d.label,
+        effective_date: todayLocal(), source: { kind: "file", reference: file.name }, links: [] });
+      await attachEvidenceFile(businessId, "funding", item.id, file);
+      return reviewDocument(businessId, subject.id, d.key, { evidence_id: item.id, artifact_id: null });
+    });
+    setUploading("");
+  }
   const archived = subject.status === "archived";
-  async function call(fn) {
+  // A review or a document changes the score: checked again at once, so the Overview's steps follow (23 Oct)
+  async function call(fn, { score = true } = {}) {
     setProblem(null);
-    try { onChanged(await fn()); } catch (e) { setProblem(readinessError(e).message); }
+    try { onChanged(await fn()); if (score) recheck?.(); } catch (e) { setProblem(readinessError(e).message); }
   }
   return (
     <div className="space-y-3">
@@ -328,6 +415,8 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
           const entry = entries[d.key] || {};
           const seen = assessed[d.key];
           const builtIn = d.record === "use_of_funds" ? "Taken from the use of funds in this case" : d.record === "forecast" ? "Taken from the forecast in this case" : null;
+          const provided = Boolean(builtIn || entry.artifact_id || entry.evidence_id);
+          const reviewed = entry.reviewed && !seen?.needs_review;
           return (
             <li key={d.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -345,12 +434,26 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
                     {(subject.evidence || []).filter((e) => e.type === "document").map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
                   </select>
                 )}
+                {!builtIn && can["funding.edit"] && !archived && (
+                  <label className={`inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 ${uploading ? "pointer-events-none opacity-60" : ""}`}>
+                    {uploading === d.key ? "Uploading…" : entry.evidence_id ? "Upload another" : "Upload a document"}
+                    <input type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-document-upload={d.key}
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; upload(d, f); }} />
+                  </label>
+                )}
+                {provided && (
+                  <Btn kind="link" aria-expanded={Boolean(viewing[d.key])} onClick={() => setViewing((v) => ({ ...v, [d.key]: !v[d.key] }))} data-document-toggle>
+                    {viewing[d.key] ? "Hide" : "View"}</Btn>
+                )}
                 {can["funding.review"] && !archived && (
-                  <Btn onClick={() => call(() => reviewDocument(businessId, subject.id, d.key, { reviewed: !(entry.reviewed && !seen?.needs_review) }))}>
-                    {entry.reviewed && !seen?.needs_review ? "Undo review" : "Mark as reviewed"}
+                  // Nothing to review until there is something to read (the owner's QA, 23 Oct)
+                  <Btn disabled={!provided && !reviewed} title={!provided && !reviewed ? "Add or choose the document first" : undefined}
+                    onClick={() => call(() => reviewDocument(businessId, subject.id, d.key, { reviewed: !reviewed }))}>
+                    {reviewed ? "Undo review" : "Mark as reviewed"}
                   </Btn>
                 )}
               </div>
+              {provided && viewing[d.key] && <DocumentView businessId={businessId} subject={subject} doc={d} entry={entry} />}
             </li>
           );
         })}

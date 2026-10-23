@@ -9,8 +9,13 @@ import FirstValueCard, { PremiumConfirm, latestOf } from "../components/FirstVal
 import ResearchSummary from "../components/ResearchSummary";
 import { premiumFlow } from "../components/ResearchReview";
 import { NextSteps, StatusLine as ResultStatus, stepsOf } from "../components/ResultSummary";
+import { launchCaseSteps, openLaunchSteps } from "../lib/launchSteps";
 import { caseSteps, sectionCounts } from "../lib/caseSteps";
+import { toast, withToast } from "../lib/toast";
 import { relatedReady, relatedServices } from "../lib/related";
+import { FundingOptions, PackStrip, RelatedCards, ResearchFindings, ScoreHero, fundingOptions, researchFindings } from "../components/readiness/CaseOverview";
+import { useApplyResearch } from "../components/ResultSummary";
+import NewNeedPrompt from "../components/readiness/NewNeedPrompt";
 import QuickCheck from "../components/QuickCheck";
 import { ButtonSpinner, ContentSkeleton, LoadError, ReadinessDetailSkeleton, ReadinessListSkeleton } from "../components/Skeleton";
 import { Attestation, EvidenceList } from "../components/readiness/Evidence";
@@ -20,7 +25,7 @@ import { ActionsPanel, DecisionPanel, HistoryPanel, MaterialsPanel, RequiredDocu
 import { confirmDialog } from "../lib/dialog";
 import {
   CLASSIFICATION, FEATURES, LIFECYCLE, createSubject, dateLabel, getPath, getSubject, listSubjects, moneyLabel, newKey, readinessError, runAssessment,
-  keepPrevious, setPath, setSubjectStatus, updateSubject,
+  keepPrevious, setPath, startNewNeed, setSubjectStatus, updateSubject,
   attest, reviewDocument, saveForecast, staleReason,
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
@@ -87,10 +92,9 @@ function StatusLine({ summary, feature, big = false, steps = null, generalChecks
   const ready = summary.classification === "ready";
   const sentence = ready ? (feature === "launch" ? "Ready to launch." : "Ready to approach funders.")
     : `${feature === "launch" ? "Not ready to launch yet." : "Not ready for funding yet."}${todo ? ` ${todo} ${todo === 1 ? "thing" : "things"} to do first.` : ""}`;
-  // Always a score (the owner, 22 Oct: "where's the score, remove Insufficient evidence"): the check's own, else the points
-  // from what is known so far.
-  const known = summary.known_score !== null && summary.known_score !== undefined ? summary.known_score : null;
-  const score = scored ? `${summary.score}/100` : known !== null ? `${Math.round(known)}/100` : "Not scored yet";
+  // One score everywhere, the summary's (the owner, 23 Oct): from what has been answered, "so far" until every item is
+  // known; none while a check is running.
+  const score = checking ? "Checking…" : scored ? `${summary.score}/100${summary.score_partial ? " so far" : ""}` : "Not scored yet";
   return (
     <span className="flex flex-col gap-0.5" data-case-status>
       <span className={`${big ? "text-[20px]" : "text-[14px]"} font-semibold text-slate-900 dark:text-slate-100`}>
@@ -447,7 +451,9 @@ function SubjectList({ businessId, feature }) {
   const meta = FEATURES[feature];
   const navigate = useNavigate();
   const [state, setState] = useState({ loading: true });
-  const [creating, setCreating] = useState(false);
+  // "Start a new launch plan" from the Agent (G6) opens the New form at once
+  const [listParams] = useSearchParams();
+  const [creating, setCreating] = useState(() => listParams.get("new") === "1");
 
   const load = useCallback(async () => {
     try { setState({ loading: false, ...(await listSubjects(businessId, feature)) }); }
@@ -500,20 +506,17 @@ function SubjectList({ businessId, feature }) {
       )}
       {creating && <NewSubject businessId={businessId} feature={feature} profiles={state.profiles} onCancel={() => setCreating(false)} onCreated={(s) => navigate(`${meta.base}/${s.id}`)} />}
       {active.length > 0 && <ul className="space-y-3">{active.map(row)}</ul>}
-      {/* A business has one funding case, kept up to date; several launches are fine. */}
-      {items.length > 0 && !creating && canEdit && feature !== "funding" && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
-      {items.length > 0 && feature === "funding" && (
-        <p className="text-[12.5px] text-slate-500" data-one-funding-case>
-          Your business has one funding case. Update it as things change{archived.length && !active.length ? ", or reactivate it" : ""}: every check and review adds to it.
-        </p>
-      )}
+      {/* Several funding cases and several launch plans: one for each need or launch (the owner's choice, 23 Oct). */}
+      {items.length > 0 && !creating && canEdit && <Btn onClick={() => setCreating(true)}>{meta.newLabel}</Btn>}
       {archived.length > 0 && (
         <details>
           <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">Archived ({archived.length})</summary>
           <ul className="mt-2 space-y-3">{archived.map(row)}</ul>
         </details>
       )}
-      {state.profiles?.current && <p className="text-[12px] text-slate-500">Checklist: {state.profiles.current.title}, version {state.profiles.current.version}. {state.profiles.current.status_note}</p>}
+      {/* The checklist's name is not the case's route (G2: a loan case read "Equity preparation") */}
+      {state.profiles?.current && feature !== "funding" && <p className="text-[12px] text-slate-500">Checklist: {state.profiles.current.title}, version {state.profiles.current.version}. {state.profiles.current.status_note}</p>}
+      {state.profiles?.current && feature === "funding" && <p className="text-[12px] text-slate-500">Each case is checked against our funding readiness checklist, version {state.profiles.current.version}. {state.profiles.current.status_note}</p>}
     </div>
   );
 }
@@ -568,7 +571,27 @@ const TAB_OF = { overview: "overview", answers: "answers", advanced: "advanced",
   evidence: "advanced", research: "advanced", documents: "advanced", history: "advanced", scenarios: "advanced", decision: "advanced" };
 const MENU_ROW = "block w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 disabled:text-slate-400 dark:text-slate-200 dark:hover:bg-slate-800";
 
-function Setup({ businessId, feature, subject, data, errors, onField, onChanged, openSection, setOpenSection, disabled }) {
+// What each confirmation says in its toast, by the case's own check (the funding case's and a launch plan's codes differ)
+const ATTEST_COPY = {
+  "funding:C4.B": { title: "Evidence confirmed.", detail: "Demand evidence now counts." },
+  "launch:C1.B": { title: "Evidence confirmed.", detail: "Your customer evidence now counts." },
+  "launch:C2.B": { title: "Figures confirmed.", detail: "Your price, costs and margin now count." },
+  "launch:C6.A": { title: "Prerequisites reviewed.", detail: "Which apply to this launch now counts." },
+  default: { title: "Figures confirmed.", detail: "Your price, costs and break-even now count." },
+};
+
+function Setup({ businessId, feature, subject, data, errors, onField, onChanged, openSection, setOpenSection, disabled, onNewNeed = null, recheck = null }) {
+  // A file for a field's evidence, from the form itself (23 Oct): saved as evidence dated today, linked to the check it
+  // answers, the plan read again so it is in the list, and chosen
+  const uploadEvidence = async (fieldKey, file, title) => {
+    const check = { prerequisites: "C6.B" }[fieldKey];
+    const item = await addEvidence(businessId, feature, { title: `${title || "Evidence"}: ${file.name}`.slice(0, 200), type: fieldKey === "prerequisites" ? "permission" : "document",
+      claim: String(title || ""), effective_date: todayLocal(), source: { kind: "file", reference: file.name },
+      links: check ? [{ subject_id: subject.id, check }] : [] });
+    await attachEvidenceFile(businessId, feature, item.id, file);
+    await onChanged?.();
+    return item.id;
+  };
   const sections = subject.profile_definition.sections;
   const progress = Object.fromEntries((subject.sections || []).map((s) => [s.key, s]));
   const index = Math.max(0, sections.findIndex((s) => s.key === openSection));
@@ -603,7 +626,12 @@ function Setup({ businessId, feature, subject, data, errors, onField, onChanged,
       <Panel className="min-w-0" title={`${index + 1}. ${section.title}`} id={`section-${section.key}`}
         actions={filledFrom(section, data) ? <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11.5px] font-semibold text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-200" data-from-chat>{filledFrom(section, data)}</span> : null}>
         <div className="space-y-4">
-          {section.fields.map((f) => <div key={f.key} data-field={f.key}><Field field={f} data={data} errors={errors} disabled={disabled} evidence={subject.evidence} onChange={onField} idBase={section.key} /></div>)}
+          {section.fields.map((f) => (
+            <div key={f.key} data-field={f.key}>
+              <Field field={f} data={data} errors={errors} disabled={disabled} evidence={subject.evidence} onChange={onField} idBase={section.key} upload={uploadEvidence} />
+              {f.key === "title" && feature === "funding" && <NewNeedPrompt key={`${subject.id}:${data.title}`} subjectId={subject.id} data={data} onNewNeed={onNewNeed} disabled={disabled} />}
+            </div>
+          ))}
           {section.forecast && (
             <div className="border-t border-slate-100 pt-4 dark:border-slate-800">
               <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">{feature === "funding" ? "12-month cash forecast" : "Cash projection"}</h3>
@@ -620,7 +648,7 @@ function Setup({ businessId, feature, subject, data, errors, onField, onChanged,
           {section.documents && (
             <div className="border-t border-slate-100 pt-4 dark:border-slate-800" data-field="required-documents">
               <h3 className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">Preparation documents</h3>
-              <RequiredDocuments businessId={businessId} subject={subject} onChanged={onChanged} />
+              <RequiredDocuments businessId={businessId} subject={subject} onChanged={onChanged} recheck={recheck} />
             </div>
           )}
           {(section.attest || []).map((code) => <Attestation key={code} businessId={businessId} feature={feature} subject={subject} code={code} onChanged={onChanged} />)}
@@ -698,12 +726,16 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   // The result is kept current for the owner: when the details change after a check, the check
   // runs again by itself, once the changes are saved. Tried once per version; if it can't
   // finish, the reason is shown and the button is still there.
+  // Only after the owner's own edits on this page (G5, 23 Oct: a reload re-checked, the check's own fill made it out of date
+  // again, and round it went): a reload never starts a check; the "Out of date" mark and the button are there.
   const autoChecked = useRef("");
-  const staleKey = subject?.assessment?.freshness?.status === "stale" && subject?.can?.[`${feature}.edit`] && subject.status !== "archived"
+  const editedHere = useRef(false);
+  const staleKey = editedHere.current && subject?.assessment?.freshness?.status === "stale" && subject?.can?.[`${feature}.edit`] && subject.status !== "archived"
     ? `${subjectId}:${subject.revision}:${subject.assessment?.id || ""}` : "";
   useEffect(() => {
     if (!staleKey || checking || save.state !== "saved" || autoChecked.current === staleKey) return;
     autoChecked.current = staleKey;
+    editedHere.current = false;      // once per edit, never again on the check's own result
     check({ quiet: true });
   }, [staleKey, checking, save.state]);      // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -718,6 +750,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     try {
       const detail = await updateSubject(businessId, feature, s.id, overrideRevision ?? s.revision, changes);
       keys.forEach((k) => { if (latest.current.data[k] === d[k]) dirty.current.delete(k); });
+      editedHere.current = true;
       setErrors({});
       accept(detail, true);
       setSave({ state: dirty.current.size ? "pending" : "saved" });
@@ -766,20 +799,72 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   }, [businessId, subjectId]);
   // The steps from the case itself, worked out again on every change to it (no wait for a check).
   // From what is on the page now, saved or still saving, so a filled step leaves at once (F-9, 22 Oct)
-  const ownSteps = useMemo(() => caseSteps(subject && data ? { ...subject, data } : subject, { max: 50, currency: (data || subject?.data)?.currency || subject?.forecast?.data?.currency }),
+  const optionApplier = useApplyResearch(businessId, researchRun, null, async (out) => { if (out?.research) setResearchRun(out.research); load(); return null; });
+  // A launch plan's own steps from its checks, with one-press confirmations, as the funding case has (23 Oct)
+  const stepsOfCase = (x, o) => (feature === "launch" ? launchCaseSteps(x, o) : caseSteps(x, o));
+  const ownSteps = useMemo(() => stepsOfCase(subject && data ? { ...subject, data } : subject, { max: 50, currency: (data || subject?.data)?.currency || subject?.forecast?.data?.currency }),
     [subject, data]);
   // The steps the last check listed that are filled now: "Done, waiting for recheck" until the check runs again.
-  const checkedSteps = useMemo(() => caseSteps(subject, { max: 50, currency: subject?.data?.currency }), [subject?.assessment?.id]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const checkedSteps = useMemo(() => stepsOfCase(subject, { max: 50, currency: subject?.data?.currency }), [subject?.assessment?.id]);      // eslint-disable-line react-hooks/exhaustive-deps
   const waiting = useMemo(() => {
     const now = new Set((ownSteps?.steps || []).map((s) => s.key));
     return (checkedSteps?.steps || []).filter((s) => !now.has(s.key));
   }, [ownSteps, checkedSteps]);
+  // One action on the case, said by the one toast system (22 Oct): "Saved. Checking your score…" turning into its result
+  // with "Score X → Y" when the check is done, and Undo. Never a line in the page.
+  const scoreNow = () => (latest.current.subject?.summary || {}).score ?? null;      // the summary's score, the one everywhere (G5)
+  // The amount and date as final, saved on the latest version of the case (never refused as out of date)
+  // Changes saved on the latest version of the case or plan (never refused as out of date)
+  const saveLatest = async (changes, confirm = []) => {
+    if (!(await flush())) throw new Error("unsaved");
+    const fresh = await getSubject(businessId, feature, subjectId);
+    accept(await updateSubject(businessId, feature, subjectId, fresh.revision, changes, confirm), true);
+  };
+  const setGoalConfirmed = async (on) => {
+    if (!(await flush())) throw new Error("unsaved");
+    const fresh = await getSubject(businessId, feature, subjectId);
+    accept(await updateSubject(businessId, feature, subjectId, fresh.revision, { timing_confirmed: on }), true);
+  };
+  const caseAction = ({ title, detail, run, undo = null }) => {
+    let after = null;
+    return withToast({ title, detail, score: (done) => (done ? after : scoreNow()),
+      run: async () => { await run(); await load(); after = await check({ quiet: true, silent: true }); },
+      undo: undo ? () => caseAction({ title: "Undone.", detail: "", run: undo }) : null });
+  };
   const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
-    ...st, run: { label: "Confirm forecast", doneLabel: "Forecast confirmed", go: async () => { await saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision); await load(); await check({ quiet: true }); } } }
-    : st.attest ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed", go: async () => { await attest(businessId, feature, subject.id, { code: st.attest.code, passed: true, rationale: st.attest.rationale }); await load(); await check({ quiet: true }); } } }
-    : st.review ? { ...st, run: { label: "Mark reviewed", doneLabel: "Marked as reviewed", go: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: true }); await load(); await check({ quiet: true }); } } }
-    : st)) } : overview),
-  [overview, ownSteps, subject, businessId, feature, load]);
+    ...st, run: { label: "Confirm forecast", doneLabel: "Forecast confirmed",
+      go: () => caseAction({ title: "Forecast confirmed.", detail: "Your forecast now counts.", run: () => saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision) }) } }
+    // A launch plan's confirmations (23 Oct): the offer, no commitments, prerequisites done; each with Undo
+    : st.confirmOffer ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed",
+      go: () => caseAction({ title: "Offer confirmed.", detail: "What you launch, its price and terms now count.",
+        run: () => saveLatest({ offer: { ...(latest.current.data?.offer || {}), confirmed: true } }),
+        undo: () => saveLatest({ offer: { ...(latest.current.data?.offer || {}), confirmed: false } }) }) } }
+    : st.noCommitments && subject?.forecast ? { ...st, run: { label: "None to list", doneLabel: "Recorded",
+      go: () => caseAction({ title: "Recorded: no commitments.", detail: "Add any later in Cash.",
+        run: () => saveForecast(businessId, feature, subject.id, { ...subject.forecast.data, no_commitments: true }, subject.forecast.revision) }) } }
+    : st.confirmCapacity ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed",
+      go: () => caseAction({ title: "Capacity confirmed.", detail: "Your delivery figures now count.",
+        run: () => saveLatest({ delivery: { ...(latest.current.data?.delivery || {}) } }, ["capacity"]) }) } }
+    : st.prereqDone ? { ...st, run: { label: "Mark done", doneLabel: "Marked done",
+      go: () => caseAction({ title: "Prerequisites marked done.", detail: "Attach the evidence under Operational prerequisites.",
+        run: () => saveLatest({ prerequisites: (latest.current.data?.prerequisites || []).map((x) => (x && x.applicable !== "no" ? { ...x, status: "completed" } : x)) }),
+        undo: () => saveLatest({ prerequisites: (latest.current.data?.prerequisites || []).map((x) => (x && x.applicable !== "no" ? { ...x, status: "not_completed" } : x)) }) }) } }
+    : st.confirmGoal ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed",
+      go: () => caseAction({ title: "Amount and date confirmed.", detail: "Your funding goal now counts.",
+        run: () => setGoalConfirmed(true), undo: () => setGoalConfirmed(false) }) } }
+    : st.attest ? { ...st, run: { label: "Confirm", doneLabel: "Confirmed",
+      go: () => caseAction({ ...(ATTEST_COPY[`${feature}:${st.attest.code}`] || ATTEST_COPY.default),
+        run: () => attest(businessId, feature, subject.id, { code: st.attest.code, passed: true, rationale: st.attest.rationale }),
+        undo: () => attest(businessId, feature, subject.id, { code: st.attest.code, withdraw: true }) }) } }
+    : st.review ? { ...st, run: { label: "Mark reviewed", doneLabel: "Marked as reviewed",
+      go: () => caseAction({ title: "Marked as reviewed.", detail: "Use of funds and forecast now count.",
+        run: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: true }); },
+        undo: async () => { for (const key of st.review) await reviewDocument(businessId, subject.id, key, { reviewed: false }); } }) } }
+    : st)) }
+    // A launch plan: the check's steps less those the plan now holds (filled by the owner or the Agent, 23 Oct)
+    : overview && !overview._failed && feature === "launch" && subject ? { ...overview, case_steps: openLaunchSteps(stepsOf(overview), subject, data) }
+    : overview),
+  [overview, ownSteps, subject, data, businessId, feature, load]);
   useEffect(() => { loadOverview(); }, [loadOverview, revision]);
   const runId = params.get("run") || overview?.research?.run_id;
   useEffect(() => {
@@ -856,13 +941,28 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       if (!(await flush())) { setCheckProblem("Save your changes first: some answers need correcting."); return; }
       const again = Boolean(latest.current.subject?.latest_assessment || a);
       // One round trip (the owner's QA: a check again in under 3 seconds): the case comes back with the check.
-      const ran = await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey(), true);
+      let ran;
+      try { ran = await runAssessment(businessId, feature, subjectId, latest.current.subject.revision, newKey(), true); }
+      catch (e) {
+        // The case moved on under the page (the Agent's fill, another tab) and nothing here is unsaved: checked on the
+        // latest version, never a "reload" banner for the owner (the owner's QA, 22 Oct).
+        const err = readinessError(e, "");
+        if (err.code !== "stale_revision" || dirty.current.size) throw e;
+        const fresh = await getSubject(businessId, feature, subjectId);
+        accept(fresh, true);
+        ran = await runAssessment(businessId, feature, subjectId, fresh.revision, newKey(), true);
+      }
       if (ran?.subject?.id) { accept(ran.subject, true); setProblem(null); } else await load();
       if (!opts?.quiet) setTab("overview");
       // Said when it is done (the owner's QA, 15 Oct): where the case stands now, in one line.
       const r = ran?.result || ran || {};
-      const where = typeof r.score === "number" ? `${Math.round(r.score)}/100` : r.classification === "insufficient_evidence" ? "Not enough evidence to score yet" : "";
-      window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: again ? "Checked again" : "Checked", message: where ? `${where}. The results are up to date.` : "The results are up to date." } }));
+      const sum = ran?.subject?.summary || {};
+      const shownScore = ran?.subject ? (sum.score ?? null) : (typeof r.score_display === "number" ? r.score_display : null);      // the summary's score, never another
+      if (!opts?.silent) {
+        const where = typeof shownScore === "number" ? `${Math.round(shownScore)}/100` : "";
+        toast({ kind: "success", title: again ? "Checked again." : "Checked.", detail: where ? `${where}. The results are up to date.` : "The results are up to date." });
+      }
+      return shownScore;
     } catch (e) {
       const err = readinessError(e, "The check couldn't be completed. Nothing was changed; you can run it again.");
       setCheckProblem(err.message);
@@ -892,25 +992,27 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const currency = data.currency || subject.forecast?.data?.currency || "GBP";
   const a = subject.assessment;
   const tabs = [["overview", "Overview"], ["answers", "Inputs"], ["advanced", "Advanced"]];
+  const sm = subject.summary || {};
+  // One score everywhere (G5, 23 Oct): the summary's, as the dashboard, pins and Agent read it; none while a check runs
+  const heroScore = checking ? null : (sm.score ?? null);
+  const todoCount = (ownSteps?.steps || []).length;
+  const neverChecked = !sm.classification && (heroScore === null || heroScore === undefined);
+  const heroStatus = neverChecked ? (sm.execution_status === "failed" ? "The last check didn't finish. Run it again to see your score." : "Not checked yet. Run the check to see your score.")
+    : [checking ? "Checking…" : heroScore !== null && heroScore !== undefined ? `${Math.round(heroScore)}/100${sm.score_partial ? " so far" : ""}` : "Not scored yet",
+    sm.classification === "ready" ? (feature === "launch" ? "Ready to launch" : "Ready to approach funders") : "Not ready yet",
+    todoCount ? `${todoCount} ${todoCount === 1 ? "thing" : "things"} to do first` : null].filter(Boolean).join(" · ");
+  const heroPills = sectionCounts(subject, ownSteps?.steps || []).map((x) => ({ ...x, state: x.done ? "done" : / to fix$/.test(x.text) || x.answered === 0 ? "fix" : "partly" }));
+  const caseRoute = String(data.route_preference || data.route || "").toLowerCase();
   const openActions = (subject.actions || []).filter((x) => ["open", "in_progress", "awaiting_evidence"].includes(x.status)).length;
   const saveText = { saved: "All changes saved", pending: "Saving shortly…", saving: "Saving…", error: save.message, conflict: save.message }[save.state];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 pb-1 md:flex-row md:items-start md:justify-between" data-case-header>
-        <div className="min-w-0">
-          <p className="text-[12px] text-slate-500" data-case-eyebrow>{feature === "launch" ? "Launch readiness" : "Funding readiness"}{archived ? " · Archived" : ""}</p>
-          <h1 className="mt-0.5 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-slate-100" data-case-title>{subject.title}</h1>
-          {/* The status, once per page: here (the owner's brief, 20 Oct). From the chat's own record when there is one. */}
-          {/* One source (F-1, 22 Oct): the case's own summary, shown as soon as the case is (F-5: never waiting on the
-              chat's result). The chat's result is used only for a case never checked. */}
-          <div className="mt-1.5">{subject.summary?.classification || !shown || shown._failed
-            ? <StatusLine summary={subject.summary} feature={feature} steps={ownSteps?.steps} generalChecks={Boolean(subject.checklist_note)}
-                checking={checking || subject.assessment?.execution_status === "running" || subject.assessment?.execution_status === "queued"} />
-            : <ResultStatus result={shown} latest={latestOf(shown)} />}</div>
-          <ChecklistUpdatedOnce id={subject.id} note={subject.checklist_updated} />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+    <div className="mx-auto w-full max-w-[1200px] space-y-4">
+      <ScoreHero eyebrow={`${feature === "launch" ? "Launch readiness" : "Funding readiness"}${archived ? " · Archived" : ""}`} title={subject.title}
+        score={heroScore} status={heroStatus} pills={heroPills} onPill={openSectionAt}
+        info={subject.checklist_note ? "Scored against the general checklist; a grant-specific checklist isn't available yet." : null}
+        notes={<ChecklistUpdatedOnce id={subject.id} note={subject.checklist_updated} />}
+        actions={<>
           {can[`${feature}.edit`] && archived ? <Btn kind="primary" onClick={() => changeStatus("reactivate")}>Reactivate</Btn>
             : feature === "launch" && subject.status === "cancelled" && can["launch.decide"] ? <Btn kind="primary" onClick={() => changeStatus("reopen")}>Reopen</Btn>
             : can[`${feature}.assess`] && subject.status !== "cancelled" && !a ? (
@@ -937,8 +1039,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
               )}
             </div>
           )}
-        </div>
-      </div>
+</>} />
 
       {arrived && (
         <div role="status" data-goal-handoff className="flex items-start justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-sm text-brand-900 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-100">
@@ -996,27 +1097,16 @@ function SubjectDetail({ businessId, feature, subjectId }) {
         {/* No "previous need" review (the owner's QA, 15 Oct): Replace replaced it, Update changed only what differed. The
             earlier need stays in History. */}
         {tab === "answers" && (
-          <Setup businessId={businessId} feature={feature} subject={subject} data={data} errors={errors} onField={onField} onChanged={onChanged}
-            openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={pickSection} disabled={!editable} />
+          <Setup businessId={businessId} feature={feature} subject={subject} errors={errors}
+            // A launch plan has no currency of its own: its money fields show the business's, as its forecast does (23 Oct)
+            data={feature === "launch" && !data.currency && subject.forecast?.data?.currency ? { ...data, currency: subject.forecast.data.currency } : data} onField={onField} onChanged={onChanged}
+            openSection={openSection || subject.profile_definition.sections[0].key} setOpenSection={pickSection} disabled={!editable}
+            recheck={() => check({ quiet: true, silent: true })}
+            onNewNeed={feature === "funding" ? (body) => caseAction({ title: "New funding need started.", detail: "The previous need is in History.",
+              run: async () => { if (!(await flush())) throw new Error("unsaved"); accept(await startNewNeed(businessId, subjectId, body), true); } }) : null} />
         )}
         {tab === "overview" && (
           <div className="space-y-4" data-case-overview>
-            {(subject.sections || []).length > 0 && (
-              // "Funding goal 6 of 7 · Finances 4 of 5 …" (the owner's brief, 21 Oct)
-              <div className="flex flex-wrap gap-2" data-section-counts>
-                {sectionCounts(subject, ownSteps?.steps || []).map((x) => (
-                  <button key={x.key} type="button" onClick={() => openSectionAt(x.key)}
-                    className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${x.done ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-300" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}>
-                    {x.done && <span aria-hidden="true" className="mr-1">✓</span>}{x.text}</button>
-                ))}
-              </div>
-            )}
-            {/* The same research summary, with its funding options, whether drafts are still waiting or all were reviewed
-                (the owner's QA, 21 Oct: one case showed it, the other only a one-line banner). */}
-            {["review", "adopted"].includes(researchRun?.status) && researchOpen(researchRun) && (
-              <ResearchSummary businessId={businessId} run={researchRun} score={null} caseId={subject.id}
-                onAdopted={(out) => { setResearchRun(out?.research || null); loadOverview(); load(); }} />
-            )}
             {overview === undefined ? (
               // The case's own steps at once (F-5): they come from the case itself, never waiting on the chat's result
               ownSteps?.steps?.length
@@ -1030,7 +1120,16 @@ function SubjectDetail({ businessId, feature, subjectId }) {
                 <p className="text-sm text-slate-700 dark:text-slate-200">Your result is taking longer than usual to load.</p>
                 <Btn className="mt-2" onClick={() => { setOverview(undefined); loadOverview(); }}>Try again</Btn>
               </Panel>
-            ) : overview && ownSteps && !ownSteps.steps?.length ? null : overview ? (
+            ) : overview && ownSteps && !ownSteps.steps?.length ? (
+              // Nothing left to do: said, never a blank Overview (G5, 23 Oct)
+              <Panel>
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100" data-nothing-left>
+                  {checking ? "Checking…" : sm.classification === "ready" ? (feature === "launch" ? "Nothing left to do. You're ready to launch." : "Nothing left to do. You're ready to approach funders.")
+                    : sm.freshness === "stale" ? "Your steps are done. Run the check again to see your score." : "No steps left from this check."}
+                </p>
+                {!checking && sm.freshness === "stale" && editable && <Btn className="mt-2" onClick={() => check()} data-check-again>Run the check again</Btn>}
+              </Panel>
+            ) : overview ? (
               // The one-page result the chat ended on, from the same record; the status is in the header (said once).
               // Nothing left in it (no steps, research adopted): not shown, never an empty card (the owner's QA, 22 Oct).
               <FirstValueCard result={shown} hideStatus hideOpen embedded className="border-slate-200"
@@ -1054,22 +1153,6 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             )}
           </div>
         )}
-        {tab === "overview" && (subject.data?.funding_options || []).length > 0 && (
-          // Saved from the research, used here and in the funding pack (the owner's QA, 22 Oct)
-          <Panel title="Funding options you saved" data-saved-options>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {subject.data.funding_options.map((o) => (
-                <li key={o.id || o.title} className="flex flex-wrap items-baseline justify-between gap-2 py-2.5 text-[13px]">
-                  <span className="min-w-0"><span className="font-semibold text-slate-900 dark:text-slate-100">{o.title}</span>
-                    {o.route && <span className="ml-2 text-[11.5px] text-slate-500">{String(o.route).charAt(0).toUpperCase() + String(o.route).slice(1)}</span>}
-                    {o.text && <span className="block text-[12.5px] text-slate-600 dark:text-slate-300">{o.text}</span>}</span>
-                  {o.source?.url && <a href={o.source.url} target="_blank" rel="noopener noreferrer nofollow" className="shrink-0 text-[12.5px] font-semibold text-brand-700 hover:underline">Open the page</a>}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 text-[12px] text-slate-500">Also in your funding pack's readiness report. Check each one is still open before you apply.</p>
-          </Panel>
-        )}
         {tab === "overview" && waiting.length > 0 && (
           // Filled since the last check (F-9): out of "Your next steps" at once, listed here until the check runs again.
           <details className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] dark:border-slate-800 dark:bg-slate-900" data-waiting-recheck>
@@ -1077,25 +1160,34 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             <ul className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">{waiting.map((w) => <li key={w.key}>{w.title}</li>)}</ul>
           </details>
         )}
-        {tab === "overview" && relatedReady(subject.summary, 75, shown && !shown._failed ? Number(String(latestOf(shown).score).split("/")[0]) : null) && (
-          // Ready (the checklist's one threshold, current, nothing blocking): related services for what comes next (F-8)
-          <Panel title="What to do next" data-related>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {relatedServices({ feature, subject, packLocked }).map((r) => (
-                <li key={r.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5" data-related-item={r.key}>
-                  <span className="min-w-0"><span className="block text-[13.5px] font-semibold text-slate-900 dark:text-slate-100">{r.title}</span>
-                    <span className="block text-[12.5px] text-slate-500">{r.why}</span></span>
-                  {r.locked
-                    ? <Btn onClick={() => navigate("/pricing")} data-related-upgrade>Upgrade to use it</Btn>
-                    : <Btn kind={r.done ? undefined : "primary"} onClick={() => navigate(r.to)} data-related-cta>{r.cta}</Btn>}
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        )}
-        {tab === "overview" && feature === "funding" && (
-          // Once, at the foot of the Overview: what the score is and isn't
-          <p className="text-[12px] text-slate-500" data-case-note>This is a look at how prepared you are. It is not a view on whether funding will be given.</p>
+        {tab === "overview" && (
+          <div className="mt-4 space-y-6">
+            {feature === "funding" && (() => {
+              const options = fundingOptions({ route: caseRoute, saved: data.funding_options || [], run: researchRun });
+              const others = options.length ? [] : fundingOptions({ route: "any", saved: data.funding_options || [], run: researchRun }).filter((o) => o.route !== caseRoute);
+              return (
+                <FundingOptions route={caseRoute} options={options} others={others} searched={Boolean(researchRun)}
+                  onSave={researchRun ? (o) => optionApplier.apply(o.item_id || o.id, { decision: "accept", pressed: true }) : null}
+                  onHide={researchRun ? (o) => optionApplier.apply(o.item_id || o.id, { decision: "reject" }) : null} />
+              );
+            })()}
+            {feature === "funding" && researchRun && (
+              <ResearchFindings items={researchFindings(researchRun)} decided={optionApplier.decided || {}}
+                onSave={(f) => optionApplier.apply(f.id, { decision: "accept", pressed: true })}
+                onHide={(f) => optionApplier.apply(f.id, { decision: "reject" })} />
+            )}
+            {["review", "adopted"].includes(overview?.research?.state) && relatedReady(subject.summary, 75, heroScore) && (
+              // Ready (75 or above), after this need's research: related services as cards (F-8), below what was found
+              <RelatedCards items={relatedServices({ feature, subject, packLocked }).filter((r) => r.key !== "pack")} />
+            )}
+            {feature === "funding" && (
+              <PackStrip pack={subject.summary?.pack} caseReady={subject.summary?.classification === "ready"} to={`/funding/${subject.id}?tab=documents`} locked={packLocked} />
+            )}
+            {feature === "funding" && (
+              // Once, at the foot of the Overview: what the score is and isn't
+              <p className="text-[12px] text-slate-500 dark:text-slate-400" data-case-note>This is a look at how prepared you are. It is not a view on whether funding will be given.</p>
+            )}
+          </div>
         )}
         {tab === "advanced" && (
           // Every part collapsed by default (the owner's brief, 20 Oct); an old address opens its own part.

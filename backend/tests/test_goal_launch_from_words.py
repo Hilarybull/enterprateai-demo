@@ -23,3 +23,30 @@ def test_the_session_does_not_ask_them_again_and_asks_when(world):  # noqa: F811
     assert "target_date" in asked and "where" not in asked
     when = {q["key"]: q for q in s["questions"]}["target_date"]
     assert when["label"] == "When do you want to launch?" and when["unsure"] == "Not decided yet"
+
+
+def test_what_is_launched_is_required_and_never_a_placeholder(world):  # noqa: F811
+    # The owner's QA, 23 Oct: "launch readiness" was read as selling "readiness", and the plan was named from it. What is
+    # launched is asked, required; a placeholder answer is asked again, saying why.
+    _env, _store, client, _who = world
+    assert "sell" not in extract("I want to check my launch readiness", "launch")
+    s = client.post("/task-sessions", json={"text": "launch readiness", "entry_mode": "free_text"}).json()
+    assert s["goal_key"] == "launch" and "sell" in s["missing"]
+    sell = {q["key"]: q for q in s["questions"]}["sell"]
+    assert sell["required"] and sell["label"] == "What exactly are you launching?" and not sell.get("default")
+    again = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"sell": "readiness"}}).json()
+    assert "sell" in again["missing"]
+    assert again["rejected"]["sell"].startswith("Name the product or service")      # said beside the question, which is open again
+    ok = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"sell": "School readiness tutoring"}}).json()
+    assert "sell" not in ok["missing"]      # a real offering that happens to contain the word
+
+
+def test_a_placeholder_answer_is_kept_out_and_asked_again_so_continue_works(world):  # noqa: F811
+    # The owner's QA, 23 Oct: the recap showed "Customer: customers" and Continue did nothing. Kept out, with the reason.
+    _env, _store, client, _who = world
+    s = client.post("/task-sessions", json={"text": "I want to launch a drone cleaning service in Leeds", "entry_mode": "free_text"}).json()
+    out = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "customers"}}).json()
+    assert "customer" in out["missing"] and out["inputs"].get("customer") in (None, "")
+    assert (out.get("rejected") or {}).get("customer", "").startswith("Say who it's for")
+    ok = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "Office managers in Leeds"}}).json()
+    assert "customer" not in ok["missing"] and ok["inputs"]["customer"] == "Office managers in Leeds"

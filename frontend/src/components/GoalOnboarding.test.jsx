@@ -996,14 +996,14 @@ describe("the chat's currency (the owner's brief, 20 Oct)", () => {
   });
 });
 
-describe("signed in, the homepage hands the message to the dashboard's Agent card: one pathway (the owner's choice, 22 Oct)", () => {
-  it("goes to the Agent card with what was asked, and starts no separate chat", async () => {
+describe("signed in, the homepage's chat runs by the side, on the page (the owner's QA, 23 Oct)", () => {
+  it("starts the chat with the workspace, and never jumps to the dashboard first", async () => {
     useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
     useWorkspaceStore.setState({ workspaceId: "ws1" });
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toMatch(/^\/dashboard/));
-    expect(posts(/task-sessions$/).length).toBe(0);
+    await waitFor(() => expect(posts(/task-sessions$/).length).toBe(1));
+    expect(screen.queryByTestId("where")?.textContent || "").not.toContain("/dashboard");      // stayed on the page
   });
 });
 

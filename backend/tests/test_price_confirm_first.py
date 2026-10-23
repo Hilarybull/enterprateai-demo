@@ -9,10 +9,12 @@ def test_a_business_plan_shows_its_price_first_and_holds_nothing():
     before = env.meter.balances.get(OWNER)
     out = env.submit(capability="business_plan_draft", params={"answers": {"description": "Mobile car wash"}}, channel="ui_action", confirmed=False)
     assert out["kind"] == "needs_confirmation" and out["price"] == 40
-    assert out["message"].startswith("Write your business plan. 40 credits.")
+    assert out["message"].startswith("I'll write your business plan. It costs 40 credits")
     assert run(env.store.list_runs("A")) == [] and env.meter.charges == [] and env.meter.balances.get(OWNER) == before
     typed = env.submit(text="write a business plan for my car wash", confirmed=False)
-    assert typed["kind"] == "needs_confirmation" and "40 credits" in typed["message"]
+    assert typed["kind"] == "needs_input" and run(env.store.list_runs("A")) == []      # its questions first (23 Oct), nothing held
+    answered = env.submit(capability="business_plan_draft", params={"purpose": "investors"}, channel="ui_action", confirmed=False)
+    assert answered["kind"] == "needs_confirmation" and "40 credits" in answered["message"] and answered["params"]["purpose"] == "investors"
     started = env.submit(capability="business_plan_draft", params={"answers": {"description": "Mobile car wash"}}, channel="ui_action", confirmed=True)
     assert started["kind"] == "workflow"
 

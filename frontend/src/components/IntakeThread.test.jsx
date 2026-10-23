@@ -40,7 +40,7 @@ it("shows the owner's message once, one acknowledgement, and 5 of 6", async () =
   expect(column().querySelector("[data-agent-line]").textContent).toBe(
     "HR teams in Abuja, got it: ₦30,000 a box, ₦12,000 to make, about 40 a month. How do you want to position it?");
   expect(column().querySelectorAll("[data-answer]").length).toBe(0);              // no Q and A pairs for slots never asked
-  expect(column().querySelector("[data-progress]").textContent).toBe("5 of 6");
+  expect(column().querySelector("[data-progress]")).toBeNull();                   // no "5 of 6" counter (the owner, 23 Oct)
   expect(column().querySelector("[data-currency-note]")).toBeNull();               // the currency is said once, in "From what you said"
 });
 

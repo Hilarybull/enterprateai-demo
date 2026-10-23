@@ -7,6 +7,7 @@ import { Collapse, WorkingSteps } from "../Motion";
 import { useListChanges } from "../../lib/motion";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "../../lib/toast";
 import { apiRequest } from "../../api/client";
 import ProfileUpdates from "./ProfileUpdates";
 import { agentErrorMessage, cancelRun, clearConversation, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
@@ -219,7 +220,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
 
   const handed = useRef(false);
   useEffect(() => {
-    if (handed.current || !businessId) return;
+    // Sent once the card can send (the owner's QA, 23 Oct: while the dashboard showed its saved copy the card was paused,
+    // the message was marked as handed over and dropped, and the landing page "just entered the dashboard")
+    if (handed.current || !businessId || paused || busy) return;
     const params = new URLSearchParams(window.location.search);
     const ask = params.get("ask");
     if (!ask) return;
@@ -227,7 +230,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     params.delete("ask");
     window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
     send({ text: ask, sourceChannel: "text" });
-  }, [businessId]);      // eslint-disable-line react-hooks/exhaustive-deps
+  }, [businessId, paused, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(req) {
     if (!businessId || busy || paused) return;
@@ -574,6 +577,19 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
 
   // Only real pending approvals are listed (risk alerts live under suggestions and risks). A row
   // opens its approval in the drawer: the owner reviews, edits, approves or declines without leaving.
+  // An Agent draft's review id, from its link (?review=…)
+  const draftReview = (to) => { try { return new URLSearchParams(String(to || "").split("?")[1] || "").get("review"); } catch { return null; } };
+  const decideDraft = async (item, decision) => {
+    const id = item.draft_id || draftReview(item.to);
+    if (!id || !businessId) return;
+    try {
+      await apiRequest(`/businesses/${businessId}/agent-drafts/${id}/decide`, "POST", { decision });
+      toast({ kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use." : "Nothing else was changed." });
+      onChanged?.();
+    } catch {
+      toast({ kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(item, decision) }] });
+    }
+  };
   const amountOf = (p) => {
     const value = p?.total ?? p?.amount ?? p?.total_amount ?? p?.outstanding;
     if (typeof value !== "number") return "";
@@ -622,6 +638,14 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
             <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">{item.age}</span>
             <span className="shrink-0 text-slate-400"><Icon name="chevron" className="h-3 w-3" /></span>
           </button>
+          {item.type === "draft" && (item.draft_id || draftReview(item.to)) && (
+            // Accept, Edit or Reject here, as on the open draft (the owner's QA, 23 Oct)
+            <div className="-mt-1 flex items-center gap-3 rounded-b-xl border border-t-0 border-slate-200 px-3 py-1.5 dark:border-slate-700" data-draft-actions>
+              <button type="button" disabled={paused || leaving} onClick={() => decideDraft(item, "accept")} className="text-[12px] font-semibold text-emerald-700 hover:underline disabled:opacity-60">Accept</button>
+              <button type="button" disabled={paused || leaving} onClick={() => navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`)} className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-60">Edit</button>
+              <button type="button" disabled={paused || leaving} onClick={() => decideDraft(item, "reject")} className="text-[12px] font-semibold text-slate-600 hover:underline disabled:opacity-60">Reject</button>
+            </div>
+          )}
           </Collapse>
         ))}
       </div>

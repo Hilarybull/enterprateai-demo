@@ -33,7 +33,8 @@ const NAV = [
   { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
-  { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
+  // Off the navbar for now (the owner, 23 Oct); the Marketplace pages still open from their own links.
+  // { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
 
@@ -336,10 +337,12 @@ export default function Layout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifToasts, setNotifToasts] = useState([]);
   useEffect(() => {
+    // One toast host for the app (lib/toast.js): the same id replaces its toast in place; at most 2 are kept.
     function onToast(e) {
-      const { kind, title, message } = e.detail || {};
-      if (!message) return;
-      setNotifToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, kind, title, message }]);
+      const { id, kind, title, message, actions } = e.detail || {};
+      if (!message && !title) return;
+      const next = { id: id || `${Date.now()}-${Math.random()}`, kind, title, message, actions };
+      setNotifToasts((t) => (t.some((x) => x.id === next.id) ? t.map((x) => (x.id === next.id ? next : x)) : [...t, next].slice(-2)));
     }
     window.addEventListener("ea:toast", onToast);
     return () => window.removeEventListener("ea:toast", onToast);

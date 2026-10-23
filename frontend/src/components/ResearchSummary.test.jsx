@@ -5,6 +5,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import * as client from "../api/client";
 import ResearchSummary, { AdoptedBanner, shortMoney } from "./ResearchSummary";
 
+// Toasts said by the one toast system (22 Oct), collected for the checks below
+const toasts = [];
+window.addEventListener("ea:toast", (e) => toasts.push(e.detail));
+const lastToast = () => toasts[toasts.length - 1] || {};
+
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const click = async (el) => { await act(async () => { fireEvent.click(el); }); };
 const months = Array.from({ length: 12 }, (_, n) => ({ month: n + 1, revenue: 1200000, costs: 650000, profit: 550000, cash: 550000 * (n + 1) }));
@@ -36,7 +42,7 @@ it("says what was prepared, points to the drafts in the steps, and applies a sav
   await act(async () => { await new Promise((r) => setTimeout(r, 600)); });
   expect(calls.find((c) => c.path.endsWith("/review")).body.decisions).toEqual({ r1: { decision: "accept", pressed: true } });
   expect(adopted).toHaveBeenCalled();
-  expect(document.querySelector("[data-summary-status]").textContent).toBe("Saved. Your score is now 38/100.");
+  expect(lastToast()).toMatchObject({ kind: "success", title: "Saved to your case.", message: "Find it under Funding options." });
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });
 
