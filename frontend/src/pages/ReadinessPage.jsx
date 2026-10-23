@@ -1181,8 +1181,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
                 onSave={(f) => optionApplier.apply(f.id, { decision: "accept", pressed: true })}
                 onHide={(f) => optionApplier.apply(f.id, { decision: "reject" })} />
             )}
-            {["review", "adopted"].includes(overview?.research?.state) && relatedReady(subject.summary, 75, heroScore) && (
-              // Ready (75 or above), after this need's research: related services as cards (F-8), below what was found
+            {relatedReady(subject.summary, 75, heroScore) && !checking && (
+              // At 75 or above, always (the owner, 23 Oct: "what of the recommended next features"): related services as cards
+              // (F-8), never waiting on this need's research
               <RelatedCards items={relatedServices({ feature, subject, packLocked }).filter((r) => r.key !== "pack")} />
             )}
             {feature === "funding" && (

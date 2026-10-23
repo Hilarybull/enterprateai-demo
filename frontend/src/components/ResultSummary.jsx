@@ -532,6 +532,10 @@ function DraftQuestion({ runId, item }) {
 
 /** "Your next steps": three at most, then "3 of 8 ready", which opens what looks ready and what is missing. The Agent's
  *  research drafts each step; the owner reviews and edits it (the owner, 20 Oct 2026: "it's an agent"). */
+// A step only the owner can do: a confirmation, a review mark, or a one-press check of their own figures
+const OWNERS_OWN = (st) => Boolean(st?.attest || st?.review || st?.confirmOffer || st?.confirmForecast || st?.noCommitments || st?.prereqDone || st?.confirmCapacity
+  || /^confirm\./.test(String(st?.key || "")));
+
 export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = null, prices = null, readyToggle = false, working = false, businessId = null, onApplied = null }) {
   const applier = useApplyResearch(businessId, run, result, onApplied);
   const currency = run?.context?.currency || null;
@@ -565,7 +569,9 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
       </ol>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
         {/* On a case: only while this need is not researched yet (the owner's QA, 22 Oct: hidden after a run, shown for a new need) */}
-        {!researched && onDoIt && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
+        {/* Only when research can do something: never beside steps that are the owner's own press (the owner, 23 Oct: "why is
+            do it all still showing" beside "Mark reviewed") */}
+        {!researched && onDoIt && steps.some((st) => !OWNERS_OWN(st)) && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
           // The one research button for every step: its price first, in the spending modal (focus on "Not now").
           <button type="button" onClick={() => onDoIt(null)} disabled={working} aria-busy={working}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
