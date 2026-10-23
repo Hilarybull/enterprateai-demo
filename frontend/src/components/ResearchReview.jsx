@@ -629,7 +629,7 @@ export function InlineResearch({ businessId, run, onAdopted = null, retry = null
 export function premiumFlow({ base, body = {}, businessId = null, onError = () => {}, onAdopted = null }) {
   return async () => {
     try {
-      const quote = await apiRequest(`${base}/quote`, "POST", body);
+      const quote = await apiRequest(`${base}/quote`, "POST", body, { timeoutMs: 30000 });      // the price alone: 30 seconds at most
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // one balance on the page
       if (!quote?.allowed) return { gate: quote?.gate };
       if (quote.reuse) {

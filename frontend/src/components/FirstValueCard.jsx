@@ -544,13 +544,12 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
     setServed({ confirm: { pending: true } });
     try {
       // Its price in the modal first, free or not (focus on "Not now"): nothing starts from one press on the card.
-      // Never a spinner for ever (the owner's QA, 23 Oct: "Getting the price…" stayed): 20 seconds, then said
-      let out;
-      try {
-        out = await Promise.race([flow(), new Promise((_, no) => { setTimeout(() => no(new Error("slow")), 20000); })]);
-      } catch {
+      // Never a spinner for ever (the owner's QA, 23 Oct): the price request itself has its own limit (premiumFlow); a
+      // research already done reopens free and may take longer, so nothing here cuts it short. Nothing back: said.
+      const out = await flow().catch(() => null);
+      if (!out) {
         setServed(null);
-        toast({ kind: "error", title: "The price couldn't be worked out just now.", detail: "Nothing was charged.", actions: [{ label: "Try again", onClick: () => premiumNow(only) }] });
+        toast({ kind: "error", title: "That couldn't be started just now.", detail: "Nothing was charged.", actions: [{ label: "Try again", onClick: () => premiumNow(only) }] });
         return;
       }
       if (out?.research && out.render && !out.confirm) {
