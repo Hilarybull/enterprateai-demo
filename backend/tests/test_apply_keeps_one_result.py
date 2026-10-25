@@ -61,4 +61,5 @@ def test_an_edited_revenue_is_what_the_case_and_its_forecast_use_and_its_own_fix
     o = client.get(f"/businesses/A/cases/{case_id}/overview").json()["result"]
     r = client.get(f"/task-sessions/{sid}/first-value").json()["result"]
     pin = next(p for p in client.get("/businesses/A/pinned").json()["items"] if p["id"] == case_id)
-    assert (o["score"], len(o["blockers"])) == (r["score"], len(r["blockers"])) == (pin["score"] if pin["score"] is not None else r["score"], pin["to_do"])
+    # One score on every surface (the owner, 25 Oct): the case summary's; the strip counts the case's own actions (23 Oct)
+    assert o["score"] == r["score"] == pin["score"] and len(o["blockers"]) == len(r["blockers"])

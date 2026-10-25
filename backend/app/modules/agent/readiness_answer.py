@@ -10,14 +10,17 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_READY = re.compile(r"\b(ready|readiness|score|how (?:am i|are we) doing|what(?:'s| is) (?:next|missing|left)|(?:do|doing) next|next steps?|where do i stand)\b", re.I)
+_READY = re.compile(r"\b(ready|readiness|score|how (?:am i|are we) doing|what(?:'s| is) (?:next|missing|left)|(?:do|doing) next|next steps?|where do i stand|"
+                    r"looking|going|status|progress|stand|need(?:s|ed)?|before launch\w*|where\b.{0,30}\bat)\b", re.I)
 _FUNDING = re.compile(r"\b(fund(?:s|ing|ed)?|grants?|loans?|invest(?:ment|ors?)?|equity|raise|raising|borrow)\b", re.I)
 _LAUNCH = re.compile(r"\b(launch(?:es|ing)?)\b", re.I)
 _ROUTE = (("grant", r"\bgrants?\b"), ("loan", r"\b(loans?|borrow\w*)\b"), ("equity", r"\b(equity|invest(?:ment|ors?)?)\b"))
 _MONEY = re.compile(r"[£$€₦]\s?\d[\d,.]*\s*(?:k|m|thousand|million)?\b|\b\d[\d,.]*\s*(?:k|m|thousand|million)\b", re.I)
 _STOP = {"ready", "readiness", "launch", "launching", "funding", "fund", "grant", "loan", "score", "what", "whats", "next", "with",
          "plan", "case", "about", "much", "need", "have", "does", "this", "that", "they", "them", "there", "where", "stand", "doing",
-         "going", "want", "would", "could", "should", "your", "mine", "first", "missing", "steps"}
+         "going", "want", "would", "could", "should", "your", "mine", "first", "missing", "steps",
+         # how a status question is put (25 Oct): never part of the plan's name
+         "looking", "status", "progress", "needs", "needed", "before", "check", "show", "plans", "apply", "applying"}
 
 
 def _words(text: Any) -> set:
@@ -47,7 +50,10 @@ def asked_about(text: str) -> str | None:
     """'funding', 'launch' or None: is this a question about where a case stands (how ready, what is next)? Only a question:
     anything asking to start, set up or apply goes to its flow."""
     t = str(text or "").strip()
-    if not _QUESTION.search(t) or (_START.search(t) and not re.search(r"\b(how ready|ready|score|next|missing|left)\b", t, re.I)):
+    # A question, or a readiness named without asking to start one ("check my launch readiness"): the owner, 25 Oct, the
+    # Agent Centre answered "how is my launch looking?" as a paid chat reply
+    asking = _QUESTION.search(t) or re.search(r"\b(?:check|show|see)\b.{0,20}\breadiness\b|^\s*(?:my\s+)?(?:launch|funding)\s+readiness\b", t, re.I)
+    if not asking or (_START.search(t) and not re.search(r"\b(how ready|ready|score|next|missing|left|before launch\w*)\b", t, re.I)):
         return None
     if not _READY.search(t):
         return None
@@ -89,7 +95,11 @@ def answer(text: str, kind: str, subjects: list[dict]) -> dict:
         named -= {"grant", "grants", "loan", "loans", "equity", "investment", "investors", "money"}
     matched = [s for s in subjects if named and named & _words(name_of(s) + " " + str((s.get("data") or {}).get("purpose") or "") + " "
                                                                + str((s.get("data") or {}).get("sell") or (s.get("data") or {}).get("description") or ""))]
-    new_label = f"Start a new {noun}"
+    if kind == "funding":
+        # One funding case per business: every funding question is about it, whatever words it uses (the owner, 25 Oct:
+        # "am I ready to apply for a loan?" found no case beside a £50k loan), and a second one is never offered
+        matched = subjects[:1]
+    new_label = f"Start a new {noun}" if kind == "launch" else "Set up your funding case"
     new_button = {"label": new_label, "to": f"{base}?new=1"}
     if kind == "funding":
         amount = _amount(text)
@@ -98,7 +108,7 @@ def answer(text: str, kind: str, subjects: list[dict]) -> dict:
         if current is not None and (amount or route):
             data = current.get("data") or {}
             differs = (amount and data.get("target_amount") not in (None, "") and abs(float(data["target_amount"]) - amount) > 0.5) or (
-                route and data.get("route_preference") and data["route_preference"] != route)
+                route and data.get("route_preference") not in (None, "", "unsure") and data["route_preference"] != route)
             if differs:
                 return {"kind": "answer", "conversational": False,
                         "message": f"You have “{name_of(current)}” ({_status(current.get('summary') or {}, kind)}). This sounds like a different need. "

@@ -27,11 +27,12 @@ export function kindOf(result) {
   if (t.startsWith("idea")) return "idea";
   if (t.startsWith("pricing")) return "pricing";
   if (t.startsWith("customer")) return "customers";
+  if (t.startsWith("business_risk")) return "risks";
   return "other";
 }
 
 const READY = { funding: "Ready to approach funders.", launch: "Ready to launch.", idea: "Worth taking further.", pricing: "Your price looks healthy.",
-  customers: "Set up to win customers.", other: "Looks ready." };
+  customers: "Set up to win customers.", risks: "No big risks right now.", other: "Looks ready." };
 const NOT_YET = { funding: "Not ready for funding yet.", launch: "Not ready to launch yet.", idea: "Not proven yet.", pricing: "Your price isn't checked yet.",
   customers: "Not set up to win customers yet.", other: "Not ready yet." };
 
@@ -48,10 +49,12 @@ export function statusWords(result, latest) {
   // The one "ready" threshold, as the checklist sets it (22 Oct: 75), sent with the result
   const readyAt = Number.isFinite(Number(result?.ready_at)) ? Number(result.ready_at) : 75;
   const ready = !partial && (Number.isFinite(n) ? n >= readyAt && failed === 0 : gaps === 0);
-  const sentence = ready ? READY[kind] : `${NOT_YET[kind]}${gaps ? ` ${gaps} ${gaps === 1 ? "thing" : "things"} to do first.` : ""}`;
+  // Risks are said as risks, never "Not ready yet" (the owner, 24 Oct)
+  const sentence = kind === "risks" ? (gaps ? `${gaps} ${gaps === 1 ? "risk" : "risks"} to act on.` : "No risks found in your records.")
+    : ready ? READY[kind] : `${NOT_YET[kind]}${gaps ? ` ${gaps} ${gaps === 1 ? "thing" : "things"} to do first.` : ""}`;
   const coverage = Math.max(0, Math.min(100, Math.round(Number(latest?.coverage ?? result?.evidence_coverage ?? 0))));
   const known = `${partial ? "Based on" : "I know"} ${coverage}% ${(WORDS.coverage[kind] || WORDS.coverage.other)}`;
-  const score = Number.isFinite(n) ? `${n}/100` : String(result?.score ?? "");
+  const score = kind === "risks" ? "" : Number.isFinite(n) ? `${n}/100` : String(result?.score ?? "");      // risks: no total
   return { score, sentence, known, ready, kind };
 }
 

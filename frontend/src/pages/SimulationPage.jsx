@@ -13,6 +13,7 @@ import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber, invoiceNumbers, shortDate } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
+import { withSharedFigures } from "../lib/sharedFigures";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted, isPlatformModuleGranted } from "../lib/permissions";
 import { planAllowsScenario } from "../lib/plans";
@@ -93,6 +94,14 @@ function biBandLabel(band) {
   return band.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** Half the monthly revenue or more gone, or the stability score down 15 points or more: said as high impact (25 Oct). */
+export function highImpact(run) {
+  const before = Number(run?.baseline_metrics?.monthly_revenue) || 0;
+  const after = Number(run?.scenario_metrics?.monthly_revenue) || 0;
+  const drop = (Number(run?.baseline_metrics?.stability_score) || 0) - (Number(run?.scenario_metrics?.stability_score) || 0);
+  return (before > 0 && after <= before * 0.5) || drop >= 15;
+}
+
 export default function SimulationPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
@@ -155,9 +164,16 @@ export default function SimulationPage() {
     [acceptedModuleValidation, catalogueData, financialsData, inputs, fxRates, currency]
   );
 
-  const stateSnapshot = financialInsights.stateSnapshot;
-
-  const largestClient = financialInsights.largestClient;
+  // The same figures as the risk check and the dashboard (R-4); the customer a "lose them" what-if was opened for
+  const [shared, setShared] = useState(null);
+  useEffect(() => {
+    if (!workspaceId) return undefined;
+    let live = true;
+    apiRequest(`/businesses/${workspaceId}/figures`, "GET").then((f) => { if (live) setShared(f || null); }).catch(() => { /* Simulation's own figures */ });
+    return () => { live = false; };
+  }, [workspaceId]);
+  const wantedCustomer = useMemo(() => { try { return new URLSearchParams(window.location.search || "").get("customer") || ""; } catch { return ""; } }, []);
+  const { stateSnapshot, largestClient } = useMemo(() => withSharedFigures(financialInsights, shared, wantedCustomer), [financialInsights, shared, wantedCustomer]);
   // QA PF4: "Loss of Largest Client" is offered only when there is a client on record to lose.
   const offeredScenario = (id) => Boolean(largestClient) || !CLIENT_SCENARIOS.includes(id);
   const activeProducts = useMemo(
@@ -1325,21 +1341,14 @@ export default function SimulationPage() {
                 const currentActualCoS = costOfSalesByMonth[nowKey] ?? 0;
                 const currentActualRec = receivablesByMonth[nowKey] ?? 0;
                 const currentActualExp = expensesByMonth[nowKey] ?? 0;
-                // Seed cumulative with actual gross profit from all months before the timeline starts
-                const historicalCumGross = Object.keys(revenueByMonth)
-                  .filter((k) => k < nowKey)
-                  .reduce((sum, k) => sum + Number(((revenueByMonth[k] ?? 0) - (costOfSalesByMonth[k] ?? 0)).toFixed(2)), 0);
                 // Last known monthly GP from actual data — used to project cumulative when current month has no data
                 const sortedPastKeys = Object.keys(revenueByMonth).filter((k) => k < nowKey).sort();
                 const lastPastKey = sortedPastKeys[sortedPastKeys.length - 1];
-                const lastActualGP = lastPastKey
-                  ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0)).toFixed(2))
-                  : 0;
                 const lastActualCashFlow = lastPastKey
                   ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0) - (expensesByMonth[lastPastKey] ?? 0)).toFixed(2))
                   : 0;
                 const currentMonthHasData = currentActualRev > 0 || costOfSalesByMonth[nowKey] != null;
-                let cumGross = Number(historicalCumGross.toFixed(2)); let cumCash = openingCash;
+                let cumGross = 0; let cumCash = openingCash;      // profit after all costs from month 1; cash already holds this month
                 const enriched = timeline.map((row) => {
                   const rd = new Date(runBaseDate); rd.setDate(1); rd.setHours(0,0,0,0); rd.setMonth(rd.getMonth() + (Number(row.month_index) - 1));
                   const monthKey = `${rd.getFullYear()}-${String(rd.getMonth() + 1).padStart(2, "0")}`;
@@ -1371,10 +1380,10 @@ export default function SimulationPage() {
                   const isFuture = !isCurrent && !isPast;
                   const hasRowData = row.revenue != null || row.cost_of_sales != null;
                   const useCarryForward = isFuture && !currentMonthHasData && !hasRowData;
-                  const gpForCum = useCarryForward ? lastActualGP : grossProfit;
+                  const netForCum = useCarryForward ? lastActualCashFlow : Number((rev - cos - exp).toFixed(2));
                   const cashForCum = useCarryForward ? lastActualCashFlow : (rev - rec - cos - exp);
-                  cumGross = Number((cumGross + gpForCum).toFixed(2));
-                  cumCash = Number((cumCash + cashForCum).toFixed(2));
+                  cumGross = Number((cumGross + netForCum).toFixed(2));
+                  if (isFuture) cumCash = Number((cumCash + cashForCum).toFixed(2));
                   const totalCosts = Number((cos + exp).toFixed(2));
                   const grossMarginPct = rev > 0 ? Number(((grossProfit / rev) * 100).toFixed(1)) : 0;
                   return { ...row, revenue: rev, cost_of_sales: cos, receivables: rec, accruals: rec, expenses: exp, costs: totalCosts, gross_profit: grossProfit, gross_margin_pct: grossMarginPct, _cumGross: cumGross, _cash: cumCash };
@@ -1408,8 +1417,8 @@ export default function SimulationPage() {
                             <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
                             <td className="px-3 py-2 text-left whitespace-nowrap">
                               {row.state_label ? (
-                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
-                                  {row.state_label}
+                                <span title={statusOf(row.state_label)[1]} data-status={stateLabel} className={`cursor-help rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") || stateLabel.includes("critical") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                                  {statusOf(row.state_label)[0]}
                                 </span>
                               ) : "—"}
                             </td>
@@ -1480,6 +1489,16 @@ export default function SimulationPage() {
 // QA PF4: scenarios about a client on record; the months the projection itself marks at risk; a ratio in words when
 // it can't be a number ("Not available": nothing to compare with; "No cash to cover it": money owed, no cash).
 export const CLIENT_SCENARIOS = ["tmpl_client_loss"];
+// Each month's status in plain words, with what it means (the owner, 25 Oct: never AT_RISK or STRESS)
+export const STATUS_WORDS = {
+  stable: ["Stable", "Cash covers six months of costs or more, and the month makes money."],
+  tight: ["Tight", "Cash covers three to six months of costs, or the month loses money."],
+  stress: ["Under stress", "Cash covers less than three months of costs, or money owed to you is building up."],
+  at_risk: ["At risk", "Cash covers less than one month of costs."],
+  critical: ["Overdrawn", "Cash is below zero."],
+};
+export const statusOf = (label) => STATUS_WORDS[String(label || "").toLowerCase().trim().replace(/\s+/g, "_")] || [String(label || ""), ""];
+
 export const atRisk = (timeline) => (timeline || []).filter((t) => ["at_risk", "stress", "critical"].includes(t?.state_label)).map((t) => t.month_index);
 export function ratioText(value, state) {
   if (typeof value === "number") return value.toFixed(2);
@@ -1999,17 +2018,12 @@ function ScenarioOutput({
   const _curMonthHasData = _curActualRev > 0 || _csbm[_nowKey] != null;
   const _sortedPastKeys = Object.keys(_rbm).filter((k) => k < _nowKey).sort();
   const _lastPastKey = _sortedPastKeys[_sortedPastKeys.length - 1];
-  const _lastActualGP = _lastPastKey
-    ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0)).toFixed(2))
-    : 0;
   const _lastActualCashFlow = _lastPastKey
     ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0) - (_expbm[_lastPastKey] ?? 0)).toFixed(2))
     : 0;
   const _runBase = activeRun?.executed_at || activeRun?.created_at;
-  const _historicalCumGross = Object.keys(_rbm)
-    .filter((k) => k < _nowKey)
-    .reduce((sum, k) => sum + Number(((_rbm[k] ?? 0) - (_csbm[k] ?? 0)).toFixed(2)), 0);
-  let _cumGross = Number(_historicalCumGross.toFixed(2)); let _cumCash = openingCash;
+  // "Cum. Profit": profit after all costs, from month 1; it goes down when the month loses money (the owner, 25 Oct)
+  let _cumGross = 0; let _cumCash = openingCash;
   const timelineRows = rawTimelineRows.map((row) => {
     const _rd = _runBase ? new Date(_runBase) : new Date();
     _rd.setDate(1); _rd.setHours(0,0,0,0); _rd.setMonth(_rd.getMonth() + (Number(row.month_index) - 1));
@@ -2032,20 +2046,21 @@ function ScenarioOutput({
       const _aexp = _expbm[_mKey];
       _exp = _aexp != null ? _aexp : Number(row.expenses || 0);
     } else {
-      // Future: keep revenue/CoS/expenses at current actual (even if 0)
-      _rev = _curActualRev;
-      _cos = _curActualCoS;
-      _rec = _curActualRec;
-      _exp = _curActualExp;
+      // Future: the scenario's own months (a lost client shows as lost), else this month's actuals
+      _rev = row.revenue != null ? Number(row.revenue) : _curActualRev;
+      _cos = row.cost_of_sales != null ? Number(row.cost_of_sales) : _curActualCoS;
+      _rec = row.receivables != null ? Number(row.receivables) : _curActualRec;
+      _exp = row.expenses != null ? Number(row.expenses) : _curActualExp;
     }
     const _gp = Number((_rev - _cos).toFixed(2));
     // For cumulative: when current month has no data, carry forward last known monthly GP
     const _isFuture = !_isCur && !_isPast;
-    const _useCarry = _isFuture && !_curMonthHasData;
-    const _gpForCum = _useCarry ? _lastActualGP : _gp;
+    const _useCarry = _isFuture && !_curMonthHasData && !(row.revenue != null || row.cost_of_sales != null);
+    const _netForCum = _useCarry ? _lastActualCashFlow : Number((_rev - _cos - _exp).toFixed(2));
     const _cashForCum = _useCarry ? _lastActualCashFlow : (_rev - _rec - _cos - _exp);
-    _cumGross = Number((_cumGross + _gpForCum).toFixed(2));
-    _cumCash = Number((_cumCash + _cashForCum).toFixed(2));
+    _cumGross = Number((_cumGross + _netForCum).toFixed(2));
+    // The starting cash already holds every payment recorded so far, this month's too: only later months are added
+    if (_isFuture) _cumCash = Number((_cumCash + _cashForCum).toFixed(2));
     const _totalCosts = Number((_cos + _exp).toFixed(2));
     const _grossMarginPct = _rev > 0 ? Number(((_gp / _rev) * 100).toFixed(1)) : 0;
     return { ...row, revenue: _rev, cost_of_sales: _cos, receivables: _rec, accruals: _rec, expenses: _exp, costs: _totalCosts, gross_profit: _gp, gross_margin_pct: _grossMarginPct, _cumGross, _cash: _cumCash };
@@ -2182,7 +2197,7 @@ function ScenarioOutput({
               "bg-slate-100 text-slate-600"
             }`}>
             {activeRun.state_result === "improved" ? "Improves stability" :
-              activeRun.state_result === "worse" ? "Reduces stability" :
+              activeRun.state_result === "worse" ? (highImpact(activeRun) ? "High impact: reduces stability" : "Reduces stability") :
                 "Neutral impact"}
           </div>
         ) : null}
@@ -2389,7 +2404,7 @@ function ScenarioOutput({
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
                       <span>Cum. Profit</span>
-                      <InfoTip text="Running total of gross profit since month 1." />
+                      <InfoTip text="Running total of profit after all costs since month 1. It goes down in a month that loses money." />
                     </div>
                   </th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
@@ -2401,7 +2416,7 @@ function ScenarioOutput({
                   <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <span>Status</span>
-                      <InfoTip text="The financial health of the business in this month." />
+                      <InfoTip text="How many months of costs your cash covers, and whether the month makes money: Stable, Tight, Under stress, At risk or Overdrawn. Hover a status for what it means." />
                     </div>
                   </th>
                 </tr>
@@ -2422,11 +2437,11 @@ function ScenarioOutput({
                       <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
                       <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">
                         {row.state_label ? (
-                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
-                            String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") ? "bg-rose-50 text-rose-700" :
+                          <span title={statusOf(row.state_label)[1]} data-status={String(row.state_label).toLowerCase()} className={`cursor-help rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
+                            String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") || String(row.state_label).toLowerCase().includes("critical") ? "bg-rose-50 text-rose-700" :
                               "bg-slate-100 text-slate-600"
                             }`}>
-                            {row.state_label}
+                            {statusOf(row.state_label)[0]}
                           </span>
                         ) : "—"}
                       </td>
@@ -2474,7 +2489,9 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
     ["Monthly expenses", metrics.monthly_expenses],
     ["Cost of sales", metrics.monthly_cost_of_sales],
     ["Total costs", metrics.monthly_costs],
-    ["Gross Profit", metrics.net_profit],
+    // The table's definition (the owner, 25 Oct): sales less the direct cost to deliver them; after every cost is Net profit
+    ["Gross Profit", metrics.monthly_revenue != null && metrics.monthly_cost_of_sales != null ? Number((metrics.monthly_revenue - metrics.monthly_cost_of_sales).toFixed(2)) : null],
+    ["Net profit", metrics.net_profit],
   ].filter(([, v]) => v != null);
 
   function renderValue(label, value) {

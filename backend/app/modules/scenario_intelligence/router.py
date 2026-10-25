@@ -154,6 +154,34 @@ async def estimate_baseline(user: dict, business_id: str) -> dict | None:
     return None
 
 
+async def shared_state(user: dict, business_id: str, state):
+    """The state with the one set of figures in place (R-4, agent/figures.py): monthly revenue, monthly costs, cash and the
+    biggest customer's share, the same the risk check and the dashboard show. Simulation's own figures stay for the rest."""
+    try:
+        from app.modules.agent import figures
+        from app.modules.agent.router import get_orchestrator
+        orch = get_orchestrator()
+        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+        if not getattr(actor, "can_view", False):
+            return state
+        f = figures.of(await orch.rt.business.load(business_id) or {})
+    except Exception:      # noqa: BLE001 - Simulation's own figures then
+        return state
+    update: dict = {}
+    if f.get("revenue_monthly") is not None:
+        update["revenue_monthly"] = max(0.0, float(f["revenue_monthly"]))
+    if f.get("costs_monthly"):
+        update["expenses_monthly"] = float(f["costs_monthly"])
+        update["costs_monthly"] = round(float(f["costs_monthly"]) + float(state.cost_of_sales_monthly or 0), 2)
+    if f.get("cash") is not None:
+        update["starting_cash"] = float(f["cash"])
+    if f.get("top_share") is not None:
+        update["top_client_share_pct"] = min(100.0, float(f["top_share"]))
+    if f.get("clients"):
+        update["clients_count"] = int(f["clients"])
+    return state.model_copy(update=update) if update else state
+
+
 async def _with_enough_data(user: dict, business_id: str, state, params: dict | None):
     """The state to project, or a 422 saying what is missing (and the estimate on offer). With `use_estimate`, the
     owner's own pricing answers are the baseline, and the run is labelled an estimate."""
@@ -182,6 +210,7 @@ async def scenario_runs_create(
     await _require_scenario(_user["id"], payload.scenario_template_id, getattr(template, "name", None) or payload.scenario_name or "This scenario",
                             business_id=payload.business_id)
     from app.modules.scenario_intelligence.service import CLIENT_SCENARIOS, has_client
+    payload.state = await shared_state(_user, payload.business_id, payload.state)      # the risk check's figures (R-4)
     if payload.scenario_template_id in CLIENT_SCENARIOS and not has_client(payload.state):
         raise HTTPException(status_code=422, detail={"error": "NO_CLIENT_ON_RECORD",
                                                      "message": "There's no client on record, so there is no largest client to lose. Nothing was run."})
@@ -303,7 +332,8 @@ async def do_nothing_run(
     payload: DoNothingRequest,
     _user=Depends(get_current_user),
 ) -> DoNothingResponse:
-    state, _estimate = await _with_enough_data(_user, payload.business_id, payload.state, getattr(payload, "parameters", None) or {})
+    state = await shared_state(_user, payload.business_id, payload.state)      # the risk check's figures (R-4)
+    state, _estimate = await _with_enough_data(_user, payload.business_id, state, getattr(payload, "parameters", None) or {})
     result = await do_nothing_projection(
         tenant_id=payload.tenant_id,
         business_id=payload.business_id,

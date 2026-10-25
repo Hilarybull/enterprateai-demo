@@ -25,7 +25,7 @@ def test_nothing_said_leaves_the_workspace_currency_to_the_document():
 def test_a_catalogue_price_saved_from_a_check_keeps_its_currency():
     from app.modules.agent import first_value
     action = first_value._doable({"label": "Save the price in your catalogue"}, {"sell": "folders", "price": 500}, sign="£")
-    assert action["catalogue"] == {"name": "folders", "base_price": 500, "currency": "GBP"}
+    assert action["catalogue"] == {"name": "Folders", "base_price": 500, "currency": "GBP"}
 
 
 def test_a_product_in_pounds_is_read_as_pounds_on_a_naira_workspace():

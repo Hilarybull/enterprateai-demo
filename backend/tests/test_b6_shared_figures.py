@@ -73,6 +73,6 @@ def test_a_written_answer_is_given_the_adopted_figures_and_the_reviews_own_resul
     from test_agent_employee import Chat
     env = _env()
     chat = Chat(monkeypatch, env)
-    chat.say("how ready is my launch and what are my prices?")
+    chat.say("what do my prices and my launch figures tell you?")      # "how ready is…" is answered from the case itself, without the model
     prompt = chat.prompts[-1]
     assert "ADOPTED AND PLANNED FIGURES" in prompt and '"evidence_coverage":90' in prompt.replace(" ", "") and "launch readiness review" in prompt

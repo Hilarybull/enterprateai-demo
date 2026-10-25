@@ -1613,7 +1613,7 @@ REGISTRY: dict[str, ToolDefinition] = {t.tool_id: t for t in [
        idempotency=lambda p, run: f"send_receipt:{p['invoice_id']}:{p['payment_id']}:{p['to_email'].lower()}",
        credit_feature="agent_send", audit_class="consequential"),
     # Decision intelligence (deterministic engines)
-    _t("read_risk", read_risk, EFFECT_READ_ONLY, "view", credit_feature="agent_analyse"),
+    _t("read_risk", read_risk, EFFECT_READ_ONLY, "view"),      # a read of results already worked out: free (Onboarding PRD 8.2.2, 13; 24 Oct)
     _t("read_recommendation", read_recommendation, EFFECT_READ_ONLY, "view"),
     _t("run_simulation", run_simulation, EFFECT_READ_ONLY, "view", ("scenario",), credit_feature="agent_analyse"),
 ]}

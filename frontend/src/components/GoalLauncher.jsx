@@ -7,6 +7,7 @@ import SaidLine from "./SaidLine";
 import { MoneyInput } from "./readiness/Fields";
 import { useAuthStore, useSignedIn } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+import { resultLine } from "../lib/resultLine";
 import GoogleSignInButton from "./GoogleSignInButton";
 import { DURATION, prefersReducedMotion, useReducedMotion, useTypewriter } from "../lib/motion";
 import { DEMO_SECONDS } from "../config/agentDemo";
@@ -120,7 +121,10 @@ function putTaskInAddress(id) {
 }
 
 /** The goal flow: what is offered, the task in hand, and what can be done with it. Shared by the launcher and the task card. */
-export function useGoalFlow() {
+// `inApp`: the chat in the dashboard's Agent card or the Agent Centre. It never reads or writes the address or this
+// browser's saved task (the owner's QA, 25 Oct: its "?task=" was read by the dashboard as an Agent task: "This item no
+// longer exists"); a new chat starts from each message there.
+export function useGoalFlow({ inApp = false } = {}) {
   const navigate = useNavigate();
   const [offer, setOffer] = useState(FALLBACK);
   const [session, setSession] = useState(null);
@@ -149,7 +153,8 @@ export function useGoalFlow() {
     if (passwordHold.current) { try { localStorage.setItem(sessionKey, session?.id || ""); } catch { /* fine without it */ } return undefined; }
     // A task already on screen stays on screen when the sign-in changes or is checked again (it was wiped here before, mid-flow):
     // it is only kept under the new key.
-    if (live.current?.id) { try { localStorage.setItem(sessionKey, live.current.id); } catch { /* fine without it */ } return undefined; }
+    if (live.current?.id) { if (!inApp) { try { localStorage.setItem(sessionKey, live.current.id); } catch { /* fine without it */ } } return undefined; }
+    if (inApp) return undefined;
     let alive = true;
     // A task begun earlier is picked up where it was left: the one in the address first, then this browser's.
     let saved = taskInAddress();
@@ -177,9 +182,10 @@ export function useGoalFlow() {
     if (!next?.id || !next.resolution) throw new Error("Not a task session");      // an empty or broken reply is a failure, said as one
     setSession({ ...next, questions: next.questions || [] });
     setClosed(false);
+    if (inApp) return;
     try { localStorage.setItem(sessionKey, next.id); } catch { /* fine without it */ }
     putTaskInAddress(next.id);
-  }, [sessionKey]);
+  }, [sessionKey, inApp]);
   const retryOnce = useCallback(async (action) => {
     try {
       return await action();
@@ -233,9 +239,10 @@ export function useGoalFlow() {
   const startOver = useCallback(() => {
     setSession(null);
     setProblem("");
+    if (inApp) return;
     try { localStorage.removeItem(sessionKey); } catch { /* ignore */ }
     putTaskInAddress("");
-  }, [sessionKey]);
+  }, [sessionKey, inApp]);
   /** Straight on, for someone signed in; or to the sign-in page for someone who says they have an account.
    *  The address is never put in a link: only where to come back to. */
   const carryOn = useCallback(() => {
@@ -322,7 +329,7 @@ export function useGoalFlow() {
     catch { attached.current = ""; return false; }
   }, [session?.id, keep, retryOnce]);
   return { offer, session, busy, pending, resuming, problem, failed, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
-    newPassword, passwordHold, setPassword, skipPassword, attachUser };
+    newPassword, passwordHold, setPassword, skipPassword, attachUser, go: navigate };
 }
 
 /** The launcher on its own: it runs its own flow and shows the task card beneath it. */
@@ -370,7 +377,7 @@ export default function GoalLauncher({ className = "" }) {
 /** The landing page's own conversation, started from what was typed in the Agent card or bar (the owner's QA, 22 Oct:
  *  "no chatting, just this?"): the same questions, the same current data, the same recap and result, never a form. */
 export function AgentGoalChat({ text }) {
-  const flow = useGoalFlow();
+  const flow = useGoalFlow({ inApp: true });
   // A new chat for each message sent, from what was just said: never an earlier chat picked up from the browser (the
   // owner's QA, 22 Oct: "this is not what I just gave it": the same words again showed the earlier chat's £25k).
   const [mine, setMine] = useState(null);
@@ -671,6 +678,8 @@ function Field({ f, value, onChange, at = "card" }) {
  *   "below" (the homepage, 768 to 1023px only): directly under the launcher card, full width; the page scrolls to it.
  *   "inline": in the flow of the page, under the launcher, at every width.
  */
+// The result card, loaded when a check's result is shown in the chat itself (the Agent Centre, the dashboard Agent: R-7)
+
 export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const { session, busy, answer, startOver, carryOn, here, closed, setClosed } = flow;
   // Never "Working…" for more than 10 seconds without saying so.
@@ -704,7 +713,9 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   // The recap before the hand-off (the owner's brief, 20 Oct): "Here's what I'll use", then [Looks right] or [Change something].
   const [recapOk, setRecapOk] = useState(false);
   const [changingRecap, setChangingRecap] = useState(false);
-  const recapDone = recapOk || Boolean(session?.verification?.sent);      // a code already sent: the recap was confirmed before
+  const recapDone = recapOk || Boolean(session?.verification?.sent);
+  // The risk check moves on only when [Check my risks] is pressed (R-7, R-8, 24 Oct): never by itself after the last answer
+  const risky = session?.goal_key === "business_risks";
   const [awaitingText, setAwaitingText] = useState("");      // what was sent, shown at once while it is read      // turns taken in this card (before the server's reply is in)
   useEffect(() => { setAnsweredHere(new Set()); }, [session?.id]);      // said-chips that were clicked: their fields are open to change
   const [currency, setCurrency] = useState(null);
@@ -782,6 +793,38 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     return () => { document.body.style.overflow = was; };
   }, [placement, phone, closed, session]);
   const [picking, setPicking] = useState(false);      // "Change something": which answer
+  const [riskBusy, setRiskBusy] = useState(false);
+  // The check done: one short line and a button to the result's own page, never the result in the chat (the owner's brief,
+  // 25 Oct), from the landing page, the dashboard's Agent card and the Agent Centre alike
+  const [done, setDone] = useState(null);      // { text, cta, to }
+  const openPage = (to) => {
+    flow.go(to, { state: { from: `${window.location.pathname}${window.location.search}` } });      // its "Back" returns here
+    const top = () => { document.querySelector("[data-tour='content-area']")?.scrollTo?.({ top: 0 }); window.scrollTo?.(0, 0); };
+    top();
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(top);
+    setTimeout(top, 80);      // opened at its top
+  };
+  const checkRisks = async () => {
+    const answers = Object.fromEntries(questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => [q.key, values[q.key]]));
+    if (!here && !compact) { setRecapOk(true); await answer(answers, true); return; }      // the landing page signed out: sign in first, then its result page
+    setRiskBusy(true);
+    try {
+      // One request (the owner's brief, 25 Oct: the result in under 5 seconds): the answers kept, the free hand-off, the result
+      const out = await apiRequest(`/task-sessions/${session.id}/risk-check`, "POST", { answers }, { timeoutMs: 30000 });
+      if (out?.business_id) useWorkspaceStore.getState().setWorkspaceId(out.business_id);
+      if (out?.result) setDone(resultLine(out.result, out.session?.handoff, "business_risks"));
+    } catch { setError("Your risks couldn't be checked just now. Nothing was lost: try again."); } finally { setRiskBusy(false); }
+  };
+  // Everything came from the records and nothing was asked: straight on to the result, never a list to confirm first
+  // (the owner, 24 Oct: "I need to understand my business risk... you just gave me this"). "Edit answers" on the result changes them.
+  const straightOn = useRef("");
+  useEffect(() => {
+    const rows = session?.summary || [];
+    const all = session?.goal_key !== "business_risks" && rows.length > 0 && rows.every((r) => r.from_records || r.key === "currency");
+    if (!session?.id || session?.next !== "questions" || currentQuestion || !questions.length || !all || busy || editing.size || straightOn.current === session.id) return;
+    straightOn.current = session.id;
+    answer(Object.fromEntries(questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => [q.key, values[q.key]])), true);
+  }, [session?.id, session?.next, session?.summary, currentQuestion, questions.length, busy, editing.size]);      // eslint-disable-line react-hooks/exhaustive-deps
   const body = useRef(null);
   const reply = useRef(null);
   const justOpened = useRef(true);      // this task card has just appeared: its first question takes the cursor
@@ -817,7 +860,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     // asked to change that one.
     const changing = editing.has(currentQuestion.key);
     // (the question's own default, "1" for a quantity, is still offered as a suggestion: QA P2-3)
-    setDraftValue(changing ? (values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || "") : (currentQuestion.default ?? ""));
+    const kept = changing ? (values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || "") : (currentQuestion.default ?? "");
+    setDraftValue(kept === "unknown" ? "" : kept);      // "not known" is never typed back into the box
   }, [currentQuestion?.key, currentQuestion?.default]);      // eslint-disable-line react-hooks/exhaustive-deps
   const step = session?.next;
   useEffect(() => { if (step !== "identity") { setRecapOk(false); setChangingRecap(false); } }, [step]);
@@ -862,7 +906,14 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     setAwaitingText(text);
     Promise.resolve(answer({}, false, { message: text, asked: null })).finally(() => setAwaitingText(""));
   };
-  const recapShown = recapStep && !reasking && said.length > 0 && !recapDone;
+  const recapRows = said.filter((r) => r.key !== "currency");      // what the recap would list: the currency alone is nothing to check
+  const recapShown = recapStep && !reasking && recapRows.length > 0 && !recapDone && !risky;      // the risk check: [Check my risks], never a list
+  // "Here's what I'll use:" only above the recap itself (the owner's brief, 25 Oct: never an empty step); a change said at the
+  // recap keeps its "Got it, ..." without it
+  const RECAP_LINE = /\s*Here's what I'll use(?::| now\.)\s*$/;
+  const threadTurns = ((reasking ? said_turns : shownTurns) || [])
+    .map((t, i, all) => (t.role === "assistant" && RECAP_LINE.test(t.content || "") && !(recapShown && i === all.length - 1) ? { ...t, content: String(t.content).replace(RECAP_LINE, "") } : t))
+    .filter((t) => t.role !== "assistant" || String(t.content || "").trim());
   // What "Looks right" will change on the funding case, said in the recap itself (the owner's QA, 21 Oct: one confirmation,
   // never a second "I'll update your funding case" screen), in the chat's own words.
   const [caseChanges, setCaseChanges] = useState([]);
@@ -886,7 +937,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     const frame = typeof requestAnimationFrame === "function" ? requestAnimationFrame(go) : null;
     return () => { if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); };
     // also while a reply is read and when the next question arrives (the owner's QA, 21 Oct: "I shouldn't have to scroll")
-  }, [shownTurns?.length, recapShown, step, awaitingText, currentQuestion?.key, ackLine, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shownTurns?.length, recapShown, step, awaitingText, currentQuestion?.key, ackLine, busy, Boolean(done)]);      // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (recapShown) recapOkRef.current?.focus({ preventScroll: true });
   }, [recapShown]);
@@ -900,12 +951,12 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   }, [here, step, session?.authenticated, newPassword]);      // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // The recap first, signed in too (the owner's brief, 20 Oct): "Here's what I'll use", then on only after "Looks right".
-    const recapped = recapDone || !(session?.summary || []).length;
+    const recapped = recapDone || (!risky && !(session?.summary || []).some((r) => r.key !== "currency"));
     if (here && recapped && (step === "identity" || (step === "prepare" && session?.authenticated)) && !newPassword && !flow.passwordHold?.current) carryOn();
   }, [here, step, carryOn, newPassword, recapDone]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) return null;
-  if (here && (step === "identity" || step === "prepare") && !newPassword && (recapDone || !(session?.summary || []).length)) return null;      // signed in, recap confirmed: on to the task
+  if (here && (step === "identity" || step === "prepare") && !newPassword && (recapDone || (!risky && !(session?.summary || []).some((r) => r.key !== "currency")))) return null;      // signed in, recap confirmed: on to the task
 
   function submitQuestion(nextValue = draftValue, typed = nextValue === draftValue) {
     const activeQuestion = currentQuestion;
@@ -1081,9 +1132,9 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
               </div>
             </SaidLine>
           )}
-          {keepThread && (reasking ? said_turns : shownTurns) && (reasking ? said_turns : shownTurns).length > 0 && (
+          {keepThread && threadTurns.length > 0 && (
             <ol className="space-y-2" aria-label="The conversation so far" data-thread>
-              {(reasking ? said_turns : shownTurns).map((t, n) => (
+              {threadTurns.map((t, n) => (
                 <li key={n} data-turn={t.role}>
                   {t.role === "user"
                     ? <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-left text-[13px] font-medium text-white" data-user-says>{t.content}</p>
@@ -1163,13 +1214,30 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
             </p>
           )}
 
-          {step === "questions" && !currentQuestion && questions.length > 0 && (
+          {["questions", "identity", "prepare"].includes(step) && !currentQuestion && questions.length > 0 && risky && !done && (!recapOk || compact || here) && (
+            // The risk check: one press, no list to confirm (R-6). In the Agent Centre and the dashboard Agent the result is shown
+            // here, never a jump to another page (R-7).
+            <div className="flex flex-wrap items-center gap-3" data-risk-check-go>
+              <button type="button" disabled={busy || riskBusy} onClick={checkRisks} data-check-my-risks
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{riskBusy ? "Checking your risks…" : "Check my risks"}</button>
+            </div>
+          )}
+          {done && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3 text-left" data-result-line>
+              <p className="text-[13px] font-semibold text-slate-900">{done.text}</p>
+              {done.to && done.cta && (
+                <button type="button" onClick={() => openPage(done.to)} data-view-result
+                  className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">{done.cta}</button>
+              )}
+            </div>
+          )}
+          {step === "questions" && !currentQuestion && questions.length > 0 && session?.goal_key !== "business_risks" && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-summary>
               <p className="text-[13px] font-semibold text-slate-900">Here's what I've got:</p>
               <ul className="mt-1.5 space-y-0.5">
                 {(session.summary || []).filter((r) => r.key !== "currency").map((r) => {
                   const q = questions.find((x) => x.key === r.key) || {};
-                  return <li key={r.key} className="text-[13px] text-slate-700"><span className="text-slate-500">{q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : r.label}:</span> {r.value}{r.from_records ? <span className="text-slate-400" data-from-records> (from your records)</span> : null}</li>;
+                  return <li key={r.key} className="text-[13px] text-slate-700"><span className="text-slate-500">{q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : r.label}:</span> {r.value}{r.from_records ? <span className="text-slate-400" data-from-records> ({r.source ? r.source.toLowerCase() : "from your records"})</span> : null}</li>;
                 })}
               </ul>
               <div className="mt-2.5 flex flex-wrap items-center gap-3">
@@ -1179,11 +1247,17 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
               </div>
               {picking && (
                 <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Which answer to change" data-change-pick>
-                  {questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => (
-                    <button key={q.key} type="button" onClick={() => { setPicking(false); open(q.key); }} className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">
-                      {q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : q.label}
-                    </button>
-                  ))}
+                  {/* Every question, so what is missing can be added too (the owner, 24 Oct: "change something is not working well") */}
+                  {questions.filter((q) => !q.hidden).map((q) => {
+                    const has = values[q.key] !== "" && values[q.key] != null && values[q.key] !== "unknown";
+                    const name = q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : q.label;
+                    return (
+                      <button key={q.key} type="button" onClick={() => { setPicking(false); open(q.key); }} data-change-key={q.key}
+                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">
+                        {has ? name : `Add: ${name.toLowerCase()}`}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

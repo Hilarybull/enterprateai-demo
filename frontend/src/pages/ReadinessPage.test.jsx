@@ -60,11 +60,11 @@ const mount = (path, feature = "launch") => render(
 // Launch and Funding Readiness are on Starter and above (the pricing PDF): these run on Starter.
 beforeEach(() => { useWorkspaceStore.setState({ workspaceId: "ws1" }); useAuthStore.setState({ subscription: { plan_key: "starter_insight", status: "active", billing_period: "monthly" }, platformGrants: [] }); mockApi(); });
 
-describe("below Starter (the pricing PDF)", () => {
-  it("Launch and Funding Readiness say which plan includes them, with a way to upgrade", async () => {
+describe("the free plan (the owner, 24 Oct)", () => {
+  it("opens Launch and Funding Readiness with its free check, never a locked page", async () => {
     useAuthStore.setState({ subscription: { plan_key: "explorer", status: "active", billing_period: "monthly" }, platformGrants: [] });
     render(<MemoryRouter initialEntries={["/funding"]}><Routes><Route path="/funding" element={<ReadinessPage feature="funding" />} /></Routes></MemoryRouter>);
-    expect(document.querySelector("[data-readiness-locked]").textContent).toContain("AI-Powered Funding Readiness is included on the Starter plan and above.");
+    expect(document.querySelector("[data-readiness-locked]")).toBeNull();
     cleanup();
   });
 });

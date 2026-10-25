@@ -247,6 +247,14 @@ def purpose_phrase(value: Any) -> str:
     return f"for {_with_article(text)}"
 
 
+_RISK_SAID = {("top_share", "over_50"): "most of your income comes from one customer", ("top_share", "20_50"): "one customer is a big share of your income",
+              ("top_share", "under_20"): "no single customer is a big share", ("runway", "under_3"): "cash would last under 3 months",
+              ("runway", "3_6"): "cash would last 3 to 6 months", ("runway", "over_6"): "cash would last over 6 months",
+              ("paid_on_time", "often_late"): "customers often pay late", ("paid_on_time", "sometimes_late"): "customers sometimes pay late",
+              ("paid_on_time", "on_time"): "customers pay on time", ("key_person", "stops"): "the business stops without you",
+              ("key_person", "slows"): "the business slows without you", ("key_person", "runs"): "the business carries on without you"}
+
+
 def _count(n: float) -> str:
     """120.0 as "120", 1500 as "1,500", 2.5 as "2.5"."""
     return f"{n:,.2f}".rstrip("0").rstrip(".")
@@ -259,6 +267,8 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
         return ""
     order = {k: n for n, k in enumerate(slots)}
     keys = sorted(captured, key=lambda k: order.get(k, 99))
+    if "worry" in keys and any((k, captured[k]) in _RISK_SAID for k in keys):
+        keys.remove("worry")      # said back as what it means, never echoed beside it
     unit = _unit_word({**known, **captured})
     cap = lambda t: f"{str(t)[:1].upper()}{str(t)[1:]}"      # noqa: E731
     low = lambda t: f"{str(t)[:1].lower()}{str(t)[1:]}"      # noqa: E731
@@ -292,6 +302,8 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
             lead[0] = f"{lead[0]} in {value}" if " for " not in lead[0] else lead[0].replace(" for ", f" in {value} for ", 1)
         elif key == "where":
             rest.append(f"in {value}")
+        elif (key, value) in _RISK_SAID:
+            rest.append(_RISK_SAID[(key, value)])      # what was understood, in words (the risk check)
         elif q.get("type") == "choice":
             rest.append(low(next((o["label"] for o in q.get("options") or [] if o["value"] == value), value)))
         else:
@@ -422,6 +434,11 @@ def described(message: str, slots: list[dict], asked: str | None) -> dict[str, d
     return out
 
 
+def _choice_words(key: str | None, message: str) -> Any:
+    from app.modules.agent import goals as _goals
+    return _goals.choice_from_words(str(key or ""), message)
+
+
 def plain_answer(message: str, slots: list[dict], asked: str | None) -> bool:
     """A few words that answer the number or choice question asked, and nothing else (no question, no change of mind)."""
     q = next((s for s in slots if s.get("key") == asked), None)
@@ -455,6 +472,8 @@ def rule_read(message: str, slots: list[dict], asked: str | None) -> dict[str, d
             out[asked] = {"slot": asked, "value": message, "normalized": _number(message), "currency_or_unit": currency_of(message), "evidence": message, "confidence": 0.9}
         elif q.get("type") == "choice" and _option(q, message) is not None:
             out[asked] = {"slot": asked, "value": _option(q, message), "evidence": message, "confidence": 0.9}
+        elif q.get("type") == "choice" and _choice_words(asked, message) is not None:
+            out[asked] = {"slot": asked, "value": _choice_words(asked, message), "evidence": message, "confidence": 0.88}
         elif q.get("type") not in ("number", "choice") and not out:
             out[asked] = {"slot": asked, "value": message.strip(), "evidence": message, "confidence": 0.9}
         elif q.get("type") not in ("number", "choice"):
@@ -497,7 +516,11 @@ WHY = {"customer": "Who buys it shapes the price they will pay and how many you 
        "stage": "Whether you are trading already changes what evidence a funder or customer expects.",
        "where": "Where you sell sets the local prices and competitors I compare you with.",
        "route": "Equity, a loan and a grant each ask for different things, so the route sets what I check you have ready.",
-       "traction": "Funders look first at what is already working: customers, sales or signed interest."}
+       "traction": "Funders look first at what is already working: customers, sales or signed interest.",
+       "top_share": "If one customer pays most of your bills, losing them is the biggest single risk most small businesses face.",
+       "runway": "How long your cash lasts without sales shows how much room you have if something goes wrong.",
+       "paid_on_time": "Late payers tie up your cash, so they are a risk even when sales are good.",
+       "key_person": "If everything depends on you, a month off or illness can stop the business."}
 _CORRECTION = re.compile(r"^\s*(?:actually|sorry|oops|wait|correction|no[,.]?\s|i meant|make (?:it|that)|change (?:it|that)(?: to)?|it'?s actually|should be)\b", re.I)
 _ASKING = re.compile(r"^\s*(?:why|what for|what do you|how come|how do you|who|do you|can you|is it|are you|what'?s the point)\b.*\?\s*$|^\s*why\b", re.I)
 
@@ -508,7 +531,13 @@ _UNSURE_IN = re.compile(r"\b(?:(?:i\s+)?(?:don'?t|do\s+not|dont)\s+(?:really\s+)
 # What each slot is called in a sentence ("we can leave the amount open").
 SLOT_WORDS = {"amount": "the amount", "use": "what it is for", "stage": "the stage", "route": "the route", "timing": "the timing",
               "traction": "traction", "where": "where you sell", "price": "the price", "cost": "the cost", "monthly_sales": "monthly sales",
-              "customer": "the customer", "fixed_costs": "fixed costs", "quantity": "the quantity", "positioning": "the positioning"}
+              "customer": "the customer", "fixed_costs": "fixed costs", "quantity": "the quantity", "positioning": "the positioning",
+              "top_share": "your biggest customer's share", "runway": "how long your cash lasts", "paid_on_time": "whether customers pay on time",
+              "key_person": "what happens when you are away", "worry": "what worries you"}
+
+
+# "Can you check my invoices instead?": a request to read it from the records
+_FROM_RECORDS = re.compile(r"\b(?:check|look at|use|read|get|pull|see|take)\b.{0,30}\b(?:invoices?|records?|books|accounts|system|data|figures|numbers|sales)\b", re.I)
 
 
 def said_unsure(message: str) -> bool:
@@ -541,6 +570,15 @@ SUGGEST = {"use": "That's yours to decide, but businesses most often use funding
 
 def defers(message: str) -> bool:
     return bool(_DEFERRING.match(str(message or "")))
+
+
+def _every_change(message: str, goal_key: str | None, by_key: dict, took: set) -> list[dict]:
+    """The other changes a correction names, read by the goal's own reader: each slot it finds that wasn't read already."""
+    if not goal_key:
+        return []
+    from app.modules.agent import goals as _goals
+    return [{"slot": k, "value": v, "normalized": v if isinstance(v, (int, float)) else None, "evidence": message, "confidence": 0.88}
+            for k, v in (_goals.extract(message, goal_key) or {}).items() if k in by_key and v not in (None, "") and k not in took]
 
 
 def rule_intent(message: str) -> str:
@@ -646,6 +684,7 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
             n = _number(message)
             if target and n is not None:
                 items = [{"slot": target["key"], "value": message, "normalized": n, "currency_or_unit": currency_of(message), "evidence": message, "confidence": 0.9}]
+                items += _every_change(message, goal_key, by_key, {i["slot"] for i in items})      # "45000 and within 3 months": both
         elif intent in ("answer", "not_sure"):
             read = rule_read(message, slots, asked)
             # Every slot the goal's own reader finds in this answer, the same reader as for the goal text ("£25k for a second
@@ -655,10 +694,23 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
                 for k, v in (_goals.extract(message, goal_key) or {}).items():
                     # Fills what the answer's own reading left, and never a slot already answered from an answer to another
                     # question (the traction answer's revenue was overwriting the amount): a change is said as a correction.
-                    if k in by_key and v not in (None, "") and k not in read and (k == asked or known.get(k) in (None, "", UNKNOWN)):
+                    # At the recap (nothing asked), what the message names replaces what was said before (the owner, 25 Oct)
+                    if k in by_key and v not in (None, "") and k not in read and (k == asked or asked is None or known.get(k) in (None, "", UNKNOWN)):
                         read[k] = {"slot": k, "value": v, "normalized": v if isinstance(v, (int, float)) else None,
                                    "currency_or_unit": currency_of(message) if by_key[k].get("prefix") else None, "evidence": message, "confidence": 0.88}
             items = list(read.values())
+    elif goal_key and intent == "correction":
+        # Every change in the message, not just the first (the owner, 25 Oct: "make it 45000 and within 3 months" changed
+        # only the amount): what the model left, the goal's own reader takes, a value already given included
+        items = [*items, *_every_change(message, goal_key, by_key, {i.get("slot") for i in items if isinstance(i, dict)})]
+    elif goal_key and intent == "answer":
+        # The goal's own reader on top of the model's reading: what the model left, the rules still take (the owner, 24 Oct:
+        # "one customer" was asked again as the biggest customer's share)
+        from app.modules.agent import goals as _goals
+        took = {i.get("slot") for i in items if isinstance(i, dict)}
+        for k, v in (_goals.extract(message, goal_key) or {}).items():
+            if k in by_key and v not in (None, "") and k not in took and (asked is None or known.get(k) in (None, "", UNKNOWN)):
+                items.append({"slot": k, "value": v, "normalized": v if isinstance(v, (int, float)) else None, "evidence": message, "confidence": 0.88})
     values, confirm, records, corrected = {}, [], [], []
     cur = None
     for item in items:
@@ -682,6 +734,7 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
             confirm.append({"slot": slot["key"], "value": value, "question": f"Just to check: {shown}" + (f" a {_unit_word(known)}" if slot["key"] == "price" else "") + "?"})
             continue
         if (known.get(slot["key"]) not in (None, "", UNKNOWN) and known.get(slot["key"]) != value and slot["key"] != asked
+                and asked is not None      # at the recap nothing is asked: what the message says is the change (25 Oct)
                 and intent != "correction" and (_slot_named(message, slots) or {}).get("key") != slot["key"]):
             # An answer given earlier is kept unless the owner names it or corrects it (G4, 23 Oct): an answer to one
             # question never overwrites another's
@@ -731,6 +784,20 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
         handed_back = SUGGEST.get(asked or "") if defers(message) else None
         answer = unsure_help or handed_back or (model_out or {}).get("answer_to_user_question") or WHY.get(about) or "It is one of the few things I need to give you a first result."
         nxt = by_key.get(asked) or nxt      # then the same question again
+    if intent == "question_to_agent" and _FROM_RECORDS.search(str(message or "")):
+        answer = "Once you're signed in I read that from your invoices and records, so you won't be asked. For now a rough answer is fine, or say Not sure."
+    if intent == "answer" and not values and not confirm and asked in by_key and not answer:
+        # Nothing in the reply answers what was asked (the owner, 24 Oct: "else it should understand and respond accordingly")
+        q = by_key[asked]
+        opts = [o["label"] for o in q.get("options") or []]
+        if opts:
+            hint = f"Pick the closest: {', '.join(opts[:-1])} or {opts[-1]}" + (f", or say {q['unsure']}" if q.get("unsure") else "") + ". A few words are fine too."
+        elif q.get("type") == "number":
+            hint = "A rough number is fine" + (f", or say {q['unsure']}" if q.get("unsure") else "") + "."
+        else:
+            hint = "A few words are enough."
+        answer = f"I didn't quite get that for {slot_words(asked)}. {hint}"
+        nxt = q
     question = (confirm[0]["question"] if confirm else template_question(nxt))
     if intent == "question_to_agent" and nxt and asked and nxt.get("key") == asked and question:
         question = f"So, {question[:1].lower()}{question[1:]}"      # the pending question again, never skipped

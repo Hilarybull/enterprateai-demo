@@ -34,7 +34,7 @@ class Search:
         if self.empty:
             return {k: [] for k in queries}
         # A funding route's pages name a product (the owner's QA, 21 Oct: an article's title is not a finding).
-        return {k: [{"title": (f"Business Growth Fund {i}" if k.startswith("route_") else f"Guide: {q[:40]}"), "url": f"https://source-{k}.example/{i}",
+        return {k: [{"title": (f"Business Growth Fund {i}" if k.startswith("route_") else f"Guide: {q[:40]}"), "url": (f"https://source-{k}.gov.uk/{i}" if k == "prerequisites" else f"https://source-{k}.example/{i}"),      # licences: an official source
                      "snippet": f"Evidence about {q}", "date": "2026"} for i in (1, 2)]
                 for k, q in queries.items()}
 
@@ -75,7 +75,7 @@ class Model:
                 numbers.setdefault(current, []).append(int(m.group(1)))
         region = (json.loads(head).get("THE_BUSINESS") or {}).get("country") or "UK"
         urls = {int(m.group(1)): m.group(2) for m in re.finditer(r"\[(\d+)\][^\n]*?\) (\S+):", body)}
-        items = [{"topic": t, "value": f"Finding for {t}", "number": FIGURES.get(t), "basis": "researched", "confidence": 0.8,
+        items = [{"topic": t, "value": f"Finding for {t}" + (": the market is worth £2 billion and growing" if t == "market" else ""), "number": FIGURES.get(t), "basis": "researched", "confidence": 0.8,
                   "results": [{"n": n, "quote": quote_for(f"https://{urls.get(n, '')}/x") if urls.get(n) else "", "figure": FIGURES.get(t), "region": region,
                                "period": "2026"} for n in numbers.get(t, [])[:2]]}
                  for t in topics]

@@ -221,14 +221,49 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
   );
 }
 
+/** The Agent's draft for one field, waiting beside it (the owner's brief, 25 Oct; F-10): Accept puts it in the field, Edit
+ *  puts it there to change, Reject removes it for good. A field that already holds a value keeps it until Accept. */
+export function DraftBox({ field, draft, data, onChange, inputId }) {
+  const shown = Array.isArray(draft.value)
+    ? draft.value.map((r) => Object.entries(r || {}).filter(([k, v]) => k !== "id" && v).map(([, v]) => v).join(": ")).filter(Boolean)
+    : [String(draft.value)];
+  const rest = () => Object.fromEntries(Object.entries(data?.agent_drafts || {}).filter(([k]) => k !== field.key));
+  const use = (focus) => {
+    onChange(field.key, draft.value);
+    onChange("agent_drafts", rest());
+    if (focus) setTimeout(() => document.getElementById(inputId)?.focus(), 50);
+  };
+  const reject = () => {
+    onChange("agent_drafts", rest());
+    onChange("rejected_drafts", [...new Set([...(data?.rejected_drafts || []), field.key])]);
+  };
+  const replaces = draft.replaces !== undefined && draft.replaces !== null && draft.replaces !== "";
+  return (
+    <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-2.5 text-[13px] text-slate-800 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-slate-100" data-agent-draft={field.key}>
+      <p className="text-[12px] font-semibold text-indigo-700 dark:text-indigo-300">{replaces ? "AI suggestion" : "AI draft"}</p>
+      {shown.length > 1 ? <ul className="mt-1 list-disc space-y-0.5 pl-5">{shown.map((t) => <li key={t}>{t}</li>)}</ul> : <p className="mt-1 whitespace-pre-wrap">{shown[0]}</p>}
+      <p className="mt-1 text-[12px] text-slate-500">Drafted {draft.source || "from your records and research"}.{replaces ? " Your current answer stays until you accept." : ""}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Btn kind="primary" className="!px-3 !py-1 text-[12.5px]" onClick={() => use(false)} data-draft-accept>Accept</Btn>
+        <Btn className="!px-3 !py-1 text-[12.5px]" onClick={() => use(true)} data-draft-edit>Edit</Btn>
+        <Btn className="!px-3 !py-1 text-[12.5px]" onClick={reject} data-draft-reject>Reject</Btn>
+      </div>
+    </div>
+  );
+}
+
 /** One field of a guided section. `onChange(path, value)`. */
 export function Field({ field, data, onChange, errors = {}, disabled, evidence, idBase = "f", upload = null }) {
   if (field.when && !Object.entries(field.when).every(([k, v]) => getPath(data, k) === v)) return null;
   const value = getPath(data, field.key);
-  if (field.type === "list") {
-    return <ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} upload={upload} />;
-  }
+  const raw = !disabled ? (data?.agent_drafts || {})[field.key] : null;
+  // A draft that says what the field already says is no draft (the owner, 25 Oct: suggestions word for word the answer)
+  const draft = raw && !(JSON.stringify(raw.value ?? "") === JSON.stringify(value ?? "") || String(raw.value ?? "").trim() === String(value ?? "").trim()) ? raw : null;
   const id = `${idBase}-${field.key}`;
+  const box = draft ? <DraftBox field={field} draft={draft} data={data} onChange={onChange} inputId={id} /> : null;
+  if (field.type === "list") {
+    return <div><ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} upload={upload} />{box}</div>;
+  }
   const error = errors[field.key];
   if (field.type === "boolean") {
     return (
@@ -246,6 +281,7 @@ export function Field({ field, data, onChange, errors = {}, disabled, evidence, 
       </Label>
       {error && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error}</p>}
       <Provenance entry={data?.provenance?.[field.key]} />
+      {box}
     </div>
   );
 }

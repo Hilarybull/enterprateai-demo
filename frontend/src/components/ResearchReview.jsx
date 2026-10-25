@@ -629,7 +629,14 @@ export function InlineResearch({ businessId, run, onAdopted = null, retry = null
 export function premiumFlow({ base, body = {}, businessId = null, onError = () => {}, onAdopted = null }) {
   return async () => {
     try {
-      const quote = await apiRequest(`${base}/quote`, "POST", body, { timeoutMs: 30000 });      // the price alone: 30 seconds at most
+      // The price alone: 30 seconds at most, tried once more when the first call is slow or drops (the owner, 25 Oct: the first
+      // start failed, the second worked). A refusal (plan, credits) is never retried.
+      const ask = () => apiRequest(`${base}/quote`, "POST", body, { timeoutMs: 30000 });
+      const quote = await ask().catch(async (e) => {
+        if (e?.status && e.status >= 400 && e.status < 500) throw e;
+        await new Promise((r) => setTimeout(r, 800));
+        return ask();
+      });
       if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // one balance on the page
       if (!quote?.allowed) return { gate: quote?.gate };
       if (quote.reuse) {

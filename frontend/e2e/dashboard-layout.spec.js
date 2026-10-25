@@ -98,7 +98,7 @@ for (const width of WIDTHS) {
 
     test("the plan gate opens as a modal, fully on screen", async ({ page }) => {
       await open(page, width, { gate: true });
-      await page.locator("[data-result-primary]").click();
+      await page.locator("[data-do-all]").click();      // the plan gate opens from "Do all for me" (the panel's one link since 20 Oct)
       expect(await onTop(page, "[data-premium-gate] [role='dialog']")).toBe("ok");
       await expect(page.getByRole("button", { name: "Continue with free tools" })).toBeVisible();
       await page.keyboard.press("Escape");
@@ -109,10 +109,12 @@ for (const width of WIDTHS) {
 
 for (const name of ["Dismiss", "Save for later"]) {
   test(`closing the result with ${name} keeps the page where it is`, async ({ page }) => {
-    await open(page, 1280);
+    const saving = name === "Save for later";      // "Save for later" is in the plan gate since 20 Oct, not on the panel
+    await open(page, 1280, { gate: saving });
+    if (saving) await page.locator("[data-do-all]").click();
     await page.evaluate(() => window.scrollTo(0, 120));
     const before = await page.evaluate(() => scrollY);
-    await page.locator("[data-first-result-panel]").getByRole("button", { name, exact: true }).click();
+    await (saving ? page.locator("[data-premium-gate]") : page.locator("[data-first-result-panel]")).getByRole("button", { name, exact: true }).click();
     await page.waitForTimeout(400);
     expect(await page.evaluate(() => scrollY), `${name} kept the scroll position`).toBe(before);
   });

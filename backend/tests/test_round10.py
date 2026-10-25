@@ -7,6 +7,28 @@ from app.modules.readiness import rules
 from app.modules.readiness.service import ReadinessService
 
 
+def accept_all(out):
+    """Every draft the Agent left accepted, as the owner pressing Accept on each (the owner's brief, 25 Oct: drafts wait)."""
+    if not out:
+        return out
+    import copy as _copy
+    from app.modules.readiness.service import _set as _put
+    out = _copy.deepcopy(out)
+    for path, d in (out.pop("agent_drafts", None) or {}).items():
+        _put(out, path, d["value"])
+    return out
+
+
+def _fill(*a):
+    from app.modules.readiness.service import ReadinessService as _R
+    return accept_all(_R._fill_blanks(_R.__new__(_R), *a))
+
+
+def _fill_svc(svc, *a):
+    return accept_all(svc._fill_blanks(*a))
+
+
+
 def _data():
     return {"workspace_profile": {"company_name": "Synthetic Cleaning", "city": "Leeds", "country": "United Kingdom",
                                   "services": [{"service_name": "Home cleaning"}, {"service_name": "End of tenancy cleaning", "description": "Deep clean."}],
@@ -39,13 +61,13 @@ def test_wrong_values_put_in_for_the_owner_are_cleared_and_theirs_kept():
     row = {"kind": rules.FUNDING, "data": {"market": {"target_segment": "anybody", "differentiation": "A mobile grooming van.", "acquisition_owner": "22 people"},
                                            "provenance": {"market.target_segment": {"value": "anybody"}, "market.differentiation": {"value": "A mobile grooming van."},
                                                           "market.acquisition_owner": {"value": "22 people"}}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, data, date(2026, 10, 21))
+    out = _fill(rules.FUNDING, row, data, date(2026, 10, 21))
     m = out["market"]
     assert not m.get("target_segment") and not m.get("differentiation") and not m.get("acquisition_owner")
     assert m["location"] == "Leeds, United Kingdom"
     # Typed by the owner (no provenance left): kept, whatever it says.
     mine = {"kind": rules.FUNDING, "data": {"market": {"target_segment": "anybody"}, "provenance": {}}}
-    kept = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, mine, data, date(2026, 10, 21))
+    kept = _fill(rules.FUNDING, mine, data, date(2026, 10, 21))
     assert (kept or mine["data"])["market"]["target_segment"] == "anybody"
 
 
@@ -85,15 +107,16 @@ def test_the_agent_drafts_what_is_still_blank_and_never_another_offerings_words(
     async def go():
         svc._draft_blanks_later("u1", rules.FUNDING, row, {"data": data, "today": date(2026, 10, 21), "now": "2026-10-21T10:00:00Z"})
         for _ in range(100):      # drafted in the background: waited for, up to 5 s
-            if (svc.store.row.get("data") or {}).get("market"):
+            if (svc.store.row.get("data") or {}).get("agent_drafts"):
                 break
             await asyncio.sleep(0.05)
     asyncio.run(go())
-    case = svc.store.row["data"]
+    assert not (svc.store.row["data"].get("market") or {}).get("acquisition_approach")      # never written for the owner (25 Oct)
+    case = accept_all(svc.store.row["data"])      # the drafts, accepted
     assert case["market"]["acquisition_approach"].startswith("Leaflets")
     assert "differentiation" not in case["market"]                       # another offering's words: never put in
     assert case["risks"][0]["risk"] == "Few repeat bookings" and case["risks"][0]["id"]
-    assert case["provenance"]["market.acquisition_approach"]["source"] == "Suggested by the Agent"
+    assert svc.store.row["data"]["agent_drafts"]["market.acquisition_approach"]["source"]      # a draft, with where it came from
     assert "grooming" not in seen["prompt"]                                # nor sent to the model
 
 

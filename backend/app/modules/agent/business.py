@@ -707,8 +707,12 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
 
 
 def simulate(data: dict, scenario: str, params: dict, today: date) -> dict[str, Any]:
-    """Deterministic what-if on authoritative records. No LLM involvement."""
+    """Deterministic what-if on authoritative records. No LLM involvement. Cash and monthly costs are the shared figures
+    (R-4, agent/figures.py): the same the risk check and the dashboard show, the owner's own answers included."""
+    from app.modules.agent import figures
     cp = cash_position(data, today)
+    f = figures.of(data, today)
+    cp = {**cp, "cash": f["cash"] if f["cash"] is not None else cp["cash"], "monthly_burn": money(f["costs_monthly"] or 0)}
     by = revenue_by_customer(data, since=today - timedelta(days=92))
     monthly_rev = money(sum(by.values()) / 3)
     if scenario == "client_loss":

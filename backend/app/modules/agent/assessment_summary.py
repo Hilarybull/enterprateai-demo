@@ -42,6 +42,7 @@ def contract_of(pick: dict | None, kind: str) -> dict | None:
     if not pick:
         return None
     out = {k: pick.get(k) for k in CONTRACT}
+    out["score_partial"] = bool(pick.get("score_partial"))      # "so far": the points from what is known (23 Oct)
     out["evidence_coverage"] = pick.get("evidence_coverage", pick.get("coverage"))
     if kind == "launch":
         out.update({k: pick.get(k) for k in ("initiative_id", "launch_type", "scope", "target_date", "lifecycle_status")})
@@ -137,7 +138,7 @@ def saved_options(adopted: list[dict], today: str) -> list[dict]:
 
 async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str, float], said: dict, reference: str,
                research: list[dict] | None = None, owner_set: set[str] | None = None, subject_id: str | None = None,
-               adopted: list[dict] | None = None, case_drafts: dict | None = None) -> dict | None:
+               adopted: list[dict] | None = None, case_drafts: dict | None = None, as_drafts: bool = False) -> dict | None:
     """Accepted figures into the one launch initiative or funding case (made if there is none), into its empty fields
     only, then the case is assessed again. Returns that assessment's summary. A field the case already holds is left as it
     is (the case's own assumption): it is listed, never overwritten."""
@@ -185,6 +186,21 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
             # the case already holds is listed as a difference, never overwritten.
             said_from: dict = {}
             from app.modules.agent import first_value as _fv
+            if as_drafts:
+                # "Do all for me" (the owner's brief, 25 Oct; F-10): each draft waits beside its field with Accept, Edit and
+                # Reject; a field that already holds something else gets the draft as a suggestion under its value. Nothing
+                # the owner rejected is offered again, and the owner's values are never touched.
+                pending = dict(data.get("agent_drafts") or {})
+                rejected = set(data.get("rejected_drafts") or [])
+                for path, value in adopted_fields(adopted or [], case_drafts or {}, today).items():
+                    held = _get(data, path)
+                    if path in rejected or value in (None, "", [], {}) or (held not in (None, "", [], {}) and str(held).strip() == str(value).strip()):
+                        continue
+                    pending[path] = {"value": value, "source": "from your records and research", "at": today,
+                                     **({"replaces": held} if held not in (None, "", [], {}) else {})}
+                if pending != (data.get("agent_drafts") or {}):
+                    changes["agent_drafts"] = pending
+                adopted, case_drafts = [], {}
             for path, value in adopted_fields(adopted or [], case_drafts or {}, today).items():
                 held = _get(data, path)
                 if held in (None, "", [], {}) or (isinstance(held, str) and not _fv._said(held)):

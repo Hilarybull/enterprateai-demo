@@ -42,10 +42,10 @@ ITEM_FILLS = {"milestones": ("owner", "due_date", "baseline"), "use_of_funds": (
 CORE_FIELDS = {
     rules.FUNDING: ("title", "route", "route_preference", "jurisdiction", "business_model", "stage", "target_amount", "currency", "receipt_date", "timing_confirmed",
                     "purpose", "purpose_milestone_id", "milestones", "use_of_funds", "market", "traction", "economics", "team", "risks",
-                    "no_known_risks", "pinned", "owner", "funding_options"),
+                    "no_known_risks", "pinned", "owner", "funding_options", "agent_drafts", "rejected_drafts"),
     rules.LAUNCH: ("name", "launch_type", "scope", "business_model", "offerings", "audience", "geography", "target_date", "planned_volume",
                    "customers", "offer", "economics", "delivery", "operations", "prerequisites", "no_prerequisites", "no_prerequisites_rationale",
-                   "market", "control", "pinned", "owner", "previous_initiative_id"),
+                   "market", "control", "pinned", "owner", "previous_initiative_id", "agent_drafts", "rejected_drafts"),
 }
 DATE_FIELDS = {
     rules.FUNDING: ("receipt_date", "traction.results_through"),
@@ -117,6 +117,20 @@ _VAGUE = re.compile(r"^\s*(?:unknown|not (?:sure|known|decided)(?: yet)?|don'?t 
 
 def _vague(v: Any) -> bool:
     return isinstance(v, str) and bool(_VAGUE.match(v))
+
+
+def short_name(text: Any, words: int = 7) -> str:
+    """A prerequisite's name, short (the owner, 25 Oct): "You will need public liability insurance, which covers..." is
+    "Public liability insurance"."""
+    t = re.split(r"(?<=[.!?])\s", str(text or "").strip())[0]
+    t = re.sub(r"^[Ii]n\s+(?:the\s+)?[A-Z][\w ]{0,30},\s*", "", t)
+    t = re.sub(r"^(?:you(?:'ll| will)?\s+(?:also\s+)?(?:need|must have|must get|have to get|should get|require)\s+(?:to\s+(?:get|have|obtain|hold|register for)\s+)?|"
+               r"(?:[a-z]+\s+){0,2}(?:businesses|cleaners|companies|traders|operators|owners)\s+(?:need|must have|must hold|must get|require|should have)\s+)", "", t, flags=re.I)
+    t = re.sub(r"^(?:a|an|the)\s+", "", t, flags=re.I)
+    t = re.split(r"\s*(?:[,;:(]|\s[-–]\s|\s(?:which|that|to cover|so that|because|if|before|in order|from|for)\b|\s(?:is|are)\s(?:recommended|required|needed|advised|essential|mandatory)\b)",
+                 t, maxsplit=1)[0].strip().rstrip(".")
+    t = " ".join(t.split()[:words])
+    return (t[:1].upper() + t[1:])[:60] if t else str(text or "")[:60]
 
 
 def _set(data: dict, path: str, value: Any) -> None:
@@ -300,6 +314,19 @@ class ReadinessService:
 
     def _validate(self, subject_type: str, data: dict, before: dict | None = None) -> dict:
         errors: dict[str, str] = {}
+        if subject_type == rules.LAUNCH:
+            # Boxes that contradict the plan never stand (the owner, 25 Oct): "every critical failure has been resolved" with no
+            # failed test run, and "nothing has to be in place" beside a prerequisite that applies; the latest change wins
+            if engine.get(data, "operations.dry_run.outcome") != "failed" and engine.get(data, "operations.dry_run.failures_resolved"):
+                _set(data, "operations.dry_run.failures_resolved", None)
+            applies = [x for x in data.get("prerequisites") or [] if isinstance(x, dict) and str(x.get("name") or "").strip() and x.get("applicable") != "no"]
+            if data.get("no_prerequisites") and applies:
+                if (before or {}).get("no_prerequisites"):
+                    data["no_prerequisites"], data["no_prerequisites_rationale"] = False, None      # a prerequisite added: something has to be in place
+                else:      # just ticked by the owner: the ones listed don't apply
+                    for x in data["prerequisites"]:
+                        if isinstance(x, dict) and x.get("applicable") != "no":
+                            x["applicable"], x["rationale"] = "no", x.get("rationale") or "Nothing has to be in place before this launch."
         for path in DATE_FIELDS[subject_type]:
             v = engine.get(data, path)
             if not engine.blank(v) and engine.parse_day(v) is None:
@@ -823,6 +850,12 @@ class ReadinessService:
                 fills["use_of_funds"] = redone
                 prov["use_of_funds"] = {"source": "Suggested by the Agent: split from your target, what it is for and your fixed costs. Change any line.",
                                         "as_of": today.isoformat(), "value": redone}
+        if subject_type == rules.FUNDING and "use_of_funds" not in theirs and "use_of_funds" not in fills:
+            renamed = self._lines_for_purpose(case)
+            if renamed is not None:
+                fills["use_of_funds"] = renamed
+                prov["use_of_funds"] = {"source": f"Suggested by the Agent: your spending lines still named the earlier need; these name the current one "
+                                                  f"({str(case.get('purpose') or '').strip()}), with the same amounts", "as_of": today.isoformat(), "value": renamed}
         if subject_type == rules.FUNDING:
             from app.modules.agent import first_value as _fo
             owner = data.get("_owner_name")
@@ -894,8 +927,25 @@ class ReadinessService:
         for path in stale:
             _set(out, path, None)
             out.get("provenance", {}).pop(path, None)
-        for path, value in fills.items():
+        # The Agent's own suggestions wait beside their fields to accept, edit or reject (the owner's brief, 25 Oct: "it wrote
+        # values straight into my answers"); what the owner said in a chat, and the links between items, are written as before
+        pending = dict(out.get("agent_drafts") or {})
+        refused = set(out.get("rejected_drafts") or [])
+        links = {"purpose_milestone_id", "market.acquisition_milestone_id", "operations.process_version", "delivery.capacity_unit", "planned_volume.unit"}
+        for path, value in list(fills.items()):
+            src = str((prov.get(path) or {}).get("source") or "")
+            if src.startswith("Suggested by the Agent") and path not in links:
+                fills.pop(path)
+                if path in refused or path in pending:
+                    continue
+                why = re.sub(r"^Suggested by the Agent[:,]?\s*", "", src).replace("Change it if it isn't right.", "").replace("Change any line.", "").strip().rstrip(".")
+                held = engine.get(case, path)
+                pending[path] = {"value": value, "source": f"from {why}" if why and not why.startswith("from ") else (why or "from your records and research"),
+                                 "at": today.isoformat(), **({"replaces": held} if not engine.blank(held) else {})}
+                continue
             _set(out, path, value)
+        if pending != (out.get("agent_drafts") or {}):
+            out["agent_drafts"] = pending
         for i in months:
             if f"use_of_funds.{(out['use_of_funds'][i] or {}).get('id')}.period" in theirs:
                 continue
@@ -906,7 +956,36 @@ class ReadinessService:
             fills = {**fills, "use_of_funds.period": arrives}
         out["provenance"] = {**(out.get("provenance") or {}), **{p: prov[p] for p in fills if p in prov}, **line_prov}
         out["filled_from_records"] = sorted(done | set(fills))
+        if out == case:
+            return None      # only drafts already waiting: nothing changed
         return out
+
+    @staticmethod
+    def _lines_for_purpose(case: dict) -> list | None:
+        """The spending lines renamed for the case's current purpose, when one still names an earlier need (the owner, 25 Oct:
+        "N10m grant for new equipments" with its line still "Hiring staff"). Amounts and months kept; a reserve or running
+        costs line is never renamed. None when every line already fits. Offered as a suggestion, never written for the owner."""
+        purpose = str(case.get("purpose") or "").strip()
+        lines = [x for x in case.get("use_of_funds") or [] if isinstance(x, dict)]
+        if not purpose or not lines:
+            return None
+        stop = {"with", "from", "into", "more", "staff", "costs", "cost", "funding", "money", "business", "need", "needs", "pays"}
+        words = lambda t: {w[:-1] if w.endswith("s") else w for w in re.findall(r"[a-z]{4,}", str(t or "").lower())} - stop      # noqa: E731
+        want = words(purpose)
+        if not want:
+            return None
+        out, changed = [], False
+        for x in lines:
+            y = dict(x)
+            kind = str(x.get("category") or "").lower()
+            said = str(x.get("purpose") or "").strip()
+            if said and kind not in ("reserve", "operations", "fundraising costs") and not (words(said) & want):
+                y["purpose"] = purpose[:1].upper() + purpose[1:]
+                if kind in ("", "other") and re.search(r"\b(equipment\w*|machines?|vans?|vehicles?|tools?|kit|bays?|premises|fit[- ]?out)\b", purpose, re.I):
+                    y["category"] = "Equipment"
+                changed = True
+            out.append(y)
+        return out if changed else None
 
     @staticmethod
     def _first_milestone(case: dict, owner: str | None) -> dict | None:
@@ -982,9 +1061,9 @@ class ReadinessService:
         run = max(runs, key=lambda r: str(r.get("created_at") or "")) if runs else {}
         found = {i.get("topic"): i for i in run.get("items") or [] if i.get("sources") and i.get("value") and i.get("decision") != "rejected"}
         first = lambda t: re.split(r"(?<=[.!?])\s", str(t).strip())[0][:200]      # noqa: E731
-        if found.get("prerequisites"):
+        if found.get("prerequisites") and not case.get("no_prerequisites"):      # never beside "nothing has to be in place"
             src = (found["prerequisites"]["sources"] or [{}])[0]
-            out["prerequisites"] = ([{"id": uuid.uuid4().hex[:12], "name": first(found["prerequisites"]["value"]), "applicable": "yes", "critical": True,
+            out["prerequisites"] = ([{"id": uuid.uuid4().hex[:12], "name": short_name(found["prerequisites"]["value"]), "applicable": "yes", "critical": True,
                                       "status": "not_completed", "source_reference": src.get("url") or src.get("site") or ""}],
                                     "from your launch research; mark it completed once it is done")
         if found.get("channels"):
@@ -1462,6 +1541,7 @@ class ReadinessService:
         from app.modules.agent import research
         case = row.get("data") or {}
         theirs = set(case.get("cleared_by_owner") or [])
+        theirs |= set(case.get("rejected_drafts") or []) | set(case.get("agent_drafts") or {})      # decided, or waiting (25 Oct)
         blank = [p for p in (research.CASE_DRAFT_FIELDS.get("need_funding") or {}) if p not in theirs and engine.blank(engine.get(case, p))]
         if not blank or self._DRAFTED_ON.get(row["id"]) == ctx["today"].isoformat() or row["id"] in self._DRAFTING:
             return
@@ -1505,25 +1585,9 @@ class ReadinessService:
                     return
                 now_case = dict(fresh.get("data") or {})
                 prov = dict(now_case.get("provenance") or {})
-                put = {p: v for p, v in drafted.items() if engine.blank(engine.get(now_case, p)) and p not in set(now_case.get("cleared_by_owner") or [])}
-                if not put:
+                if not self._pending_drafts(now_case, drafted, ctx):
                     return      # nothing to add: the case is not touched (its check stays current)
-                for p, v in put.items():
-                    if isinstance(v, list):      # each row its own id, as the form makes them
-                        v = [{"id": uuid.uuid4().hex[:12], **r} for r in v]
-                    _set(now_case, p, v)
-                    prov[p] = {"source": "Suggested by the Agent", "as_of": ctx["today"].isoformat(), "value": v}
-                now_case["provenance"] = prov
-                if put.get("milestones"):
-                    first = (now_case.get("milestones") or [{}])[0].get("id")
-                    for ref in ("purpose_milestone_id",):
-                        if first and not now_case.get(ref):
-                            now_case[ref] = first
-                    if first and not (now_case.get("market") or {}).get("acquisition_milestone_id"):
-                        now_case.setdefault("market", {})["acquisition_milestone_id"] = first
-                now_case["filled_from_records"] = sorted(set(now_case.get("filled_from_records") or []) | set(put))
                 await self.store.update("subjects", row["id"], {"data": now_case, "updated_at": ctx["now"]}, bump=False)
-                self._check_again_later(user_id, row["business_id"], subject_type, row["id"], None)
             except Exception:      # noqa: BLE001 - left blank; drafted again tomorrow
                 logger.info("agent drafts for case %s not made", row.get("id"), exc_info=True)
             finally:
@@ -1536,6 +1600,24 @@ class ReadinessService:
             self._DRAFTING.discard(row["id"])
         return
 
+    @staticmethod
+    def _pending_drafts(case: dict, drafted: dict, ctx: dict) -> bool:
+        """The Agent's drafts beside their fields, to accept, edit or reject (the owner's brief, 25 Oct; F-10): only for
+        fields still blank, never one the owner cleared or rejected, never over a draft already waiting. True if any."""
+        skip = set(case.get("cleared_by_owner") or []) | set(case.get("rejected_drafts") or [])
+        pending = dict(case.get("agent_drafts") or {})
+        added = False
+        for p, v in (drafted or {}).items():
+            if p in skip or p in pending or not engine.blank(engine.get(case, p)) or engine.blank(v):
+                continue
+            if isinstance(v, list):      # each row its own id, as the form makes them
+                v = [{"id": uuid.uuid4().hex[:12], **r} if isinstance(r, dict) and not r.get("id") else r for r in v]
+            pending[p] = {"value": v, "source": "from your records and research", "at": ctx["today"].isoformat()}
+            added = True
+        if added:
+            case["agent_drafts"] = pending
+        return added
+
     def _draft_launch_later(self, user_id: str, row: dict, ctx: dict) -> None:
         """A launch plan's blank fields drafted by the Agent with AI (the owner's QA, 23 Oct: "be smart"), from the profile,
         the catalogue, the records and this plan's own research only, in the background, at most once a day, into fields still
@@ -1543,6 +1625,7 @@ class ReadinessService:
         from app.modules.agent import research
         case = row.get("data") or {}
         theirs = set(case.get("cleared_by_owner") or [])
+        theirs |= set(case.get("rejected_drafts") or []) | set(case.get("agent_drafts") or {})      # decided, or waiting (25 Oct)
         fields = research.CASE_DRAFT_FIELDS["launch"]
         blank = [p for p in fields if p not in theirs and engine.blank(engine.get(case, p))
                  and not (p == "economics.shared_cost_method" and case.get("launch_type") != "new_offering")
@@ -1569,19 +1652,13 @@ class ReadinessService:
                     return
                 now_case = dict(fresh.get("data") or {})
                 prov = dict(now_case.get("provenance") or {})
-                put = {p: v for p, v in drafted.items() if engine.blank(engine.get(now_case, p)) and p not in set(now_case.get("cleared_by_owner") or [])}
-                if not put:
-                    return
-                for p, v in put.items():
+                for p, v in list(drafted.items()):
                     if p == "delivery.dependencies" and isinstance(v, list):
-                        v = [{"id": uuid.uuid4().hex[:12], "name": r.get("name"), "kind": r.get("kind") if r.get("kind") in ("supplier", "person", "system") else "supplier",
-                              "available": "yes", "needs_contingency": bool(r.get("contingency")), "contingency": r.get("contingency") or ""} for r in v]
-                    _set(now_case, p, v)
-                    prov[p] = {"source": "Suggested by the Agent", "as_of": ctx["today"].isoformat(), "value": v}
-                now_case["provenance"] = prov
-                now_case["filled_from_records"] = sorted(set(now_case.get("filled_from_records") or []) | set(put))
+                        drafted[p] = [{"id": uuid.uuid4().hex[:12], "name": r.get("name"), "kind": r.get("kind") if r.get("kind") in ("supplier", "person", "system") else "supplier",
+                                       "available": "yes", "needs_contingency": bool(r.get("contingency")), "contingency": r.get("contingency") or ""} for r in v]
+                if not self._pending_drafts(now_case, drafted, ctx):
+                    return
                 await self.store.update("subjects", row["id"], {"data": now_case, "updated_at": ctx["now"]}, bump=False)
-                self._check_again_later(user_id, row["business_id"], rules.LAUNCH, row["id"], None)
             except Exception:      # noqa: BLE001 - left blank; drafted again tomorrow
                 logger.info("agent drafts for launch plan %s not made", row.get("id"), exc_info=True)
             finally:
@@ -1657,6 +1734,8 @@ class ReadinessService:
         except Exception:      # noqa: BLE001
             launches = []
         out.update({
+            # Products in the catalogue: "List on the Marketplace" is offered beside the case (the owner, 25 Oct)
+            "has_products": any(isinstance(p, dict) and str(p.get("name") or "").strip() for p in ((wsd.get("catalogue") or {}).get("products") or [])),
             "related_done": {"marketplace": bool((wsd.get("marketplace") or {}).get("is_active")),
                              "plan": bool(wsd.get("business_plan") or wsd.get("live_plan") or wsd.get("blueprint")),
                              "launch": bool(launches)},
@@ -1691,6 +1770,12 @@ class ReadinessService:
         before = row["data"] or {}
         given = {k: _clean(v) for k, v in (changes or {}).items() if k in CORE_FIELDS[subject_type]}
         data = _deep_merge(before, given)
+        for k in ("agent_drafts", "rejected_drafts"):      # replaced as a whole: a draft decided is gone, never merged back
+            if k in (changes or {}):
+                data[k] = (changes or {})[k] or ({} if k == "agent_drafts" else [])
+        if data.get("agent_drafts"):      # a draft that now says what its field says is done with (25 Oct)
+            data["agent_drafts"] = {p: d for p, d in data["agent_drafts"].items()
+                                    if not (isinstance(d, dict) and str(engine.get(data, p)).strip() == str(d.get("value")).strip())}
         if subject_type == rules.FUNDING and ("target_amount" in given or "receipt_date" in given) and data.get("target_amount") not in (None, ""):
             # The owner entered the amount (and date) themselves: confirmed by doing so (the owner's brief, 20 Oct: no
             # separate "I confirm this amount and date" box).
@@ -1714,6 +1799,11 @@ class ReadinessService:
         if cleared:
             data["cleared_by_owner"] = sorted(set(before.get("cleared_by_owner") or []) | set(cleared))      # theirs: never filled again
         prov.update(_said_where(provenance, data))      # what this change came from ("From your funding chat, 15 Oct")
+        # A draft the owner accepted as it was: its source kept beside the value (F-10)
+        for path, d in (before.get("agent_drafts") or {}).items():
+            if isinstance(d, dict) and path not in (data.get("agent_drafts") or {}) and engine.get(data, path) == d.get("value"):
+                prov[path] = {"source": f"The Agent's draft ({d.get('source') or 'from your records and research'}), accepted by you",
+                              "as_of": ctx["today"].isoformat(), "value": d.get("value")}
         data["provenance"] = prov
         data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
         extra: dict = {}
@@ -1839,23 +1929,28 @@ class ReadinessService:
         for e in held_evidence:
             if by_id.get(e["id"]):
                 e["saved"] = evidence_words(by_id[e["id"]])
+        # The same purpose with a new amount: the owner's use-of-funds lines are theirs and stay (the owner, 25 Oct: "don't
+        # change my allocations without asking"); the case then shows the lines against the new amount, to fix or keep
+        norm = lambda v: " ".join(str(v or "").lower().split())      # noqa: E731
+        keep_lines = bool(before.get("use_of_funds")) and (not given.get("purpose") or norm(given.get("purpose")) == norm(before.get("purpose")))
+        aside = [k for k in self.PREVIOUS_NEED_FIELDS if not (keep_lines and k == "use_of_funds")]
         # `previous_title`: the old need's name when the form already saved the new title (a title change starting a new need)
         previous = {"replaced_at": ctx["today"].isoformat(), "title": previous_title or before.get("title"), "summary": summary,
                     "values": {k: before.get(k) for k in ("target_amount", "currency", "purpose", "route", "route_preference", "receipt_date", "stage") if before.get(k) is not None},
-                    "set_aside": {k: before[k] for k in self.PREVIOUS_NEED_FIELDS if before.get(k) not in (None, "", [], {})},
+                    "set_aside": {k: before[k] for k in aside if before.get(k) not in (None, "", [], {})},
                     "documents": documents,
                     "materials": {k: {"title": (a.get("data") or {}).get("title"), "text": str(a["data"]["body"])[:20000]} for k, a in latest.items() if k not in documents},
                     "evidence": held_evidence, "review": {}}
 
         def apply(data: dict) -> None:
-            for k in self.PREVIOUS_NEED_FIELDS:
+            for k in aside:
                 data.pop(k, None)
             data.pop("documents", None)
             merged = _deep_merge(data, given)
             data.clear()
             data.update(merged)
             data["previous_needs"] = [previous] + list(before.get("previous_needs") or [])[:9]
-            prov = {p: v for p, v in (before.get("provenance") or {}).items() if p.split(".")[0] not in given and p.split(".")[0] not in self.PREVIOUS_NEED_FIELDS}
+            prov = {p: v for p, v in (before.get("provenance") or {}).items() if p.split(".")[0] not in given and p.split(".")[0] not in aside}
             prov.update(_said_where(provenance, data))
             data["provenance"] = prov
             data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
@@ -2048,7 +2143,7 @@ class ReadinessService:
             econ, traction = case.get("economics") or {}, case.get("traction") or {}
             figures = {k: v for k, v in (("price", econ.get("price")), ("cost", econ.get("direct_cost")), ("fixed_costs", econ.get("fixed_costs_monthly")),
                                          ("monthly_revenue", traction.get("monthly_revenue"))) if v not in (None, "")}
-            i = research.inputs_of(goal, answers, {**data, "case_figures": figures} if figures else data)
+            i = research.inputs_of(goal, answers, {**data, "case_figures": figures} if figures else data, ctx.get("today"))
             owned = {k for k, src in (version.get("inputs_from") or {}).items() if src == "your answer"}
             for k, v in (version.get("inputs") or {}).items():
                 if isinstance(v, (int, float)) and (i.get(k) is None or k in owned):
@@ -2542,9 +2637,14 @@ class ReadinessService:
         # full history is only fetched when none of those few succeeded.
         for limit in (4, 50):
             rows = await self.store.list("assessments", row["business_id"], subject_id=row["id"], limit=limit)
-            for a in rows:
-                if not succeeded_only or a.get("status") == "succeeded":
-                    return a
+            if succeeded_only:
+                # The check of the newest version of the case, never one of an older version that was started or finished later
+                # (the owner, 25 Oct: the score flipped between 88 and 95 after a change)
+                done = [a for a in rows if a.get("status") == "succeeded"]
+                if done:
+                    return max(enumerate(done), key=lambda x: (int((x[1].get("data") or {}).get("subject_revision") or 0), -x[0]))[1]
+            elif rows:
+                return rows[0]
             if len(rows) < limit:
                 break
         return None
@@ -3124,7 +3224,8 @@ class ReadinessService:
 
     async def _summary_of(self, row: dict, latest: dict | None, ctx: dict) -> dict:
         data = row["data"] or {}
-        done = latest if latest and latest.get("status") == "succeeded" else await self._latest(row, succeeded_only=True)
+        current = latest and latest.get("status") == "succeeded" and int((latest.get("data") or {}).get("subject_revision") or 0) >= int(row.get("revision") or 0)
+        done = latest if current else await self._latest(row, succeeded_only=True)
         result = (done["data"] or {}).get("result") if done else None
         async def no_check() -> dict:
             return {"status": None, "reason": None}
@@ -3152,6 +3253,12 @@ class ReadinessService:
             out.update({"score": out["known_score"], "score_partial": True})
         else:
             out["score_partial"] = False
+        # Why it isn't ready yet, in one line (25 Oct), when the check has a result
+        try:
+            ready_at = (rules.get_profile(data.get("profile")).get("thresholds") or {}).get("ready") if data.get("profile") else None
+        except Exception:      # noqa: BLE001
+            ready_at = None
+        out["not_ready_why"] = engine.why_not_ready(result, ready_at)
         if row["kind"] == rules.FUNDING:
             out.update({"case_id": row["id"], "coverage": (result or {}).get("coverage") if result else None, "route": data.get("route"),
                         "lifecycle_status": row.get("status"), "pack": _pack_of(row, result)})

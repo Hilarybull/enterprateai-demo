@@ -131,7 +131,7 @@ def test_no_credits_is_said_exactly_and_a_missing_price_is_never_called_out_of_c
 
 
 def test_answers_from_records_and_tasks_dont_use_the_model_or_the_chat_charge(chat):
-    assert chat.say("What is my biggest risk?")["kind"] == "answer"
+    assert chat.say("What is my biggest risk?")["kind"] == "check"      # the one risk check, from the records, free (24 Oct)
     task = chat.say("Prepare a quotation for BrightTech Ltd for 2 x Strategy Workshop")
     assert task["kind"] == "workflow" and task["run"]["status"] == "awaiting_approval"
     assert chat.prompts == [] and chat.charges == []

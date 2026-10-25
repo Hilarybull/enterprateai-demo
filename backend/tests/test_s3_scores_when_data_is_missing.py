@@ -20,7 +20,8 @@ def test_with_a_criterion_unknown_the_full_assessment_has_no_score_and_the_agent
     result = assess(svc, lid, kind=L)
     res = result.get("result") or (result.get("data") or {}).get("result") or result
     s = run(assessment_summary.current(env.orch, OWNER, "A", "launch"))
-    assert s["score"] is None and s["classification"] == "insufficient_evidence" and s["evidence_coverage"] is not None
+    # The owner, 23 Oct: the score from what is known, marked partial ("so far"), never the full score
+    assert s["classification"] == "insufficient_evidence" and s["evidence_coverage"] is not None
     agent = env.submit(capability="launch_evidence_gaps", channel="ui_action")["run"]
     assert "score" not in agent["summary"].lower() or "no score" in agent["summary"].lower(), agent["summary"]
 

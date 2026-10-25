@@ -636,8 +636,7 @@ def kpi_values(data: dict, policy: dict, now: datetime, readiness: dict) -> dict
         "funding_needed": money_from(("funding_needed", "funding_required", "capital_required", "funding_gap"), "Add funding needs to your plan"),
         "launch_readiness": have(f"{readiness['percent']}%", f"{readiness['done']} of {readiness['total']} in place",
                                  "emerald" if readiness["percent"] >= 80 else "amber" if readiness["percent"] >= 40 else "rose"),
-        "runway": have(f"{cash['runway_months']:g} months", tone="rose" if cash["runway_months"] < 3 else "emerald")
-        if cash["runway_months"] is not None else need("Record cash received and monthly costs"),
+        "runway": _runway_kpi(data, today, have, need),
         "planned_costs": money_from(("planned_costs", "monthly_costs", "monthly_fixed_costs", "fixed_costs", "operating_costs"), "Add planned costs to your plan"),
         "funding_secured": money_from(("funding_secured", "funding_raised", "starting_cash", "opening_cash"), "Add funding or starting cash to your plan"),
         "revenue_growth": have(f"{growth['pct']:+g}%", "last 90 days vs the 90 before", "emerald" if growth["pct"] >= 0 else "rose")
@@ -653,6 +652,18 @@ def kpi_values(data: dict, policy: dict, now: datetime, readiness: dict) -> dict
         out[key] = {"value": None, "state": "available" if has_records else "insufficient_data",
                     "hint": None if has_records else "Needs an invoice or expense", "tone": None}
     return out
+
+
+def _runway_kpi(data: dict, today, have, need) -> dict:
+    """Months of cash from the shared figures; from less than two months of spending it is said to be an estimate (R-9)."""
+    from app.modules.agent import figures
+    f = figures.of(data, today)
+    m = f["runway_months"]
+    if m is None:
+        return need("Record cash received and monthly costs")
+    if f["costs_estimate"]:
+        return have(f"About {m:g} months", f"An estimate: based on {figures.estimate_basis(f)}", "amber")
+    return have(f"{m:g} months", tone="rose" if m < 3 else "emerald")
 
 
 def headline_of(stage: str, layout: dict, kpis: dict[str, dict], risks: list[dict], readiness: dict) -> dict:
@@ -1287,32 +1298,45 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
                     evidence=evidence, source="Paid and delivered invoices", as_of=as_of))
 
     if "cash" in families:
-        cash_evidence = [_ev("Cash received less costs paid", fmt_money(cash["cash"], cur)),
-                         _ev("Average monthly costs (last 3 months)", fmt_money(cash["monthly_burn"], cur))]
+        # The same figures and the same estimate rule as the risk check (R-9, the owner's brief, 24 Oct)
+        from app.modules.agent import figures
+        f = figures.of(data, today)
+        told = lambda k: f["sources"].get(k, "").startswith(("what you told me", "your usual monthly costs"))      # noqa: E731
+        cash_evidence = [_ev("Cash in the bank, as you told me" if told("cash") else "Cash received less costs paid", fmt_money(f["cash"] or 0, cur)),
+                         _ev("Usual monthly costs, as you told me" if told("costs_monthly") else "Average monthly costs (last 3 months)", fmt_money(f["costs_monthly"] or 0, cur))]
         cash_cta = {"label": "View cash forecast", "to": "/operations?tab=Reports"}
-        if not has_invoices and not has_expenses:
+        if f["cash"] is None:
             cards.append(_card(
                 "cash", 5, "emerald", "No income or costs are recorded yet, so there is no cash position to show.",
                 state="insufficient_data", cta={"label": "Record income or costs", "to": "/operations"},
                 why="Cash position is what you've been paid, less what you've paid out. Neither is recorded yet.",
                 source="Invoices and expenses in Business Operations", missing=["A paid invoice", "A paid expense"]))
-        elif cash["cash"] < 0:
+        elif f["cash"] < 0:
             cards.append(_card(
-                "cash", 1, "rose", f"Your cash position is negative at {fmt_money(cash['cash'], cur)}. Review costs and collect what you're owed.",
+                "cash", 1, "rose", f"Your cash position is negative at {fmt_money(f['cash'], cur)}. Review costs and collect what you're owed.",
                 severity="high", cta=cash_cta, why="More has been paid out than received.",
                 evidence=cash_evidence, source="Paid invoices and paid expenses", as_of=as_of))
-        elif cash["runway_months"] is not None:
-            tight = cash["runway_months"] < 3
+        elif f["runway_months"] is not None and f["costs_estimate"]:
+            m = f["runway_months"]
+            cards.append(_card(
+                "cash", 1 if m < 3 else 5, "amber",      # its usual place on the dashboard: an estimate is not more urgent
+                f"Your cash position is {fmt_money(f['cash'], cur)}. About {m:g} months of runway, but it's only an estimate: "
+                f"it's based on {figures.estimate_basis(f)}. Add your regular monthly costs to see it properly.",
+                severity="high" if m < 3 else "low", cta={"label": "Add regular monthly costs", "to": "/check/risks"},
+                why="Spending from less than two months of records can miss regular costs like rent, wages or subscriptions.",
+                evidence=[*cash_evidence, _ev("Runway (estimate)", f"About {m:g} months")], source="Paid invoices and paid expenses", as_of=as_of))
+        elif f["runway_months"] is not None:
+            tight = f["runway_months"] < 3
             cards.append(_card(
                 "cash", 1 if tight else 5, "rose" if tight else "emerald",
-                f"Your cash position is {'tight' if tight else 'healthy'} with {cash['runway_months']:g} months of runway at current burn rate.",
+                f"Your cash position is {'tight' if tight else 'healthy'} with {f['runway_months']:g} months of runway at current burn rate.",
                 severity="high" if tight else "low", cta=cash_cta, why="Runway is your cash divided by your average monthly costs.",
-                evidence=[*cash_evidence, _ev("Runway", f"{cash['runway_months']:g} months")],
+                evidence=[*cash_evidence, _ev("Runway", f"{f['runway_months']:g} months")],
                 source="Paid invoices and paid expenses", as_of=as_of))
         else:
             cards.append(_card(
-                "cash", 5, "emerald", f"Your cash position is {fmt_money(cash['cash'], cur)}. Record expenses to see your runway.",
-                state="insufficient_data", cta={"label": "Record an expense", "to": "/operations?tab=Transactions"},
+                "cash", 5, "emerald", f"Your cash position is {fmt_money(f['cash'], cur)}. Record expenses to see your runway.",
+                state="insufficient_data", cta={"label": "Record an expense", "to": "/operations?tab=Transactions&sub=Expenses&new=expense"},
                 why="Runway needs your monthly costs, and no paid expense has been recorded in the last three months.",
                 evidence=cash_evidence, source="Paid invoices and paid expenses", missing=["A paid expense in the last 3 months"], as_of=as_of))
 

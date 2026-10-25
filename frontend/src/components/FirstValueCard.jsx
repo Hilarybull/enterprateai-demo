@@ -15,6 +15,7 @@ import { NextSteps, PackLine, SavedNotice, StatusLine, stepsOf, useResearchRun, 
 import { hasFundingPack } from "../lib/plans";
 import WhatNext from "./WhatNext";
 import { useAuthStore } from "../store/auth";
+import { AI_CAN_ERR } from "../lib/aiNotice";
 
 // The free first result for a goal (First-Value PRD 12.2): what was checked, the score or the
 // count, how much of the evidence is known (its own figure, never folded into the score), what
@@ -84,7 +85,8 @@ export function EditAnswers({ result, onUpdated, className = "", onDirty = () =>
     // One card on mobile (no card inside the card); its own panel from 768px.
     <div className="w-full pb-16 md:rounded-xl md:border md:border-slate-200 md:bg-slate-50 md:p-4 md:pb-4 dark:md:border-slate-700 dark:md:bg-slate-900/60" data-edit-form>
       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Your answers</p>
-      <p className="mt-0.5 text-[12.5px] text-slate-500">Change any of them, then check again. The {result.assessment_type === "launch_readiness_initial" ? "launch plan" : "funding case"} is updated with what you change.</p>
+      <p className="mt-0.5 text-[12.5px] text-slate-500">Change any of them, then check again.{result.assessment_type === "launch_readiness_initial" ? " The launch plan is updated with what you change."
+        : result.assessment_type === "funding_readiness_initial" ? " The funding case is updated with what you change." : ""}</p>
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         {edit.questions.map((q) => (
           <label key={q.key} className="block text-[13px] font-medium text-slate-700 dark:text-slate-200">
@@ -173,6 +175,7 @@ export function openOf(result) {
     case "launch_readiness_initial": return { label: "Open launch plan", to: a?.initiative_id ? `/launch/${a.initiative_id}?tab=results` : "/launch" };
     case "pricing_health_initial": return { label: "Open pricing check", to: "/check/pricing" };
     case "customer_growth_foundation": return { label: "Open growth checklist", to: "/check/customers" };
+    case "business_risk_initial": return { label: "Open risk check", to: "/check/risks" };
     // The result itself, the idea check's page (G4, 23 Oct: this opened an empty Idea Validation form)
     case "idea_viability_initial": return { label: "Open idea check", to: "/check/idea" };
     default: return null;
@@ -207,7 +210,8 @@ export function actionsOf(result) {
     }
   }
   const open = openOf(result);
-  if (open && !list.some((a) => /^Open /.test(a.label || ""))) {
+  const here = typeof window !== "undefined" ? window.location.pathname : "";
+  if (open && open.to?.split("?")[0] !== here && !list.some((a) => /^Open /.test(a.label || ""))) {
     const at = list.findIndex((a) => a.save);
     list.splice(at < 0 ? list.length : at, 0, open);
   }
@@ -377,7 +381,7 @@ export function PremiumConfirm({ result, confirm: given, working: busy, onStart,
   const n = (k) => Number(plan[k]) || 0;
   // What it will do, in plain words, one line each (only what applies).
   const doing = [
-    n("research") + n("estimate") && `Look up ${n("research") + n("estimate")} ${n("research") + n("estimate") === 1 ? "thing" : "things"} funders ask about${(confirm.topics || []).length ? `: ${confirm.topics.slice(0, 3).map(lowerFirst).join(", ")}${confirm.topics.length > 3 ? " and more" : ""}` : ""}`,
+    n("research") + n("estimate") && `Look up ${n("research") + n("estimate")} ${n("research") + n("estimate") === 1 ? "thing" : "things"} ${String(result?.assessment_type || "").startsWith("funding") ? "funders ask about" : String(result?.assessment_type || "").startsWith("launch") ? "a launch needs" : "this check needs"}${(confirm.topics || []).length ? `: ${confirm.topics.slice(0, 3).map(lowerFirst).join(", ")}${confirm.topics.length > 3 ? " and more" : ""}` : ""}`,
     n("worked_out") && `Work out ${n("worked_out")} ${n("worked_out") === 1 ? "figure" : "figures"} from what you told me`,
     n("asked") && `Ask you ${n("asked")} ${n("asked") === 1 ? "question" : "questions"} only you can answer`,
   ].filter(Boolean);
@@ -464,6 +468,8 @@ export function useFirstResult() {
       if (!live || !res?.result || (res.business_id && res.business_id !== workspaceId)) return;
       // Its home is its case (the owner's QA, 22 Oct: 70/100 on the dashboard beside 53/100 on the case): not kept here
       if (resultHome(res.result)) { forget(); return; }
+      // The risk check lives on its own page (/check/risks), never on the dashboard (the owner, 24 Oct)
+      if (res.result.assessment_type === "business_risk_initial") { forget(); return; }
       setResult(res.result);
     }).catch(() => {});
     return () => { live = false; };
@@ -490,8 +496,58 @@ export function useFirstResult() {
 
 const KIND_WORD = { funding: "Funding readiness", launch: "Launch readiness" };
 
+/** What a risk check couldn't see, each said plainly with the one thing to add, answered in place: the away question as
+ *  three buttons, the cash in the bank as an amount, a missing record as the button to record it (R-3, R-6). */
+const RISK_ADD = { runway: { cta: "Add an expense", to: "/operations?tab=Transactions&sub=Expenses&new=expense" },
+  concentration: { cta: "Create an invoice", to: "/operations?tab=Sales&sub=Invoices&new=invoice" },
+  late_payment: { cta: "Create an invoice", to: "/operations?tab=Sales&sub=Invoices&new=invoice" } };
+function RiskGaps({ items, onAnswer }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [cash, setCash] = useState("");
+  const go = async (key, value) => { if (busy) return; setBusy(true); try { await onAnswer(key, value); } finally { setBusy(false); } };
+  return (
+    <div className="mt-2 space-y-2 rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60" data-fv-not-on-record>
+      <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">Not on record yet</p>
+      {items.map((x) => (
+        <div key={x.key} className="space-y-1.5" data-gap={x.key}>
+          <p className="text-[13px] text-slate-700 dark:text-slate-200">{x.ask === "key_person" ? "If you were away for a month, what would happen to the business?" : x.label}</p>
+          {x.ask === "key_person" && (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="If you were away for a month">
+              {[["runs", "It would carry on"], ["slows", "It would slow down"], ["stops", "It would stop"]].map(([v, label]) => (
+                <button key={v} type="button" disabled={busy} onClick={() => go("key_person", v)} data-gap-answer={v}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-400 disabled:opacity-60">{label}</button>
+              ))}
+            </div>
+          )}
+          {x.ask === "cash_in_bank" && (
+            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (Number(cash) >= 0 && cash !== "") go("cash_in_bank", Number(cash)); }}>
+              <input inputMode="decimal" aria-label="What's in the bank today?" value={cash} onChange={(e) => setCash(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Amount in the bank today"
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] outline-none focus:border-brand-500" />
+              <button type="submit" disabled={busy || cash === ""} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-60">Save</button>
+            </form>
+          )}
+          {x.ask === "monthly_costs" && (
+            <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (cash !== "") go("monthly_costs", Number(cash)); }}>
+              <input inputMode="decimal" aria-label="Regular costs in a usual month" value={cash} onChange={(e) => setCash(e.target.value.replace(/[^0-9.]/g, ""))}
+                placeholder="All regular costs in a usual month" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] outline-none focus:border-brand-500" />
+              <button type="submit" disabled={busy || cash === ""} data-gap-save="monthly_costs" className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-60">Save</button>
+              <button type="button" disabled={busy} onClick={() => go("monthly_costs", 0)} data-gap-none="monthly_costs"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 disabled:opacity-60">No other regular costs</button>
+            </form>
+          )}
+          {!x.ask && RISK_ADD[x.key] && (
+            <button type="button" onClick={() => navigate(RISK_ADD[x.key].to)} data-gap-go={x.key}
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">{RISK_ADD[x.key].cta}</button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function FirstValueCard({ result: given, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null,
-  initialServed = null, onUpdated = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null }) {
+  initialServed = null, onUpdated = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null, onAnswer = null }) {
   const navigate = useNavigate();
   const [edited, setEdited] = useState(null);      // the result after "Save and check again"
   useEffect(() => { setEdited(null); }, [given?._session]);
@@ -580,6 +636,24 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       {!hideStatus && <div className="mt-3"><StatusLine result={result} latest={latest} /></div>}
       {/* What to run next, directly under the score (the owner's brief, 21 Oct). */}
       {/* After the research is adopted, "What to do next" takes the place of the steps (the owner, 21 Oct): never both. */}
+      {/* The risk the owner asked about, answered first (the owner, 24 Oct) */}
+      {result.focus?.text && <p className="mt-3 rounded-xl border border-brand-200 bg-brand-50/60 px-3 py-2 text-[14px] font-medium text-slate-800 dark:border-brand-900 dark:bg-brand-950/30 dark:text-slate-100" data-fv-focus>{result.focus.text}</p>}
+      {Array.isArray(result.not_on_record) && result.not_on_record.length > 0 && (
+        <RiskGaps items={result.not_on_record} onAnswer={async (key, value) => {
+          // Saved to this check (and the business), the result worked out again in place (R-2, R-6)
+          try {
+            if (result._session) {
+              const res = withEdit(await apiRequest(`/task-sessions/${result._session}/answers`, "POST", { answers: { [key]: value } }, { timeoutMs: 30000 }));
+              if (res?.result) { setEdited(res.result); onUpdated?.(res.result); }
+            } else if (onAnswer) await onAnswer(key, value);
+            toast({ kind: "success", title: "Saved. Your risk check is up to date." });
+          } catch { toast({ kind: "error", title: "That didn't go through.", detail: "Your answers are kept. Try again." }); }
+        }} />
+      )}
+      {Array.isArray(result.fine) && result.fine.length > 0 && (
+        <p className="mt-2 text-[13px] text-emerald-800 dark:text-emerald-300" data-fv-fine>
+          <span className="font-semibold">In good shape:</span> {result.fine.map((x, i) => (i ? x[0].toLowerCase() + x.slice(1) : x)).join("; ")}.</p>
+      )}
       {result.assessment_type === "funding_readiness_initial" && result._session && !reviewing && result.research?.state === "adopted" && (
         <WhatNext sessionId={result._session} businessId={workspaceId} act={act} onChanged={async () => { const r = (await fetchFirstValue(result._session).catch(() => null))?.result; if (r) { setEdited(r); onUpdated?.(r); } return r; }} />
       )}
@@ -717,7 +791,20 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       {saved && <p role="status" className="mt-2 text-[12px] text-slate-600">Saved. You'll find this at the top of your dashboard.</p>}
       {priceModal}
       {/* The disclaimer last, in small grey text (the owner's brief, 20 Oct). */}
+      {result.engines && (
+        // Which risk came from which engine (R-5), under Advanced
+        <details className="mt-4 text-[12.5px] text-slate-600 dark:text-slate-300" data-fv-engines>
+          <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-200">How this was worked out</summary>
+          <ul className="mt-1.5 space-y-0.5">
+            {result.engines.survival != null && <li>Survival engine: {result.engines.survival}/100, from your cash and spending (cash runway).</li>}
+            {result.engines.stability != null && <li>Stability engine: {result.engines.stability}/100, from your customers and cover when you're away.</li>}
+            {result.engines.fragility != null && <li>Fragility engine: {result.engines.fragility}/100, from both (higher means more fragile).</li>}
+            <li>Late payments: from your invoices.</li>
+          </ul>
+        </details>
+      )}
       {result.note && !embedded && <p className="mt-4 text-[12px] text-slate-500" data-fv-note>{result.note}</p>}
+      {result.assessment_type === "business_risk_initial" && <p className="mt-1 text-[12px] text-slate-500" data-ai-can-err>{AI_CAN_ERR}</p>}
       {onContinue && (
         <div className="mt-4 flex justify-end border-t border-slate-100 pt-3 dark:border-slate-800">
           <button type="button" onClick={onContinue} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">{continueLabel}</button>

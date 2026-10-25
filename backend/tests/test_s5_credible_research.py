@@ -88,7 +88,7 @@ class _Model:
     async def generate_text(self, *, system, prompt, feature, max_tokens):
         self.prompts.append(prompt)
         head = json.loads(prompt.partition("\n<external_content>\n")[0])
-        items = [{"topic": t["topic"], "value": f"Finding for {t['topic']}", "basis": "researched", "confidence": 0.8, "number": None,
+        items = [{"topic": t["topic"], "value": f"Finding for {t['topic']}" + (": the market is worth £2 billion and growing" if t['topic'] == "market" else ""), "basis": "researched", "confidence": 0.8, "number": None,
                   "results": [{"n": 1, "quote": QUOTE, "region": "UK", "period": "2025"}]} for t in head["TOPICS"] if not t.get("figure")]
         return SimpleNamespace(text=json.dumps({"items": items}))
 

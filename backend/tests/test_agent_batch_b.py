@@ -89,7 +89,8 @@ def test_each_task_records_what_it_cost_and_the_total_matches_the_wallet():
     res = env.submit(text="Check my concentration risk and then run a what-if on losing Nova Labs")
     risk, what_if = (r["run"] for r in res["results"])
     assert (agent_router.credits_of(risk), agent_router.credits_of(what_if)) == (2, 2)
-    assert agent_router.charges_of(risk)[0]["what"] == "Risk or scenario analysis" and agent_router.charges_of(risk)[0]["credits"] == 2
+    # Reading the risk is free (24 Oct); the run's own task charge is what remains
+    assert agent_router.charges_of(risk)[0]["what"] == "Agent work" and agent_router.charges_of(risk)[0]["credits"] == 2
     assert sum(cost for _, _, cost in env.meter.charges) == 4 == agent_router.credits_of(risk) + agent_router.credits_of(what_if)
     assert "credits_used" not in agent_router._public_run(risk) and "credits" not in agent_router._public_run(risk)      # never shown with the task
     assert env.meter.balances[OWNER] == 96

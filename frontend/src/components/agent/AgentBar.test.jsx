@@ -15,14 +15,17 @@ const typeAndSend = (text) => {
   fireEvent.submit(screen.getByLabelText("Ask EnterprateAI").closest("form"));
 };
 
-describe("the Agent Centre bar uses the Agent card's pathway (the owner's choice, 22 Oct)", () => {
-  it("hands what was typed to the dashboard's Agent card, as if typed there", async () => {
-    function Where() { return <p data-testid="where">{useLocation().pathname}{useLocation().search}</p>; }
+describe("the Agent Centre bar answers where it was asked (the owner's brief, 25 Oct)", () => {
+  it("runs the check under the bar, on the Agent Centre, never a jump to the dashboard", async () => {
+    submitAgentRequest.mockResolvedValue({ kind: "check", goal_key: "need_funding", said: "I need funding readiness" });
+    function Where() { return <p data-testid="where">{useLocation().pathname}</p>; }
     render(<MemoryRouter initialEntries={["/agent"]}><Routes>
-      <Route path="/agent" element={<AgentBar businessId="b1" />} />
-      <Route path="*" element={<Where />} /></Routes></MemoryRouter>);
+      <Route path="/agent" element={<><AgentBar businessId="b1" /><Where /></>} />
+      <Route path="*" element={<p data-testid="where">elsewhere</p>} /></Routes></MemoryRouter>);
     typeAndSend("I need funding readiness");
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?ask=I%20need%20funding%20readiness"));
-    expect(submitAgentRequest).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.querySelector("[data-quick-check='need_funding']")).not.toBeNull());
+    expect(submitAgentRequest).toHaveBeenCalledWith(expect.objectContaining({ businessId: "b1", text: "I need funding readiness", sourceChannel: "text" }));
+    expect(screen.getByTestId("where").textContent).toBe("/agent");
+    expect(document.querySelector("[data-you-asked]").textContent).toBe("I need funding readiness");
   });
 });

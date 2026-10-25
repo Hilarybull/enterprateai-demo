@@ -102,9 +102,10 @@ describe("dashboard before its composition arrives", () => {
     expect(screen.getByText("Pre-launch stage")).toBeTruthy();               // no skeleton, no Operating defaults
     expect(screen.getByText(/Updating…/)).toBeTruthy();
     expect(screen.queryByText(/Enquiry to Quote/)).toBeNull();
-    // While the remembered copy shows: approvals, send and anything that starts a task wait; page links stay live.
+    // While the remembered copy shows: approvals and anything that starts a task wait; page links stay live, and a typed
+    // question is answered (the owner's brief, 25 Oct: Send works while "Updating…")
     const off = (el) => el.disabled === true;
-    expect(off(screen.getByRole("button", { name: "Send" }))).toBe(true);
+    expect(off(screen.getByRole("button", { name: "Send" }))).toBe(false);
     expect(off(screen.getByText("Quote #QUO-1").closest("button"))).toBe(true);
     expect(off(screen.getByRole("button", { name: /Ask Agent to prepare a follow-up/ }))).toBe(true);
     expect(off(screen.getByText("Would you like me to prepare a payment follow-up?").closest("button"))).toBe(true);

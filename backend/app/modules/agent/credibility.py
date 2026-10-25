@@ -43,6 +43,18 @@ TIER3_HOSTS = ("bbc.co.uk", "bbc.com", "theguardian.com", "ft.com", "reuters.com
 NOT_ALLOWED = ("reddit.com", "quora.com", "mumsnet.com", "facebook.com", "twitter.com", "x.com", "tiktok.com", "instagram.com", "pinterest.com",
                "youtube.com", "medium.com", "answers.com", "wikihow.com", "chatgpt.com", "openai.com", "perplexity.ai", "fandom.com", "linkedin.com",
                "forum", "forums", "community.", "boards.")
+# A page selling a franchise or a business opportunity is an advert for itself, never evidence about a market (the owner,
+# 25 Oct: franchise sales pages were cited)
+SALES_PAGE = re.compile(r"\b(franchis(?:e|es|ing|ee)\s+(?:opportunit\w*|for sale|available|packages?|fees?|enquir\w*|prospectus)|"
+                        r"(?:buy|own|start|open|become)\s+(?:a|your own|an?)\s+\w*\s*franchis\w*|franchisee\b|business opportunit\w*)", re.I)
+
+
+def sales_page(url: str, title: str = "", text: str = "") -> bool:
+    """A franchise or business-opportunity sales page: by its address, its title or its opening text."""
+    where = f"{url} {title} {str(text or '')[:1500]}"
+    return bool(SALES_PAGE.search(where) or re.search(r"/(?:franchis\w*|business-opportunit\w*)(?:/|$|\?)", str(url or ""), re.I))
+
+
 TIER_WORD = {1: "Tier 1: official statistics or a regulator", 2: "Tier 2: trade body or published industry report", 3: "Tier 3: news, company or price page"}
 
 
@@ -320,6 +332,11 @@ def judge(item: dict, cited: list[dict], pages: dict[str, dict], ctx: dict, now:
         exact = close = False
         if tier is None:
             why = "not an allowed source (forum, social or AI-written page)"
+        elif sales_page(url, page.get("title") or c.get("title") or "", page.get("text") or ""):
+            why = "a franchise or business-opportunity sales page, not independent evidence"
+        elif item.get("topic") == "prerequisites" and tier == 3:
+            # What the law requires comes from the regulator, the government or a trade body, never a company's sales blog
+            why = "licences and registrations need an official or trade-body source, not a company's own page"
         elif not page.get("ok"):
             why = f"the page couldn't be loaded ({page.get('reason') or page.get('why') or 'no response'})"
         else:

@@ -24,12 +24,10 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); window.history.replaceState(null, "", "/"); });
 
-it("waits while the card is paused, then sends the landing page's message once", async () => {
+it("sends the landing page's message while the dashboard is still updating, once (the owner's brief, 25 Oct)", async () => {
   const sent = () => calls.filter((c) => /\/agent\/requests$/.test(c.path));
   const { rerender } = render(<MemoryRouter><AgentPanel businessId="ws1" summary={SUMMARY} onChanged={() => {}} paused /></MemoryRouter>);
-  await new Promise((r) => setTimeout(r, 50));
-  expect(sent()).toHaveLength(0);
-  expect(window.location.search).toBe("?ask=I%20need%20funding");      // kept until it is sent
+  await waitFor(() => expect(sent()).toHaveLength(1));      // "Updating…" never holds a typed question back
   rerender(<MemoryRouter><AgentPanel businessId="ws1" summary={SUMMARY} onChanged={() => {}} paused={false} /></MemoryRouter>);
   await waitFor(() => expect(sent()).toHaveLength(1));
   expect(sent()[0].body.text).toBe("I need funding");

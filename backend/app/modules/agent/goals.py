@@ -112,7 +112,7 @@ GOALS: list[dict[str, Any]] = [
      "boundary": "The price you charge stays your decision.",
      "questions": [_f("sell", "What are you pricing?", "text", required=True), _money("price", "What price do you have in mind?"),
                    _money("cost", "What does it cost you to deliver?")]},
-    {"key": "launch", "mode": "business_goal", "chip": False,      # off the landing shortcuts until ready (the owner, 22 Oct)
+    {"key": "launch", "mode": "business_goal",      # back on the landing shortcuts (the owner, 25 Oct)
      "label": "I want to launch a product/service", "outcome": "Check launch readiness and close the gaps",
      "class": PARTIAL, "start": "launch_readiness", "path": ["launch_readiness", "idea_validation", "launch_evidence_gaps", "scenario_help"],
      "say": "I can assess how ready the launch is, list what is missing and what to do next, and test the idea behind it.",
@@ -132,14 +132,14 @@ GOALS: list[dict[str, Any]] = [
      "say": "I can work out what growing would do to your revenue and costs, check whether you have the capacity for it, and review what sells.",
      "boundary": "I can't guarantee a growth result.",
      "questions": [_f("sell", "What do you sell?", "text", required=True), _f("limit", "What is holding growth back today?", "text")]},
-    {"key": "test_idea", "mode": "business_goal", "chip": False,      # off the landing shortcuts until ready (the owner, 22 Oct)
+    {"key": "test_idea", "mode": "business_goal",      # back on the landing shortcuts (the owner, 25 Oct)
      "label": "Test a business idea", "outcome": "Score a business idea and see its risks",
      "class": DIRECT, "start": "idea_validation", "path": ["idea_validation", "market_size", "business_plan_draft"],
      "say": "I can score your idea, show the risks and next steps, and size the market for it.",
      "boundary": "The score comes from the validation engine, from what you tell me: I won't make up demand.",
      "questions": [_f("description", "What is the idea? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text", required=True),
                    _f("problem", "What problem does it solve for them?", "textarea", required=True)]},
-    {"key": "business_risks", "mode": "business_goal", "chip": False,      # off the landing shortcuts until ready (the owner, 22 Oct)
+    {"key": "business_risks", "mode": "business_goal",      # back on the landing shortcuts: its free check is built (the owner, 24 Oct)
      "label": "Help me understand my business risks", "outcome": "See the risks in the business and what to do about them",
      "class": COMPOSITE, "start": "risk_concentration", "path": ["risk_concentration", "scenario_help", "readiness_refresh"],
      "say": "I can show where the business is fragile: reliance on a few customers, late payment and cash, and what a shock would do.",
@@ -206,6 +206,20 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("capacity", "How many could you realistically deliver each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="capacity"),
         _choice("demand", "What evidence of demand do you already have?", [("assumption", "None yet, it is my assumption"), ("research", "Research"), ("enquiries", "Enquiries"),
                 ("lois", "Letters of intent"), ("pilot", "A paid pilot"), ("paying", "Paying customers"), ("repeat", "Repeat customers")], required=True, q=6, noun="demand evidence"),
+    ]},
+    # The free Business Risk Check (the owner, 24 Oct: "Help me understand my business risks... implement it")
+    "business_risks": {"value": "I'll check your biggest customer, cash, late payments and how much the business depends on you. This uses your records; it isn't financial advice.", "questions": [
+        _f("worry", "What worries you most about the business right now?", "textarea", unsure="Nothing in particular", q=1, noun="worry"),
+        _choice("top_share", "How much of your income comes from your biggest customer?", [("under_20", "Less than a fifth"), ("20_50", "A fifth to a half"),
+                ("over_50", "More than half")], required=True, unsure=_NOT_SURE, q=2, noun="biggest customer"),
+        _choice("runway", "If sales stopped today, how long would your cash cover your costs?", [("under_3", "Less than 3 months"), ("3_6", "3 to 6 months"),
+                ("over_6", "More than 6 months")], required=True, unsure=_NOT_SURE, q=3, noun="cash"),
+        _choice("paid_on_time", "Do your customers pay on time?", [("on_time", "Almost always"), ("sometimes_late", "Sometimes late"), ("often_late", "Often late")],
+                required=True, unsure=_NOT_SURE, q=4, noun="payments"),
+        _choice("key_person", "If you were away for a month, what would happen to the business?", [("runs", "It would carry on"), ("slows", "It would slow down"),
+                ("stops", "It would stop")], required=True, unsure=_NOT_SURE, q=5, noun="team"),
+        _money("cash_in_bank", "What's in the bank today?", hidden=True, noun="cash in the bank"),
+        _money("monthly_costs", "What do you spend in a usual month, all regular costs together?", hidden=True, noun="monthly costs"),
     ]},
     "launch": {"value": "A few quick questions, then you'll see how ready you are to launch and what to sort out first.", "questions": [
         _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
@@ -292,7 +306,7 @@ _OUTCOMES: list[tuple[str, re.Pattern]] = [
         r"|\b(?:thinking|thinkin|planning|looking)\s+(?:of|about|bout|to|on)\s+(?:starting|opening|setting\s+up|launching|start|open|set\s+up|launch)\b", re.I)),
     ("cash_flow", re.compile(r"\b(cash ?flow|cash position|running out of (cash|money)|paid (late|faster|on time)|late pay\w*)\b", re.I)),
     ("test_idea", re.compile(r"\b((business |startup |new )idea|test (an?|my) idea|validat\w+)\b", re.I)),
-    ("business_risks", re.compile(r"\b(risks?|fragil\w*|what could go wrong)\b", re.I)),
+    ("business_risks", re.compile(r"\b(risks?|fragil\w*|what could go wrong|worried|worries|worry|vulnerab\w*)\b|\b(?:rely|relying|relies|depend\w*)\s+(?:on|upon)\b", re.I)),
     ("grow", re.compile(r"\b(grow\w*|scale (up|my|the)|expand\w*)\b", re.I)),
     ("create_business_plan", re.compile(r"\bbusiness plans?\b", re.I)),
 ]
@@ -381,6 +395,91 @@ def extract(text: str, goal_key: str | None) -> dict[str, Any]:
     return out
 
 
+# What a sentence says about the four risks (the owner, 24 Oct: "one customer" was asked again as "How much of your income
+# comes from your biggest customer?"). Read from any answer, the first message or the worry, so the chat moves on.
+_RISK_SIGNS = (
+    ("top_share", "over_50", r"\b(?:one|1|a single|single|two|2|one or two|a couple of|a few|one big|our main|my main|our biggest|my biggest|"
+                             r"our largest|my largest)\s+(?:big\s+|main\s+|major\s+|key\s+)?(?:customers?|clients?|buyers?|accounts?)\b|"
+                             r"\b(?:rely|relies|relying|depend|depends|dependent|depending)\s+(?:on|upon)\s+(?:one|a single|a few|two|our|my)\b"),
+    ("top_share", "under_20", r"\b(?:lots of|many|hundreds of|loads of)\s+(?:small\s+)?(?:customers|clients)\b|\bno (?:one|single) customer\b"),
+    ("runway", "under_3", r"\brun(?:ning)?\s+out\s+of\s+(?:cash|money)\b|\b(?:can't|cannot|struggl\w*\s+to)\s+pay\s+(?:the\s+)?(?:bills|rent|staff|salaries|wages)\b|"
+                          r"\b(?:low|no|little)\s+(?:cash|money)\b|\bcash\s*flow\b"),
+    ("paid_on_time", "often_late", r"\b(?:pay|paying|paid)\s+late\b|\blate\s+pay\w*\b|\b(?:don't|do not|won't)\s+pay\b|\bchas\w+\s+(?:payments?|invoices?|customers?|clients?)\b|"
+                                   r"\boverdue\b|\bowed\b|\bunpaid\b"),
+    ("key_person", "stops", r"\b(?:only|just)\s+me\b|\bby myself\b|\bon my own\b|\bi do (?:everything|it all)\b|\bwithout me\b|\bone[- ]man\b|\bsolo\b"),
+)
+
+
+_NUM_WORDS = {"one": 1, "a": 1, "an": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+              "eleven": 11, "twelve": 12, "a couple of": 2, "a few": 3, "several": 4}
+
+
+def _n_of(text: str, unit: str) -> float | None:
+    """The number said before a unit: "about 2 months", "two weeks", "a year" (the unit as a regex)."""
+    m = re.search(rf"(\d+(?:\.\d+)?|{'|'.join(sorted(_NUM_WORDS, key=len, reverse=True))})\s*(?:or so\s+)?(?:more\s+)?{unit}", text, re.I)
+    if not m:
+        return None
+    w = m.group(1).lower()
+    return float(w) if re.match(r"\d", w) else float(_NUM_WORDS[w])
+
+
+def choice_from_words(key: str, text: str) -> str | None:
+    """A risk question answered in plain words, not by picking a chip (the owner, 24 Oct: "it should be flexible and adaptive"):
+    "about 30%", "most of it", "maybe 2 months", "mostly yes", "I have 3 staff"."""
+    t = str(text or "").lower()
+    if key == "top_share":
+        pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|per ?cent)", t)
+        if pct:
+            v = float(pct.group(1))
+            return "over_50" if v > 50 else "20_50" if v >= 20 else "under_20"
+        if re.search(r"\b(most|majority|nearly all|almost all|all of it|the bulk|over half|more than half|everything)\b", t):
+            return "over_50"
+        if re.search(r"\b(half|a third|a quarter|a big (?:part|chunk|share)|quite a lot)\b", t):
+            return "20_50"
+        if re.search(r"\b(small|little|tiny|not much|a bit|spread|evenly|none)\b", t):
+            return "under_20"
+        return risk_answers(t).get("top_share")
+    if key == "runway":
+        months = _n_of(t, r"months?") or ((_n_of(t, r"weeks?") or 0) / 4.3 or None) or ((_n_of(t, r"years?") or 0) * 12 or None)
+        if months is None and re.search(r"\ba year\b|\byears\b", t):
+            months = 12
+        if months is None and re.search(r"\b(?:few|couple of)?\s*weeks?\b|\bdays\b|\bnot long\b|\bnot (?:very )?long\b", t):
+            months = 1
+        if months is not None:
+            return "under_3" if months < 3 else "3_6" if months <= 6 else "over_6"
+        return risk_answers(t).get("runway")
+    if key == "paid_on_time":
+        if re.search(r"\b(often|usually|always|most(?:ly)?|many)\b.{0,20}\b(late|slow|don'?t pay|chase)\b|\bno\b(?!t)|\brarely\b|\bnever\b", t):
+            return "often_late"
+        if re.search(r"\b(some(?:times|one)?|a few|occasionally|now and then|not always|one or two|slow)\b", t):
+            return "sometimes_late"
+        if re.search(r"\b(yes|yeah|yep|mostly|usually|always|on time|generally|they do|fine|good)\b", t):
+            return "on_time"
+        return risk_answers(t).get("paid_on_time")
+    if key == "key_person":
+        staff = _n_of(t, r"(?:staff|people|employees|workers|team members|helpers|others)")
+        if staff is not None:
+            team = staff + 1
+            return "runs" if team >= 5 else "slows"
+        if re.search(r"\b(manager|partner|team|staff|deputy|someone else|colleague|co-?founder)\b.{0,30}\b(run|runs|handle|handles|manage|cover|covers|carry|carries)\b|\bcarr(?:y|ies) on\b|\b(?:would|will) be fine\b|\bkeeps? going\b", t):
+            return "runs"
+        if re.search(r"\bslow(?:s|er)?\b|\bstruggle\b|\bless\b|\bsome things\b", t):
+            return "slows"
+        if re.search(r"\bstop(?:s|ped)?\b|\bclose(?:s|d)?\b|\bnothing (?:would )?happen|\bshut\b|\bcollapse", t):
+            return "stops"
+        return risk_answers(t).get("key_person")
+    return None
+
+
+def risk_answers(text: str) -> dict[str, str]:
+    """{question: answer} that a sentence gives for the risk check; the first sign for each question wins."""
+    out: dict[str, str] = {}
+    for key, value, pattern in _RISK_SIGNS:
+        if key not in out and re.search(pattern, str(text or ""), re.I):
+            out[key] = value
+    return out
+
+
 def _extract(text: str, goal_key: str | None) -> dict[str, Any]:
     """Values the visitor has already given in their own sentence, for the goal's questions.
     Rules only, and only what is plainly there: anything doubtful is left to be asked."""
@@ -408,6 +507,9 @@ def _extract(text: str, goal_key: str | None) -> dict[str, Any]:
             from app.modules.agent.intake_turn import currency_of as _cur
             if _cur(text):
                 out["currency"] = _cur(text)      # "15000 naira": NGN, kept on the session (never a question)
+        return out
+    if goal_key == "business_risks":
+        out.update({k: v for k, v in risk_answers(text).items() if k in wanted})
         return out
     if goal_key == "test_idea":
         # "Validate my idea: a mobile car wash in Abuja": the idea and where it will run, read from the goal itself.
@@ -519,6 +621,13 @@ def _launch_facts(text: str) -> dict[str, Any]:
         who = re.match(r"\s*for\s+(.+?)(?=\s+(?:in|across|around|near|by|from|next|this|before)\b|[,.;!?]|$)", text[m.end(1):], re.I)
         if who and not re.match(r"(?:the\s+)?(?:next|first|a|an)\s+(?:few\s+)?(?:weeks?|months?|years?)\b", who.group(1), re.I):
             out["customer"] = _tidy(who.group(1))
+    if not out.get("customer"):      # kept only where the check asks who it is for (the caller filters)
+        # A correction said as who it is for (the owner, 25 Oct: "it's for landlords and letting agents in Leeds" left the
+        # recap's customer unchanged): the customer, and any place after it is the place
+        who = re.match(r"\s*(?:actually,?\s+|no,?\s+)?(?:(?:it'?s|it\s+is|this\s+is|that'?s|they'?re|we'?re)\s+)?(?:aimed\s+at|targeting|for)\s+"
+                       r"(.+?)(?=\s+(?:in|across|around|near|by|from|next|this|before|within)\b|[,.;!?]|$)", text, re.I)
+        if who and not re.match(r"(?:the\s+)?(?:next|first|about|around|over|a|an|\d+|few|couple)\b.{0,20}?\b(?:days?|weeks?|months?|years?)\b", text[who.start(1):], re.I) and len(who.group(1)) > 3:
+            out["customer"] = _tidy(who.group(1))
     st = re.search(r"\b(?:at\s+(?:the\s+)?|in\s+(?:the\s+)?)?(idea|prototype|testing|trial|pilot|ready)\s+stage\b|\bstill\s+(?:an?\s+)?(idea|prototype)\b|\b(?:it'?s|it\s+is)\s+(?:being\s+)?(tested|testing|ready)\b", text, re.I)
     if st:
         word = next(g for g in st.groups() if g).lower()
@@ -619,6 +728,32 @@ def _resolution(goal: dict, original: str, reg: dict[str, str], confidence: floa
     }
 
 
+# The words goals are recognised by, for reading a typo as what was meant (the owner, 24 Oct: "i want to understand a rsisk"
+# was offered launch, idea and funding)
+_KEY_WORDS = ("risk", "risks", "funding", "funds", "loan", "grant", "investment", "launch", "launching", "idea", "validate", "invoice", "quotation",
+              "quote", "proposal", "business", "customers", "customer", "pricing", "price", "cashflow", "growth", "grow", "readiness", "fragile",
+              "plan")      # "I need a business paln" (the owner, 25 Oct)
+_REAL_WORDS = {"plain", "place", "plane", "prize", "lunch", "ideal", "finding", "fund", "loans", "grants", "quite", "quiet", "growl", "proposed",
+               "rink", "disk", "brisk", "frisk", "rusk", "rise", "rich", "cuts", "custom", "costumes", "costume", "nice", "voice", "busy",
+               "plant", "plane", "planet", "plank", "plain", "clan", "plat", "play", "plans"}
+
+
+def _typos_fixed(text: str) -> str:
+    """The sentence with a misspelt goal word put right ("rsisk" is "risk", "fundng" is "funding"); every other word as it was."""
+    import difflib
+    def fix(m: re.Match) -> str:
+        w = m.group(0)
+        low = w.lower()
+        if len(low) < 4 or low in _KEY_WORDS or low in _REAL_WORDS:
+            return w
+        close = difflib.get_close_matches(low, _KEY_WORDS, n=1, cutoff=0.8)
+        if not close:      # two letters swapped ("paln", "lanuch"): the word itself
+            close = [k for k in _KEY_WORDS if len(k) == len(low) and k[0] == low[0] and sorted(k) == sorted(low)
+                     and sum(a != b for a, b in zip(k, low)) == 2]
+        return close[0] if close else w
+    return re.sub(r"[A-Za-z]+", fix, text)
+
+
 def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, str] | None = None) -> dict:
     """Goal -> underlying outcome -> the registered capabilities that address it. No model, no credits."""
     reg = registry() if reg is None else reg
@@ -628,9 +763,10 @@ def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, s
         return _resolution(goal, original or goal["label"], reg, 1.0, f"suggestion:{key}") if goal else _no_match(original or key, "unknown_suggestion")
     if not original:
         return _no_match("", "empty")
-    outcomes = [k for k, pattern in _OUTCOMES if pattern.search(original) and _valid_path(_BY_KEY[k], reg)]
+    read = _typos_fixed(original)      # matched as meant; the owner's own words kept as their goal
+    outcomes = [k for k, pattern in _OUTCOMES if pattern.search(read) and _valid_path(_BY_KEY[k], reg)]
     # A document or task named outright is a direct task, unless the sentence is really about an outcome.
-    named = intent.rule_capability(original, list(reg))
+    named = intent.rule_capability(read, list(reg))
     if named and named in reg and not (set(outcomes) & {"need_funding", "more_customers", "cash_flow", "grow", "price_offer", "launch"}):
         if named in _GOAL_OF_CAPABILITY:
             return _resolution(_BY_KEY[_GOAL_OF_CAPABILITY[named]], original, reg, 0.9, f"task_rule:{named}", direct=named)
@@ -650,7 +786,7 @@ def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, s
             return asked
     # About the business, but too loose to pick a route: ask once. Only what has nothing to do with it is refused.
     for pattern, keys in _VAGUE:
-        if pattern.search(original):
+        if pattern.search(read):
             asked = _clarify(original, keys, reg, "vague")
             if asked:
                 return asked
@@ -861,9 +997,15 @@ def _summary(session: dict) -> list[dict]:
     """What has been given so far, one short line each, for the visitor to see and confirm."""
     answers = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
     said = set(session.get("from_message") or [])
-    rows = [{"key": f["key"], "label": f["label"], "value": _shown(f, answers[f["key"]]), "proposed": f["key"] not in (session.get("inputs") or {}),
-             "from_message": f["key"] in said, "from_records": f["key"] in set(session.get("from_records") or [])}
-            for f in _in_currency(session, _questions(session)) if answers.get(f["key"]) not in (None, "")]
+    from app.modules.agent.intake_turn import _RISK_SAID
+    # A risk answer said as what it means ("Customers pay on time"), never a chip's words under another heading (the owner,
+    # 24 Oct: "Late payment: Almost always" read as always late)
+    meaning = lambda f, v: (_RISK_SAID[(f["key"], v)][:1].upper() + _RISK_SAID[(f["key"], v)][1:]) if (f["key"], v) in _RISK_SAID else _shown(f, v)   # noqa: E731
+    rows = [{"key": f["key"], "label": f["label"], "value": meaning(f, answers[f["key"]]), "proposed": f["key"] not in (session.get("inputs") or {}),
+             "from_message": f["key"] in said, "from_records": f["key"] in set(session.get("from_records") or []),
+             **({"source": (session.get("record_sources") or {})[f["key"]]} if f["key"] in (session.get("record_sources") or {}) else {})}
+            for f in _in_currency(session, _questions(session)) if answers.get(f["key"]) not in (None, "")
+            and f["key"] not in set(session.get("not_on_record") or [])]
     if session.get("currency") and session["currency"] != DEFAULT_CURRENCY and any(f.get("prefix") for f in _questions(session)):
         rows.append({"key": "currency", "label": "Currency", "value": session["currency"], "proposed": not session.get("currency_confirmed")})
     return rows
@@ -899,7 +1041,9 @@ def _conversation(session: dict) -> dict:
             intake_turn.acknowledgement(first, {f["key"]: f for f in every}, answers, session.get("currency"))) if first else ""
     goal = _BY_KEY.get(session.get("goal_key") or "") or {}
     return {"progress": {"answered": done, "total": len(fields)} if fields else None, "acknowledged": said,
-            "value_line": goal.get("value") or "", "first_value": first_value.covered(session.get("goal_key")),
+            # Nothing left to ask because the records answered it: said so, never "a few quick questions" (the owner, 24 Oct)
+            "value_line": session.get("value_note") or goal.get("value") or "",
+            "first_value": first_value.covered(session.get("goal_key")),
             "questions_avoided": len(understood)}
 
 
@@ -958,7 +1102,7 @@ async def _understood_goal(text: str, no_match: dict) -> dict:
         return {**out, "original_goal": text, "provenance": {**(out.get("provenance") or {}), "rule": "understanding"}}
     if u and u.intent == und.UNSUPPORTED and u.method == "llm+rules":
         return no_match      # the model agrees: nothing here does that
-    return _clarify(text, ["launch", "test_idea", "need_funding", "create_invoice"], registry(), "understanding_unsure") or no_match
+    return _clarify(text, ["business_risks", "launch", "test_idea", "need_funding", "create_invoice"], registry(), "understanding_unsure") or no_match
 
 
 # E1: a document asked for on the homepage is read by the same AI extractor as the Agent's own tasks.
@@ -2236,6 +2380,20 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
         raise PermissionError("Sign in and resume this task first.")
     if session.get("handoff") and (session["handoff"].get("run_id") or session["handoff"].get("subject_id")):
         return session      # already prepared: the same task, never a second one
+    if session.get("goal_key") == "business_risks":
+        # R-1 (the owner, 24 Oct: three identical runs, 2 credits each): the risk check is a free calculation on the records,
+        # shown as its result. No background task, no charge, no history row; the answers are kept for the next check.
+        if (session.get("handoff") or {}).get("free"):
+            return session      # R-8: already handed over: the same answer at once, never a second wait
+        try:
+            await orch.rt.business.mutate(session["business_id"], lambda d: _keep_answers(d, session, now))
+        except Exception:      # noqa: BLE001 - R-8: the result is shown either way; they are kept again on the next answer
+            logger.warning("risk check: answers not kept on hand-off for %s", session["id"][:8], exc_info=True)
+        session["handoff"] = {"to": "/check/risks", "capability": (session.get("resolution") or {}).get("start_capability"), "free": True}
+        session["state"] = HANDED_OFF
+        session["updated_at"] = now.isoformat()
+        await store.put(session)
+        return session
     session["handoff"] = None      # it could not be started last time (a plan limit, no credits): tried again now, not refused for ever
     res, a = session["resolution"], session.get("inputs") or {}
     capability = res.get("start_capability")

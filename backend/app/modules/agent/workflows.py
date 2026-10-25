@@ -1569,6 +1569,10 @@ async def idea_validation_step(ctx):
         return ask
     depth = ctx.params.get("depth") or "basic"
     idea = {**idea, "known": {} if separate else known_for_validation(data, ctx.answers), "depth": depth}
+    if economics_gaps(idea, ctx.answers):
+        # What the records don't give, estimated for this idea and place, said as estimates and changeable on Idea
+        # Validation (the owner, 25 Oct: "agent is supposed to fill and smart populate these"), never left as "still needed"
+        idea = await _estimate_economics(ctx, idea)
     if not separate:
         # The draft in Idea Validation History, for the owner to accept or reject: one per idea, so a Comprehensive run after
         # an upgrade updates the same draft (with the same answers), never a second one.
@@ -1591,10 +1595,13 @@ async def idea_validation_step(ctx):
         await _draft_in_history(ctx, idea, r)
     from app.modules.agent.services import risk_sentence
     risks, steps = [risk_sentence(x) for x in r.get("risks") or []], [str(x) for x in r.get("next_steps") or []]
+    guessed = [words for key, words in ECONOMICS if key in (idea.get("estimated") or [])]
     head = ((f"Not enough evidence to score this idea yet. Still needed: {_and_list(gaps)}. "
              f"{len(risks)} risk{'s' if len(risks) != 1 else ''} and {len(steps)} next step{'s' if len(steps) != 1 else ''} found so far.")
             if gaps else
-            f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}.")
+            f"Idea scored {r['score']}/100: {len(risks)} risk{'s' if len(risks) != 1 else ''}, {len(steps)} next step{'s' if len(steps) != 1 else ''}."
+            + (f" I estimated the {_and_list(guessed)} ({idea.get('estimate_basis') or 'typical for this kind of business'}): change them on Idea Validation and I'll score it again."
+               if guessed else ""))
     summary = (head
                + (f" Biggest risk: {risks[0].rstrip('.')}." if risks else "") + (f" First step: {steps[0].rstrip('.')}." if steps else "")
                + (" The full report, with its research, will be on Idea Validation in a few minutes." if r.get("full_report") == "pending" else ""))
@@ -1807,6 +1814,68 @@ _FILL_SYSTEM = ("You fill in the inputs of a small business's plan from a short 
                 "spelled correctly, as the owner meant it (for example 'window cleanig' is 'Window cleaning'). problem: the customer problem it solves, one sentence. "
                 "customer: who buys it, specific (who and where). value_prop: why they would choose it, one sentence. industry: two or three words "
                 "(for example 'Commercial cleaning'). Only about the idea described; never about another business. Plain words, no dashes.")
+
+
+_ESTIMATE_SYSTEM = ("You estimate the basic figures of a small business idea, for a first viability check. Given the idea, who it is "
+                    "for, where and the currency, return JSON only: {\"price\": number, \"cost\": number, \"monthly_sales\": number, "
+                    "\"basis\": \"one short phrase on what the estimate rests on\"}. price: what one sale costs a customer; cost: the direct "
+                    "cost of delivering one sale (materials, labour, travel); monthly_sales: how many sales a new small business like this "
+                    "makes in a month. Typical, conservative figures for that place, in that currency, as plain numbers. Use null for any "
+                    "figure you can't estimate sensibly.")
+
+
+async def _estimate_economics(ctx, idea: dict) -> dict:
+    """Price, cost per sale and sales a month, for the ones neither the owner nor the records give: one short model call,
+    each checked for sense, marked as estimated. Nothing is estimated without a model; the check then says what is missing."""
+    known = dict(idea.get("known") or {})
+    want = [k for k, _w in ECONOMICS if not _positive(known.get(k)) and not _positive((ctx.answers or {}).get(k))]
+    if not want or not idea.get("description"):
+        return idea
+    try:
+        import json
+        from app.modules.agent import research
+        llm = research._default_llm(ctx.actor.user_id)
+        if llm is None:
+            return idea
+        facts = {k: idea.get(k) for k in ("description", "customer", "location", "industry", "currency") if idea.get(k)}
+        facts.update({k: known[k] for k in ("price", "cost", "monthly_sales") if _positive(known.get(k))})      # what is on record
+        res = await asyncio.wait_for(llm.generate_text(system=_ESTIMATE_SYSTEM, prompt="IDEA:\n" + json.dumps(facts, ensure_ascii=False)[:2000],
+                                                       feature="agent_plan_inputs", max_tokens=200), timeout=20)
+        m = re.search(r"\{.*\}", str(getattr(res, "text", "") or ""), re.S)
+        got = json.loads(m.group(0)) if m else {}
+    except Exception:      # noqa: BLE001 - said as still needed instead
+        logger.info("idea figures not estimated for %s", ctx.run.get("id"), exc_info=True)
+        return idea
+    price = _num_or_none(got.get("price")) if "price" in want else _num_or_none(known.get("price"))
+    took = []
+    for k in want:
+        v = _num_or_none(got.get(k))
+        if v is None or v <= 0:
+            continue
+        if k == "cost" and price and v >= price * 1.5:
+            continue      # a cost far above the price is not an estimate to score from
+        if k == "monthly_sales" and v > 100000:
+            continue
+        known[k] = round(v, 2) if k != "monthly_sales" else round(v)
+        took.append(k)
+    if not took:
+        return idea
+    basis = " ".join(str(got.get("basis") or "").split())[:120]
+    return {**idea, "known": known, "estimated": took, **({"estimate_basis": basis} if basis else {})}
+
+
+def _positive(v) -> bool:
+    try:
+        return float(v) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _num_or_none(v):
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 async def _fill_idea(ctx, idea: dict) -> dict:

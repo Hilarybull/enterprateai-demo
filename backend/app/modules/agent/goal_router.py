@@ -220,7 +220,7 @@ async def start_session(body: StartIn, request: Request):
         except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
             user, biz = None, None
     session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency)
-    if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan"):
+    if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan", "business_risks"):
         try:
             session = await _from_records(session, user, body.business_id, biz)
         except Exception:      # noqa: BLE001 - asked as usual
@@ -249,11 +249,33 @@ async def _from_records(session: dict, user: dict, business_id: str, data: dict)
         if on_case.get("use") and not (said.get("amount") or said.get("use")):
             found["use"] = on_case["use"]      # "I need funding", nothing more: the need on record, to confirm or change
     found = {k: v for k, v in found.items() if k in wanted and said.get(k) in (None, "") and v not in (None, "")}
-    if not found:
+    if key == "business_risks":
+        # Signed in: nothing is asked (the owner, 24 Oct: "agent can fetch these from the system, why stressing the user").
+        # What the records don't show is left open, said in the result as not on record yet, with what to add.
+        rest = [k for k in ("top_share", "runway", "paid_on_time") if k not in found and said.get(k) in (None, "")]      # "away" asked if not known
+        session["record_sources"] = {k: v for k, v in first_value.risks({}, data).get("provenance", {}).items() if k in found}
+        # The worry is left as "not said" on both sides (the page and the chat agree on what is still open: the owner, 24 Oct,
+        # an answer showed under "What worries you most?")
+        worry_open = said.get("worry") in (None, "")
+        session["inputs"] = {**(session.get("inputs") or {}), **{k: goals.UNSURE for k in rest}, **({"worry": goals.UNSURE} if worry_open else {})}
+        session["not_on_record"] = rest + (["worry"] if worry_open else [])
+    if not found and key != "business_risks":
         return session
+    session["records_business_id"] = business_id      # the workspace these answers were read from (checked again on use)
     session["proposed"] = {**(session.get("proposed") or {}), **found}
     session["from_records"] = sorted(set(session.get("from_records") or []) | set(found))
     session["missing"] = goals._missing(session)
+    if not session["missing"] and key != "business_risks":
+        # Said once, at the start, only when nothing will be asked: never changed after a question was asked
+        session["value_note"] = "I've read what I need from your records. Here's your result."
+    turns = session.get("turns") or []
+    if turns and turns[-1].get("role") == "assistant" and turns[-1].get("next") and turns[-1]["next"] not in session["missing"]:
+        nxt = next((q for q in goals._questions(session) if q["key"] in session["missing"]), None)
+        if nxt:
+            turns[-1] = {**turns[-1], "content": nxt["label"], "next": nxt["key"]}
+        else:
+            turns.pop()      # nothing to ask: no question bubble
+        session["turns"] = turns
     await get_store().put(session)
     return session
 
@@ -288,6 +310,13 @@ async def session_inputs(session_id: str, body: InputsIn, request: Request):
     if mid:
         out["seen_message_ids"] = list(out.get("seen_message_ids") or [])[-19:] + [mid]
         await get_store().put(out)
+    if out.get("goal_key") == "business_risks" and (out.get("business_id") or out.get("records_business_id")):
+        try:
+            user = await get_optional_user(request)
+            if user:
+                await _keep_risk_answers(out, user)      # R-2: every later check, anywhere, reads it
+        except Exception:      # noqa: BLE001 - the chat carries on either way
+            logger.info("risk check: answers not kept on input for %s", session_id[:8])
     return goals.public(out)
 
 
@@ -382,7 +411,7 @@ async def session_first_value(session_id: str, user=Depends(get_current_user)):
     session = await _session(session_id)
     if session.get("user_id") and session["user_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Not found.")
-    return await _first_value_reply(session, user)
+    return await _first_value_reply(session, user)      # a read: never a write beside the hand-off (R-8)
 
 
 class EditAnswersIn(BaseModel):
@@ -400,7 +429,21 @@ async def edit_session_answers(session_id: str, body: EditAnswersIn, user=Depend
         session = await goals.edit_answers(get_store(), session, get_orchestrator(), user["id"], body.answers, user.get("email"))
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
+    await _keep_risk_answers(session, user)
     return await _first_value_reply(session, user)
+
+
+async def _keep_risk_answers(session: dict, user: dict) -> None:
+    """The risk check's answers kept on the business, with when they were given (R-2): every later check reuses them."""
+    keep_in = session.get("business_id") or session.get("records_business_id")
+    if session.get("goal_key") != "business_risks" or not keep_in:
+        return
+    try:
+        await _business_for(user, keep_in)      # only into a workspace this user may change
+        now = datetime.now(timezone.utc)
+        await get_orchestrator().rt.business.mutate(keep_in, lambda d: goals._keep_answers(d, session, now))
+    except Exception:      # noqa: BLE001 - the result is shown either way
+        logger.info("risk check: answers not kept for %s", str(session.get("id"))[:8])
 
 
 @router.get("/businesses/{business_id}/cases/{case_id}/overview")
@@ -457,6 +500,12 @@ async def _first_value_reply(session: dict, user: dict) -> dict:
         result["assessment"] = await assessment_summary.current(get_orchestrator(), user["id"], session["business_id"],
                                                                 assessment_summary.KIND_OF_GOAL[session["goal_key"]], user.get("email"),
                                                                 subject_id=(session.get("handoff") or {}).get("subject_id"))
+        # One score on every surface (the owner, 25 Oct): the case summary's, the one the strip, the Overview and the Agent
+        # show; the chat's own figure only while the case has none yet
+        case_score = (result["assessment"] or {}).get("score")
+        if isinstance(case_score, (int, float)):
+            result["chat_score"] = result.get("score")
+            result["score"], result["score_partial"] = case_score, bool(result["assessment"].get("score_partial"))
     await goals.track(get_store(), "first_value_shown", session)
     # What the card's "Edit answers" shows: the questions asked, with the answers given (changed there, then run again).
     editable = bool(session.get("user_id") == user["id"] and session.get("business_id"))
@@ -535,6 +584,28 @@ def _quick_questions(goal_key: str, data: dict, said: dict | None = None, from_c
     cased = set(from_case or {}) - set((said or {}).keys() - set(from_case or {}))
     questions = []
     fields = goals.questions_for(goal_key)
+    if goal_key == "business_risks":
+        # Read from the records, never asked (the owner, 24 Oct): what they show, said as from your records; the rest open
+        out = []
+        for q in fields:
+            if q["key"] == "worry":
+                continue
+            q = dict(q)
+            if q["key"] in said:
+                q["default"], q["said"], q["said_text"] = said[q["key"]], True, goals._shown(q, said[q["key"]])
+            elif q["key"] in known:
+                # Said as what it means ("customers pay on time"), never a chip's words (the owner, 24 Oct)
+                from app.modules.agent.intake_turn import _RISK_SAID
+                v = known[q["key"]]["value"]
+                q["default"], q["said"], q["said_text"], q["source"] = v, True, _RISK_SAID.get((q["key"], v)) or goals._shown(q, v), "From your records"
+            elif q["key"] == "key_person":
+                pass      # the one thing the records can't tell: asked
+            elif q.get("hidden"):
+                continue      # the cash in the bank: asked on the result only when it is the one thing missing
+            else:
+                q["default"], q["said"], q["said_text"], q["source"] = goals.UNSURE, True, "not on your records yet", "From your records"
+            out.append(q)
+        return out
     if goal_key == "launch":
         # A form, not a chat: where and when are two fields side by side; what is only kept from a chat (price, cost) is not asked.
         fields = [({**f, "label": "Where do you want to launch?"} if f["key"] == "where" else
@@ -1076,7 +1147,8 @@ async def pinned_cards(business_id: str, user=Depends(get_current_user)):
                 verdict = "Ready to launch" if cls == "ready" else "Not enough evidence to judge the launch yet" if cls == "insufficient_evidence" else "Not ready to launch yet"
             out.append({"id": item["id"], "kind": "funding" if kind == rr.FUNDING else "launch",
                         "label": f"{'Funding readiness' if kind == rr.FUNDING else 'Launch readiness'} · {item.get('title')}",
-                        "score": summary.get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),
+                        # One score (25 Oct): the case summary's; before its first check, the score its chat result shows
+                        "score": summary.get("score") if summary.get("score") is not None else (told or {}).get("score"), "classification": cls, "verdict": verdict, "coverage": summary.get("evidence_coverage") or summary.get("coverage"),
                         "title": item.get("title"), "to_do": summary.get("open_actions") if isinstance(summary.get("open_actions"), int) else len(summary.get("blockers") or []),
                         "pack": summary.get("pack"), "blockers": summary.get("blockers") or [], "open": base, "answers": f"{base}?tab=answers",
                         "again": f"{base}?check=again", "updated_at": item.get("updated_at")})
@@ -1309,7 +1381,8 @@ def _fill_case_later(user: dict, business_id: str, goal: str, run: dict, case_id
     async def go() -> None:
         try:
             await assessment_summary.feed(get_orchestrator(), user, business_id, goal, {}, run.get("answers") or {}, f"research-fill:{run['id']}",
-                                          subject_id=case_id or run.get("case_id"), adopted=drafted, case_drafts=run.get("case_drafts") or {})
+                                          subject_id=case_id or run.get("case_id"), adopted=drafted, case_drafts=run.get("case_drafts") or {},
+                                          as_drafts=True)      # suggestions to accept, edit or reject (25 Oct)
         except Exception:      # noqa: BLE001 - the drafts stay on the run, to adopt from the page
             logger.info("research %s not put on the case", run.get("id"), exc_info=True)
     task = asyncio.ensure_future(go())
@@ -1500,7 +1573,10 @@ async def quick_check_questions(business_id: str, goal_key: str, said: str | Non
     # The owner's own sentence, when they started here from one: read by the same readers as the homepage (QA P5-1).
     read = _read_said(said, goal_key, {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)}) if said and said.strip() else {}
     # QA R8-8: the latest result for this check (and offering), shown on return instead of asking the questions again.
-    last = (data.get("quick_check_answers") or {}).get(goal_key) or {}
+    last = dict((data.get("quick_check_answers") or {}).get(goal_key) or {})
+    if goal_key == "business_risks" and last.get("result"):
+        # Worked out again from its answers and today's records, never an old copy (the owner, 24 Oct: "it has a different score")
+        last["result"] = first_value.assess(goal_key, last.get("answers") or {}, data)
     # The conversation as usual, from the current data (the owner's QA, 22 Oct: "it's not using the current data like when
     # coming from the landing page"): what the funding case already holds is shown once, "From your funding case", and
     # not asked; only what is missing is asked. What the owner says now wins over the case.
@@ -1678,6 +1754,45 @@ async def prepare_session(session_id: str, body: PrepareIn | None = None, user=D
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     return goals.public(session)
+
+
+@router.get("/businesses/{business_id}/figures")
+async def business_figures(business_id: str, user=Depends(get_current_user)):
+    """The one set of figures (R-4): monthly revenue and costs, cash, runway and the customers' shares, read the same way by
+    the risk check, the dashboard and Simulation, with where each came from."""
+    from app.modules.agent import figures
+    data = await _business_for(user, business_id)
+    return figures.of(data)
+
+
+class RiskCheckIn(BaseModel):
+    answers: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/task-sessions/{session_id}/risk-check")
+async def session_risk_check(session_id: str, body: RiskCheckIn, user=Depends(get_current_user)):
+    """[Check my risks], in one request (the owner's brief, 25 Oct: the result in under 5 seconds): the answers kept, the
+    workspace connected when it isn't yet, the free hand-off (R-1) and the result. Rules only: no model, no task, no charge."""
+    session = await _session(session_id)
+    _mine(session, user)
+    if session.get("goal_key") != "business_risks":
+        raise HTTPException(status_code=409, detail="This isn't a risk check.")
+    if not session.get("user_id"):
+        session = await goals.attach(get_store(), session, user["id"])
+    if body.answers:
+        session = await goals.add_inputs(get_store(), session, body.answers, confirm=True, rules_only=True)
+    if not session.get("business_id"):
+        try:
+            session = await goals.resume(get_store(), session, get_orchestrator(), user["id"])
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+    if goals.public(session)["missing"]:
+        raise HTTPException(status_code=409, detail="A few details are still needed before your risks can be checked.")
+    try:
+        session = await goals.prepare(get_store(), session, get_orchestrator(), user["id"], user.get("email"))      # keeps the answers once
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    return {**await _first_value_reply(session, user), "session": goals.public(session)}
 
 
 @router.get("/task-sessions/{session_id}/status")

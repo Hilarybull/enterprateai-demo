@@ -1,4 +1,5 @@
 import { currencySign } from "../lib/format";
+import { toast as appToast } from "../lib/toast";
 import { getSubject } from "../lib/readiness";
 import { refusalMessage } from "../lib/entitlement";
 import { STREAMED_DOCS, streamBlueprint } from "../lib/blueprintStream";
@@ -766,14 +767,49 @@ export default function BlueprintPage() {
       if (customer) setTargetMarket(customer);
       const problem = pick("customers.problem", "problem");
       if (problem) setProblem(problem);
+      startNewDoc("business_plan");      // straight to the plan's form, filled in (25 Oct)
+    }).catch(() => {});
+  }, [bpSearchParams, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Opened from a funding case (?funding=<id>): the plan is written from that case, its customer, what sets it apart and
+  // the funding ask with what it pays for (the owner, 25 Oct: "just like the launch readiness business plan")
+  const fundingFor = useRef("");
+  useEffect(() => {
+    const caseId = bpSearchParams.get("funding");
+    if (!caseId || !workspaceIdStored || fundingFor.current === caseId) return;
+    fundingFor.current = caseId;
+    getSubject(workspaceIdStored, "funding", caseId).then((out) => {
+      const d = out?.data || {};
+      const pick = (...paths) => paths.map((p) => p.split(".").reduce((x, k) => (x == null ? x : x[k]), d)).find((v) => typeof v === "string" && v.trim());
+      const customer = pick("market.target_segment");
+      if (customer) setTargetMarket(customer);
+      const apart = pick("market.differentiation");
+      if (apart) setValueProp(apart);
+      const purpose = pick("purpose");
+      const cur = d.currency || "";
+      const amount = Number(d.target_amount) || 0;
+      const lines = (Array.isArray(d.use_of_funds) ? d.use_of_funds : []).filter((a) => a && Number(a.amount))
+        .map((a) => `${a.purpose || a.category}: ${cur} ${Number(a.amount).toLocaleString("en-GB")}`);
+      const notes = [
+        amount ? `Funding sought: ${cur} ${amount.toLocaleString("en-GB")}${d.route_preference && d.route_preference !== "unsure" ? ` (${d.route_preference})` : ""}${purpose ? ` for ${purpose}` : ""}.` : "",
+        lines.length ? `Use of funds: ${lines.join("; ")}.` : "",
+        pick("traction.summary") ? `Traction: ${pick("traction.summary")}` : "",
+        pick("market.acquisition_approach") ? `How it wins customers: ${pick("market.acquisition_approach")}` : "",
+      ].filter(Boolean).join("\n");
+      if (notes) setExtraNotes(notes);
+      startNewDoc("business_plan");
     }).catch(() => {});
   }, [bpSearchParams, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
   async function decideDraft(decision) {
     if (!reviewId || !workspaceIdStored) return;
+    // Said the moment it is pressed, then its result in place (the owner, 25 Oct: no toast while it was processing)
+    const t = appToast({ kind: "pending", title: decision === "accept" ? "Accepting your business plan…" : "Rejecting the draft…" });
     try {
       await apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}/decide`, "POST", { decision });
-      showToast?.("success", decision === "accept" ? "Accepted. This is now your business plan." : "Rejected. Nothing else was changed.");
-    } catch { /* the bar stays, to try again */ return; }
+      appToast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "This is now your business plan." : "Nothing else was changed." });
+    } catch {
+      appToast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(decision) }] });
+      return;      // the bar stays, to try again
+    }
     const next = new URLSearchParams(bpSearchParams);
     next.delete("review");
     setBpSearchParams(next, { replace: true });

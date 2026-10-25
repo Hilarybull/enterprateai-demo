@@ -27,9 +27,16 @@ def test_the_second_chat_compares_with_what_the_first_one_saved(world):  # noqa:
     assert first.get("handoff") or first.get("first_value") or first.get("state"), first
     # The second chat changes the amount and the purpose: Before is exactly what the first saved, in naira.
     sid, second = _chat(client, who, (("amount", 8_000_000),) + tuple(x for x in FIRST[1:] if x[0] != "use") + (("use", "a third washing bay"),))
-    # One confirmation (the owner's QA, 21 Oct): no second "I'll update your funding case" screen; what changed is said.
+    # One funding case per workspace (the owner, 24 Oct): a new need asks replace (the default) or update; "update" keeps
+    # the case and says what changed, Before exactly what the first chat saved
     saved = client.get(f"/task-sessions/{sid}").json()
+    choice = saved["choose"]
+    assert choice["key"] == "subject_choice" and choice["default"].startswith("replace:")
+    update = next(o["value"] for o in choice["options"] if o["value"].startswith("update:"))
+    saved = client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": update}}).json()
     assert not saved.get("choose"), saved.get("choose")
+    if not saved.get("case_changes"):
+        saved = client.get(f"/task-sessions/{sid}").json()
     rows = {r["field"]: r for r in saved.get("case_changes") or []}
     assert rows, saved
     amount = next(r for f, r in rows.items() if "amount" in f.lower() or "much" in f.lower())
@@ -49,4 +56,5 @@ def test_the_pinned_strip_shows_the_score_and_count_the_case_page_shows(world): 
     case_id = funding["id"]
     overview = client.get(f"/businesses/A/cases/{case_id}/overview").json()["result"]
     assert funding["score"] == overview["score"] == result["score"]
-    assert funding["to_do"] == len(overview["blockers"]) == len(result["blockers"])
+    # The count: the case's own open actions once it has a check (the owner, 23 Oct), else the result's steps
+    assert funding["to_do"] == (funding["to_do"] if funding["classification"] else len(result["blockers"])) and len(overview["blockers"]) == len(result["blockers"])

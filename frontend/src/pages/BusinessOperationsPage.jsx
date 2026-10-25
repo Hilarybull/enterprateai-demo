@@ -1807,7 +1807,7 @@ export default function BusinessOperationsPage() {
       if (tab === "Procurement") setProcSub(sub);
       if (tab === "Transactions") setTxnSub(sub);
     }
-    if (p.get("new") === "quote" || p.get("new") === "invoice") setCreateFromLink(p.get("new"));      // "Create a quotation" from a check: the form, open
+    if (["quote", "invoice", "expense"].includes(p.get("new"))) setCreateFromLink(p.get("new"));      // "Add an expense" from the risk check: the form, open      // "Create a quotation" from a check: the form, open
   }, [location.search]);
   const [createFromLink, setCreateFromLink] = useState(null);
   const [recordsIn, setRecordsIn] = useState(false);      // the workspace's records have been read at least once

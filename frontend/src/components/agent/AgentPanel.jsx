@@ -91,6 +91,10 @@ function fundingWhat(result) {
   return `${amt} ${route}`.trim();
 }
 
+const ASK_KEY = "ea_agent_ask";      // a question handed over from another page, kept until answered (R-7)
+let sharedAsk = null;      // { text, businessId, promise }: the one request for a handed-over question, whichever copy shows it
+let lastAsk = null;        // { text, businessId, res, at }: its answer, shown again by a copy that appears after it came back
+
 export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null }) {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
@@ -212,28 +216,66 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const [asked, setAsked] = useState("");      // the owner's own words, shown above the answer
   /** What the owner types: the landing page's conversation, the one pathway everywhere (22 Oct). */
   function chat(text) {
-    if (!businessId || busy || paused) return;
+    if (!businessId || busy) return;
     setAsked(text);
     setReply({ tone: "plan", text: "", check: { goalKey: "", said: text, at: Date.now() } });
     setPrompt("");
   }
 
   const handed = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    // A copy that appears after the handed-over question was answered shows that answer, never an empty card (R-7)
+    if (!lastAsk || lastAsk.businessId !== businessId || Date.now() - lastAsk.at > 120000 || handed.current) return;
+    handed.current = true;
+    setAsked(lastAsk.text);
+    handle(lastAsk.res, { text: lastAsk.text, sourceChannel: "text" });
+  }, [businessId]);      // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // Sent once the card can send (the owner's QA, 23 Oct: while the dashboard showed its saved copy the card was paused,
-    // the message was marked as handed over and dropped, and the landing page "just entered the dashboard")
-    if (handed.current || !businessId || paused || busy) return;
+    // the message was marked as handed over and dropped, and the landing page "just entered the dashboard"). Kept until a
+    // card that is still on screen has its answer (R-7, 24 Oct: the dashboard renders this card in two layouts; the first
+    // took the question and went, and it was lost).
+    if (handed.current || !businessId || busy) return;      // a question is answered while the dashboard updates (25 Oct)
     const params = new URLSearchParams(window.location.search);
-    const ask = params.get("ask");
+    let ask = params.get("ask");
+    if (ask) {
+      try { sessionStorage.setItem(ASK_KEY, ask); } catch { /* sent from the address below */ }
+      params.delete("ask");
+      window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+    } else {
+      try { ask = sessionStorage.getItem(ASK_KEY); } catch { ask = null; }
+    }
     if (!ask) return;
     handed.current = true;
-    params.delete("ask");
-    window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
-    send({ text: ask, sourceChannel: "text" });
-  }, [businessId, paused, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
+    // One request for the question, shared by every copy of this card: asked once, answered by the copy still on screen
+    const req = { text: ask, sourceChannel: "text" };
+    if (!sharedAsk || sharedAsk.text !== ask || sharedAsk.businessId !== businessId) {
+      sharedAsk = { text: ask, businessId, promise: submitAgentRequest({ businessId, background: true, ...req }) };
+    }
+    const mine = sharedAsk;
+    setBusy(true);
+    setAsked(ask);
+    setReply({ tone: "indigo", text: WORKING_TEXT, working: true });
+    mine.promise.then((res) => {
+      lastAsk = { text: ask, businessId, res, at: Date.now() };      // kept for a copy that replaces this one (a layout swap)
+      if (!alive.current) return;      // this copy went: the copy on screen shows it
+      handle(res, req);
+      setPrompt("");
+      try { sessionStorage.removeItem(ASK_KEY); } catch { /* answered either way */ }
+      if (sharedAsk === mine) sharedAsk = null;
+    }).catch((e) => {
+      if (alive.current) setReply({ tone: "rose", text: agentErrorMessage(e, "The Agent couldn't start that. Please try again.") });
+      if (sharedAsk === mine) sharedAsk = null;
+    }).finally(() => { if (alive.current) setBusy(false); });
+  }, [businessId, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(req) {
-    if (!businessId || busy || paused) return;
+    // What is typed is answered while the dashboard is "Updating…" (the owner's brief, 25 Oct); only a task started from a
+    // tile waits for the fresh dashboard
+    if (!businessId || busy || (paused && req?.capability && req?.sourceChannel !== "text")) return undefined;
+    lastAsk = null;      // a new message: the handed-over answer is no longer the current one
     setBusy(true);
     if (req?.text && req.sourceChannel === "text") setAsked(req.text);
     else if (req?.text === undefined || req?.text === null) setAsked("");
@@ -442,7 +484,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-500" />
         {/* Space reserved here for a future microphone control (voice uses the same request). */}
         {/* Always solid indigo; dimmed only while a request is in progress. An empty prompt is ignored on submit. */}
-        <button type="submit" disabled={busy || paused} aria-label="Send" title={paused ? PAUSED_TIP : undefined}
+        <button type="submit" disabled={busy} aria-label="Send"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white transition hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-60">
           {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <Icon name="send" className="h-4 w-4" />}
         </button>
@@ -579,15 +621,22 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
   // opens its approval in the drawer: the owner reviews, edits, approves or declines without leaving.
   // An Agent draft's review id, from its link (?review=…)
   const draftReview = (to) => { try { return new URLSearchParams(String(to || "").split("?")[1] || "").get("review"); } catch { return null; } };
+  // Said the moment it is pressed (the owner, 25 Oct: "there was no toast to let me know it's processing"): a pending toast
+  // and the button's own words, turning into the result in place
+  const [deciding, setDeciding] = useState({});      // draft id: "accept" | "reject"
   const decideDraft = async (item, decision) => {
     const id = item.draft_id || draftReview(item.to);
-    if (!id || !businessId) return;
+    if (!id || !businessId || deciding[id]) return;
+    setDeciding((d) => ({ ...d, [id]: decision }));
+    const t = toast({ kind: "pending", title: decision === "accept" ? `Accepting ${item.title || "the draft"}…` : `Rejecting ${item.title || "the draft"}…` });
     try {
       await apiRequest(`/businesses/${businessId}/agent-drafts/${id}/decide`, "POST", { decision });
-      toast({ kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use." : "Nothing else was changed." });
+      toast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use." : "Nothing else was changed." });
       onChanged?.();
     } catch {
-      toast({ kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(item, decision) }] });
+      toast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(item, decision) }] });
+    } finally {
+      setDeciding((d) => { const next = { ...d }; delete next[id]; return next; });
     }
   };
   const amountOf = (p) => {
@@ -641,9 +690,11 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
           {item.type === "draft" && (item.draft_id || draftReview(item.to)) && (
             // Accept, Edit or Reject here, as on the open draft (the owner's QA, 23 Oct)
             <div className="-mt-1 flex items-center gap-3 rounded-b-xl border border-t-0 border-slate-200 px-3 py-1.5 dark:border-slate-700" data-draft-actions>
-              <button type="button" disabled={paused || leaving} onClick={() => decideDraft(item, "accept")} className="text-[12px] font-semibold text-emerald-700 hover:underline disabled:opacity-60">Accept</button>
-              <button type="button" disabled={paused || leaving} onClick={() => navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`)} className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-60">Edit</button>
-              <button type="button" disabled={paused || leaving} onClick={() => decideDraft(item, "reject")} className="text-[12px] font-semibold text-slate-600 hover:underline disabled:opacity-60">Reject</button>
+              {(() => { const now = deciding[item.draft_id || draftReview(item.to)]; return (<>
+              <button type="button" disabled={paused || leaving || Boolean(now)} aria-busy={now === "accept"} onClick={() => decideDraft(item, "accept")} className="text-[12px] font-semibold text-emerald-700 hover:underline disabled:opacity-60">{now === "accept" ? "Accepting…" : "Accept"}</button>
+              <button type="button" disabled={paused || leaving || Boolean(now)} onClick={() => navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`)} className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-60">Edit</button>
+              <button type="button" disabled={paused || leaving || Boolean(now)} aria-busy={now === "reject"} onClick={() => decideDraft(item, "reject")} className="text-[12px] font-semibold text-slate-600 hover:underline disabled:opacity-60">{now === "reject" ? "Rejecting…" : "Reject"}</button>
+              </>); })()}
             </div>
           )}
           </Collapse>

@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 import re
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,10 +26,10 @@ UNSURE = "unknown"      # what "Not sure" is stored as: an answer, and never a f
 
 # Which goal gets which assessment.
 ASSESSMENT_OF = {"test_idea": "idea_viability_initial", "launch": "launch_readiness_initial", "need_funding": "funding_readiness_initial",
-                 "price_offer": "pricing_health_initial", "more_customers": "customer_growth_foundation"}
+                 "price_offer": "pricing_health_initial", "more_customers": "customer_growth_foundation", "business_risks": "business_risk_initial"}
 HEADLINE = {"idea_viability_initial": "Initial Idea Viability", "launch_readiness_initial": "Initial Launch Readiness",
             "funding_readiness_initial": "Funding readiness", "pricing_health_initial": "Pricing Health",
-            "customer_growth_foundation": "Customer Growth Foundation"}
+            "customer_growth_foundation": "Customer Growth Foundation", "business_risk_initial": "Business Risk Check"}
 # The premium next action, and what it will do (said before any upgrade is asked for: PRD 12.3).
 PREMIUM = {
     "idea_viability_initial": ("Validate the weak points", "research competitors and demand, find comparable prices and test the assumptions the score rests on"),
@@ -37,6 +37,7 @@ PREMIUM = {
     "funding_readiness_initial": ("Help me become funding-ready", "research funding routes, structure your use of funds, prepare forecast assumptions and close the gaps a funder will ask about"),
     "pricing_health_initial": ("Find my best price", "research competitor prices and market price bands, and test alternative prices against demand"),
     "customer_growth_foundation": ("Find my best customer opportunities", "research segments, channels and demand signals, and prepare a brief of the best opportunities"),
+    "business_risk_initial": ("Plan for my biggest risks", "model a shock to the business and draft what to do about each risk"),
 }
 FREE_NEXT = {
     "idea_viability_initial": [("Write a business plan", "/business-plan"), ("Add it to your catalogue", "/catalogue")],
@@ -46,6 +47,7 @@ FREE_NEXT = {
     "funding_readiness_initial": [("Prepare my funding pack", "/funding?tab=documents"), ("Open funding case", "/funding?tab=results")],
     "pricing_health_initial": [("Save the price in your catalogue", "/catalogue"), ("Create a quotation", "/operations")],
     "customer_growth_foundation": [("Set up your Marketplace profile", "/marketplace/profile"), ("Create a quotation", "/operations")],
+    "business_risk_initial": [],      # each risk card has its own button: never the same links again below them
 }
 
 
@@ -466,7 +468,186 @@ def customers(a: dict, data: dict | None = None, now: datetime | None = None, si
     return out
 
 
-_RUN = {"need_funding": funding, "launch": launch, "test_idea": idea, "price_offer": pricing, "more_customers": customers}
+# Sentence starts that are ordinary words, lower-cased after "You asked about ...:" (a customer's name keeps its capital)
+_PLAIN_START = {"The", "Over", "One", "No", "Less", "Three", "About", "Your", "It's", "Customers", "Whether"}
+
+
+def risk_facts(data: dict | None, now: datetime | None = None) -> dict:
+    """What the records say about the business's risks, from the one source of figures (agent/figures.py, R-4): the biggest
+    customer's share, revenue, costs and cash a month, months of cash, overdue invoices, and the team size."""
+    from app.modules.agent import figures
+    data = data or {}
+    f = figures.of(data, (now or datetime.now(timezone.utc)).date())
+    out: dict[str, Any] = {**f, "team": None}
+    p = data.get("workspace_profile") or {}
+    # The profile form's own field, company_size ("solo", "2-5", ...); a range counts from its smallest size
+    for k in ("company_size", "team_size", "employee_count", "staff_count"):
+        raw = str(p.get(k) or "").strip().lower().replace("_", "-")
+        if not raw:
+            continue
+        if raw in ("solo", "just me", "1", "me"):
+            out["team"] = 1
+            break
+        m = re.search(r"\d+", raw)
+        if m and int(m.group(0)) > 0:
+            out["team"] = int(m.group(0))
+            break
+    return out
+
+
+def saved_risk_answers(data: dict | None) -> dict[str, dict]:
+    """What the owner answered in an earlier risk check (R-2): {question: {"value", "at"}}, reused by every later check."""
+    kept = ((data or {}).get("quick_check_answers") or {}).get("business_risks") or {}
+    at = str(kept.get("at") or "")[:10]
+    return {k: {"value": v, "at": at} for k, v in (kept.get("answers") or {}).items()
+            if k in ("key_person", "cash_in_bank", "monthly_costs") and str(v).strip() and str(v).strip().lower() != UNSURE}
+
+
+def _engines(f: dict, key_person: str) -> dict | None:
+    """The authoritative engines on the same figures (Onboarding PRD 6.1): Survival from cash, revenue and costs; Stability
+    from the customers and what the owner said about being away; Fragility from both. None while they lack their inputs."""
+    if f.get("cash") is None or not f.get("costs_monthly") or f.get("revenue_monthly") is None:
+        return None
+    try:
+        from app.engines import (FragilityEngineInput, StabilityEngineInput, SurvivalEngineInput, run_fragility_engine,
+                                 run_stability_engine, run_survival_engine)
+        sv = run_survival_engine(SurvivalEngineInput(business_id="risk_check", cash_balance=float(f["cash"]), monthly_revenue=float(f["revenue_monthly"]),
+                                                     monthly_expenses=float(f["costs_monthly"]), variable_costs_monthly=0.0, fixed_costs_monthly=float(f["costs_monthly"])))
+        st = run_stability_engine(StabilityEngineInput(business_id="risk_check", top1_customer_revenue_pct=f.get("top_share"), customer_count=int(f.get("clients") or 0),
+                                                       key_person_dependency=key_person in ("stops", "slows"), has_backup_personnel=key_person == "runs"))
+        sc, tc = sv.scores, st.scores
+        fr = run_fragility_engine(FragilityEngineInput(business_id="risk_check", survival_cash_health=sc.survival_score if sc else None,
+                                                       stability_customer=tc.customer_stability_score if tc else None,
+                                                       stability_operational=tc.operational_dependency_score if tc else None,
+                                                       top_client_share_pct=f.get("top_share"), client_count=int(f.get("clients") or 1)))
+        return {"survival": sc.survival_score if sc else None, "stability": tc.stability_score if tc else None,
+                "fragility": fr.scores.fragility_index if fr.scores else None,
+                "from": {"runway": "Survival engine", "concentration": "Stability engine", "key_person": "Stability engine", "late_payment": "Your invoices"}}
+    except Exception:      # noqa: BLE001 - the risks stand without the engine view
+        return None
+
+
+def _amount_words(v: float, sign: str) -> str:
+    return f"{sign}{v:,.2f}".replace(".00", "")
+
+
+def risks(a: dict, data: dict | None = None, now: datetime | None = None, sign: str = "£") -> dict:
+    """The free Business Risk Check (Onboarding PRD 6.1): the four common risks, read from the records first (the one source of
+    figures), then what the owner said; only real risks are listed as risks, what is fine apart, what isn't on record apart.
+    No made-up total (the owner, 24 Oct): the engines' own numbers, under Advanced, once they have their inputs."""
+    f = risk_facts(data, now)
+    said = lambda k: str(a.get(k) or "").strip().lower()      # noqa: E731
+    saved = saved_risk_answers(data)
+    shown = known_answers("business_risks", data) if data else {}
+    spoke = lambda k: said(k) not in ("", UNSURE) and said(k) != shown.get(k)      # noqa: E731
+    crit = []
+    # 1. Relying on one customer
+    if f["top_share"] is not None and spoke("top_share"):
+        state = {"over_50": UNMET, "20_50": PARTIAL, "under_20": MET}.get(said("top_share"), UNKNOWN)
+        mine = {"over_50": "more than half", "20_50": "a fifth to a half", "under_20": "less than a fifth"}.get(said("top_share"), said("top_share"))
+        crit.append({"key": "concentration", "label": "Relying on one customer", "state": state,
+                     "strength": f"You said your biggest customer is {mine} of your income", "gap": f"You said your biggest customer is {mine} of your income",
+                     "note": f"Your invoices show {f['top_customer']} at {round(f['top_share'])}%"})
+    elif f["top_share"] is not None:
+        share = round(f["top_share"])
+        state = UNMET if share >= 50 else PARTIAL if share >= 30 else MET
+        crit.append({"key": "concentration", "label": "Relying on one customer", "state": state, "customer": f["top_customer"],
+                     "strength": f"No customer is more than {share}% of your income", "gap": f"{f['top_customer']} is {share}% of your paid income",
+                     "why": "Losing them would take that share of your income with it."})
+    else:
+        state = {"over_50": UNMET, "20_50": PARTIAL, "under_20": MET}.get(said("top_share"), UNKNOWN)
+        crit.append({"key": "concentration", "label": "Relying on one customer", "state": state, "strength": "No single customer is a large share of income",
+                     "gap": "Over half your income comes from one customer" if state == UNMET else "One customer is a large share of income"
+                     if state == PARTIAL else "I can't see who pays you yet: no paid invoices are recorded"})
+    # 2. Cash: worked out from what exists (R-3), what's missing asked for exactly
+    cash = _num(a.get("cash_in_bank")) if _num(a.get("cash_in_bank")) is not None else _num((saved.get("cash_in_bank") or {}).get("value"))
+    cash_from = "what you told me" if cash is not None else f["sources"].get("cash")
+    cash = cash if cash is not None else f["cash"]
+    costs = f["costs_monthly"]
+    from app.modules.agent.figures import day_words
+    said_costs = _num(a.get("monthly_costs")) if _num(a.get("monthly_costs")) is not None else _num((saved.get("monthly_costs") or {}).get("value"))
+    if said_costs is not None and said_costs > 0:
+        costs, f["sources"]["costs_monthly"] = said_costs, "your usual monthly costs, as you told me"
+    # Too thin to judge (the owner, 24 Oct: "2 same-day expenses averaged over 3 months understates spending"): an estimate,
+    # and the regular costs asked for before any months of cash are shown
+    thin = said_costs is None and f.get("costs_estimate", False)      # the same rule as the dashboard's cash card
+    if spoke("runway"):
+        state = {"under_3": UNMET, "3_6": PARTIAL, "over_6": MET}.get(said("runway"), UNKNOWN)
+        crit.append({"key": "runway", "label": "Cash runway", "state": state, "strength": "Over six months of costs covered by cash",
+                     "gap": "Less than three months of costs covered by cash" if state == UNMET else "Three to six months of costs covered by cash"})
+    elif cash is not None and thin:
+        from app.modules.agent.figures import estimate_basis
+        crit.append({"key": "runway", "label": "Cash runway", "state": UNKNOWN, "strength": "", "ask": "monthly_costs",
+                     "gap": f"Your cash runway is only an estimate: it's based on {estimate_basis(f)}. Are there regular monthly costs, "
+                            "like rent, wages or subscriptions?"})
+    elif cash is not None and costs:
+        months = round(max(0.0, cash) / costs, 1)
+        state = UNMET if months < 3 else PARTIAL if months < 6 else MET
+        basis = (f"{_amount_words(cash, sign)} in the bank ({cash_from}); about {_amount_words(costs, sign)} a month spent "
+                 f"({f['sources'].get('costs_monthly')}). If you have other costs, add them.")
+        crit.append({"key": "runway", "label": "Cash runway", "state": state, "strength": f"About {months:g} months of cash at your recorded spending",
+                     "gap": f"About {months:g} months of cash at your recorded spending", "note": basis, "basis": basis})
+    elif costs:
+        crit.append({"key": "runway", "label": "Cash runway", "state": UNKNOWN, "strength": "",
+                     "gap": "I don't know what's in the bank today. Tell me and I'll work out how long your cash lasts.", "ask": "cash_in_bank"})
+    else:
+        crit.append({"key": "runway", "label": "Cash runway", "state": UNKNOWN, "strength": "",
+                     "gap": "I can't tell how long your cash would last because no expenses are recorded. Add last month's expenses and I'll show you."})
+    # 3. Late payment
+    if f["overdue"] is not None and not spoke("paid_on_time"):
+        n = f["overdue"]
+        state = MET if n == 0 else PARTIAL if n <= max(1, f["invoices"] // 5) else UNMET
+        crit.append({"key": "late_payment", "label": "Late payments", "state": state, "strength": "No invoices overdue",
+                     "gap": f"{n} invoice{'s' if n != 1 else ''} overdue", "why": "Late payers tie up the cash you have already earned."})
+    else:
+        state = {"on_time": MET, "sometimes_late": PARTIAL, "often_late": UNMET}.get(said("paid_on_time"), UNKNOWN)
+        crit.append({"key": "late_payment", "label": "Late payments", "state": state, "strength": "Customers pay on time",
+                     "gap": "Customers often pay late" if state == UNMET else "Customers sometimes pay late" if state == PARTIAL
+                     else "I can't see how customers pay yet: no invoices are recorded"})
+    # 4. Cover if you're away: what the owner says (now or before, R-2); a team size never answers it, except "just me"
+    kp = said("key_person") if said("key_person") not in ("", UNSURE) else str((saved.get("key_person") or {}).get("value") or "").lower()
+    state = {"runs": MET, "slows": PARTIAL, "stops": UNMET}.get(kp, UNKNOWN)
+    solo = state == UNKNOWN and f["team"] == 1
+    if solo:
+        state, kp = UNMET, "stops"
+    # Wording follows the answer (R-5: "slows down" never says "could stop")
+    crit.append({"key": "key_person", "label": "Cover if you're away for a month", "state": state, "strength": "The business carries on without you",
+                 "gap": ("It's just you, so the business stops without you" if solo else "The business stops without you") if state == UNMET
+                 else "The business slows down without you" if state == PARTIAL else "What happens when you're away isn't known yet",
+                 "why": "A month away could stop the work and the income." if state == UNMET else "A month away would slow the work and the income."
+                 if state == PARTIAL else "", "ask": "key_person" if state == UNKNOWN else None})
+    out = _result("business_risk_initial", criteria=crit, score=None, score_label="", now=now, sign=sign,
+                  basis=["What you told me", "Your invoices, expenses and cash on record"])
+    out["partial_score"] = None
+    out["premium_next_action"] = None      # free only
+    extra = {c["key"]: {k: c[k] for k in ("note", "why", "ask", "basis", "customer") if c.get(k)} for c in crit}      # "customer": the what-if is about them (R-4)
+    every = [{**b, **extra.get(b["key"], {})} for b in out["blockers"]]
+    # Only what was found to be a risk is a risk; what isn't on record is said apart, with the one thing to add (R-5, R-6)
+    out["blockers"] = [b for b in every if b.get("kind") != "unknown"]
+    out["not_on_record"] = [{"key": b["key"], "label": b["label"], **({"ask": b["ask"]} if b.get("ask") else {})} for b in every if b.get("kind") == "unknown"]
+    # What is fine, with what it rests on when that is thin ("16.7 months" from 2 expenses: said so)
+    out["fine"] = [(f"{c['strength']} ({c['basis']})" if c.get("basis") else c["strength"]) for c in crit if c["state"] == MET and c.get("strength")]
+    out["checked"] = sum(1 for c in crit if c["state"] != UNKNOWN)
+    out["engines"] = _engines({**f, "cash": cash}, kp) if out["checked"] == len(crit) else None      # no number until all four are known
+    from app.modules.agent.figures import day_words
+    out["provenance"] = {k: f"From you, {day_words(v['at'])}" for k, v in saved.items() if v.get("at")}
+    worry = str(a.get("worry") or "").strip()
+    from app.modules.agent.goals import risk_answers
+    named = next(iter(risk_answers(worry)), None) if worry and worry.lower() != UNSURE else None
+    about = {"top_share": "relying on one customer", "runway": "your cash", "paid_on_time": "late payment", "key_person": "the business depending on you"}
+    if named:
+        crit_key = {"top_share": "concentration", "paid_on_time": "late_payment"}.get(named, named)
+        c = next(x for x in crit if x["key"] == crit_key)
+        found = c["strength"] if c["state"] == MET else c["gap"]
+        verdict = {MET: "That one looks under control", PARTIAL: "That's a real risk", UNMET: "That's your biggest risk right now"}.get(c["state"], "")
+        out["focus"] = {"key": crit_key, "text": f"You asked about {about[named]}: {found[:1].lower() + found[1:] if found.split(' ')[0] in _PLAIN_START else found}."
+                                               + (f" {verdict}." if verdict else "")}
+        out["blockers"] = sorted(out["blockers"], key=lambda b: b.get("key") != crit_key)
+    out["note"] = "This looks at four common risks from your records and answers. It is not financial advice."
+    return out
+
+
+_RUN = {"need_funding": funding, "launch": launch, "test_idea": idea, "price_offer": pricing, "more_customers": customers, "business_risks": risks}
 
 
 def covered(goal_key: str | None) -> bool:
@@ -724,12 +905,30 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
     city, country = str(profile.get("city") or "").strip(), str(profile.get("country") or "").strip()
     place = ", ".join(x for x in (city, country) if x and x.lower() != "not specified")
     out: dict[str, Any] = {}
+    if goal_key == "business_risks":
+        # What the records already tell is not asked (the owner, 23 Oct): the biggest customer's share, the cash, late payment
+        f = risk_facts(data)
+        if f["top_share"] is not None:
+            out["top_share"] = "over_50" if f["top_share"] >= 50 else "20_50" if f["top_share"] >= 20 else "under_20"
+        if f["runway_months"] is not None and not f.get("costs_estimate"):      # an estimate is never taken as known (R-9)
+            out["runway"] = "under_3" if f["runway_months"] < 3 else "3_6" if f["runway_months"] < 6 else "over_6"
+        if f["overdue"] is not None:
+            out["paid_on_time"] = "on_time" if f["overdue"] == 0 else "sometimes_late" if f["overdue"] <= max(1, f["invoices"] // 5) else "often_late"
+        if f["team"] == 1:
+            out["key_person"] = "stops"      # a business of one; any larger team is asked, never guessed
+        for k, v in saved_risk_answers(data).items():
+            out.setdefault(k, v["value"])      # what the owner answered before (R-2): never asked again
+        return out
     if goal_key in ("launch", "more_customers", "price_offer") and offers:
         out["sell"] = offers[0] if goal_key == "price_offer" else ", ".join(offers[:3])
     if goal_key == "launch" and co["about"] and not str(co["about"]).endswith("with EnterprateAI."):
         out["sell"] = co["about"][:400]
-    if goal_key in ("launch", "more_customers", "test_idea", "price_offer") and co["target"]:
-        out["customer"] = co["target"]
+    # The profile's target customer, only when the owner set it: one the Agent filled from a chat about another offering is
+    # never proposed for this one (the owner, 25 Oct: "Dog owners aged 30 to 60" offered for a carpet cleaning launch)
+    owners = lambda f: (lambda e: not e or e.get("by") == "owner")(((data or {}).get("profile_provenance") or {}).get(f))      # noqa: E731
+    target = next((str(profile.get(f)).strip() for f in ("target_customer", "target_market") if str(profile.get(f) or "").strip() and owners(f)), "")
+    if goal_key in ("launch", "more_customers", "test_idea", "price_offer") and target:
+        out["customer"] = target
     if goal_key in ("launch", "more_customers") and place:
         out["where"] = place
     if goal_key == "need_funding" and profile.get("operating_stage") in _STAGE_FOR_FUNDING and profile.get("operating_stage") != "idea":

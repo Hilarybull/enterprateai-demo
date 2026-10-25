@@ -274,7 +274,12 @@ def context_of(data: dict | None, i: dict) -> dict:
     # workspace's stale industry): the offering said here, then the workspace's industry.
     # then the offering itself (the owner's QA, 22 Oct: a car wash's market searched as "consulting", the profile's industry)
     sector = (own("sell") or own("description")) or offering or words(p.get("primary_industry")) or words(p.get("business_type"))
-    size = words(p.get("company_size")) or (f"{i['team_size']:g}-person" if i.get("team_size") else "small")
+    # "2-5" said in words (the owner, 25 Oct: "a 2-5 business" in the text): "2 to 5 person"
+    raw = words(p.get("company_size"))
+    span = re.fullmatch(r"\s*(\d+)\s*[-–]\s*(\d+)\s*", raw or "")
+    plus = re.fullmatch(r"\s*(\d+)\s*\+\s*", raw or "")
+    raw = f"{span.group(1)} to {span.group(2)} person" if span else f"{plus.group(1)} or more person" if plus else (f"{raw}-person" if re.fullmatch(r"\d+", raw or "") else raw)
+    size = raw or (f"{i['team_size']:g}-person" if i.get("team_size") else "small")
     # The case's own currency when the owner said one (₦, naira, NGN), else the business default: never empty.
     currency = str(i.get("currency") or "").upper() or task_currency(data)
     return {"offering": offering, "sector": sector, "place": place, "country": country, "customer": words(i.get("customer")), "size": size,
@@ -707,7 +712,7 @@ def refresh_from_records(run: dict, data: dict | None, today: date | None = None
     return out
 
 
-def inputs_of(goal: str, answers: dict, data: dict | None) -> dict[str, Any]:
+def inputs_of(goal: str, answers: dict, data: dict | None, today: date | None = None) -> dict[str, Any]:
     """{field: value} plus `_from` {field: where it came from}. Order: this check's answers, then facts adopted or given
     anywhere in the workspace for the same offering, earlier checks, the catalogue, onboarding."""
     data = data or {}
@@ -768,7 +773,7 @@ def inputs_of(goal: str, answers: dict, data: dict | None) -> dict[str, Any]:
         take(key, value, where)
     # The business's own records (Business Operations) come next: actual figures beat an older review's estimate (the
     # owner's QA, 20 Oct: "the workspace already has business operations; fill these fields intelligently").
-    records = records_of(data)
+    records = records_of(data, today)      # "today": the caller's day (a case's forecast drafts on its own date)
     for key, value, where in records:
         if key == "records_thin":
             out["_thin"] = {**value, "words": where}      # too little on record for a monthly figure: asked instead
@@ -1234,6 +1239,17 @@ def site_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+# What a finding must be about to carry its topic's label (the owner, 25 Oct: local prices were labelled "Market size")
+_ABOUT = {"market": re.compile(r"\b(market|industry|sector)\b.{0,80}\b(worth|valued?|size[ds]?|revenue|turnover|bn|billion|million|growth|grow\w*|"
+                               r"cagr|expand\w*|declin\w*)\b|\b(worth|valued at|growing|grew|cagr)\b.{0,60}\b(market|industry|sector)\b", re.I)}
+
+
+def about_its_topic(topic: str, value: str) -> bool:
+    """Does the finding say what its label promises? Only topics with a test are checked; the rest pass."""
+    test = _ABOUT.get(topic)
+    return bool(test.search(value)) if test else True
+
+
 def read_items(raw: dict | None, topics: list[dict], by_n: dict[int, dict], now: datetime, pages: dict[str, dict] | None = None,
                ctx: dict | None = None) -> list[dict]:
     """Only what can be checked is kept: a requested topic, a value, sources that are search results it was given (by
@@ -1249,6 +1265,8 @@ def read_items(raw: dict | None, topics: list[dict], by_n: dict[int, dict], now:
             continue
         if _NOTHING_FOUND.search(str(value)):
             continue      # the topic is asked instead ("I looked, and found nothing I could point to"), and nothing is charged
+        if not about_its_topic(topic["topic"], str(value)):
+            continue      # what was found isn't what the label says (local prices filed as "market size"): never shown under it
         cited, said = [], []
         for k in x.get("results") or []:
             ref = k if isinstance(k, dict) else {"n": k}
@@ -1392,6 +1410,11 @@ CASE_DRAFT_FIELDS = {
 # A launch plan's own fields (the owner, 23 Oct: "funding readiness and launch readiness are not the same"): one plan per
 # service or product, drafted for that offering only.
 CASE_DRAFT_FIELDS["launch"] = {
+    # The figures the plan's money check needs, drafted too (the owner, 25 Oct: "that's the main missing step and it was
+    # skipped"): from the catalogue, invoices and the research's benchmarks in FACTS, as an assumption to accept or change
+    "economics.price_per_unit": "The price of one unit or one customer's order, a whole number in the plan's currency only, from FACTS (catalogue, invoices, comparable prices); null when FACTS give no basis",
+    "economics.variable_cost_per_unit": "What delivering one unit or order costs (materials, labour, travel), a whole number in the plan's currency only, from FACTS or a benchmark in FACTS; null when there is no basis",
+    "economics.fixed_costs_monthly": "The monthly running costs that don't change with sales (rent, insurance, subscriptions, a vehicle), a whole number in the plan's currency only, from FACTS (expenses, benchmarks); null when there is no basis",
     "offer.delivery_terms": "How and where the offering is delivered and paid for (for example booking, location, payment timing, cancellation), in one or two sentences",
     "economics.shared_cost_method": "Only for a new offering in an existing business: how shared costs (rent, staff, utilities) are split onto it, in one sentence",
     "market.message": "The launch message to the first customers: one or two sentences naming the offering, who it is for, the benefit and the price with its currency",
@@ -1405,7 +1428,8 @@ CASE_DRAFT_FIELDS["launch"] = {
 }
 CASE_LIST_FIELDS = {"team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
                     "milestones": ("outcome", "measure", "target"), "delivery.dependencies": ("name", "kind", "contingency")}
-NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit")
+NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit",
+                 "economics.price_per_unit", "economics.variable_cost_per_unit", "economics.fixed_costs_monthly")
 _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, specific sentences a funder can read. "
                  "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
                  "where FACTS give none, say so plainly. Plans and assumptions are yours to propose from what FACTS say about the "

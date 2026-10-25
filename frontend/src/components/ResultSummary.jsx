@@ -14,6 +14,13 @@ const money = (sign, n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${sig
 // Each gap as a step: a plain title, one sentence of why, and how it is done. `answer`: one fact, typed here (re-checked
 // free). `doIt`: the Agent does it (its research, the price shown first). `mine`: the screen to do it yourself.
 const STEPS = {
+  // Each risk: what was found as its title, why it matters, and a button that does something about it (the owner, 24 Oct)
+  risks: {
+    concentration: { title: "Relying on one customer", cta: "Run a what-if: lose them", to: "/simulation?template=tmpl_client_loss" },
+    runway: { title: "Cash runway", cta: "Run a what-if: sales drop", to: "/simulation?template=tmpl_revenue_drop" },
+    late_payment: { title: "Late payments", cta: "Chase overdue invoices", to: "/operations?tab=Sales&sub=Invoices" },
+    key_person: { title: "Cover if you're away for a month", cta: "Run a what-if: hire help", to: "/simulation?template=tmpl_hire_staff" },
+  },
   funding: {
     purpose: { title: () => "Settle how much you need", why: "Funders start with the amount and what it pays for.", answer: "amount", mine: "setup:goal" },
     use_of_funds: { title: (a, s) => (a.amount ? `Split your ${money(s, a.amount)} into what it pays for` : "Split the amount into what it pays for"), why: "A funder wants each line of spending and what it changes.", doIt: true, mine: "setup:finances" },
@@ -90,6 +97,17 @@ export function stepsOf(result) {
   const answers = result?._edit?.answers || {};
   const asked = new Set((result?._edit?.questions || []).map((q) => q.key));
   const sign = result?.currency_sign || "";
+  if (kind === "risks") {
+    return (result?.blockers || []).map((b) => {
+      const s = table[b.key] || {};
+      // The title says what the risk is about; the finding and why it matters sit underneath (R-6)
+      const detail = [b.label, b.note, b.why].filter(Boolean).map((x) => String(x).replace(/\.$/, "")).join(". ");
+      return { key: b.key, kind: b.kind, badge: b.kind === "failed" ? "High risk" : "Watch", title: s.title || b.label,
+        why: detail ? `${detail}.` : "", gap: b.label, doIt: false, cta: s.cta || null, field: true,
+        // The what-if is about the customer the check found (R-4): "lose them" opens with Delta Offices Ltd filled in
+        to: s.to && b.customer ? `${s.to}&customer=${encodeURIComponent(b.customer)}` : s.to || null };
+    });
+  }
   return (result?.blockers || []).map((b) => {
     const s = table[b.key] || { title: () => b.label, why: "" };
     return { key: b.key, kind: b.prefill ? "partial" : b.kind, badge: b.prefill ? "Partly there" : gapWord(b.kind), title: s.title(answers, sign), why: s.why || b.label, gap: b.label,
@@ -109,7 +127,7 @@ export function StatusLine({ result, latest }) {
   return (
     <div data-result-status>
       <p className="text-[20px] font-semibold leading-7 text-slate-900 dark:text-slate-100">
-        <span className="tabular-nums" data-fv-score>{s.score}</span> <span className="text-slate-400">·</span> <span data-status-sentence>{s.sentence}</span>
+        {s.score ? <><span className="tabular-nums" data-fv-score>{s.score}</span> <span className="text-slate-400">·</span> </> : null}<span data-status-sentence>{s.sentence}</span>
       </p>
 
     </div>
@@ -294,6 +312,20 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
   const [problem, setProblem] = useState("");
   const [answer, setAnswer] = useState(draft?.prefill != null ? String(draft.prefill) : "");
   const field = useRef(null);
+  // A choice pressed on the card: saved to this check, and the result worked out again in place
+  const choose = async (picked) => {
+    if (busy || !result?._session) return;
+    setBusy(true);
+    setProblem("");
+    try {
+      const res = await apiRequest(`/task-sessions/${result._session}/answers`, "POST", { answers: { [step.key === "key_person" ? "key_person" : step.key]: picked } }, { timeoutMs: 30000 });
+      onAnswered?.(res);
+    } catch {
+      setProblem("That couldn't be saved just now. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
   const send = async () => {
     if (!value.trim() || busy || !result?._session) return;
     setBusy(true);
@@ -392,11 +424,19 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
       )}
       {problem && !(draft && draft.kind === "question") && <p role="alert" className="text-[12px] text-rose-700">{problem}</p>}
       {/* While the Agent's drafts wait, no "I'll do it": the draft is the way (the owner's QA, 21 Oct). */}
+      {Array.isArray(step.choices) && result?._session && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label={step.title} data-step-choices-inline>
+          {step.choices.map(([v, label]) => (
+            <button key={v} type="button" disabled={busy} onClick={() => choose(v)}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-400 disabled:opacity-60">{label}</button>
+          ))}
+        </div>
+      )}
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-1" data-step-actions>
         {step.run && <StepRun run={step.run} />}
         {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} data-step-mine data-step-focus={step.focus || undefined}
           className={step.run || !step.field ? "self-center text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" : "rounded-lg bg-brand-600 px-3 py-1.5 text-center text-[12.5px] font-semibold text-white hover:bg-brand-700 max-sm:w-full"}>
-          {step.run ? "See it" : (step.cta || "Fill it in")}</a>}
+          {step.run ? (step.seeLabel || "See it") : (step.cta || "Fill it in")}</a>}
         {!draft && !researched && (step.more || []).map((m) => (
           <a key={m.label} href={m.to} onClick={(e) => { e.preventDefault(); navigate(m.to); }} className="self-center text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" data-step-more data-step-focus={m.focus || undefined}>{m.label}</a>
         ))}
@@ -533,7 +573,7 @@ function DraftQuestion({ runId, item }) {
 /** "Your next steps": three at most, then "3 of 8 ready", which opens what looks ready and what is missing. The Agent's
  *  research drafts each step; the owner reviews and edits it (the owner, 20 Oct 2026: "it's an agent"). */
 // A step only the owner can do: a confirmation, a review mark, or a one-press check of their own figures
-const OWNERS_OWN = (st) => Boolean(st?.attest || st?.review || st?.confirmOffer || st?.confirmForecast || st?.noCommitments || st?.prereqDone || st?.confirmCapacity
+const OWNERS_OWN = (st) => Boolean(st?.ownerOnly || st?.attest || st?.review || st?.confirmOffer || st?.confirmForecast || st?.noCommitments || st?.prereqDone || st?.confirmCapacity
   || /^confirm\./.test(String(st?.key || "")));
 
 export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = null, prices = null, readyToggle = false, working = false, businessId = null, onApplied = null }) {

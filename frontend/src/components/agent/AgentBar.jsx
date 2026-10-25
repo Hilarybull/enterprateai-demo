@@ -4,7 +4,7 @@ import { AgentAvatar } from "./AgentShell";
 import { agentErrorMessage, submitAgentRequest } from "../../lib/agent";
 import { useAuthStore } from "../../store/auth";
 import { useTaskFlow } from "./TaskFlow";
-import { AgentGoalChat, agentCardPath } from "../GoalLauncher";
+import { AgentGoalChat } from "../GoalLauncher";
 
 // The Agent Centre's slim bar (the owner's QA, 15 Oct): the avatar, a greeting, the input and Online, about 72px tall. The
 // lists below are the page; the full Agent card stays on the dashboard. Whatever the Agent answers is acted on here, as in
@@ -16,10 +16,12 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState(null);      // { text, check?, offers? }
+  const [said, setSaid] = useState("");      // the owner's own words, shown above the answer
   const flow = useTaskFlow({ say: (r) => setReply(r ? { text: r.text, offers: r.offers } : null), onChanged: () => onChanged?.(), onDetails: (id) => onOpenRun?.(id) });
 
   async function ask(req) {
     if (!businessId || busy) return;
+    if (req?.sourceChannel === "text" && req.text) setSaid(req.text);
     setBusy(true);
     setReply(null);
     try {
@@ -51,8 +53,10 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
     const said = text.trim();
     if (!said) return;
     setText("");
-    // The one pathway (the owner's choice, 22 Oct): the dashboard's Agent card handles it, as if typed there
-    navigate(agentCardPath(said));
+    // Answered here, in the Agent Centre (the owner's brief, 25 Oct: a result shows where the question was asked), by the
+    // same request and the same chat as the dashboard's Agent card
+    setReply(null);
+    ask({ text: said, sourceChannel: "text" });
   };
   const press = (o) => {
     if (o.dismiss) return setReply(null);
@@ -75,7 +79,8 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
       {busy && !reply && <p role="status" className="mt-2 text-[13px] text-white/85">Working on it…</p>}
       {reply && (
         <div role="status" className="mt-2" data-agent-bar-reply>
-          {reply.text && <p className="text-[13px] text-white/85">{reply.text}</p>}
+          {(said || reply.check?.said) && <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-white/15 px-3 py-1.5 text-[13px] font-medium text-white" data-you-asked>{reply.check?.said || said}</p>}
+          {reply.text && <p className="mt-2 whitespace-pre-wrap text-[13px] text-white/85">{reply.text}</p>}
           {reply.check && businessId && (
             // The check itself, here (the reply said "answer anything I still need below")
             <div className="mt-3 rounded-xl bg-white p-3 text-left text-slate-800 dark:bg-slate-900 dark:text-slate-100" data-agent-check={reply.check.goalKey}>

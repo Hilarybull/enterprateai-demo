@@ -34,8 +34,11 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
   const passed = (code) => checks[code] === "passed";
   const out = [];
   // target: { section, field, focus? (element id), to? (another page) }; cta: the button; more: other buttons
+  // A field with the Agent's draft waiting: its step reviews the draft (F-10, 25 Oct), never "Fill it in"
+  const drafted = (target) => Boolean(target?.field && (s?.agent_drafts || {})[target.field]);
   const add = (key, title, why, target, cta, more = []) => out.push({
-    key, section: target.section, kind: "unknown", badge: "To do", title, why, field: true, cta,
+    key, section: target.section, kind: "unknown", badge: drafted(target) ? "Draft ready" : "To do", title, why, field: true,
+    cta: drafted(target) ? "Review the draft" : cta, drafted: drafted(target),
     focus: target.focus || null, to: target.to || at(target.section, target.field, target.focus),
     more: more.map((m) => ({ label: m.label, focus: m.focus || null, to: m.to || at(m.section || target.section, m.field, m.focus) })),
   });
@@ -129,6 +132,7 @@ export function caseSteps(subject, { max = 3, currency = null } = {}) {
     if (inTitle && Math.abs(inTitle - target) > 1) {
       add("goal.title", `Your title says ${money(inTitle)} but your target is ${money(target)}`, "Change whichever is wrong. Nothing is changed for you.", F("title"), "Edit title",
         [{ label: "Edit target", section: "goal", field: "target_amount", focus: fieldId("goal", "target_amount") }]);
+      out[out.length - 1].ownerOnly = true;      // which is right is the owner's to decide: never offered to the Agent (25 Oct)
     }
   }
   // C6: market (10)

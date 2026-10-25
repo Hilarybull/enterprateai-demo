@@ -144,7 +144,7 @@ AUTO_START_MAX_CREDITS = 10      # kept for reference only: what decides now is 
 # review, expansion) may still start by themselves.
 SUGGEST_ONLY = frozenset({"idea_validation", "market_size", "business_plan_draft", "sales_letter_draft", "funding_pack_draft"})
 FREE_DETERMINISTIC = frozenset({"readiness_refresh", "launch_evidence_gaps", "registration_checklist", "price_test", "capacity_check",
-                                "offer_review", "expansion_scenario"})
+                                "offer_review", "expansion_scenario", "risk_concentration"})      # a calculation on the records: never charged
 
 
 def feature_of(capability: str) -> str | None:

@@ -31,7 +31,10 @@ function relatedAll({ feature, subject, packLocked = false }) {
       { key: "pack", title: packDone ? "Your funding pack is ready" : `Your funding pack is ${pct}% ready`,
         why: packDone ? "Everything a funder asks for, from this check." : `Still to do: ${(pack.items || []).filter((i) => !i.ready).map((i) => i.label).join(", ") || "the remaining parts"}.`,
         cta: packDone ? "View funding pack" : "Finish the pack", to: `/funding/${id}?tab=documents`, locked: packLocked },
-      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "Funders ask for one beside the pack.", cta: "Start a business plan", to: "/blueprint?tab=business-plans" },
+      // From this case's own details (the owner, 25 Oct: "it's supposed to use details to create a business plan")
+      { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "Funders ask for one beside the pack.", cta: "Start a business plan", to: `/blueprint?tab=business-plans${id ? `&funding=${encodeURIComponent(id)}` : ""}` },
+      // Products in the catalogue and not listed yet: where customers can find and buy them (the owner, 25 Oct)
+      ...(subject?.has_products ? [{ key: "marketplace", title: "List your products on the Marketplace", why: "So customers can find and buy what's in your catalogue.", cta: "List on the Marketplace", to: "/marketplace/profile" }] : []),
       { key: "launch", title: "Check you're ready to launch", why: "The same checks for putting the money to work.", cta: "Open Launch Readiness", to: "/launch" },
       { key: "invoice", title: "Send your next invoice", why: "Every paid invoice is more evidence of demand for your case.", cta: "Create an invoice", to: "/operations?tab=Sales&new=invoice" },
       { key: "catalogue", title: "Keep your prices up to date", why: "Your case reads its price and cost per sale from your Catalogue.", cta: "Open Catalogue", to: "/catalogue?tab=products" },
@@ -43,7 +46,7 @@ function relatedAll({ feature, subject, packLocked = false }) {
       { key: "pricing", title: "Check your price", why: "A launch sells at the price you set: check it covers your costs.", cta: "Open Pricing", to: "/catalogue" },
       // For this launch's product, never the business's (the owner, 23 Oct)
       { cost: "Credits apply", key: "plan", title: "Write your business plan", why: "The plan behind the launch, in one document.", cta: "Start a business plan", to: `/blueprint?tab=business-plans${id ? `&launch=${encodeURIComponent(id)}` : ""}` },
-      { key: "marketplace", title: "List your business on the Marketplace", why: "So your first customers can find you.", cta: "Open the Marketplace", to: "/marketplace" },
+      { key: "marketplace", title: "List your business on the Marketplace", why: "So your first customers can find you.", cta: "List on the Marketplace", to: "/marketplace/profile" },
       { key: "invoice", title: "Set up your first quotation and invoice", why: "Ready for the first order.", cta: "Open Business Operations", to: "/operations?tab=Sales" },
       { key: "funding", title: "Check your funding readiness", why: "If the launch needs money, see how prepared you are.", cta: "Open Funding Readiness", to: "/funding" },
     ];

@@ -1861,6 +1861,30 @@ class Orchestrator:
         clean = {k: v for k, v in (answers or {}).items() if k in allowed}      # only what was asked for
         if not clean:
             raise Conflict("no_matching_answer", "None of those answers match the question this task is asking.")
+        # Understood, else answered (the owner, 24 Oct: "flexible and adaptive... else it should understand and respond
+        # accordingly", for every task on the dashboard and in Agent Centre): a question typed into a field is answered, never
+        # kept as the answer; a choice said in words is read to its option, or the options are said back.
+        from app.modules.agent import intake_turn as _it
+        from app.modules.agent import goals as _goals
+        for f in run["pending_question"]["fields"]:
+            k, v = f["key"], clean.get(f["key"])
+            if not isinstance(v, str) or not v.strip():
+                continue
+            label = str(f.get("label") or k).rstrip("?")
+            if f.get("type") in ("text", "textarea", "choice", "number") and _it.rule_intent(v) == "question_to_agent" and not _it.said_unsure(v):
+                why = _it.WHY.get(k) or "It's one of the few things I need to do this for you."
+                raise Conflict("question_asked", f"{why} So, {label[:1].lower()}{label[1:]}?")
+            if f.get("type") == "choice" and f.get("options"):
+                values = [o.get("value") for o in f["options"]]
+                if v in values:
+                    continue
+                read = _it._option(f, v) or _goals.choice_from_words(k, v)
+                if read in values:
+                    clean[k] = read
+                    continue
+                labels = [str(o.get("label") or o.get("value")) for o in f["options"]]
+                raise Conflict("invalid_answer", f"I didn't quite get that for {label[:1].lower()}{label[1:]}. Pick the closest: "
+                                                 f"{', '.join(labels[:-1])} or {labels[-1]}." if len(labels) > 1 else f"Pick: {labels[0]}.")
         # QA H: a number typed in words ("about sixty", "20%", "standard rate" for VAT) is read by the shared normalisers;
         # one that can't be read is refused with the reason, never stored as text.
         from app.modules.agent import understanding as und

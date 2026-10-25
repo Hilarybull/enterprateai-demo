@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { toast } from "../lib/toast";
 import { useNavigate } from "react-router-dom";
 import { resultHome } from "../lib/resultHome";
 import { apiRequest } from "../api/client";
@@ -19,6 +20,7 @@ export const QUICK_CHECKS = {
   price_offer: { title: "Pricing health check", intro: "A few questions about your price." },
   more_customers: { title: "Customer growth check", intro: "A few questions about winning customers." },
   test_idea: { title: "Idea check", intro: "A few questions about your idea and its numbers." },
+  business_risks: { title: "Business risk check", intro: "Your risks, worked out from your records. I only ask what your records can't tell." },
 };
 
 const ukDay = (iso) => { const [y, m, d] = String(iso).split("-"); return d && m && y ? `${d}/${m}/${y}` : iso; };
@@ -61,7 +63,9 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
 
   // What their own sentence already answered is shown once and not asked (QA P5-1); "Edit" asks it like the rest.
   const asked = (questions || []).filter((x) => editingSaid || !x.said);
-  const saidItems = (questions || []).filter((x) => x.said && x.source !== "From your funding case").map((x) => ({ key: x.key, text: x.said_text }));
+  // Each answer named ("Payments: customers pay on time"), never a bare chip's words (the owner, 24 Oct)
+  const saidItems = (questions || []).filter((x) => x.said && x.source !== "From your funding case")
+    .map((x) => ({ key: x.key, text: goalKey === "business_risks" && x.noun ? `${x.noun[0].toUpperCase()}${x.noun.slice(1)}: ${x.said_text}` : x.said_text }));
   // What the funding case already holds: shown once, not asked (the owner's QA, 22 Oct: "use the current data")
   const caseItems = (questions || []).filter((x) => x.said && x.source === "From your funding case").map((x) => ({ key: x.key, text: x.said_text }));
   const q = asked[at];
@@ -73,9 +77,11 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
     try {
       const r = await apiRequest(`/businesses/${businessId}/quick-check/${goalKey}`, "POST", { answers: all });
       setResult(r.result);
+      if (goalKey === "business_risks") toast({ kind: "success", title: "Done. Your risk check is up to date." });
       trackGoal("first_value_shown", { key: goalKey, where: "app" });
     } catch {
       setError("I couldn't work that out just now. Your answers are kept: try again.");
+      toast({ kind: "error", title: "That didn't go through.", detail: "Your answers are kept. Try again." });
     } finally { setBusy(false); }
   }
 
@@ -112,7 +118,9 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
           : <button type="button" className="font-semibold text-brand-700 underline-offset-2 hover:underline" onClick={async () => { try { setLinked(await attach()); } catch { setError("Your launch plan couldn't be updated just now. Nothing was changed."); } }}>
             Add these answers to your launch plan</button>}
       </div>) : null;
-    return <FirstValueCard result={result} onPremium={premium} extra={extra} onDismiss={() => { setResult(null); setAt(0); setOpen(false); }}
+    // On the risk check's own page the result is the page: no Dismiss; an answer given on it is checked again here
+    return <FirstValueCard result={result} onPremium={premium} extra={extra} onDismiss={goalKey === "business_risks" ? null : () => { setResult(null); setAt(0); setOpen(false); }}
+      onAnswer={(key, value) => finish({ ...values, [key]: value })}
       onContinue={() => { setResult(null); setAt(0); setOpen(true); }} continueLabel="Start again" />;
   }
 
@@ -121,7 +129,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{meta.title}</p>
-          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro} You get a score, what looks ready and what is missing.</p>
+          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro}{goalKey === "business_risks" ? "" : " You get a score, what looks ready and what is missing."}</p>
         </div>
         {!open && <button type="button" onClick={() => setOpen(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Start the quick check</button>}
       </div>
@@ -131,7 +139,8 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
         <div className="mt-3" data-from-case><SaidLine title="From your funding case" items={caseItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }} /></div>
       )}
       {open && questions && saidItems.length > 0 && (
-        <div className="mt-3"><SaidLine items={saidItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }} /></div>
+        <div className="mt-3"><SaidLine items={saidItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }}
+          {...(goalKey === "business_risks" ? { title: "From your records" } : {})} /></div>
       )}
       {open && questions && !q && !result && asked.length === 0 && (
         // Everything was in their sentence: one tap to see the result.

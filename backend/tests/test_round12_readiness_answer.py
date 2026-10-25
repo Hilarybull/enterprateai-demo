@@ -23,3 +23,33 @@ def test_readiness_questions_match_the_named_subject_and_always_end_on_buttons(w
     for out in (drone, car, grant, nxt):
         assert out["offers"] and "—" not in out["message"] and "–" not in out["message"]
     assert env.meter.charges == []
+
+
+def test_any_funding_question_answers_from_the_one_case_and_never_offers_a_second(world):
+    """The owner, 25 Oct: "am I ready to apply for a loan?" said "I can't find a funding case for that" beside a £50k loan."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 50000, "use": "a second van and hiring one cleaner", "stage": "trading",
+                                                                       "route": "loan", "timing": "Within 3 months", "traction": "Paying customers"}})
+    client.post(f"/task-sessions/{s['id']}/resume")
+    client.post(f"/task-sessions/{s['id']}/prepare")
+    for text in ("am I ready to apply for a loan?", "How ready is my funding?", "what's left before I can borrow?"):
+        out = ask(client, text)
+        assert "can't find" not in out["message"] and "/100" in out["message"] or "not checked yet" in out["message"], (text, out["message"])
+        assert not any("new funding case" in o["label"].lower() for o in out["offers"]), out["offers"]
+        assert out["offers"][0]["label"].startswith("Open “")
+
+
+def test_launch_status_questions_are_answered_from_the_plan_for_free_never_a_paid_chat(world):
+    """The owner, 25 Oct: the Agent Centre answered launch questions as a paid chat reply; the same free answer as the
+    dashboard (score and Open the plan) for every way of asking."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    _launch(client)
+    for text in ("how is my launch looking?", "check my launch readiness", "what does my launch plan need?", "how is my launch going"):
+        out = ask(client, text)
+        assert out["kind"] == "answer" and not out.get("conversational") and out["offers"][0]["label"].startswith("Open “"), (text, out)
+    for text in ("I need launch readiness", "I want to launch a carpet cleaning service"):
+        assert "Open “" not in str(ask(client, text).get("offers")), text      # a request to start: its chat, never a status
+    assert env.meter.charges == []

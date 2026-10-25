@@ -224,6 +224,31 @@ def display_score(score: float | Decimal | None) -> int | None:
     return shown
 
 
+def why_not_ready(result: dict | None, ready_at: float | None = None) -> str | None:
+    """One line on why a check is not ready yet (the owner, 25 Oct: 88/100 beside "Not ready yet" said nothing about why),
+    from the result itself: a must-have that failed, documents still to mark as reviewed, what is still unknown, or a
+    score just under the line."""
+    if not result or result.get("classification") in (None, "ready"):
+        return None
+    failed = [g for g in result.get("gates") or [] if g.get("state") == FAILED]
+    if failed:
+        first = str(failed[0].get("label") or "a must-have").rstrip(".")
+        return f"{first[:1].upper() + first[1:]} must be fixed first." if len(failed) == 1 else f"{len(failed)} must-haves to fix first, starting with: {first[:1].lower() + first[1:]}."
+    checks = [ch for c in result.get("criteria") or [] for ch in c.get("checks") or []]
+    unreviewed = next((ch for ch in checks if str(ch.get("reason") or "").startswith("Not reviewed:")), None)
+    if unreviewed:
+        n = len([x for x in str(unreviewed["reason"])[len("Not reviewed:"):].strip().rstrip(".").split(",") if x.strip()])
+        return f"{n} document{'s' if n != 1 else ''} need{'s' if n == 1 else ''} marking as reviewed."
+    unknown = [ch for ch in checks if ch.get("state") == UNKNOWN]
+    if unknown:
+        first = str(unknown[0].get("label") or "").rstrip(".")
+        return (f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add, starting with: {first[:1].lower() + first[1:]}." if first
+                else f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add.")
+    if result.get("classification") == "conditionally_ready" and ready_at is not None:
+        return f"Just under the {ready_at:g} needed to be ready."
+    return None
+
+
 def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     """Order matters: a confirmed failed gate gives not_ready even when other evidence is
     unknown; otherwise anything unknown gives insufficient_evidence; otherwise the score decides.

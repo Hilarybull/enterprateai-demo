@@ -34,17 +34,19 @@ def enabled(subject_type: str) -> bool:
 
 
 async def _require_readiness_plan(business_id: str, user=Depends(get_current_user)) -> None:
-    """Launch and Funding Readiness are on Starter and above (the pricing PDF, 19 Oct 2026): the workspace owner's plan,
-    the one the Agent checks, so a team member works under the team's. Reading stays open, so the page can say so."""
+    """The paid parts of Launch and Funding Readiness (scenarios, generated materials) are on Starter and above. The case,
+    its inputs, evidence, confirmations and the deterministic check and score are on every plan, the free one too (the
+    owner, 24 Oct: "the free plan is allowed the first deterministic score... not the do it all for me"). The research
+    ("Do all for me") and the funding pack have their own gates."""
     from app.modules.agent import config as agent_config
     from app.modules.agent.router import get_orchestrator
     plan = (await get_orchestrator().entitlement(business_id)).get("plan")
     if agent_config.plan_rank(plan) < agent_config.plan_rank("starter_insight"):
         have = agent_config.PLAN_LABEL.get(plan, plan)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
-            "error": "FEATURE_NOT_ENTITLED", "feature_name": "Launch and Funding Readiness", "minimum_plan": "starter_insight",
+            "error": "FEATURE_NOT_ENTITLED", "feature_name": "This part of Launch and Funding Readiness", "minimum_plan": "starter_insight",
             "minimum_plan_label": "Starter", "plan": plan, "plan_label": have, "upgrade": True,
-            "message": f"Launch and Funding Readiness are included from the Starter plan. You're on {have}."})
+            "message": f"Scenarios and generated documents are included from the Starter plan. You're on {have}."})
 
 
 async def _require_funding_pack(user: dict, business_id: str) -> None:
@@ -204,23 +206,23 @@ async def list_evidence(business_id: str, user=Depends(get_current_user)):
     return {"items": await _run(get_service().list_evidence(user["id"], business_id, user.get("email")))}
 
 
-@router.post("/businesses/{business_id}/evidence", status_code=201, dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/evidence", status_code=201)
 async def add_evidence(business_id: str, body: EvidenceIn, feature: str | None = Query(default=None), user=Depends(get_current_user)):
     return await _run(get_service().add_evidence(user["id"], business_id, body.data, user.get("email"), _feature(feature)))
 
 
-@router.patch("/businesses/{business_id}/evidence/{evidence_id}", dependencies=[Depends(_require_readiness_plan)])
+@router.patch("/businesses/{business_id}/evidence/{evidence_id}")
 async def update_evidence(business_id: str, evidence_id: str, body: EvidenceIn, feature: str | None = Query(default=None), user=Depends(get_current_user)):
     return await _run(get_service().update_evidence(user["id"], business_id, evidence_id, body.data, user.get("email"), _feature(feature)))
 
 
-@router.post("/businesses/{business_id}/evidence/{evidence_id}/review", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/evidence/{evidence_id}/review")
 async def review_evidence(business_id: str, evidence_id: str, body: EvidenceReviewIn, feature: str | None = Query(default=None), user=Depends(get_current_user)):
     return await _run(get_service().review_evidence(user["id"], business_id, evidence_id, verification=body.verification, rationale=body.rationale,
                                                     exception=body.exception, email=user.get("email"), feature=_feature(feature)))
 
 
-@router.post("/businesses/{business_id}/evidence/{evidence_id}/file", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/evidence/{evidence_id}/file")
 async def attach_evidence_file(business_id: str, evidence_id: str, file: UploadFile = File(...), feature: str | None = Query(default=None),
                                user=Depends(get_current_user)):
     content = await file.read(svc_mod.MAX_FILE_BYTES + 1)
@@ -253,7 +255,7 @@ def _subject_routes(segment: str) -> APIRouter:
         return {"enabled": True, **await _run(get_service().list_subjects(user["id"], business_id, _type(segment), user.get("email")))}
 
 
-    @r.post("", status_code=201, dependencies=[Depends(_require_readiness_plan)])
+    @r.post("", status_code=201)
     async def create_subject(business_id: str, body: SubjectIn, user=Depends(get_current_user)):
         return await _run(get_service().create_subject(user["id"], business_id, _type(segment), body.data, user.get("email")))
 
@@ -263,28 +265,28 @@ def _subject_routes(segment: str) -> APIRouter:
         return await _run(get_service().get_subject(user["id"], business_id, _type(segment), subject_id, user.get("email")))
 
 
-    @r.patch("/{subject_id}", dependencies=[Depends(_require_readiness_plan)])
+    @r.patch("/{subject_id}")
     async def update_subject(business_id: str, subject_id: str, body: SubjectPatch, user=Depends(get_current_user)):
         return await _run(get_service().update_subject(user["id"], business_id, _type(segment), subject_id, body.revision, body.changes,
                                                        user.get("email"), body.confirm))
 
 
-    @r.post("/{subject_id}/status", dependencies=[Depends(_require_readiness_plan)])
+    @r.post("/{subject_id}/status")
     async def set_status(business_id: str, subject_id: str, body: StatusIn, user=Depends(get_current_user)):
         return await _run(get_service().set_status(user["id"], business_id, _type(segment), subject_id, body.action, user.get("email"), body.reason))
 
 
-    @r.put("/{subject_id}/forecast", dependencies=[Depends(_require_readiness_plan)])
+    @r.put("/{subject_id}/forecast")
     async def save_forecast(business_id: str, subject_id: str, body: ForecastIn, user=Depends(get_current_user)):
         return await _run(get_service().save_forecast(user["id"], business_id, _type(segment), subject_id, body.forecast, body.revision, user.get("email")))
 
 
-    @r.post("/{subject_id}/forecast/link", dependencies=[Depends(_require_readiness_plan)])
+    @r.post("/{subject_id}/forecast/link")
     async def link_forecast(business_id: str, subject_id: str, body: ForecastLinkIn, user=Depends(get_current_user)):
         return await _run(get_service().link_forecast(user["id"], business_id, _type(segment), subject_id, body.forecast_id, user.get("email")))
 
 
-    @r.post("/{subject_id}/attestations", dependencies=[Depends(_require_readiness_plan)])
+    @r.post("/{subject_id}/attestations")
     async def attest(business_id: str, subject_id: str, body: AttestIn, user=Depends(get_current_user)):
         if body.withdraw:
             return await _run(get_service().withdraw_attestation(user["id"], business_id, _type(segment), subject_id, body.code, user.get("email")))
@@ -292,7 +294,7 @@ def _subject_routes(segment: str) -> APIRouter:
                                                body.independent, user.get("email")))
 
 
-    @r.post("/{subject_id}/assessments", status_code=202, dependencies=[Depends(_require_readiness_plan)])
+    @r.post("/{subject_id}/assessments", status_code=202)
     async def request_assessment(business_id: str, subject_id: str, body: AssessIn | None = None, user=Depends(get_current_user)):
         """Starts a check and returns its run. The run is saved with its input snapshot before it is
         calculated, so its status can be read back with the id at any time."""
@@ -312,7 +314,7 @@ def _subject_routes(segment: str) -> APIRouter:
         return await _run(get_service().get_assessment(user["id"], business_id, _type(segment), subject_id, assessment_id, user.get("email")))
 
 
-    @r.patch("/{subject_id}/actions/{action_id}", dependencies=[Depends(_require_readiness_plan)])
+    @r.patch("/{subject_id}/actions/{action_id}")
     async def update_action(business_id: str, subject_id: str, action_id: str, body: ActionPatch, user=Depends(get_current_user)):
         return await _run(get_service().update_action(user["id"], business_id, _type(segment), subject_id, action_id,
                                                       body.model_dump(exclude_unset=True), user.get("email")))
@@ -363,7 +365,7 @@ for _segment in SEGMENTS:
 
 # ── funding only ──────────────────────────────────────────────────────────────
 
-@router.post("/businesses/{business_id}/funding-cases/{subject_id}/documents/{key}", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/documents/{key}")
 async def review_document(business_id: str, subject_id: str, key: str, body: DocumentIn | None = None, user=Depends(get_current_user)):
     body = body or DocumentIn()
     _type("funding-cases")
@@ -378,7 +380,7 @@ class PreviousNeedIn(BaseModel):
     need: int = Field(default=0, ge=0, le=9)      # which earlier need it is from: 0 the latest replaced, 1 the one before…
 
 
-@router.post("/businesses/{business_id}/funding-cases/{subject_id}/previous-need", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/previous-need")
 async def previous_need(business_id: str, subject_id: str, body: PreviousNeedIn, user=Depends(get_current_user)):
     """[Keep] or [Remove] for something from the funding need this case replaced."""
     _type("funding-cases")
@@ -392,7 +394,7 @@ class NewNeedIn(BaseModel):
     previous_title: str | None = Field(default=None, max_length=200)
 
 
-@router.post("/businesses/{business_id}/funding-cases/{subject_id}/new-need", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/new-need")
 async def new_need(business_id: str, subject_id: str, body: NewNeedIn, user=Depends(get_current_user)):
     """A new title that names a different need (the owner's QA, 23 Oct): the case becomes that need, the old one goes to
     History with its milestones, allocations, market and traction set aside, exactly as Replace in the funding chat."""
@@ -409,7 +411,7 @@ async def new_need(business_id: str, subject_id: str, body: NewNeedIn, user=Depe
                                        summary=need_summary(before), previous_title=was))
 
 
-@router.post("/businesses/{business_id}/funding-cases/{subject_id}/contradictions", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/contradictions")
 async def contradiction(business_id: str, subject_id: str, body: ContradictionIn, user=Depends(get_current_user)):
     _type("funding-cases")
     return await _run(get_service().contradiction(user["id"], business_id, subject_id, description=body.description, resolve_id=body.resolve_id,
@@ -418,7 +420,7 @@ async def contradiction(business_id: str, subject_id: str, body: ContradictionIn
 
 # ── launch only ───────────────────────────────────────────────────────────────
 
-@router.post("/businesses/{business_id}/launch-initiatives/{subject_id}/decisions", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/launch-initiatives/{subject_id}/decisions")
 async def record_decision(business_id: str, subject_id: str, body: DecisionIn, user=Depends(get_current_user)):
     """Proceed, defer or cancel. Records intent only: nothing is published, charged or marked as launched."""
     _type("launch-initiatives")
@@ -427,7 +429,7 @@ async def record_decision(business_id: str, subject_id: str, body: DecisionIn, u
                                                     new_target_date=body.new_target_date, email=user.get("email")))
 
 
-@router.post("/businesses/{business_id}/launch-initiatives/{subject_id}/launch", dependencies=[Depends(_require_readiness_plan)])
+@router.post("/businesses/{business_id}/launch-initiatives/{subject_id}/launch")
 async def record_launch(business_id: str, subject_id: str, body: LaunchIn, user=Depends(get_current_user)):
     _type("launch-initiatives")
     return await _run(get_service().record_launch(user["id"], business_id, subject_id, actual_date=body.actual_date, scope=body.scope or "",

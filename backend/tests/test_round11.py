@@ -4,6 +4,28 @@ from datetime import date
 from app.modules.readiness.service import ReadinessService
 
 
+def accept_all(out):
+    """Every draft the Agent left accepted, as the owner pressing Accept on each (the owner's brief, 25 Oct: drafts wait)."""
+    if not out:
+        return out
+    import copy as _copy
+    from app.modules.readiness.service import _set as _put
+    out = _copy.deepcopy(out)
+    for path, d in (out.pop("agent_drafts", None) or {}).items():
+        _put(out, path, d["value"])
+    return out
+
+
+def _fill(*a):
+    from app.modules.readiness.service import ReadinessService as _R
+    return accept_all(_R._fill_blanks(_R.__new__(_R), *a))
+
+
+def _fill_svc(svc, *a):
+    return accept_all(svc._fill_blanks(*a))
+
+
+
 def test_opening_cash_from_the_records():
     data = {"financials": {"invoices": [{"id": "i1", "status": "paid", "total_amount": 1000, "amount_paid": 1000, "currency": "GBP"}],
                            "expenses": [{"id": "e1", "status": "paid", "total_amount": 300, "currency": "GBP"}]},
@@ -23,7 +45,7 @@ def test_months_default_to_when_the_funding_arrives_and_non_answers_are_cleared(
     from app.modules.readiness import rules
     row = {"data": {"receipt_date": "2027-04-30", "use_of_funds": [{"id": "a1", "category": "Other", "amount": "99400", "period": None, "purpose": "Hiring staff"}],
                     "market": {"acquisition_approach": "No acquisition channels or first steps are described in the available information."}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 21))
+    out = _fill(rules.FUNDING, row, {}, date(2026, 10, 21))
     assert out["use_of_funds"][0]["period"] == "2027-04"
     assert "Suggested by the Agent" in out["provenance"]["use_of_funds.period"]["source"]
     assert not (out.get("market") or {}).get("acquisition_approach")
@@ -121,7 +143,7 @@ def test_empty_milestone_parts_are_filled_from_the_case_and_never_overwritten():
                     "milestones": [{"id": "m1", "outcome": "Customer base established", "measure": "Number of paying customers", "target": "20"},
                                    {"id": "m2", "outcome": "Monthly revenue growth", "measure": "Monthly revenue in GBP", "owner": "Sam", "due_date": "2027-01-01"}],
                     "use_of_funds": [{"id": "a1", "category": "Reserve", "amount": "100", "period": "2027-01", "purpose": "Reserve: one month of fixed costs"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, {}, date(2026, 10, 22))
     m1, m2 = out["milestones"]
     assert (m1["owner"], m1["due_date"], m1["baseline"]) == ("Hillzy (owner)", "2027-10-28", "3 paying customers")
     assert (m2["owner"], m2["due_date"], m2["baseline"]) == ("Sam", "2027-01-01", "£450 a month")      # theirs kept
@@ -134,7 +156,7 @@ def test_the_purpose_takes_the_milestone_a_spending_line_names():
     row = {"data": {"milestones": [{"id": "m1", "outcome": "Customer base established", "measure": "customers", "target": "20", "due_date": "2027-06-01",
                                     "owner": "Hillzy", "baseline": "3"}],
                     "use_of_funds": [{"id": "a1", "category": "Operations", "amount": "100", "period": "2027-01", "purpose": "Kit", "milestone_id": "m1"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, {}, date(2026, 10, 22))
     assert out["purpose_milestone_id"] == "m1"
 
 
@@ -143,7 +165,7 @@ def test_every_list_item_gets_an_id_so_it_can_be_picked():
     from app.modules.readiness import rules
     row = {"data": {"milestones": [{"outcome": "Grow the customer base", "measure": "customers", "target": "20", "due_date": "2027-06-01", "owner": "A", "baseline": "1"}],
                     "team": {"responsibilities": [{"area": "Delivery", "owner": "A"}]}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, {}, date(2026, 10, 22))
     assert out["milestones"][0]["id"] and out["team"]["responsibilities"][0]["id"]
 
 
@@ -198,7 +220,7 @@ def test_the_case_takes_what_the_last_research_drafted():
                                       "case_drafts": {"market.differentiation": "Same-day bookings across Leeds", "market.acquisition_cost": "£300 a month on local ads"}}}}
     row = {"data": {"market": {"acquisition_approach": "Leaflets"}, "team": {"responsibilities": [{"id": "r1", "area": "Sales", "owner": "Hillzy (owner)"}]},
                     "milestones": [{"id": "m1", "outcome": "Grow the customer base", "measure": "customers", "target": "20", "due_date": "2027-06-01", "owner": "Hillzy", "baseline": "1"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, data, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, data, date(2026, 10, 22))
     m = out["market"]
     assert m["differentiation"] == "Same-day bookings across Leeds" and m["acquisition_cost"] == "£300 a month on local ads"
     assert m["acquisition_approach"] == "Leaflets"                                     # theirs kept
@@ -213,7 +235,7 @@ def test_a_draft_about_another_offering_or_a_location_that_is_not_a_place_is_nev
                                       "case_drafts": {"market.differentiation": "The mobile dog grooming service brings a van to the door.",
                                                       "market.location": "cleaning services", "market.acquisition_cost": "£300 a month on local ads"}}}}
     row = {"data": {"market": {}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, data, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, data, date(2026, 10, 22))
     m = out["market"]
     assert "differentiation" not in m and "location" not in m
     assert m["acquisition_cost"] == "£300 a month on local ads"
@@ -226,7 +248,7 @@ def test_the_market_fields_are_never_left_empty_when_the_records_answer_them():
                                   "services": [{"service_name": "Home cleaning"}, {"service_name": "End of tenancy cleaning"}]}}
     row = {"data": {"currency": "GBP", "market": {"target_segment": "Busy professionals and families in Leeds"}, "economics": {"fixed_costs_monthly": "100"},
                     "use_of_funds": [{"id": "a1", "category": "Marketing", "amount": "6000", "purpose": "Local ads", "period": "2027-01"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, data, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, data, date(2026, 10, 22))
     m = out["market"]
     assert m["location"] == "Leeds, United Kingdom"
     assert "home cleaning and end of tenancy cleaning" in m["differentiation"]
@@ -243,7 +265,7 @@ def test_a_field_the_owner_empties_is_never_filled_again():
     row = {"data": {"receipt_date": "2027-04-30", "market": {"target_segment": "Families", "acquisition_owner": "Hillzy"},
                     "cleared_by_owner": ["market.location", "market.differentiation", "milestones.m1.due_date"],
                     "milestones": [{"id": "m1", "outcome": "Grow", "measure": "customers", "target": "20", "owner": "Hillzy", "baseline": "1"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, data, date(2026, 10, 22)) or row["data"]
+    out = _fill(rules.FUNDING, row, data, date(2026, 10, 22)) or row["data"]
     assert not out["market"].get("location") and not out["market"].get("differentiation")
     assert not out["milestones"][0].get("due_date")
     assert out["market"].get("acquisition_approach")                                   # one not emptied is still filled
@@ -285,12 +307,12 @@ def test_the_agents_own_lines_are_worked_out_again_for_the_new_target():
                     "provenance": {"use_of_funds": {"source": "your research"}},
                     "use_of_funds": [{"id": "a", "category": "Marketing and sales", "amount": "249700", "purpose": "Marketing", "period": "2027-04"},
                                      {"id": "b", "category": "Operations", "amount": "200", "purpose": "Working capital", "period": "2027-04"}]}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {}, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, {}, date(2026, 10, 22))
     lines = [(x["category"], x["amount"]) for x in out["use_of_funds"]]
     assert lines == [("People", "99700"), ("Operations", "200"), ("Reserve", "100")]
     # typed by the owner (no source on them): never touched
     mine = {"data": {**row["data"], "provenance": {}}}
-    kept = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, mine, {}, date(2026, 10, 22)) or mine["data"]
+    kept = _fill(rules.FUNDING, mine, {}, date(2026, 10, 22)) or mine["data"]
     assert kept["use_of_funds"][0]["amount"] == "249700"
 
 
@@ -307,7 +329,7 @@ def test_owners_and_a_first_milestone_are_filled_for_the_owner():
     from app.modules.readiness import rules
     row = {"data": {"purpose": "Marketing", "receipt_date": "2027-04-30", "traction": {"customers": "2"},
                     "team": {"responsibilities": [{"id": "r1", "area": "Customer delivery", "owner": ""}, {"id": "r2", "area": "Accounts", "owner": "Sam"}]}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.FUNDING, row, {"_owner_name": "Hilary (owner)"}, date(2026, 10, 22))
+    out = _fill(rules.FUNDING, row, {"_owner_name": "Hilary (owner)"}, date(2026, 10, 22))
     assert [p["owner"] for p in out["team"]["responsibilities"]] == ["Hilary (owner)", "Sam"]
     assert out["market"]["acquisition_owner"] == "Hilary (owner)"
     m = out["milestones"][0]
@@ -376,7 +398,7 @@ def test_a_launch_plan_is_filled_as_a_launch_never_with_placeholders():
                  "sources": [{"url": "https://example.org/cac"}]},
                 {"id": "i3", "kind": "estimated", "topic": "bench_hours_per_person", "value": "The legal work week is 40 hours.", "number": 40.0, "sources": [{"url": "https://example.org/h"}]},
                 {"id": "i2", "kind": "researched", "topic": "channels", "value": "Similar businesses find customers through social media.", "sources": [{"url": "https://example.org/x"}]}]}}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.LAUNCH, row, data, date(2026, 10, 23))
+    out = _fill(rules.LAUNCH, row, data, date(2026, 10, 23))
     assert out["name"] == "Car wash subscription, Abuja, November 2026"
     assert (out["geography"], out["audience"], out["customers"]["target_segment"]) == ("Abuja, Nigeria", "Office workers", "Office workers")
     assert out["offer"]["launch_scope"] == "Car wash subscription" and out["offer"]["price"] == "15000"
@@ -390,10 +412,10 @@ def test_a_launch_plan_is_filled_as_a_launch_never_with_placeholders():
     assert out["market"]["message"] == "Clean cars for Abuja office workers: car wash subscription for office workers. From ₦15,000."
     assert out["economics"]["shared_cost_method"].startswith("Shared costs (rent, staff, utilities) are split")
     assert "use_of_funds" not in out and "purpose" not in out      # never a funding field
-    assert out["provenance"]["geography"]["source"].startswith("Suggested by the Agent")
+    assert out.get("geography")      # offered as a draft (25 Oct), here accepted
     # What the owner typed is theirs: a real place stays
     mine = {"id": "l1", "data": {**row["data"], "geography": "Lagos"}}
-    assert ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.LAUNCH, mine, data, date(2026, 10, 23))["geography"] == "Lagos"
+    assert _fill(rules.LAUNCH, mine, data, date(2026, 10, 23))["geography"] == "Lagos"
 
 
 
@@ -449,7 +471,7 @@ def test_a_launch_plan_is_filled_from_its_own_business_never_another_ones_words(
                                   "services": [{"service_name": "Home cleaning"}], "key_offering_focus": "Food",
                                   "problem": "Busy dog owners struggle to get to a groomer; we come to their door with a fully equipped van."},
             "_owner_name": "Ada (owner)"}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.LAUNCH, row, data, date(2026, 10, 23))
+    out = _fill(rules.LAUNCH, row, data, date(2026, 10, 23))
     assert out["offer"]["launch_scope"] == "Home cleaning" and out["offer"]["price"] == "65.0"
     assert out["name"] == "Home cleaning, Leeds, April 2027"
     assert not (out.get("customers") or {}).get("problem")      # another business's problem is never copied
@@ -481,11 +503,11 @@ def test_a_launch_plan_follows_its_own_offering_and_refreshes_the_agents_old_dra
                                 "provenance": {"operations.process": {"source": "Suggested by the Agent: a first outline", "value": old}}}}
     data = {"workspace_profile": {"company_name": "E2E Car Wash", "key_offering_focus": "Car wash subscription", "services": [{"service_name": "Car wash subscription"}]}}
     svc = ReadinessService.__new__(ReadinessService)
-    out = svc._fill_blanks(rules.LAUNCH, row, data, date(2026, 10, 23))
+    out = _fill_svc(svc, rules.LAUNCH, row, data, date(2026, 10, 23))
     assert out["operations"]["process"].startswith("An enquiry or order comes in, the drone cleaning is agreed")
     # Typed by the owner: never replaced
     mine = {"id": "l3", "data": {**row["data"], "operations": {"process": "We book a slot, fly the drone, invoice on the day."}}}
-    again = svc._fill_blanks(rules.LAUNCH, mine, data, date(2026, 10, 23))
+    again = _fill_svc(svc, rules.LAUNCH, mine, data, date(2026, 10, 23))
     assert (again or mine["data"])["operations"]["process"] == "We book a slot, fly the drone, invoice on the day."
 
 
@@ -497,7 +519,7 @@ def test_a_new_offerings_plan_never_borrows_the_main_offerings_tagline():
     row = {"id": "l4", "data": {"offer": {"launch_scope": "Drone Cleaning", "price": "4000"}, "audience": "Office managers", "geography": "Abuja, Nigeria"}}
     data = {"workspace_profile": {"company_name": "E2E Car Wash", "key_offering_focus": "Car wash subscription", "tagline": "Clean cars for Abuja office workers",
                                   "problem": "Office workers have no time to wash their cars.", "country": "Nigeria"}}
-    out = ReadinessService._fill_blanks(ReadinessService.__new__(ReadinessService), rules.LAUNCH, row, data, date(2026, 10, 23))
+    out = _fill(rules.LAUNCH, row, data, date(2026, 10, 23))
     assert "car" not in out["market"]["message"].lower() and out["market"]["message"].startswith("Drone Cleaning for office managers in Abuja")
     assert not (out.get("customers") or {}).get("problem") and not (out.get("offer") or {}).get("customer_promise")
 

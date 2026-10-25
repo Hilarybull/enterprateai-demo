@@ -280,7 +280,8 @@ LAUNCH_COMMERCIAL_V1 = {
             _f("operations.process_version", "Process version", help="Change this when the process changes. A test run only counts for the version it tested."),
             _f("operations.dry_run.date", "Test run date", "date"),
             _f("operations.dry_run.outcome", "Test run result", "select", options=["passed", "failed"], labels={"passed": "Worked end to end", "failed": "A critical step failed"}),
-            _f("operations.dry_run.failures_resolved", "Every critical failure has been resolved", "boolean"),
+            # Only after a test run where a critical step failed (the owner, 25 Oct: ticked with no test run at all)
+            _f("operations.dry_run.failures_resolved", "Every critical failure has been resolved", "boolean", when={"operations.dry_run.outcome": "failed"}),
             _f("operations.dry_run.notes", "What happened", "textarea"),
             _f("prerequisites", "What must be in place to launch", "list", item="prerequisite", fields=[
                 _f("name", "Prerequisite"),

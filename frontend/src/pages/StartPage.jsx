@@ -49,7 +49,7 @@ const WORKING_ON = { price_offer: "Working on your price", need_funding: "Workin
   create_quotation: "Working on your quotation", prepare_proposal: "Working on your proposal", create_business_plan: "Working on your business plan",
   business_risks: "Working on your business risks", cash_flow: "Working on your cash flow", grow: "Working on your growth" };
 
-const CHECKING = { need_funding: "Checking what funders ask for", launch: "Checking what a launch needs", test_idea: "Checking the idea",
+const CHECKING = { business_risks: "Checking each risk", need_funding: "Checking what funders ask for", launch: "Checking what a launch needs", test_idea: "Checking the idea",
   price_offer: "Checking your price", more_customers: "Checking what wins customers" };
 const SIGN = { GBP: "£", NGN: "₦", USD: "$", EUR: "€", GHS: "GH₵", KES: "KSh " };
 const NAME = { GBP: "pounds", NGN: "naira", USD: "US dollars", EUR: "euros", GHS: "cedis", KES: "shillings" };
@@ -275,7 +275,7 @@ export default function StartPage({ framed = false }) {
   const checking = CHECKING[session?.goal_key] || "Working it out";
   const working = stage === "preparing";
   const steps = [
-    { key: "read", n: 1, label: "Reading your answers", state: working || stage === "choose" || stage === "currency" ? "done" : "active" },
+    { key: "read", n: 1, label: session?.goal_key === "business_risks" ? "Reading your records" : "Reading your answers", state: working || stage === "choose" || stage === "currency" ? "done" : "active" },
     { key: "check", n: 2, label: checking, state: working ? (writing ? "done" : "active") : "todo" },
     { key: "write", n: 3, label: "Writing your next steps", state: working && writing ? "active" : "todo" },
   ];

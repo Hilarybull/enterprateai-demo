@@ -323,6 +323,29 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 cases = []
             if cases:
                 return _result(case_edit.proposal(sorted(cases, key=lambda r: str(r.get("created_at") or ""), reverse=True)[0], change))
+    # Business risks: the one risk check everywhere (the owner, 24 Oct: "applying the fixing via all the agent"): the
+    # dashboard Agent, Agent Centre and the Risk tile open the same chat as the landing page, read from the records and
+    # asking only what they don't show. A business event (a concentration alert) still runs its own background check.
+    from app.modules.agent import goals as _goals
+    risky = body.capability == "risk_concentration" and body.source_channel in ("ui_action", "text", "voice") and not (body.params or {})
+    if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice"):
+        risky = risky or ((_goals.resolve(text=body.text) or {}).get("goal_key") == "business_risks")
+    if risky:
+        return _result({"kind": "check", "capability": "risk_concentration", "goal_key": "business_risks",
+                        "said": ((body.text or "").strip() or "Help me understand my business risks")[:500],
+                        "message": "Business risks: I'll read what I can from your records and ask only what they don't show."})
+    if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice") and body.business_id:
+        # A business plan asked for while plans already wait for review (the owner, 25 Oct: "why didn't it add a link to them,
+        # ask if I want to create a new one?"): each opens, or a new one is made, never only a sentence about them
+        if ((_goals.resolve(text=body.text) or {}).get("goal_key")) == "create_business_plan":
+            waiting = await _plans_waiting(user, body.business_id)
+            if waiting:
+                names = ", ".join(f"“{w['name']}”" for w in waiting[:3])
+                n = len(waiting)
+                return _result({"kind": "answer", "conversational": False,
+                                "message": f"You have {n} business plan{'s' if n != 1 else ''} waiting for your review: {names}. Open one, or create a new one?",
+                                "offers": [{"label": f"Open “{w['short']}”", "to": w["to"]} for w in waiting[:3]]
+                                          + [{"label": "Create a new one", "capability": "business_plan_draft"}]})
     if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice"):
         # A readiness question, or a funding need stated: answered from the case summary by rules, with buttons (G6)
         from app.modules.agent import readiness_answer
@@ -973,6 +996,23 @@ async def list_documents(
 
 
 # B9: documents the Agent prepares for review, by the task that makes them: (label, where the outcome keeps it).
+async def _plans_waiting(user: dict, business_id: str) -> list[dict]:
+    """The business plans the Agent drafted that wait for the owner's review, newest first: {name, short, to}."""
+    from app.modules.agent import drafts
+    try:
+        await get_orchestrator().actor_for(user["id"], business_id, user.get("email"))
+        data = await get_orchestrator().rt.business.load(business_id) or {}
+    except Exception:      # noqa: BLE001 - no access: an ordinary message
+        return []
+    out = []
+    for d in sorted((x for x in drafts.pending(data) if x.get("kind") == "business_plan"), key=lambda x: str(x.get("updated_at") or ""), reverse=True):
+        c = drafts.card(d)
+        name = str(c["title"]).split(": ", 1)[-1] if ": " in str(c["title"]) else str(c["title"])
+        if c.get("to"):
+            out.append({"name": name, "short": name if len(name) <= 32 else name[:32].rsplit(" ", 1)[0] + "…", "to": c["to"]})
+    return out
+
+
 _PREPARED_KINDS = {"funding_pack_draft": ("Funding pack", "documents"), "business_plan_draft": ("Business plan", "plan"),
                    "sales_letter_draft": ("Sales letter", "sales_letter")}
 

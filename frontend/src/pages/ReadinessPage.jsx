@@ -30,7 +30,7 @@ import {
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import { hasFundingPack, hasReadiness } from "../lib/plans";
+import { hasFundingPack } from "../lib/plans";
 
 // Funding Readiness and Launch Readiness: one set of screens for both. `feature` is
 // "funding" or "launch"; the questions, checks and wording come from the checklist profile.
@@ -836,7 +836,32 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       run: async () => { await run(); await load(); after = await check({ quiet: true, silent: true }); },
       undo: undo ? () => caseAction({ title: "Undone.", detail: "", run: undo }) : null });
   };
-  const shown = useMemo(() => (overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
+  // The Agent's drafts waiting for the owner: one card first in "Your next steps" (the owner, 25 Oct: "I didn't even know
+  // all these were pending"; "the AI fill reviewing should be one on the next steps card"). A draft that says what its
+  // field already says is no draft.
+  const draftStep = (base) => {
+    if (!base || !subject?.can?.[`${feature}.edit`] || subject.status === "archived") return base;
+    const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "") || String(a ?? "").trim() === String(b ?? "").trim();
+    const waiting = Object.entries(data?.agent_drafts || {}).filter(([p, d]) => d && !same(getPath(data, p), d.value));
+    if (!waiting.length) return base;
+    const [first] = waiting[0];
+    const sec = (subject.profile_definition?.sections || []).find((x) => (x.fields || []).some((f) => f.key === first))?.key;
+    const n = waiting.length;
+    const acceptAll = () => {
+      const before = waiting.map(([p]) => [p, getPath(data, p)]);
+      const had = data?.agent_drafts || {};
+      waiting.forEach(([p, d]) => onField(p, d.value));
+      onField("agent_drafts", {});
+      toast({ kind: "success", title: `${n} draft${n === 1 ? "" : "s"} accepted.`, detail: "Saved. Your score is checked again.",
+        actions: [{ label: "Undo", onClick: () => { before.forEach(([p, v]) => onField(p, v ?? null)); onField("agent_drafts", had); } }] });
+    };
+    const step = { key: "agent.drafts", kind: "unknown", badge: "Draft ready", field: true, title: `Review ${n} AI draft${n === 1 ? "" : "s"}`,
+      why: "Do all for me drafted these for you. Nothing counts until you accept.", seeLabel: "Review them",
+      to: `/${feature}/${subject.id}?tab=answers${sec ? `&section=${sec}` : ""}&field=${encodeURIComponent(first)}`,
+      run: { label: "Accept all", doneLabel: "Accepted", go: acceptAll } };
+    return { ...base, case_steps: [step, ...(Array.isArray(base.case_steps) ? base.case_steps : stepsOf(base))] };
+  };
+  const shown = useMemo(() => draftStep(overview && !overview._failed && ownSteps ? { ...overview, case_steps: ownSteps.steps.map((st) => (st.confirmForecast && subject?.forecast ? {
     ...st, run: { label: "Confirm forecast", doneLabel: "Forecast confirmed",
       go: () => caseAction({ title: "Forecast confirmed.", detail: "Your forecast now counts.", run: () => saveForecast(businessId, feature, subject.id, subject.forecast.data, subject.forecast.revision) }) } }
     // A launch plan's confirmations (23 Oct): the offer, no commitments, prerequisites done; each with Undo
@@ -868,7 +893,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     : st)) }
     // A launch plan: the check's steps less those the plan now holds (filled by the owner or the Agent, 23 Oct)
     : overview && !overview._failed && feature === "launch" && subject ? { ...overview, case_steps: openLaunchSteps(stepsOf(overview), subject, data) }
-    : overview),
+    : overview),      // eslint-disable-line react-hooks/exhaustive-deps
   [overview, ownSteps, subject, data, businessId, feature, load]);
   useEffect(() => { loadOverview(); }, [loadOverview, revision]);
   const runId = params.get("run") || overview?.research?.run_id;
@@ -912,7 +937,8 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     let t = null;
     const go = () => {
       const exact = wantedFocus ? document.getElementById(wantedFocus) : null;
-      const el = exact || (wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : wantedField ? document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`) : null);
+      const el = exact || (wantedField === "forecast" ? document.querySelector("[data-forecast-editor]") : wantedField ? (document.querySelector(`[data-field="${CSS.escape(wantedField)}"]`)
+        || document.querySelector(`[data-agent-draft="${CSS.escape(wantedField)}"]`)) : null);
       if (!el) { if (tries++ < 30) t = setTimeout(go, 100); return; }
       const input = exact || [...el.querySelectorAll("input, textarea, select")].find((x) => !x.value) || el.querySelector("input, textarea, select") || el;
       input.scrollIntoView?.({ block: "center" });
@@ -1016,7 +1042,13 @@ function SubjectDetail({ businessId, feature, subjectId }) {
       <ScoreHero eyebrow={`${feature === "launch" ? "Launch readiness" : "Funding readiness"}${archived ? " · Archived" : ""}`} title={subject.title}
         score={heroScore} status={heroStatus} pills={heroPills} onPill={openSectionAt}
         info={subject.checklist_note ? "Scored against the general checklist; a grant-specific checklist isn't available yet." : null}
-        notes={<ChecklistUpdatedOnce id={subject.id} note={subject.checklist_updated} />}
+        notes={<>
+          {/* 75 or more beside "Not ready yet": why, in one line (the owner, 25 Oct) */}
+          {!checking && sm.classification && sm.classification !== "ready" && Number(heroScore) >= 75 && sm.not_ready_why && (
+            <p className="text-[13px] font-medium text-amber-800 dark:text-amber-300" data-not-ready-why>{sm.not_ready_why}</p>
+          )}
+          <ChecklistUpdatedOnce id={subject.id} note={subject.checklist_updated} />
+        </>}
         actions={<>
           {can[`${feature}.edit`] && archived ? <Btn kind="primary" onClick={() => changeStatus("reactivate")}>Reactivate</Btn>
             : feature === "launch" && subject.status === "cancelled" && can["launch.decide"] ? <Btn kind="primary" onClick={() => changeStatus("reopen")}>Reopen</Btn>
@@ -1276,22 +1308,8 @@ export default function ReadinessPage({ feature }) {
   const meta = FEATURES[feature];
   const { subjectId } = useParams();
   const businessId = useWorkspaceStore((s) => s.workspaceId);
-  const subscription = useAuthStore((st) => st.subscription);
-  const platformGrants = useAuthStore((st) => st.platformGrants);
   if (!businessId) return <ContentSkeleton label="your business" />;
-  if (!hasReadiness(subscription, platformGrants)) {
-    // Launch and Funding Readiness are on Starter and above (the pricing PDF, 19 Oct 2026).
-    return (
-      <div className="space-y-4">
-        <PageHeader title={meta.title} description={meta.intro} />
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950" data-readiness-locked>
-          <p className="text-[16px] font-semibold">{feature === "launch" ? "Product/Service Launch Readiness" : "AI-Powered Funding Readiness"} is included on the Starter plan and above.</p>
-          <p className="mt-1 text-[14px]">Upgrade to see how ready you are, what to fix first, and to keep your {feature === "launch" ? "launch plan" : "funding case"} up to date.</p>
-          <a href="/pricing" className="mt-3 inline-flex rounded-xl bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700">See plans</a>
-        </div>
-      </div>
-    );
-  }
+  // The case and its free check are on every plan (the owner, 24 Oct); only the research and the pack are paid
   if (subjectId) return <SubjectDetail key={`${businessId}-${subjectId}`} businessId={businessId} feature={feature} subjectId={subjectId} />;
   return (
     <div className="space-y-4">

@@ -162,6 +162,8 @@ def rule_capability(text: str, supported: list[str]) -> str | None:
     """The capability the fixed rules give for a request to act, without any model. None for a
     question, or when no rule fits."""
     body = (text or "").strip()
+    from app.modules.agent.goals import _typos_fixed
+    body = _typos_fixed(body)      # "create an invocie" read as meant, on every Agent surface (the owner, 24 Oct)
     if not body:
         return None
     if _QUESTION.search(body) and not _ACTION.search(body) and not re.search(r"\bwhat (happens )?if\b|\bwhat happens to\b.{1,40}\bif\b", body, re.I):
@@ -231,6 +233,8 @@ async def resolve_capability(text: str, classifier: Classifier, user_id: str, su
     """Map a user goal to a supported capability, to a planned-but-unavailable one (the
     caller says so plainly), or None when the Assistant should answer instead."""
     body = (text or "").strip()
+    from app.modules.agent.goals import _typos_fixed
+    body = _typos_fixed(body)      # "create an invocie" read as meant, on every Agent surface (the owner, 24 Oct)
     if not body:
         return None
     wants_action = bool(_ACTION.search(body))

@@ -182,44 +182,20 @@ def _classify_health_status(
     Accounting-correct 5-state health classifier as per proposal.
     Incorporates Profitability, Coverage, and Burn signals.
     """
-    coverage = cash_balance / max(abs(total_costs), 1.0)
-    is_burning = prev_cash is not None and cash_balance < prev_cash
-
-    # 1. Critical (Overdraft)
+    # Judged on the months of costs the cash covers and whether the month makes money, never on fixed amounts (the
+    # owner, 25 Oct: a profitable month with £381.50 against £22.83 of costs, over 16 months covered, read "at risk"
+    # because it was under £500).
     if cash_balance < 0:
-        return "critical"
-    
-    # 2. At Risk (Near zero)
-    if cash_balance < max(total_costs * 0.1, 500):
+        return "critical"      # overdrawn
+    costs = abs(float(total_costs or 0))
+    covered = cash_balance / costs if costs > 0 else float("inf")      # months of costs the cash pays for
+    if covered < 1:
         return "at risk"
-
-    # 3. Stress (Low balance)
-    if cash_balance < max(total_costs * 0.3, 1000):
+    if covered < 3:
         return "stress"
-
-    # 4. Tight (Positive but limited)
-    if cash_balance < max(total_costs * 0.7, 2500):
-        return "tight"
-
-    # 5. Stable (Strong buffer)
+    if covered < 6 or net_profit < 0:
+        return "tight"      # some cover, or a month that loses money
     return "stable"
-
-    # 2. Stress (Loss-making AND out of cash buffer OR profitable but burning fast)
-    if net_profit < 0 and cash_balance <= 0:
-        return "stress"
-
-    # 3. At Risk (Loss-making BUT has > 1 month cost buffer)
-    if net_profit < 0 and coverage >= 1:
-        return "at risk"
-
-    # 4. Tight (Profitable but thin cash cushion OR positive profit but burning)
-    if net_profit >= 0:
-        if coverage < 2 or is_burning or cash_balance <= 0:
-            return "tight"
-        return "stable"
-
-    # 5. Default/Catch-all (Loss-making and very low cash)
-    return "stress"
 
 
 def _month_span_from_days(days: int | None, fallback: int = 1, cap: int = 3) -> int:
@@ -607,7 +583,10 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
 
 
 def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any]) -> BusinessStateSnapshot:
-    revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, 1)
+    # A lost client or a sales drop is judged once it is fully in effect, never on its first ramp month (the owner, 25 Oct:
+    # losing a client worth 100% of revenue read "Neutral impact" from month 1, half of it gone)
+    month = 12 if scenario_type in ("client_loss", "revenue_drop") else 1
+    revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, month)
     starting_cash = float(state.starting_cash)
 
     return BusinessStateSnapshot(
@@ -847,7 +826,8 @@ def _timeline(
         cash_conv, cash_conv_state, receivable_exp, receivable_state, delayed_rev_pct, delayed_state = typed_ratios(cash, cumulative_profit, accruals_balance)
 
         # Inject critical collection alert if ratios hit extremes
-        if accruals_balance > cumulative_profit and i > 2: # Give it some months to settle
+        # Only money actually owed to the business escalates it: a loss with nothing owed is judged on its cash above
+        if accruals_balance > 0 and accruals_balance > cumulative_profit and i > 2: # Give it some months to settle
             health_status = "stress" # Escalate status even if cash is positive
         
         score = _stability_score(
