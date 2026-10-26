@@ -351,7 +351,7 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 return _result({"kind": "answer", "conversational": False,
                                 "message": f"You have {n} business plan{'s' if n != 1 else ''} waiting for your review: {names}. Open one, or create a new one?",
                                 "offers": [{"label": f"Open “{w['short']}”", "to": w["to"]} for w in waiting[:3]]
-                                          + [{"label": "Create a new one", "capability": "business_plan_draft"}]})
+                                          + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]})
     if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice"):
         # A readiness question, or a funding need stated: answered from the case summary by rules, with buttons (G6)
         from app.modules.agent import readiness_answer

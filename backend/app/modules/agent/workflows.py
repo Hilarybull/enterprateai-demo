@@ -2015,10 +2015,10 @@ async def business_plan_step(ctx):
     if reused:
         return Done("You already have this business plan draft" + (f" ({r['title']})" if r.get("title") else "") + ", so I haven't made another. Nothing was charged.",
                     next_action="Ask me to redraft it when you want a new version.",
-                    outcome={"plan": r, "reused": True, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans"}]}, skipped=True)
+                    outcome={"plan": r, "reused": True, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans", "primary": True}]}, skipped=True)
     return Done("Your business plan is ready to review" + (f": {r['sections']} sections" if r.get("sections") else "") + ".",
                 next_action="Review it: accept it, edit it or reject it.",
-                outcome={"plan": r, "links": [{"label": "draft business plan", "to": r.get("to") or "/blueprint?tab=business-plans"}]})
+                outcome={"plan": r, "links": [{"label": "draft business plan", "to": r.get("to") or "/blueprint?tab=business-plans", "primary": True}]})      # See details opens it (26 Oct)
 
 
 async def sales_letter_step(ctx):

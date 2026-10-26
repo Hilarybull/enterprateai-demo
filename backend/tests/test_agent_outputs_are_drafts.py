@@ -15,6 +15,7 @@ def test_a_business_plan_is_a_draft_to_review_until_accepted():
     r = env.submit(capability="business_plan_draft", channel="ui_action")["run"]
     link = r["state"]["outcome"]["links"][0]
     assert link["to"].startswith("/blueprint?tab=business-plans&document_id=doc-1&review=dr-")
+    assert link["primary"] is True      # "See details" opens the plan, never the Agent Centre (the owner, 26 Oct)
     s = run(build_summary(env.orch, OWNER, "A"))
     card = next(c for c in s["needs_approval"] if c.get("type") == "draft")
     assert card["subtitle"] == "Needs your review" and card["title"].startswith("Business plan: ") and s["needs_approval_count"] >= 1

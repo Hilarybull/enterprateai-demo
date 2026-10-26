@@ -987,7 +987,8 @@ class Orchestrator:
             # a paid plan or a full-access grant. Never Comprehensive on Explorer (the owner's QA, 15 Oct).
             depth = (req.params or {}).get("depth") or await self._idea_depth(req)
             req.params = {**(req.params or {}), "depth": depth}
-        if capability == "business_plan_draft" and req.source_channel in ("text", "voice") and not (req.params or {}).get("purpose")                 and not getattr(req, "essential_handoff", False) and not (req.params or {}).get("answers"):      # the homepage chat asked its own
+        # A button too ("Create a new one" beside the plans waiting: the owner, 26 Oct: "it just started creating, no question")
+        if capability == "business_plan_draft" and (req.source_channel in ("text", "voice") or (req.params or {}).get("existing_plan") == "new")                 and not (req.params or {}).get("purpose")                 and not getattr(req, "essential_handoff", False) and not (req.params or {}).get("answers"):      # the homepage chat asked its own
             # Conversational first (the owner's QA, 23 Oct: "i need business plan" went straight to its price): which plan and
             # what it is for, asked once, then its price
             asked = await self._plan_questions(req)

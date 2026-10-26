@@ -17,7 +17,7 @@ def test_plans_waiting_are_linked_and_a_new_one_is_offered(world):
     out = ask(client, "I need a business paln")
     assert out["kind"] == "answer" and "2 business plans waiting for your review" in out["message"]
     labels = [o["label"] for o in out["offers"]]
-    assert labels[-1] == "Create a new one" and out["offers"][-1] == {"label": "Create a new one", "capability": "business_plan_draft"}
+    assert labels[-1] == "Create a new one" and out["offers"][-1] == {"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}
     assert {"Open “Car wash subscription”", "Open “Drone Cleaning”"} <= set(labels)
     assert all("review=" in o["to"] for o in out["offers"][:-1])                 # opens the draft with its review bar
     assert env.meter.charges == []
