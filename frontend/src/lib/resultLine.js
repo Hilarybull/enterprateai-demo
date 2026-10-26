@@ -6,9 +6,9 @@ import { resultHome } from "./resultHome";
 
 const PAGE = { risks: "/check/risks", idea: "/check/idea", pricing: "/check/pricing", customers: "/check/customers" };
 const VIEW = { risks: "View your risk check", funding: "View your funding readiness", launch: "View your launch readiness", idea: "View your idea check",
-  pricing: "View your pricing check", customers: "View your growth checklist", plan: "View your business plan", other: "View your result" };
+  pricing: "View your pricing check", customers: "View your customer plan", plan: "View your business plan", other: "View your result" };
 
-const GOAL_KIND = { need_funding: "funding", launch: "launch", test_idea: "idea", create_business_plan: "plan", business_risks: "risks" };
+const GOAL_KIND = { need_funding: "funding", launch: "launch", test_idea: "idea", create_business_plan: "plan", business_risks: "risks", more_customers: "customers" };
 const READY_WORDS = { funding: "Your funding case is set up.", launch: "Your launch plan is set up.", idea: "Your idea check is ready.",
   plan: "I'm writing your business plan.", risks: "Your risk check is ready." };
 
@@ -18,7 +18,7 @@ export function resultLine(result, handoff = {}, goalKey = "") {
     const kind = kindOf(result);
     const { score, sentence } = statusWords(result);
     const so = result.score_partial ? " so far" : "";
-    const text = kind === "risks" || !score ? sentence : `${score}${so} · ${sentence}`;
+    const text = kind === "risks" || kind === "customers" || !score ? sentence : `${score}${so} · ${sentence}`;
     return { text, cta: VIEW[kind] || VIEW.other, to: resultHome(result) || PAGE[kind] || handoff?.to || null };
   }
   const kind = GOAL_KIND[goalKey] || "other";

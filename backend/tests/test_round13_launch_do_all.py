@@ -14,7 +14,11 @@ def test_the_agent_s_launch_suggestions_wait_as_drafts_and_the_owner_s_answers_a
     _sid, made = _launch(client)
     svc = service_for(env.orch)
     cid = made["handoff"]["subject_id"]
-    run(svc.get_subject(OWNER, "A", rules.LAUNCH, cid, OWNER))      # opened: what the records and research give is offered
+    run(svc.get_subject(OWNER, "A", rules.LAUNCH, cid, OWNER))      # opened before "Do all for me": nothing is filled for free
+    assert not run(svc.store.get("subjects", cid))["data"].get("agent_drafts")
+    env.businesses["A"]["data"].setdefault("research_runs", {})["rr1"] = {"id": "rr1", "goal": "launch", "status": "review", "case_id": cid,
+                                                                         "created_at": "2026-10-26T00:00:00Z", "items": []}
+    run(svc.get_subject(OWNER, "A", rules.LAUNCH, cid, OWNER))      # after it: what the records and research give is offered
     data = run(svc.store.get("subjects", cid))["data"]
     prov = data.get("provenance") or {}
     units = {"operations.process_version", "delivery.capacity_unit", "planned_volume.unit"}      # how things are counted, not answers

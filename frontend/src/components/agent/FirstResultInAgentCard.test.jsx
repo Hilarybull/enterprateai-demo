@@ -43,10 +43,18 @@ function Dashboard() {
     {firstResult?.result && <div data-first-result-card><FirstResultPanel firstResult={firstResult} /></div>}</>;
 }
 function Where() { return <p data-testid="where">{useLocation().pathname}</p>; }
-const OPEN = { pricing: { label: "Open pricing check", to: "/check/pricing" }, customers: { label: "Open growth checklist", to: "/check/customers" } };
+const OPEN = { pricing: { label: "Open pricing check", to: "/check/pricing" } };
 const mount = async () => { render(<MemoryRouter><Dashboard /><Where /></MemoryRouter>); await act(async () => { await new Promise((r) => setTimeout(r, 20)); }); };
 
-describe.each(Object.entries(RESULTS))("the %s result under the Agent card", (_kind, result) => {
+// The customer plan lives on its own page, like the risk check (the owner, 25 Oct): never under the Agent card
+it("a customer plan is never shown under the Agent card: it has its own page", async () => {
+  firstValue = { business_id: "ws1", result: RESULTS.customers };
+  await mount();
+  expect(document.querySelector("[data-first-result-panel]")).toBeNull();
+  expect(within(screen.getByRole("region", { name: "EnterprateAI Agent" })).getAllByText(/^Suggestion \d$/).length).toBe(4);
+});
+
+describe.each(Object.entries(RESULTS).filter(([k]) => k !== "customers"))("the %s result under the Agent card", (_kind, result) => {
   it("is its own card under the Agent row, with every action a button and an X to dismiss", async () => {
     firstValue = { business_id: "ws1", result };
     await mount();

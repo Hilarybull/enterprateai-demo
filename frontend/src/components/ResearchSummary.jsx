@@ -148,7 +148,9 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
 
   if (!run) return null;
   const amount = run.answers?.amount;
-  const what = `${Number(amount) > 0 ? `${shortMoney(amount, currency)} ` : ""}${ROUTE_WORD[String(run.answers?.route || "").toLowerCase()] || "funding"}`;
+  // The customer plan's run is said as that, never "funding" (the owner, 26 Oct: "why funding when it's more customer flow")
+  const what = run.goal === "more_customers" ? "customer plan"
+    : `${Number(amount) > 0 ? `${shortMoney(amount, currency)} ` : ""}${ROUTE_WORD[String(run.answers?.route || "").toLowerCase()] || "funding"}`;
   // One count everywhere (the owner's QA, 21 Oct): the run's own number of new findings.
   const findings = typeof run?.findings === "number" ? run.findings
     : options.length + items.filter((x) => (x.sources || []).length && x.kind === "estimated" && !x.derive).length;

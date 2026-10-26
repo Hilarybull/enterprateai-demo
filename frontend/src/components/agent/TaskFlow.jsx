@@ -1,6 +1,6 @@
 import UkDateInput, { ukDate } from "../UkDateInput";
 import { useEffect, useRef, useState } from "react";
-import { agentErrorMessage, answerRun, cancelRun, fixCustomerEmail, getRun } from "../../lib/agent";
+import { agentErrorMessage, answerRun, cancelRun, detailsOf, fixCustomerEmail, getRun } from "../../lib/agent";
 import { formatCurrency } from "../../lib/format";
 import { CustomerPicker, LineItems, Modal, checkLines, linesFromText, startingLines } from "./AgentBits";
 import SaidLine from "../SaidLine";
@@ -566,7 +566,7 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     if (was?.kind !== "ask") changed();
   }
 
-  const details = (runId) => { close(); out.current.onDetails?.(runId); };
+  const details = async (runId) => { close(); out.current.onDetails?.(runId, await detailsOf(runId)); };      // (runId, where it goes)
 
   /** "Discard this request": the task is cancelled, so it leaves Needs You for History. */
   async function discard() {

@@ -53,9 +53,14 @@ def decide(data: dict, draft_id: str, decision: str) -> dict | None:
     d["status"] = ACCEPTED if decision == "accept" else REJECTED
     d["decided_at"] = datetime.now(timezone.utc).isoformat()
     if d.get("kind") == "idea_validation":
+        if decision == "reject":
+            # Rejected: gone from Idea Validation History too, never kept as "Rejected" (the owner, 26 Oct)
+            data["validation_history"] = [e for e in data.get("validation_history") or [] if not (isinstance(e, dict) and e.get("id") == d.get("ref"))]
+            if data.get("active_validation_id") == d.get("ref"):
+                data.pop("active_validation_id", None)
         for e in data.get("validation_history") or []:
             if isinstance(e, dict) and e.get("id") == d.get("ref"):
-                e["status"] = "accepted" if decision == "accept" else "rejected"
+                e["status"] = "accepted"
     return d
 
 

@@ -10,7 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "../../lib/toast";
 import { apiRequest } from "../../api/client";
 import ProfileUpdates from "./ProfileUpdates";
-import { agentErrorMessage, cancelRun, clearConversation, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
+import { agentErrorMessage, cancelRun, clearConversation, detailsOf, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
@@ -102,7 +102,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const [reply, setReply] = useState(null);      // { tone, text, runId, upgrade }
   // A task started here stays here: its questions open in a dialog on this page, what it prepares
   // is confirmed in the line under the box, and its own page opens only from "See details".
-  const flow = useTaskFlow({ say: (r) => setReply(r), onChanged: () => onChanged?.(), onDetails: (runId) => navigate(`/agent/runs/${runId}`) });
+  const flow = useTaskFlow({ say: (r) => setReply(r), onChanged: () => onChanged?.(), onDetails: (runId, to) => navigate(to || `/agent/runs/${runId}`) });
   const ent = summary?.entitlement;
   const runsLeft = ent ? Math.max(0, (ent.monthly_runs || 0) - (ent.monthly_runs_used || 0)) : null;
   const credits = typeof ent?.credits === "number" ? ent.credits : null;
@@ -555,7 +555,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             </div>
           )}
           <div className="mt-2 flex flex-wrap gap-3 text-[13px] font-semibold">
-            {reply.runId && <button type="button" className="underline" onClick={() => navigate(`/agent/runs/${reply.runId}`)}>See details</button>}
+            {reply.runId && <button type="button" className="underline" onClick={async () => navigate(await detailsOf(reply.runId))}>See details</button>}
             {reply.to && <button type="button" className="underline" onClick={() => navigate(reply.to)}>Open Agent Centre</button>}
             {getConversation(businessId).length > 0 && (
               <button type="button" className="underline" onClick={() => { clearConversation(businessId); setReply(null); }}>New conversation</button>
@@ -631,7 +631,8 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
     const t = toast({ kind: "pending", title: decision === "accept" ? `Accepting ${item.title || "the draft"}…` : `Rejecting ${item.title || "the draft"}…` });
     try {
       await apiRequest(`/businesses/${businessId}/agent-drafts/${id}/decide`, "POST", { decision });
-      toast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use." : "Nothing else was changed." });
+      toast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use."
+        : ["idea_validation", "business_plan"].includes(item.kind) ? "It's been deleted." : "Nothing else was changed." });      // deleted on reject (26 Oct)
       onChanged?.();
     } catch {
       toast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(item, decision) }] });

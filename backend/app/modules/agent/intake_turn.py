@@ -181,6 +181,18 @@ def check(slot: dict, item: dict, said: list[str], owner_name: str | None) -> tu
         return n, cur, "ok"
     if kind == "choice":
         picked = _option(slot, raw) if _option(slot, raw) is not None else _option(slot, evidence)
+        if picked is None and slot.get("multi"):
+            # Several chosen at once ("word_of_mouth,social"): each one an option (the owner, 25 Oct: "can be multichoice")
+            parts = [_option(slot, p) for p in re.split(r"[,;]", str(raw or "")) if p.strip()]
+            if parts and all(x is not None for x in parts):
+                picked = ",".join(dict.fromkeys(parts))
+        if picked is None:
+            # Said in plain words ("through Instagram", "about 12 new customers"): the question's own reader, kept only when it
+            # names its options
+            from app.modules.agent import goals as _goals
+            words = _goals.choice_from_words(str(slot.get("key") or ""), f"{raw or ''} {evidence or ''}")
+            if words and all(_option(slot, x) is not None for x in str(words).split(",")):
+                picked = words
         return (picked, None, "ok") if picked is not None else (None, None, "not_an_option")
     text = str(raw or "").strip()[:500]
     if not text:
@@ -597,6 +609,10 @@ def _slot_named(message: str, slots: list[dict]) -> dict | None:
     names = {"price": ("price", "charge"), "cost": ("cost",), "amount": ("amount", "funding"), "monthly_sales": ("sales a month", "a month", "per month"),
              "fixed_costs": ("fixed",), "quantity": ("quantity", "how many"), "customer": ("sell to", "who buys", "customer", "customers", "who it is for"),
              "route": ("route", "loan", "grant", "equity"), "use": ("what it is for", "use of", "spend"), "positioning": ("position", "positioning")}
+    # "make it 10 new customers" is the goal, never who the customer is (the owner, 26 Oct: "why is it not based on what I typed")
+    goal = next((sl for sl in slots if sl["key"] == "goal"), None)
+    if goal and re.search(r"\b\d+\s*(?:or more\s+)?(?:new\s+)?customers?\b", words):
+        return goal
     # The slot whose name is said most specifically ("who I sell to" is the customer, not what is sold).
     best, size = None, 0
     for sl in slots:

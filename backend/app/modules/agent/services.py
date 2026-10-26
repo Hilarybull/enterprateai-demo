@@ -567,7 +567,24 @@ def validation_payload(idea: dict, business_id: str | None) -> dict:
                   "fixed_costs_monthly": num(k.get("fixed_costs"))},
         "step9": {"capacity_per_month": num(k.get("capacity"))},
     }
+    # A name alone ("Bush Clearing") is never the description too (the owner, 26 Oct: "description is not even making sense"):
+    # the Agent's own fill writes those, and the name is used only when there is nothing else
+    desc = str(idea.get("description") or "").strip()
+    fill = idea.get("form_fill") or {}
+    if fill and len(desc.split()) <= 4:
+        for s, f in (("step1", "idea_tagline"), ("step1", "idea_description"), ("step2", "proposed_solution"), ("step5", "solution_description")):
+            if (fill.get(s) or {}).get(f) or (s, f) == ("step2", "proposed_solution"):
+                steps[s].pop(f, None)
+    if idea.get("country"):
+        steps["step1"]["operating_country"] = idea["country"]      # the form's own list of countries, never "Abuja, Nigeria"
     steps = {s: {f: v for f, v in fields.items() if v not in (None, "")} for s, fields in steps.items()}
+    # Every question the owner and the records leave empty, as the Agent filled it (validation_fill), never over an answer
+    for s, fields in fill.items():
+        for f, v in (fields or {}).items():
+            if v not in (None, "", []) and str((steps.get(s) or {}).get(f) or "").strip().lower() in ("", "other", "unknown"):
+                steps.setdefault(s, {})[f] = v
+    if fill and len(desc.split()) <= 4 and not (steps.get("step2") or {}).get("proposed_solution") and (steps.get("step5") or {}).get("solution_description"):
+        steps["step2"]["proposed_solution"] = steps["step5"]["solution_description"]
     steps = {s: fields for s, fields in steps.items() if fields}
     return {"validation_mode": "basic", "workspace_id": business_id, "currency": idea.get("currency") or "GBP",
             "steps_completed": sorted(int(s[4:]) for s in steps), **steps}
@@ -590,14 +607,15 @@ class ModuleStudio(Studio):
         payload = validation_payload(idea, business_id)
         payload["validation_mode"] = idea.get("depth") or payload.get("validation_mode") or "basic"
         quick = evaluate_v4(v4_payload_to_input(payload))
-        comprehensive = idea.get("depth") == "comprehensive"
-        if comprehensive:      # Basic is the engine alone: no research and no report written by a model
-            self._full_later(user_id, payload, business_id=business_id, history_id=idea.get("history_id"))
+        # The full validation the page runs, Basic or Comprehensive alike (its research and report, at that depth), saved on
+        # the draft as the page saves its own (the owner, 26 Oct: "agent is supposed to populate the field and get me the full
+        # validation output, based on basic or comprehensive")
+        self._full_later(user_id, payload, business_id=idea.get("history_business") or business_id, history_id=idea.get("history_id"))
         scores = quick.get("scores") or {}
         return {"score": round(float(scores.get("potential_score") or 0)), "confidence": round(float(scores.get("evidence_confidence_score") or 0)),
                 "verdict": (quick.get("verdict") or {}).get("category"), "risks": [risk_sentence(f) for f in quick.get("risk_flags") or []][:6],
-                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending" if comprehensive else None,
-                "payload": payload, "quick": {k: quick.get(k) for k in ("scores", "verdict", "risk_flags", "experiments") if k in quick}}
+                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending",
+                "payload": payload, "quick": quick}
 
     @staticmethod
     def _full_later(user_id: str, payload: dict, business_id: str | None = None, history_id: str | None = None) -> None:

@@ -97,7 +97,7 @@ GOALS: list[dict[str, Any]] = [
                    _f("use", "What will the money be used for?", "textarea", required=True),
                    _f("stage", "Where is the business now?", "choice", required=True,
                       options=[{"value": "pre_revenue", "label": "Not trading yet"}, {"value": "trading", "label": "Trading"}])]},
-    {"key": "more_customers", "mode": "business_goal", "chip": False,      # off the landing shortcuts until ready (the owner, 22 Oct)
+    {"key": "more_customers", "mode": "business_goal",      # on the landing shortcuts: its free check is built (the owner, 25 Oct)
      "label": "I need more customers", "outcome": "Work toward winning more customers",
      "class": COMPOSITE, "start": "offer_review", "path": ["offer_review", "marketplace_profile", "marketplace_offering", "new_proposal", "enquiry_to_quote"],
      "say": "I can help you work toward getting more customers: review what sells, improve how your business appears in the Marketplace, "
@@ -244,13 +244,18 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("monthly_sales", "How many could you realistically sell each month?", "number", required=True, unsure=_NOT_SURE, q=5, noun="monthly sales"),
         _choice("positioning", "How do you want to position it?", [("affordable", "Affordable"), ("mid", "Mid-market"), ("premium", "Premium"), (UNSURE, _NOT_SURE)], required=True, q=6, noun="positioning"),
     ]},
-    "more_customers": {"value": "A few quick questions, then you'll see what is holding back new customers and what to do first.", "questions": [
+    # Winning more customers (the owner's brief, 25 Oct): what the records hold is read, never asked; the rest as buttons
+    "more_customers": {"value": "I'll look at who buys from you now, how new customers find you, and the first things to do. This uses your records; it doesn't promise customers.",
+                       "questions": [
         _f("sell", "What do you sell?", "text", required=True, q=1, noun="what you sell"),
-        _f("customer", "Who do you believe your ideal customers are?", "text", required=True, unsure="I'm not sure", q=2, noun="ideal customer"),
-        _f("where", "Where do you want to find customers?", "text", required=True, unsure=_NOT_SURE, q=3, noun="where"),
-        _f("channel", "How do customers find you today?", "text", required=True, unsure="I don't have customers yet", unsure_value="I don't have customers yet", q=4, noun="channel"),
-        _f("price", "What do you typically charge, or what is a typical customer worth?", "text", required=True, unsure=_NOT_SURE, q=5, noun="price"),
-        _f("goal", "What would success look like over the next three months?", "text", required=True, unsure=_NOT_SURE, q=6, noun="goal"),
+        _f("customer", "Who do you want more of? Your best kind of customer.", "text", required=True, unsure="I'm not sure", q=2, noun="customer"),
+        _f("where", "Where do you want to find them?", "text", required=True, unsure=_NOT_SURE, q=3, noun="where"),
+        # Several at once (the owner, 25 Oct: "can be multichoice"): stored as the values chosen, joined with commas
+        _f("channel", "How do new customers find you today? Pick all that apply.", "choice", required=True, multi=True, q=4, noun="channel",
+           options=[{"value": k, "label": v[:1].upper() + v[1:]} for k, v in first_value.CHANNELS.items()] + [{"value": "none", "label": "I don't have customers yet"}]),
+        _f("price", "What do you usually charge?", "text", required=True, unsure=_NOT_SURE, q=5, noun="price"),
+        _f("goal", "How many new customers do you want in the next three months?", "choice", required=True, unsure=_NOT_SURE, q=6, noun="goal",
+           options=[{"value": k, "label": v[:1].upper() + v[1:]} for k, v in first_value.CUSTOMER_GOALS.items()]),
     ]},
 }
 # A document's short conversation: who it is for, their email (it can wait), what, how many, the price,
@@ -295,7 +300,7 @@ _OUTCOMES: list[tuple[str, re.Pattern]] = [
                                 r"|rais(e|ing) (about |around |up to )?(£|\d)|(need|want|looking for|after) (about |around |roughly )?(£\s?\d|\d[\d,]*\s?(k|m|thousand|million|pounds)\b))"
                                 # "£25k for a second van and a driver, ... need it by March": an amount for something, needed by a date.
                                 r"|^\s*[£$€₦]\s?\d[\d,.]*\s*(?:k|m|thousand|million)?\s+(?:for|to)\b|\bneed (?:it|the money|the cash|the funds?) (?:by|before|in)\b", re.I)),
-    ("more_customers", re.compile(r"\b(more (customers|clients|sales|leads|work|business)|win (more )?(work|customers|clients|contracts)|get (customers|clients|leads)|find (customers|clients))\b", re.I)),
+    ("more_customers", re.compile(r"\b(more (customers|clients|sales|leads|work|business)|win (more )?(work|customers|clients|contracts)|get (customers|clients|leads)|find (customers|clients)|(?:need|want|looking for)\s+(?:new\s+|some\s+)?(customers|clients)|no (customers|clients))\b", re.I)),
     ("price_offer", re.compile(r"\b(pric(e|ing) (my|our|a|the)|how much (should|to) (i )?charge|what (should|to) (i )?charge|help me price)\b", re.I)),
     ("launch", re.compile(
         r"\blaunch\w*\b"
@@ -423,10 +428,31 @@ def _n_of(text: str, unit: str) -> float | None:
     return float(w) if re.match(r"\d", w) else float(_NUM_WORDS[w])
 
 
+_CHANNEL_WORDS = (("word_of_mouth", r"\b(word of mouth|referr\w*|recommend\w*|friends?|family|returning customers?|repeat customers?)\b"),
+                  ("social", r"\b(social media|instagram|insta|facebook|fb|tiktok|twitter|whatsapp|linkedin|youtube|snapchat|social)\b"),
+                  ("marketplace", r"\b(marketplace|directory|directories|jiji|etsy|amazon|ebay|yell|checkatrade|bark|enterprateai)\b"),
+                  ("search", r"\b(google|search(?: engines?)?|maps|website|seo|online search)\b"),
+                  ("ads", r"\b(ads?|adverts?|advertis\w*|flyers?|leaflets?|posters?|billboards?|radio|newspapers?)\b"),
+                  ("partners", r"\b(partners?|agents?|suppliers?|resellers?|other businesses)\b"),
+                  ("walk_in", r"\b(walk[- ]?ins?|passing by|passers[- ]?by|foot traffic|street|shop front|storefront)\b"))
+
+
 def choice_from_words(key: str, text: str) -> str | None:
     """A risk question answered in plain words, not by picking a chip (the owner, 24 Oct: "it should be flexible and adaptive"):
     "about 30%", "most of it", "maybe 2 months", "mostly yes", "I have 3 staff"."""
     t = str(text or "").lower()
+    if key == "channel":
+        # "Instagram and referrals" (the owner, 25 Oct: several at once): each channel named, joined as the chips are
+        if re.search(r"\b(?:no|none|don'?t have any|haven'?t got any|not yet)\b.{0,15}\b(?:customers?|clients?)\b|\bno customers\b", t):
+            return "none"
+        said = [k for k, pattern in _CHANNEL_WORDS if re.search(pattern, t)]
+        return ",".join(said) or None
+    if key == "goal":
+        n = re.search(r"\b(\d{1,4})\b", t)
+        if n:
+            v = int(n.group(1))
+            return "5" if v <= 7 else "10" if v <= 15 else "20"
+        return None
     if key == "top_share":
         pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|per ?cent)", t)
         if pct:
@@ -503,6 +529,11 @@ def _extract(text: str, goal_key: str | None) -> dict[str, Any]:
         rest = re.sub(r"(?:\s*,)?(?:\s+(?:for|at|of|costing|worth|totall?ing|priced at|@))?\s*" + re.escape(m.group(0)), " ", text, count=1, flags=re.I)
     if goal_key in ("launch", "more_customers", "price_offer"):
         out.update({k: v for k, v in _launch_facts(text).items() if k in wanted or (k.endswith("_per") and k[:-4] in wanted)})
+        if goal_key == "more_customers" and "channel" in wanted:
+            # "selling to local offices through Instagram": how new customers find you, as the chips say it (25 Oct)
+            ch = choice_from_words("channel", text)
+            if ch:
+                out["channel"] = ch
         if goal_key == "launch" and ("price" in out or "cost" in out):
             from app.modules.agent.intake_turn import currency_of as _cur
             if _cur(text):
@@ -969,6 +1000,9 @@ def _shown(field: dict, value: Any) -> str:
     if value == UNSURE:
         return str(field.get("unsure") or _NOT_SURE)
     if field.get("type") == "choice":
+        if field.get("multi") and isinstance(value, str) and "," in value:      # several chosen: each by its own label
+            labels = {o["value"]: o["label"] for o in field.get("options") or []}
+            return ", ".join(labels.get(v.strip(), v.strip()) for v in value.split(",") if v.strip())
         return next((o["label"] for o in field.get("options") or [] if o["value"] == value), str(value))
     if field.get("type") == "number" and isinstance(value, (int, float)):
         return f"{field.get('prefix', '')}{value:,.2f}".replace(".00", "")
@@ -1877,6 +1911,10 @@ async def resume(store: SessionStore, session: dict, orch, user_id: str, *, busi
     return session
 
 
+# The free checks worked out on the records alone, each with its own page (the owner, 24 and 25 Oct): no paid task, no
+# history row, the result in one request, one short line in the chat
+FREE_CHECKS = {"business_risks": "/check/risks", "more_customers": "/check/customers"}
+
 NEW = "new"
 
 
@@ -2380,7 +2418,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
         raise PermissionError("Sign in and resume this task first.")
     if session.get("handoff") and (session["handoff"].get("run_id") or session["handoff"].get("subject_id")):
         return session      # already prepared: the same task, never a second one
-    if session.get("goal_key") == "business_risks":
+    if session.get("goal_key") in FREE_CHECKS:
         # R-1 (the owner, 24 Oct: three identical runs, 2 credits each): the risk check is a free calculation on the records,
         # shown as its result. No background task, no charge, no history row; the answers are kept for the next check.
         if (session.get("handoff") or {}).get("free"):
@@ -2389,7 +2427,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
             await orch.rt.business.mutate(session["business_id"], lambda d: _keep_answers(d, session, now))
         except Exception:      # noqa: BLE001 - R-8: the result is shown either way; they are kept again on the next answer
             logger.warning("risk check: answers not kept on hand-off for %s", session["id"][:8], exc_info=True)
-        session["handoff"] = {"to": "/check/risks", "capability": (session.get("resolution") or {}).get("start_capability"), "free": True}
+        session["handoff"] = {"to": FREE_CHECKS[session["goal_key"]], "capability": (session.get("resolution") or {}).get("start_capability"), "free": True}
         session["state"] = HANDED_OFF
         session["updated_at"] = now.isoformat()
         await store.put(session)

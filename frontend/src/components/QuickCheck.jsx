@@ -14,11 +14,14 @@ import { premiumFlow } from "./ResearchReview";
 // provisional result from the server's deterministic check. No credits; the premium step comes after
 // the value, and its gate (plan before credits) only when it is chosen.
 
+// The free checks whose result is the page itself (no score, no Dismiss): the risk check and winning more customers
+const FREE_PAGES = new Set(["business_risks", "more_customers"]);
+
 export const QUICK_CHECKS = {
   launch: { title: "Launch Readiness quick check", intro: "A few questions, about two minutes." },
   need_funding: { title: "Funding quick check", intro: "A few questions, about two minutes." },
   price_offer: { title: "Pricing health check", intro: "A few questions about your price." },
-  more_customers: { title: "Customer growth check", intro: "A few questions about winning customers." },
+  more_customers: { title: "Win more customers", intro: "Who buys from you now, how new customers find you, and the first things to do, from your records. I only ask what they don't show." },
   test_idea: { title: "Idea check", intro: "A few questions about your idea and its numbers." },
   business_risks: { title: "Business risk check", intro: "Your risks, worked out from your records. I only ask what your records can't tell." },
 };
@@ -78,6 +81,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       const r = await apiRequest(`/businesses/${businessId}/quick-check/${goalKey}`, "POST", { answers: all });
       setResult(r.result);
       if (goalKey === "business_risks") toast({ kind: "success", title: "Done. Your risk check is up to date." });
+      if (goalKey === "more_customers") toast({ kind: "success", title: "Done. Your customer plan is up to date." });
       trackGoal("first_value_shown", { key: goalKey, where: "app" });
     } catch {
       setError("I couldn't work that out just now. Your answers are kept: try again.");
@@ -103,8 +107,10 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
     // QA PF1/PF3: the premium step, here on the page. The plan first, then the cost (shown before it starts), then
     // research of what is missing, reviewed item by item. Nothing else is started.
     // R9-4: once adopted, the card shows the new result (never the old score left on screen).
+    // The result loaded again from the records, after findings are accepted on this page
+    const reload = () => apiRequest(`/businesses/${businessId}/quick-check/${goalKey}`, "GET").then((r) => { if (r?.last?.result) setResult(r.last.result); }).catch(() => {});
     const premium = premiumFlow({ base: `/businesses/${businessId}/quick-check/${goalKey}/premium`, body: { answers: values }, businessId, onError: setError,
-      onAdopted: (out) => { if (out?.result) setResult({ ...out.result, premium_gate: result.premium_gate }); } });
+      onAdopted: (out) => { if (out?.result) setResult({ ...out.result, premium_gate: result.premium_gate }); else reload(); } });
     // QA E4: the answers belong on the launch plan, which otherwise still shows 0% evidence.
     const extra = goalKey === "launch" ? (
       <div className="mt-3 text-[13px]" data-launch-link>
@@ -119,7 +125,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
             Add these answers to your launch plan</button>}
       </div>) : null;
     // On the risk check's own page the result is the page: no Dismiss; an answer given on it is checked again here
-    return <FirstValueCard result={result} onPremium={premium} extra={extra} onDismiss={goalKey === "business_risks" ? null : () => { setResult(null); setAt(0); setOpen(false); }}
+    return <FirstValueCard result={result} onPremium={premium} extra={extra} onReload={reload} onDismiss={FREE_PAGES.has(goalKey) ? null : () => { setResult(null); setAt(0); setOpen(false); }}
       onAnswer={(key, value) => finish({ ...values, [key]: value })}
       onContinue={() => { setResult(null); setAt(0); setOpen(true); }} continueLabel="Start again" />;
   }
@@ -129,7 +135,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{meta.title}</p>
-          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro}{goalKey === "business_risks" ? "" : " You get a score, what looks ready and what is missing."}</p>
+          <p className="text-[13px] text-slate-600 dark:text-slate-400">{meta.intro}{FREE_PAGES.has(goalKey) ? "" : " You get a score, what looks ready and what is missing."}</p>
         </div>
         {!open && <button type="button" onClick={() => setOpen(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Start the quick check</button>}
       </div>
@@ -140,7 +146,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
       )}
       {open && questions && saidItems.length > 0 && (
         <div className="mt-3"><SaidLine items={saidItems} editing={editingSaid} onEdit={() => { setEditingSaid(true); setAt(0); }}
-          {...(goalKey === "business_risks" ? { title: "From your records" } : {})} /></div>
+          {...(FREE_PAGES.has(goalKey) ? { title: "From your records" } : {})} /></div>
       )}
       {open && questions && !q && !result && asked.length === 0 && (
         // Everything was in their sentence: one tap to see the result.

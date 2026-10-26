@@ -126,6 +126,6 @@ describe("buttons that lead to an Agent task", () => {
     expect(within(dialog).getByLabelText("Email address for Aftred")).toBeTruthy();
     expect(screen.queryByTestId("elsewhere")).toBeNull();                         // still on the dashboard
     fireEvent.click(within(dialog).getByRole("button", { name: "See details" })); // the page opens only when asked for
-    expect(screen.getByTestId("elsewhere").textContent).toBe("/agent/runs/run-5");
+    expect((await screen.findByTestId("elsewhere")).textContent).toBe("/agent/runs/run-5");      // its task page: no result of its own
   });
 });

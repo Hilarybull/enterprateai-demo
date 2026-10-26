@@ -96,7 +96,7 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     expect(onTheDashboard()).toBeTruthy();
     // The task's page opens only when the owner asks for it.
     fireEvent.click(screen.getByRole("button", { name: "See details" }));
-    expect(screen.getByTestId("elsewhere").textContent).toBe("/agent/runs/run-q");
+    expect((await screen.findByTestId("elsewhere")).textContent).toBe("/agent/runs/run-q");      // its task page: no result of its own
   });
 
   it("'quote Frank for 2 months bookkeeping' needs no questions: the confirmation appears straight away", async () => {

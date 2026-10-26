@@ -36,7 +36,7 @@ PREMIUM = {
     "launch_readiness_initial": ("Resolve my launch blockers", "research the missing evidence, benchmark your market, test assumptions and help resolve the blockers"),
     "funding_readiness_initial": ("Help me become funding-ready", "research funding routes, structure your use of funds, prepare forecast assumptions and close the gaps a funder will ask about"),
     "pricing_health_initial": ("Find my best price", "research competitor prices and market price bands, and test alternative prices against demand"),
-    "customer_growth_foundation": ("Find my best customer opportunities", "research segments, channels and demand signals, and prepare a brief of the best opportunities"),
+    "customer_growth_foundation": ("Find my best customer opportunities", "research the kinds of customer, channels and demand near you, and draft a short plan you can accept, edit or reject"),
     "business_risk_initial": ("Plan for my biggest risks", "model a shock to the business and draft what to do about each risk"),
 }
 FREE_NEXT = {
@@ -442,30 +442,172 @@ def pricing(a: dict, data: dict | None = None, now: datetime | None = None, sign
 
 # ── Customer growth (PRD 11.3): nine foundations, a count and never a score ──
 
+CHANNELS = {"word_of_mouth": "word of mouth and referrals", "social": "social media", "marketplace": "an online marketplace or directory",
+            "search": "search engines and maps", "ads": "ads, leaflets or posters", "partners": "partners or other businesses", "walk_in": "people passing by"}
+CUSTOMER_GOALS = {"5": "5 new customers", "10": "10 new customers", "20": "20 or more new customers"}
+
+
 def customers(a: dict, data: dict | None = None, now: datetime | None = None, sign: str = "£") -> dict:
+    """Winning more customers (the owner's brief, 25 Oct), the risk check's way: who buys now, from the records; only what is
+    really in the way, each with why and the one thing to do; what isn't on record asked in place; what's fine said. No
+    made-up total. It does not promise customers."""
     co = _company(data)
-    sell, ideal, where, channel, charge, goal = (a.get(k) for k in ("sell", "customer", "where", "channel", "price", "goal"))
-    no_customers = _known(channel) and "have customers yet" in str(channel).lower()
-    has = lambda ok: MET if ok else UNKNOWN      # noqa: E731
-    crit = [
-        {"key": "offer", "label": "Offer exists", "state": has(_known(sell) or co["products"]), "strength": "Offer defined", "gap": "No offer on record"},
-        {"key": "clarity", "label": "Offer clarity", "state": has(len(str(sell or "").split()) >= 3 or len(co["about"].split()) >= 6), "strength": None, "gap": "Offer is not described clearly enough to sell"},
-        {"key": "target", "label": "Target customer", "state": has(_known(ideal) and len(str(ideal).split()) >= 2), "strength": "Ideal customer described",
-         "gap": "Ideal customer too broad" if _known(ideal) else "Ideal customer not defined"},
-        {"key": "price", "label": "Price readiness", "state": has(_known(charge) or co["priced"]), "strength": "Price defined", "gap": "No price or price basis"},
-        {"key": "channel", "label": "Acquisition channel", "state": UNMET if no_customers and not _known(where) else has((_known(channel) and not no_customers) or _known(where)),
-         "strength": "Where to find customers identified", "gap": "No defined acquisition channel"},
-        {"key": "marketplace", "label": "Marketplace visibility", "state": MET if co["listed"] else UNMET, "strength": "Listed on the Marketplace", "gap": "No active Marketplace listing"},
-        {"key": "sales_path", "label": "Sales path", "state": MET, "strength": "Quotation path ready", "gap": None},
-        {"key": "traction", "label": "Traction evidence", "state": MET if co["customers"] or co["invoices"] else UNMET if no_customers else UNKNOWN,
-         "strength": "Customers already on record", "gap": "Limited demand evidence"},
-        {"key": "goal", "label": "Growth goal", "state": has(_known(goal)), "strength": "Growth goal set", "gap": "No measurable three-month goal"},
-    ]
-    crit = _with_research(crit, a)
-    in_place = sum(1 for c in crit if c["state"] == MET)
-    out = _result("customer_growth_foundation", criteria=crit, score=f"{in_place} of {len(crit)}", score_label="in place", now=now, sign=sign)
-    out["note"] = "This checks the foundations for winning customers. It does not promise customers."
+    f = risk_facts(data, now)
+    ideal, channel, charge, goal = (a.get(k) for k in ("customer", "channel", "price", "goal"))
+    ch = str(channel or "").strip().lower()
+    chs = [c.strip() for c in re.split(r"[,;]", ch) if c.strip()]      # several at once ("word_of_mouth,social")
+    none_yet = "none" in chs or "have customers yet" in ch
+    crit = []
+    # 1. Who it's for
+    if _known(ideal) and len(str(ideal).split()) >= 2:
+        crit.append({"key": "target", "label": "Who you want more of", "state": MET, "strength": f"You know who you're after: {str(ideal).strip()}"})
+    elif _known(ideal):
+        crit.append({"key": "target", "label": "Who you want more of", "state": PARTIAL, "ask": "customer", "ask_type": "text",
+                     "gap": f"“{str(ideal).strip()}” is too broad to aim at", "why": "Say who exactly, for example office managers in Abuja."})
+    else:
+        crit.append({"key": "target", "label": "Who you want more of", "state": UNKNOWN, "ask": "customer", "ask_type": "text",
+                     "gap": "Who you want more of isn't said yet. Who is your best customer?"})
+    # 2. How new customers find you
+    if none_yet:
+        crit.append({"key": "channel", "label": "How new customers find you", "state": UNMET, "gap": "No way for new customers to find you yet",
+                     "why": "Pick one channel to start with, where your customers already look."})
+    elif chs == ["word_of_mouth"]:
+        crit.append({"key": "channel", "label": "How new customers find you", "state": PARTIAL, "gap": "New customers only come by word of mouth",
+                     "why": "Add one channel you control, so new customers don't depend on referrals alone."})
+    elif _known(channel):
+        found = [CHANNELS.get(c, c) for c in chs]
+        said = found[0] if len(found) == 1 else ", ".join(found[:-1]) + " and " + found[-1]
+        crit.append({"key": "channel", "label": "How new customers find you", "state": MET, "strength": f"Customers find you through {said}"})
+    else:
+        crit.append({"key": "channel", "label": "How new customers find you", "state": UNKNOWN, "ask": "channel", "ask_type": "choice",
+                     "ask_options": [[k, v[:1].upper() + v[1:]] for k, v in CHANNELS.items()] + [["none", "I don't have customers yet"]],
+                     "gap": "How do new customers find you today?"})
+    # 3. The Marketplace
+    crit.append({"key": "marketplace", "label": "On the Marketplace", "state": MET if co["listed"] else UNMET, "strength": "Listed on the Marketplace",
+                 "gap": "Not listed on the Marketplace", "why": "Customers searching there can't find you yet."})
+    # 4. A price to quote
+    priced = co["priced"][0] if co["priced"] else None
+    if _known(charge) or priced:
+        said = str(charge).strip() if _known(charge) else f"{priced['name']}: {_amount_words(float(priced['base_price']), sign)}"
+        crit.append({"key": "price", "label": "A price to quote", "state": MET, "strength": f"Price on record ({said})"})
+    else:
+        crit.append({"key": "price", "label": "A price to quote", "state": UNKNOWN, "ask": "price", "ask_type": "text",
+                     "gap": "No price on record yet. What do you usually charge?"})
+    # 5. Quotes waiting for an answer: the quickest new customers
+    waiting = [q for q in co["quotes"] if str(q.get("status") or "").lower() in ("sent", "viewed")]
+    if waiting:
+        n = len(waiting)
+        crit.append({"key": "follow_up", "label": "Quotes waiting", "state": PARTIAL, "gap": f"{n} quote{'s' if n != 1 else ''} waiting for an answer",
+                     "why": "A follow-up is often the quickest new customer."})
+    # 6. Relying on one customer: new customers lower it
+    if f.get("top_share") is not None and f["top_share"] >= 50 and (f.get("clients") or 0) >= 1:
+        crit.append({"key": "concentration", "label": "Relying on one customer", "state": PARTIAL,
+                     "gap": f"{f['top_customer']} is {round(f['top_share'])}% of your paid income", "why": "Every new customer also lowers that risk."})
+    # 7. A goal for the next three months
+    if _known(goal):
+        crit.append({"key": "goal", "label": "Your goal", "state": MET, "strength": f"Goal for the next three months: {CUSTOMER_GOALS.get(str(goal).strip(), str(goal).strip())}"})
+    else:
+        crit.append({"key": "goal", "label": "Your goal", "state": UNKNOWN, "ask": "goal", "ask_type": "choice",
+                     "ask_options": [[k, v[:1].upper() + v[1:]] for k, v in CUSTOMER_GOALS.items()],
+                     "gap": "How many new customers do you want in the next three months?"})
+    out = _result("customer_growth_foundation", criteria=crit, score=None, score_label="", now=now, sign=sign,
+                  basis=["What you told me", "Your catalogue, invoices, quotes and Marketplace listing"])
+    out["partial_score"] = None
+    extra = {c["key"]: {k: c[k] for k in ("why", "ask", "ask_type", "ask_options") if c.get(k)} for c in crit}
+    every = [{**b, **extra.get(b["key"], {})} for b in out["blockers"]]
+    # Only what is really in the way is a thing to fix; what isn't on record is asked apart (as the risk check)
+    out["blockers"] = [b for b in every if b.get("kind") != "unknown"]
+    out["not_on_record"] = [{"key": b["key"], "label": b["label"], **{k: b[k] for k in ("ask", "ask_type", "ask_options") if b.get(k)}}
+                            for b in every if b.get("kind") == "unknown"]
+    out["fine"] = [c["strength"] for c in crit if c["state"] == MET and c.get("strength")]
+    out["checked"] = sum(1 for c in crit if c["state"] != UNKNOWN)
+    # Who buys from you now, from the records, first
+    clients, monthly = f.get("clients") or 0, f.get("revenue_monthly")
+    out["focus"] = {"key": "now", "text": (f"Now: {clients} paying customer{'s' if clients != 1 else ''} on record"
+                                           + (f", about {_amount_words(monthly, sign)} a month" if monthly else "") + ".") if clients
+                    else "Now: no paying customers on record yet."}
+    out["note"] = "This looks at what helps you win customers, from your records and answers. It does not promise customers."
+    # What to do next, as cards, from the records (the owner, 26 Oct: "why are the next actions not cards"): never a listing
+    # set-up for a business already listed
+    cards = [{"label": "Quote your next enquiry", "to": "/operations?tab=Sales&sub=Quotations", "why": "A quick, priced quote turns an enquiry into a customer."}]
+    # Sharing the Marketplace listing is a step of the plan below, never a second card (the owner, 26 Oct)
+    if clients:
+        cards.append({"label": "Offer your customers something new", "to": "/catalogue?tab=products", "why": "A second product or a bundle is often the easiest new sale."})
+    out["free_next_actions"] = cards + [{"label": "Save for later", "save": True}]
+    # The plan is what "Do all for me" makes: only once it has run for these answers, never an earlier request's (the owner,
+    # 26 Oct: "why show old one... haven't done do it all")
+    from app.modules.agent import research as _research
+    rs = _research.research_state(data, "more_customers", answers=a)
+    if rs.get("state") in ("review", "adopted"):
+        out["plan"] = customer_plan(a, data, f, co, sign, rs.get("run_id"))
+        # The channel card opens the plan's first step (the owner, 26 Oct: "yet no link to fix it")
+        for b in out["blockers"]:
+            if b["key"] == "channel" and out["plan"]["steps"]:
+                b["to"] = "#customer-plan"
     return out
+
+
+def customer_plan(a: dict, data: dict | None, f: dict, co: dict, sign: str, run_id: str | None = None) -> dict:
+    """The plan for winning more customers (the owner, 26 Oct: "so where is the plan?"): a weekly target from the goal, then
+    each step with why, how many, and the words ready to send. From the records and answers, free; what the owner accepted
+    from "Do all for me" is said as the reason it was picked."""
+    data = data or {}
+    profile = data.get("workspace_profile") or {}
+    name = str(profile.get("company_name") or "").strip() or "us"
+    where = str(a.get("where") or profile.get("city") or "").strip()
+    who = str(a.get("customer") or co["target"] or "").strip()
+    priced = co["priced"][0] if co["priced"] else None
+    # What is sold, never the owner's request ("need more customers" is the ask, not the offer: the owner, 26 Oct)
+    sell = str(a.get("sell") or "").strip()
+    if re.search(r"\bcustomers?\b|\b(need|want|find|get)\b", sell, re.I):
+        sell = ""
+    offer = sell or str((priced or {}).get("name") or "").strip()
+    price = (_amount_words(float(priced["base_price"]), sign) if priced else str(a.get("price") or "").strip())
+    if price and price.replace(",", "").replace(".", "").isdigit():
+        price = f"{sign}{price}"
+    what = f"{offer} for {price}" if offer and price else offer or "what we offer"
+    near = f" in {where}" if where else ""
+    goal = int(re.sub(r"\D", "", str(a.get("goal") or "")) or 0)
+    # What the owner accepted from the research, by topic
+    found: dict[str, str] = {}
+    for run in [r for r in (data.get("research_runs") or {}).values() if isinstance(r, dict) and r.get("id") == run_id]:
+        for x in run.get("items") or []:
+            if x.get("decision") in ("accepted", "edited") and x.get("topic"):
+                found[x["topic"]] = str(x.get("edited_value") or x.get("value") or "").strip()
+    steps = []
+    clients = f.get("clients") or 0
+    if clients:
+        top = f.get("top_customer")
+        steps.append({"key": "referrals", "title": "Ask your customers to pass your name on",
+                      "why": f"You have {clients} paying customer{'s' if clients != 1 else ''}. Someone who already pays you is the easiest way to the next one.",
+                      "target": f"Message all {clients} this week" if clients > 1 else "Message them this week",
+                      "who": top or "",
+                      "draft": f"Hello{' ' + top if top else ''}, thank you for using {name}. If you know anyone who would like {what}{near}, "
+                               f"please pass on my number. I'll look after them as well as I look after you."})
+    office = re.search(r"\b(office|staff|workers?|company|companies|business(es)?)\b", who, re.I)
+    if who:
+        steps.append({"key": "where_they_are", "title": f"Go where {who[:1].lower() + who[1:]} are" if not who[:2].isupper() else f"Go where {who} are",
+                      "why": f"You want more {who}." + (" Office buildings and estates have building managers and notice boards that reach many at once." if office else
+                                                         " Go to where they already gather, rather than waiting to be found."),
+                      "target": "3 places a week" if office else "2 places a week",
+                      "draft": (f"Good day. I run {name}, offering {what}{near}. I'd like to offer your staff a convenient service while they're at work. "
+                                f"Could I leave a notice on your board, or share a short message with your staff?") if office else
+                               f"Hello, I run {name}: {what}{near}. Could I leave a notice here for your members or visitors?"})
+    reason = found.get("channels")
+    steps.append({"key": "post", "title": "Post about it where people nearby will see it",
+                  "why": (f"What similar businesses do: {reason.rstrip('.')}." if reason else "A short post with your price gives people a reason to call today."),
+                  "target": "2 posts a week",
+                  "draft": f"{name}{near}: {what}. " + (f"Made for {who[:1].lower() + who[1:]}. " if who else "") + "Message me to book."})
+    steps.append({"key": "marketplace", "title": "Share your Marketplace listing" if co["listed"] else "List on the Marketplace",
+                  "why": "Put the link in every message above, so people can see you before they call." if co["listed"] else "Customers searching there can't find you yet.",
+                  "target": "", "draft": "", **({"share": True} if co["listed"] else {"to": "/marketplace/profile", "cta": "List on the Marketplace"})})
+    weekly = ""
+    if goal:
+        per = goal / 12
+        weekly = (f"Your goal: {goal} new customers in 3 months, about {round(per)} a week." if per >= 1.5
+                  else f"Your goal: {goal} new customers in 3 months, about 1 a week." if per >= 0.75
+                  else f"Your goal: {goal} new customers in 3 months, about 1 every {round(12 / goal)} weeks.")
+    return {"goal": weekly, "steps": steps, "research_used": bool(found)}
 
 
 # Sentence starts that are ordinary words, lower-cased after "You asked about ...:" (a customer's name keeps its capital)
@@ -931,6 +1073,9 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
         out["customer"] = target
     if goal_key in ("launch", "more_customers") and place:
         out["where"] = place
+    if goal_key == "more_customers" and co["priced"]:      # the price to quote, from the catalogue (25 Oct)
+        first = co["priced"][0]
+        out["price"] = f"{first['base_price']:g} for {first['name']}"
     if goal_key == "need_funding" and profile.get("operating_stage") in _STAGE_FOR_FUNDING and profile.get("operating_stage") != "idea":
         out["stage"] = _STAGE_FOR_FUNDING[profile["operating_stage"]]
     if goal_key == "price_offer" and co["priced"]:

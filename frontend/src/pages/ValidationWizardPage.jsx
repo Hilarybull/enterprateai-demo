@@ -1289,8 +1289,11 @@ export default function ValidationWizardPage() {
       // Opened from a link (the Agent's task, History): the form, prefilled with the saved answers, on its first step, even
       // when the Agent's draft already has a quick score (the owner's QA, 21 Oct: it went to the results instead). The
       // result is one press away from there. Then the link's id leaves the address, so the "Loading" spinner never stays.
-      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true, true))
-        .finally(() => setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); return next; }, { replace: true }));
+      // "Open the validation results" (view=results) goes to its results dashboard instead (the owner, 26 Oct)
+      const toResults = searchParams.get("view") === "results";
+      // Gone to the results: the address is never tidied here after, which brought the owner back to this page (26 Oct)
+      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, !toResults, !toResults))
+        .finally(() => window.location.pathname.endsWith("/validation") && setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); next.delete("view"); return next; }, { replace: true }));
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry
       (async () => {

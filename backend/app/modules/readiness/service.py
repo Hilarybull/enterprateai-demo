@@ -119,6 +119,15 @@ def _vague(v: Any) -> bool:
     return isinstance(v, str) and bool(_VAGUE.match(v))
 
 
+# A fill's reason that points at the business's own records ("the price of X in your catalogue", "where your business
+# profile says you trade", "you, as the owner") against one that is worked out, researched or an assumption
+# What the owner said (in the funding or launch chat, or another check): their own answer, always written (26 Oct)
+_OWNER_WORDS = re.compile(r"^(?:from )?your (?:funding chat|launch check|[a-z ]+ check)\b", re.I)
+_FROM_RECORDS = re.compile(r"\b(catalogue|business profile|your profile|your invoices|invoices so far|Business Operations|your records|"
+                           r"you, as the owner|the person named on your team|the price per unit on this plan|tagline)\b", re.I)
+_WORKED_OUT = re.compile(r"\b(research|outline|split|measured|usual|assum\w*|estimate\w*|first version|nothing booked|× about|hours a month)\b", re.I)
+
+
 def short_name(text: Any, words: int = 7) -> str:
     """A prerequisite's name, short (the owner, 25 Oct): "You will need public liability insurance, which covers..." is
     "Public liability insurance"."""
@@ -888,7 +897,16 @@ class ReadinessService:
                 prov[path] = {"source": f"Suggested by the Agent: {why}. Change it if it isn't right.", "as_of": today.isoformat(), "value": value}
             stale += [p for p in ("geography", "audience", "customers.target_segment", "offer.launch_scope", "market.audience")
                       if p not in fills and p not in theirs and isinstance(engine.get(case, p), str) and _vague(engine.get(case, p))]
-        lines = self._line_and_milestone_fills(case, data, today)
+        # Filling is part of "Do all for me" (the owner, 26 Oct: "the fillers are not free... they can fill it manually"):
+        # without a run for this case (since its latest need), only what the owner said is written; with one, everything it
+        # can fill is offered as a draft, kept with the case, never charged again for the same details
+        paid = self._paid_run(subject_type, {**row, "data": case}, data)
+        if not paid:
+            for path in [p for p in fills if not _OWNER_WORDS.search(str((prov.get(p) or {}).get("source") or ""))]:
+                fills.pop(path)
+        lines = self._line_and_milestone_fills(case, data, today) if paid else {}
+        if not paid:
+            months = []
         # Every list item has an id (the owner's QA, 22 Oct: milestones added without one never showed in the milestone
         # dropdown): an item without one is given one.
         unnamed = [(lst, i) for lst in ("milestones", "use_of_funds", "risks") for i, x in enumerate(case.get(lst) or []) if isinstance(x, dict) and not x.get("id")] \
@@ -934,7 +952,7 @@ class ReadinessService:
         links = {"purpose_milestone_id", "market.acquisition_milestone_id", "operations.process_version", "delivery.capacity_unit", "planned_volume.unit"}
         for path, value in list(fills.items()):
             src = str((prov.get(path) or {}).get("source") or "")
-            if src.startswith("Suggested by the Agent") and path not in links:
+            if not _OWNER_WORDS.search(src) and path not in links:
                 fills.pop(path)
                 if path in refused or path in pending:
                     continue
@@ -959,6 +977,25 @@ class ReadinessService:
         if out == case:
             return None      # only drafts already waiting: nothing changed
         return out
+
+    @staticmethod
+    def _paid_run(subject_type: str, row: dict, data: dict) -> bool:
+        """A "Do all for me" run for this case, since its latest need was set (a Replace starts again; a new launch plan is
+        its own): its results stay with the case and what it can fill is offered, never charged again (the owner, 26 Oct)."""
+        goal = "need_funding" if subject_type == rules.FUNDING else "launch"
+        case = row.get("data") or {}
+        since = str(((case.get("previous_needs") or [{}])[0] or {}).get("replaced_at") or "")
+        for run in (data.get("research_runs") or {}).values():
+            if not isinstance(run, dict) or run.get("goal") != goal or run.get("status") not in ("review", "adopted") or run.get("error"):
+                continue
+            if run.get("case_id") and str(run["case_id"]) != str(row.get("id")):
+                continue
+            if subject_type == rules.LAUNCH and not run.get("case_id"):
+                continue      # a launch plan's research is its own
+            if since and str(run.get("created_at") or "")[:10] < since[:10]:
+                continue      # for the need that was replaced
+            return True
+        return False
 
     @staticmethod
     def _lines_for_purpose(case: dict) -> list | None:
@@ -1365,7 +1402,8 @@ class ReadinessService:
                     row = await self.store.update("subjects", row["id"], {"data": filled, "updated_at": ctx["now"]}, bump=False) or {**row, "data": filled}
                 except Exception:      # noqa: BLE001 - shown as it is; filled next time
                     logger.warning("could not fill blank fields on %s", row.get("id"), exc_info=True)
-            self._draft_blanks_later(user_id, subject_type, row, ctx)
+            # No AI drafts on opening a case (the owner, 26 Oct: "why will AI fill before the do it all for me?"): they come
+            # only from "Do all for me", as drafts to accept, edit or reject; what the records say is filled in below
             # The records' sales as evidence, after the page has its answer (the owner's QA, 23 Oct: a launch plan took 34 s
             # to open while this waited on the database); the check runs again when something was attached.
             scope = str(engine.get(row.get("data") or {}, "offer.launch_scope") or "").strip()

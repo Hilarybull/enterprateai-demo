@@ -15,4 +15,4 @@ def test_the_agents_idea_validation_fills_the_wizard_form_from_what_was_said():
     assert form["form"]["step3"]["primary_segment"] == said["customer"]
     assert "steps_completed" not in form["form"]
     links = (res["run"]["state"]["outcome"] or {}).get("links") or []
-    assert links[0]["label"] == "draft in Idea Validation" and links[0]["to"].startswith("/validation?history_id=agent-")
+    assert links[1]["label"] == "the Idea Validation form" and links[1]["to"].startswith("/validation?history_id=agent-")

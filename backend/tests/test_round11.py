@@ -16,13 +16,25 @@ def accept_all(out):
     return out
 
 
-def _fill(*a):
+def _paid(subject_type, row, data):
+    """The case with a "Do all for me" run behind it: filling is part of it, never free (the owner, 26 Oct)."""
+    from app.modules.readiness import rules as _rules
+    row = {**row, "id": row.get("id") or "case-under-test"}
+    goal = "need_funding" if subject_type == _rules.FUNDING else "launch"
+    runs = dict((data or {}).get("research_runs") or {})
+    runs.setdefault("rr-paid", {"id": "rr-paid", "goal": goal, "status": "review", "case_id": row["id"], "created_at": "2026-10-01T00:00:00Z", "items": []})
+    return row, {**(data or {}), "research_runs": runs}
+
+
+def _fill(subject_type, row, data, today):
     from app.modules.readiness.service import ReadinessService as _R
-    return accept_all(_R._fill_blanks(_R.__new__(_R), *a))
+    row, data = _paid(subject_type, row, data)
+    return accept_all(_R._fill_blanks(_R.__new__(_R), subject_type, row, data, today))
 
 
-def _fill_svc(svc, *a):
-    return accept_all(svc._fill_blanks(*a))
+def _fill_svc(svc, subject_type, row, data, today):
+    row, data = _paid(subject_type, row, data)
+    return accept_all(svc._fill_blanks(subject_type, row, data, today))
 
 
 

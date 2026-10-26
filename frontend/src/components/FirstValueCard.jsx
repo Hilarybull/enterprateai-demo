@@ -9,6 +9,7 @@ import { apiRequest } from "../api/client";
 import { trackGoal } from "./GoalLauncher";
 import { useWorkspaceStore } from "../store/workspace";
 import { InlineResearch, premiumFlow } from "./ResearchReview";
+import CustomerPlan from "./CustomerPlan";
 import { refusalMessage } from "../lib/entitlement";
 import { creditCopy } from "../lib/creditCopy";
 import { NextSteps, PackLine, SavedNotice, StatusLine, stepsOf, useResearchRun, useStepPrices } from "./ResultSummary";
@@ -174,7 +175,7 @@ export function openOf(result) {
     case "funding_readiness_initial": return { label: "Open funding case", to: a?.case_id ? `/funding/${a.case_id}?tab=results` : "/funding?tab=results" };
     case "launch_readiness_initial": return { label: "Open launch plan", to: a?.initiative_id ? `/launch/${a.initiative_id}?tab=results` : "/launch" };
     case "pricing_health_initial": return { label: "Open pricing check", to: "/check/pricing" };
-    case "customer_growth_foundation": return { label: "Open growth checklist", to: "/check/customers" };
+    case "customer_growth_foundation": return { label: "Open customer plan", to: "/check/customers" };
     case "business_risk_initial": return { label: "Open risk check", to: "/check/risks" };
     // The result itself, the idea check's page (G4, 23 Oct: this opened an empty Idea Validation form)
     case "idea_viability_initial": return { label: "Open idea check", to: "/check/idea" };
@@ -469,7 +470,7 @@ export function useFirstResult() {
       // Its home is its case (the owner's QA, 22 Oct: 70/100 on the dashboard beside 53/100 on the case): not kept here
       if (resultHome(res.result)) { forget(); return; }
       // The risk check lives on its own page (/check/risks), never on the dashboard (the owner, 24 Oct)
-      if (res.result.assessment_type === "business_risk_initial") { forget(); return; }
+      if (["business_risk_initial", "customer_growth_foundation"].includes(res.result.assessment_type)) { forget(); return; }      // their own pages
       setResult(res.result);
     }).catch(() => {});
     return () => { live = false; };
@@ -505,6 +506,7 @@ function RiskGaps({ items, onAnswer }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [cash, setCash] = useState("");
+  const [typed, setTyped] = useState({});      // a typed answer per question (who you want more of, your price)
   const go = async (key, value) => { if (busy) return; setBusy(true); try { await onAnswer(key, value); } finally { setBusy(false); } };
   return (
     <div className="mt-2 space-y-2 rounded-xl bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60" data-fv-not-on-record>
@@ -536,6 +538,21 @@ function RiskGaps({ items, onAnswer }) {
                 className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 disabled:opacity-60">No other regular costs</button>
             </form>
           )}
+          {x.ask_type === "choice" && Array.isArray(x.ask_options) && (
+            <div className="flex flex-wrap gap-2" role="group" aria-label={x.label}>
+              {x.ask_options.map(([v, label]) => (
+                <button key={v} type="button" disabled={busy} onClick={() => go(x.ask, v)} data-gap-answer={v}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 hover:border-brand-400 disabled:opacity-60">{label}</button>
+              ))}
+            </div>
+          )}
+          {x.ask_type === "text" && (
+            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if ((typed[x.key] || "").trim()) go(x.ask, typed[x.key].trim()); }}>
+              <input aria-label={x.label} value={typed[x.key] || ""} onChange={(e) => setTyped((t) => ({ ...t, [x.key]: e.target.value }))}
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] outline-none focus:border-brand-500" />
+              <button type="submit" disabled={busy || !(typed[x.key] || "").trim()} data-gap-save={x.ask} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-60">Save</button>
+            </form>
+          )}
           {!x.ask && RISK_ADD[x.key] && (
             <button type="button" onClick={() => navigate(RISK_ADD[x.key].to)} data-gap-go={x.key}
               className="rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">{RISK_ADD[x.key].cta}</button>
@@ -547,14 +564,15 @@ function RiskGaps({ items, onAnswer }) {
 }
 
 export default function FirstValueCard({ result: given, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null,
-  initialServed = null, onUpdated = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null, onAnswer = null }) {
+  initialServed = null, onUpdated = null, onReload = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null, onAnswer = null }) {
   const navigate = useNavigate();
   const [edited, setEdited] = useState(null);      // the result after "Save and check again"
   useEffect(() => { setEdited(null); }, [given?._session]);
   // The case's own steps always come from the page (the case as it is now), never from a refreshed copy of the result,
   // which doesn't carry them (the owner's QA, 22 Oct: after an adopt the old steps came back).
   const result = edited ? { ...edited, ...(given?.case_steps ? { case_steps: given.case_steps } : {}) } : given;
-  const asCards = embedded && kindOfResult(result) === "launch";      // a launch plan's page: what to do next as cards
+  // A launch plan's page, and the customer plan (the owner, 26 Oct): what to do next as cards
+  const asCards = (embedded && kindOfResult(result) === "launch") || result?.assessment_type === "customer_growth_foundation";
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
   const [saved, setSaved] = useState(false);
   const [served, setServed] = useState(initialServed);   // the server's answer to the premium step: a gate, a cost to confirm, or the research it did
@@ -570,6 +588,9 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
   const [runNow, setRunNow] = useState(null);
   const [detail, setDetail] = useState(null);      // the full review of the run just made here, folded
   const [detailOpen, setDetailOpen] = useState(false);
+  // Findings still to decide, from a run already done: open, never hidden behind a link (the owner, 26 Oct: "what I got last
+  // time disappeared")
+  useEffect(() => { if (result?.research?.state === "review" && fetched?.items?.some((x) => !x.decision)) setDetailOpen(true); }, [fetched?.id]);      // eslint-disable-line react-hooks/exhaustive-deps
   // the newest run this card has seen: the one just made here, else the page's, else the result's own
   const run = (runNow && (!(runGiven || fetched) || runNow.id === (runGiven || fetched)?.id || runNow.created_at >= ((runGiven || fetched)?.created_at || "")) ? runNow : null) || runGiven || fetched;
   const prices = useStepPrices((edited || given)?._session, edited || given);      // each step's own price, shown on its button
@@ -646,7 +667,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
               const res = withEdit(await apiRequest(`/task-sessions/${result._session}/answers`, "POST", { answers: { [key]: value } }, { timeoutMs: 30000 }));
               if (res?.result) { setEdited(res.result); onUpdated?.(res.result); }
             } else if (onAnswer) await onAnswer(key, value);
-            toast({ kind: "success", title: "Saved. Your risk check is up to date." });
+            toast({ kind: "success", title: result.assessment_type === "customer_growth_foundation" ? "Saved. Your customer plan is up to date." : "Saved. Your risk check is up to date." });
           } catch { toast({ kind: "error", title: "That didn't go through.", detail: "Your answers are kept. Try again." }); }
         }} />
       )}
@@ -714,6 +735,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
           {!embedded && <EditAnswers result={result} onDirty={(d) => { setAnswersDirty(d); if (!d) setSaveFirst(false); }} onUpdated={(r) => { setEdited(r); setServed(null); onUpdated?.(r); }} />}
         </div>
       )}
+      <CustomerPlan plan={result?.plan} />
       {asCards && (() => {
         // On a launch plan's page: what to do next as cards, as the funding case's Overview shows them (the owner's QA, 23 Oct:
         // "the recommended next features are not in card"), at most three
@@ -722,7 +744,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
         // result's own first, then the launch's related features, never one already offered in other words
         const covers = (key) => own.some((a) => (key === "plan" && a.capability === "business_plan_draft") || (key === "marketplace" && /marketplace/i.test(a.label || ""))
           || (key === "pricing" && a.catalogue));
-        const related = relatedServices({ feature: "launch", subject: { id: result?.assessment?.initiative_id } })
+        const related = result?.assessment_type === "customer_growth_foundation" ? [] : relatedServices({ feature: "launch", subject: { id: result?.assessment?.initiative_id } })
           .filter((r) => !covers(r.key)).map((r) => ({ label: r.title, why: r.why, to: r.to, ...(r.cost === "Credits apply" ? { capability: null, paid: true } : {}) }));
         const next = [...own, ...related].slice(0, 3);
         if (!next.length) return null;
@@ -733,7 +755,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
               {next.map((a) => (
                 <li key={a.label} className="flex h-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" data-fv-next-card>
                   <p className="text-[14.5px] font-semibold text-slate-900 dark:text-slate-100">{a.label}</p>
-                  <p className="text-[13px] text-slate-600 dark:text-slate-300">{NEXT_WHY[a.label] || a.why || "The next thing that helps this launch."}</p>
+                  <p className="text-[13px] text-slate-600 dark:text-slate-300">{NEXT_WHY[a.label] || a.why || "The next thing that helps."}</p>
                   <div className="mt-auto flex items-center justify-between gap-3 pt-2">
                     <span className="text-[12px] text-slate-500 dark:text-slate-400">{a.capability || a.paid ? "Credits apply" : "Free"}</span>
                     <button type="button" onClick={() => act(a)} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">Start →</button>
@@ -779,7 +801,10 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
         <div className="mt-3" data-research-detail>
           <button type="button" onClick={() => setDetailOpen((v) => !v)} aria-expanded={detailOpen} data-research-detail-toggle
             className="text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline">{detailOpen ? "Hide the detail" : "Review every finding in detail"}</button>
-          {detailOpen && (run ? <InlineResearch businessId={workspaceId} run={run} onAdopted={async () => { const r = (await fetchFirstValue(result._session).catch(() => null))?.result; if (r) { setEdited(r); onUpdated?.(r); } }} /> : detail)}
+          {detailOpen && (run ? <InlineResearch businessId={workspaceId} run={run} onAdopted={async () => {
+            // A check's own page has no chat session: it loads its result again, so the plan shows at once (the owner, 26 Oct: "had to refresh")
+            if (!result._session) { onReload?.(); return; }
+            const r = (await fetchFirstValue(result._session).catch(() => null))?.result; if (r) { setEdited(r); onUpdated?.(r); } }} /> : detail)}
         </div>
       )}
       {extra}

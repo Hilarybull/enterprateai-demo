@@ -59,15 +59,13 @@ const STEPS = {
     sensitivity: { title: () => "Test how customers react to a price change", why: "To find room to move.", doIt: true },
     positioning: { title: () => "Check how competitors position themselves", why: "Budget, mid-range or premium.", doIt: true },
   },
+  // Winning more customers (the owner, 25 Oct): what is in the way as its title, why under it, and a button that acts on it
   customers: {
-    marketplace: { title: () => "List your business on the Marketplace", why: "So buyers can find you.", mine: "marketplace" },
-    offer: { title: () => "Add an offer", why: "Something to sell first.", mine: "catalogue" },
-    clarity: { title: () => "Describe your offer clearly", why: "Clear offers sell.", mine: "catalogue" },
-    target: { title: () => "Define your ideal customer", why: "So effort goes where it pays.", answer: "customer" },
-    price: { title: () => "Set a price", why: "Buyers need to know the price.", mine: "catalogue" },
-    channel: { title: () => "Choose how you will reach customers", why: "One channel, done well, first.", doIt: true },
-    traction: { title: () => "Gather proof of demand", why: "It makes the next sale easier.", doIt: true },
-    goal: { title: () => "Set a three-month customer goal", why: "A number to aim for.", answer: "growth_goal" },
+    channel: { title: "How new customers find you", cta: "See your plan for this" },
+    marketplace: { title: "On the Marketplace", cta: "List on the Marketplace", to: "/marketplace/profile" },
+    follow_up: { title: "Quotes waiting for an answer", cta: "Follow up your quotes", to: "/operations?tab=Sales&sub=Quotations" },
+    concentration: { title: "Relying on one customer", cta: "See your risk check", to: "/check/risks" },
+    target: { title: "Who you want more of", answer: "customer" },
   },
 };
 
@@ -97,15 +95,15 @@ export function stepsOf(result) {
   const answers = result?._edit?.answers || {};
   const asked = new Set((result?._edit?.questions || []).map((q) => q.key));
   const sign = result?.currency_sign || "";
-  if (kind === "risks") {
+  if (kind === "risks" || kind === "customers") {
     return (result?.blockers || []).map((b) => {
       const s = table[b.key] || {};
       // The title says what the risk is about; the finding and why it matters sit underneath (R-6)
       const detail = [b.label, b.note, b.why].filter(Boolean).map((x) => String(x).replace(/\.$/, "")).join(". ");
-      return { key: b.key, kind: b.kind, badge: b.kind === "failed" ? "High risk" : "Watch", title: s.title || b.label,
-        why: detail ? `${detail}.` : "", gap: b.label, doIt: false, cta: s.cta || null, field: true,
+      return { key: b.key, kind: b.kind, badge: b.kind === "failed" ? (kind === "risks" ? "High risk" : "To fix") : "Watch", title: s.title || b.label,
+        why: detail ? `${detail}.` : "", gap: b.label, doIt: false, cta: s.cta || null, field: true, ...(s.answer ? { answer: s.answer } : {}),
         // The what-if is about the customer the check found (R-4): "lose them" opens with Delta Offices Ltd filled in
-        to: s.to && b.customer ? `${s.to}&customer=${encodeURIComponent(b.customer)}` : s.to || null };
+        to: s.to && b.customer ? `${s.to}&customer=${encodeURIComponent(b.customer)}` : s.to || b.to || null };
     });
   }
   return (result?.blockers || []).map((b) => {
@@ -434,7 +432,7 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
       )}
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-1" data-step-actions>
         {step.run && <StepRun run={step.run} />}
-        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); navigate(step.to); }} data-step-mine data-step-focus={step.focus || undefined}
+        {step.to && !draft && !researched && <a href={step.to} onClick={(e) => { e.preventDefault(); if (step.to.startsWith("#")) document.getElementById(step.to.slice(1))?.scrollIntoView?.({ behavior: "smooth", block: "start" }); else navigate(step.to); }} data-step-mine data-step-focus={step.focus || undefined}
           className={step.run || !step.field ? "self-center text-[12.5px] font-semibold text-brand-700 underline-offset-2 hover:underline" : "rounded-lg bg-brand-600 px-3 py-1.5 text-center text-[12.5px] font-semibold text-white hover:bg-brand-700 max-sm:w-full"}>
           {step.run ? (step.seeLabel || "See it") : (step.cta || "Fill it in")}</a>}
         {!draft && !researched && (step.more || []).map((m) => (
@@ -583,7 +581,6 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
   const [every, setEvery] = useState(false);      // the other steps too, as cards with their drafts (the owner, 20 Oct)
   const steps = stepsOf(result);
   const researched = Boolean(run);
-  const price = prices?.all ?? result?.research?.max;
   const total = (result?.criteria || []).length || steps.length + (result?.strengths || []).length;
   const ready = Math.max(0, total - steps.length);
   if (!steps.length) return null;
@@ -617,7 +614,11 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
             {/* A spinner at once, while the price is fetched (the owner's brief, 20 Oct). */}
             {working && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-            {working ? "Getting the price…" : `Do all for me${price ? ` · up to ${price} credits` : " · Free"}`}</button>
+            {working ? "Getting the price…" : "Do all for me"}</button>
+        )}
+        {/* What it does, in one line, on the customer plan (the owner, 26 Oct: "what's the do all for me for?") */}
+        {!researched && onDoIt && result?.assessment_type === "customer_growth_foundation" && result?.premium_next_action?.explains && (
+          <span className="text-[12.5px] text-slate-600" data-do-all-explains>{String(result.premium_next_action.explains).replace(/^I can now /, "It will ").replace(/^./, (c) => c.toUpperCase())}</span>
         )}
         {/* Said plainly why it costs less than the check's price (the owner, 20 Oct: "what's do the rest for me?"). */}
         {!researched && onDoIt && prices?.spent > 0 && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (

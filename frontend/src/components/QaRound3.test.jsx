@@ -68,14 +68,14 @@ describe("PF3 the premium research, walked through in the browser", () => {
     const review = screen.getByRole("region", { name: "Review the research" });
     const items = review.querySelectorAll("[data-research-item]");
     expect([...items].map((i) => i.querySelector("[data-research-state]").textContent)).toEqual(["Found online", "My estimate"]);
-    expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clientsDated Mar 2026");
+    expect(items[0].querySelector("[data-research-sources]").textContent).toBe("How cleaners find clientsMar 2026");      // one line, the date in words (26 Oct)
     expect(items[0].querySelector("a").getAttribute("rel")).toContain("noopener");
     expect(items[1].querySelector("[data-research-sources]")).toBeNull();      // an estimate with no source shows none
     // Every result is the owner's to edit (QA, 17 Oct), a researched finding too.
     expect(within(items[0]).getByRole("button", { name: "Edit" })).toBeTruthy();
     await click(within(items[0]).getByRole("button", { name: "Accept" }));
     await click(within(items[1]).getByRole("button", { name: "Reject" }));
-    await click(within(review).getByRole("button", { name: "Use what I adopted and check again" }));
+    await click(within(review).getByRole("button", { name: "Use what I accepted" }));
     expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "accept", pressed: true }, i2: { decision: "reject" } } });
     const done = document.querySelector("[data-research-adopted]");
     expect(done.querySelector("[data-score-change]").textContent).toBe("38 → 43 out of 100");
@@ -119,9 +119,9 @@ describe("PF3 the premium research, walked through in the browser", () => {
     if (document.querySelector("[data-see-everything]")) await click(document.querySelector("[data-see-everything]"));
     const review = screen.getByRole("region", { name: "Review the research" });
     expect(review.querySelector("[data-research-error]").textContent).toContain("Research isn't available right now. Nothing was charged.");
-    expect(review.querySelector("[data-research-counts]").textContent).toBe("0 found online · 0 my estimates · 0 already on record · 1 worked out · 2 to answer · 0 sources");
+    expect(review.querySelector("[data-research-counts]").textContent).toBe("1 worked out, 2 questions for you.");      // only what there is, in words (26 Oct)
     // The draft first, on its own; the inputs open with "Check or review inputs".
-    expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up LoansDated 2026");
+    expect(review.querySelector("[data-funding-drafts] [data-route='loan']").textContent).toContain("Start Up Loans2026");      // one line, no "Dated" (26 Oct)
     expect(review.querySelector("[data-research-item]")).toBeNull();
     expect(review.querySelector("[data-review-prompt]").textContent).toBe("1 input to adopt or edit and 2 questions for you. The gaps above update once you adopt them: until then nothing counts.");
     // With questions open, the one-press button opens the inputs to answer them first.
@@ -129,7 +129,7 @@ describe("PF3 the premium research, walked through in the browser", () => {
     await click(within(review).getByRole("button", { name: "Check or review inputs" }));
     expect(review.querySelector("[data-funding-drafts]")).toBeNull();
     expect(review.querySelector('[data-research-item="cash_needed"] [data-working]').textContent).toBe("Three months of fixed costs: 3 × £900 = £2,700");
-    const adopt = within(review).getByRole("button", { name: "Use what I adopted and check again" });
+    const adopt = within(review).getByRole("button", { name: "Use what I accepted" });
     expect(adopt.disabled).toBe(false);                                      // pressable: it says what is left (QA, 17 Oct)
     expect(review.querySelector("[data-questions-left]").textContent).toBe("2 questions left: answer or skip each.");
     // Never blocked by a question left open (the owner's QA, 21 Oct); the count follows each press at once.
@@ -138,10 +138,11 @@ describe("PF3 the premium research, walked through in the browser", () => {
     await click(within(review.querySelector('[data-research-item="dry_run"]')).getByRole("button", { name: "Skip" }));
     expect(review.querySelector("[data-questions-left]")).toBeNull();
     expect(adopt.disabled).toBe(false);
-    expect(review.querySelector("[data-undecided]").textContent).toBe("1 not adopted yet: they won't count unless you adopt them.");
-    await click(within(review).getByRole("button", { name: "Adopt all (1)" }));
+    expect(review.querySelector("[data-undecided]").textContent).toBe("1 not accepted yet.");
+    expect(review.querySelector("[data-adopt-all]")).toBeNull();      // one left: its own Accept, no "Accept all (1)"
+    await click(within(review.querySelector('[data-research-item="cash_needed"]')).getByRole("button", { name: "Accept" }));
     await click(adopt);
-    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { q1: { decision: "answer", value: "Hilary" }, q2: { decision: "skip", value: "" }, e1: { decision: "accept" } } });
+    expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { q1: { decision: "answer", value: "Hilary" }, q2: { decision: "skip", value: "" }, e1: { decision: "accept", pressed: true } } });
     expect(document.querySelector("[data-research-adopted] [data-funding-drafts]")).toBeTruthy();      // after adopting: the draft again
     await click(within(document.querySelector("[data-research-adopted]")).getByRole("button", { name: "Check or review inputs" }));
     const rows = [...document.querySelectorAll("[data-criteria-changes] tbody tr")].map((r) => r.textContent);

@@ -17,7 +17,7 @@ RICH = [
     ("launch", "kind", "A dog walking service in Leeds next month, for busy professionals",
      {"kind": "service", "sell": "dog walking service", "where": "Leeds", "customer": "busy professionals", "target_date": "next month"}, "stage", None),
     ("more_customers", "sell", "a bakery in Manchester, selling to local offices through Instagram",
-     {"sell": "bakery", "where": "Manchester", "customer": "local offices", "channel": "Instagram"}, "price", None),
+     {"sell": "bakery", "where": "Manchester", "customer": "local offices", "channel": "social"}, "price", None),      # a button now: Instagram is social media (25 Oct)
     ("create_quotation", "customer", "ABC Ltd, 20 chairs at £45 each", {"customer": "ABC Ltd", "quantity": 20.0, "item": "chairs", "amount": 45.0}, "customer_email", None),
     ("create_invoice", "customer", "Mark, $300 for catering", {"customer": "Mark", "amount": 300.0, "item": "catering"}, "customer_email", None),
     ("price_offer", "sell", "Cupcake boxes for HR teams, I charge £30 a box and it costs me £12",

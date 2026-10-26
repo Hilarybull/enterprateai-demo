@@ -463,7 +463,7 @@ export default function AgentCentrePage() {
         }
       />
 
-      {workspaceId && <AgentBar businessId={workspaceId} onChanged={load} onOpenRun={(id) => navigate(`/agent/runs/${id}`)} />}
+      {workspaceId && <AgentBar businessId={workspaceId} onChanged={load} onOpenRun={(id, to) => navigate(to || `/agent/runs/${id}`)} />}
       {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700">{error}</p>}
 
       <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900" role="tablist" data-agent-tabs>
@@ -508,7 +508,7 @@ export default function AgentCentrePage() {
         ) : (
           // One compact row for every list (QA, 15 Oct): no forms in the list; a row opens its question or approval in the side panel.
           <AgentRows runs={visible} empty={TABS.find((t) => t.key === tab).empty} onChanged={load}
-            onOpen={(r) => navigate(`/agent/runs/${r.id}`)} onReview={(r) => setDraft({ runId: r.id, edit: false })} />
+            onOpen={(r) => navigate(r.to || `/agent/runs/${r.id}`)} onReview={(r) => setDraft({ runId: r.id, edit: false })} />
         )}
         {!loading && tab !== "results" && (      // Results pages by its own count, inside its list
           <Pagination total={total} page={at.page} more={at.more} noun={tab === "documents" ? "documents" : "tasks"} className="border-t border-slate-100 dark:border-slate-800"

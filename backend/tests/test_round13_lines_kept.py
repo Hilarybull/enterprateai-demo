@@ -48,6 +48,8 @@ def test_a_new_purpose_offers_lines_named_for_it_never_changes_them(world):
     row = run(svc.store.get("subjects", cid))
     run(svc.update_subject(OWNER, "A", rules.FUNDING, cid, row["revision"], {"purpose": "new equipment",
                                                                              "use_of_funds": [{"id": "l1", "category": "Other", "amount": "50000", "purpose": "Hiring staff"}]}, OWNER))
+    env.businesses["A"]["data"].setdefault("research_runs", {})["rr1"] = {"id": "rr1", "goal": "need_funding", "status": "review", "case_id": cid,
+                                                                         "created_at": "2026-10-26T00:00:00Z", "items": []}      # "Do all for me" ran
     run(svc.get_subject(OWNER, "A", rules.FUNDING, cid, OWNER))      # opened
     data = run(svc.store.get("subjects", cid))["data"]
     assert [x["purpose"] for x in data["use_of_funds"]] == ["Hiring staff"]                      # never changed for the owner

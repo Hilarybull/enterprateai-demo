@@ -73,9 +73,10 @@ def test_pricing_gives_the_owners_own_economics_and_customers_get_a_count_of_nin
     assert p["score"] == "Strong" and {"label": "At 20 sales a month", "value": "£1,100 contribution before fixed costs"} in p["metrics"]
     assert "not a recommended market price" in p["note"] and any(b["label"] == "Comparable prices are not known" for b in p["blockers"])
     c = fv.assess("more_customers", {"sell": "Bookkeeping for small firms", "customer": "unknown", "where": "Leeds", "channel": "I don't have customers yet", "price": "£300 a month", "goal": "5 new clients"})
-    assert c["assessment_type"] == "customer_growth_foundation" and len(c["criteria"]) == 9 and c["score_label"] == "in place"
-    assert c["score"] == f"{sum(1 for x in c['criteria'] if x['state'] == 'met')} of 9" and "does not promise customers" in c["note"]
-    assert any(b["label"] == "No active Marketplace listing" for b in c["blockers"])
+    # Winning more customers the risk check's way (the owner, 25 Oct): real gaps and what isn't on record, never a score
+    assert c["assessment_type"] == "customer_growth_foundation" and c["score"] is None and "does not promise customers" in c["note"]
+    assert {b["label"] for b in c["blockers"]} >= {"Not listed on the Marketplace", "No way for new customers to find you yet"}
+    assert [x["ask"] for x in c["not_on_record"]] == ["customer"]
     launch = fv.assess("launch", {"kind": "service", "sell": "Mobile car wash", "stage": "testing", "customer": "Busy drivers", "where": "Abuja", "evidence": "None yet"})
     assert [x["weight"] for x in launch["criteria"]] == [15, 15, 20, 15, 10, 10, 10, 5] and launch["premium_next_action"]["label"].startswith("Resolve my ")
     assert fv.assess("create_invoice", {}) is None                           # a document has no assessment

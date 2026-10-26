@@ -179,7 +179,9 @@ PLAN: dict[str, dict[str, list[tuple[str, str]]]] = {
                     "sensitivity": [(R, "price_sensitivity")], "positioning": [(R, "positioning")]},
     "more_customers": {"offer": [(A, "offer")], "clarity": [(A, "offer")], "target": [(R, "segments")], "price": [(R, "comparable_prices")],
                        "channel": [(R, "channels")], "marketplace": [(A, "listed")], "traction": [(R, "local_demand"), (A, "customers_so_far")],
-                       "goal": [(A, "growth_goal")]},
+                       "goal": [(A, "growth_goal")],
+                       # relying on one customer: the other kinds of customer worth winning (25 Oct)
+                       "concentration": [(R, "segments")]},
     "test_idea": {"idea": [(A, "offer")], "customer": [(R, "segments")], "margin": [(D, "margin")], "break_even": [(D, "break_even")],
                   "capacity": [(D, "capacity")], "demand": [(R, "demand")], "competitors": [(R, "competitors"), (R, "comparable_prices")]},
 }
@@ -1542,8 +1544,12 @@ def _question(criterion: str, key: str, label: str, *, used_for: str | None = No
             "type": a["type"], "money": bool(a.get("money")), "why": why, "for_derive": for_derive, "tag": tag, "used_for": used_for or label, "decision": None}
 
 
+# The owner's own actions, never researched: a quote waiting is followed up by the owner (25 Oct)
+OWNER_ACTIONS = {"follow_up"}
+
+
 def blockers_of(result: dict) -> list[str]:
-    return [c["key"] for c in result.get("criteria") or [] if c["state"] != first_value.MET]
+    return [c["key"] for c in result.get("criteria") or [] if c["state"] != first_value.MET and c["key"] not in OWNER_ACTIONS]
 
 
 ROUTE_OF_ANSWER = {"equity": "route_equity", "investment": "route_equity", "investors": "route_equity", "loan": "route_loan", "debt": "route_loan",
@@ -2012,6 +2018,54 @@ def research_state(data: dict | None, goal: str, now: datetime | None = None, an
         return {"state": "adopted", "run_id": run["id"], "findings": findings, "at": at, "max": price}
     return {"state": "stale", "run_id": run["id"], "findings": findings, "at": at, "max": price, "adopted": run.get("status") == "adopted",
             "why": "Your answers changed since the last research." if changed else f"Your last research is from {at}."}
+
+
+CHECK_NAME = {"need_funding": "Funding readiness", "launch": "Launch readiness", "more_customers": "Customer plan",
+              "price_offer": "Pricing", "test_idea": "Idea validation"}
+
+
+def history_rows(data: dict | None) -> list[dict]:
+    """Every "Do all for me" run, from every flow, as a row of the Agent Centre's History (the owner, 26 Oct: "hope all these
+    agentic runs are stored in the agent centre"): when, which check, credits used, findings, where it stands; Open goes to
+    that check's own page."""
+    runs = [r for r in _runs(data or {}).values() if isinstance(r, dict) and r.get("goal") in CHECK_NAME and r.get("created_at")]
+    newest: dict[tuple, str] = {}
+    for r in runs:
+        k = (r["goal"], str(r.get("case_id") or ""))
+        newest[k] = max(newest.get(k, ""), str(r["created_at"]))
+    pages = {"more_customers": "/check/customers", "price_offer": "/check/pricing", "test_idea": "/check/idea"}
+    out = []
+    for r in runs:
+        goal, case = r["goal"], str(r.get("case_id") or "")
+        if goal == "need_funding":
+            to = f"/funding/{case}?tab=results" if case else "/check/funding"
+        elif goal == "launch":
+            to = f"/launch/{case}" if case else "/check/launch"
+        else:
+            to = pages[goal]
+        state = ("Researching" if r.get("status") == "researching" else "Didn't finish" if r.get("error")
+                 else "Replaced by a newer run" if str(r["created_at"]) < newest[(goal, case)]
+                 else "Accepted" if r.get("status") == "adopted" else "Waiting for you to review" if r.get("status") == "review" else str(r.get("status") or ""))
+        found, spent = int(r.get("findings") or 0), int(r.get("charged") or 0)
+        said = [f"{found} finding{'s' if found != 1 else ''}", f"{spent} credit{'s' if spent != 1 else ''}" if spent else "Free", state]
+        out.append({"id": f"research:{r['id']}", "kind": "research", "workflow_key": f"research_{goal}", "capability": r.get("capability"),
+                    "title": f"Do all for me: {CHECK_NAME[goal]}", "summary": " · ".join(said), "status": "succeeded", "display_status": "succeeded",
+                    "bucket": "research", "created_at": r["created_at"], "updated_at": r.get("updated_at") or r["created_at"],
+                    "completed_at": r.get("updated_at") or r["created_at"], "to": to, "credits_used": spent or None, "research_state": state})
+    # The free checks too (the owner, 26 Oct: "other flows too, funding, launch readiness, business risk and so on"): each
+    # check's latest result, as it is kept, free
+    free_names = {**CHECK_NAME, "business_risks": "Risk check", "more_customers": "Customer check"}
+    free_pages = {"business_risks": "/check/risks", "more_customers": "/check/customers", "price_offer": "/check/pricing",
+                  "test_idea": "/check/idea", "launch": "/check/launch", "need_funding": "/check/funding"}
+    for goal, rec in ((data or {}).get("quick_check_answers") or {}).items():
+        if goal not in free_pages or not isinstance(rec, dict) or not isinstance(rec.get("result"), dict) or not rec.get("at"):
+            continue
+        head = str(rec["result"].get("headline") or "").strip().rstrip(".")
+        out.append({"id": f"check:{goal}", "kind": "research", "workflow_key": f"check_{goal}", "capability": None,
+                    "title": free_names[goal] if goal == "business_risks" or goal == "more_customers" else f"{free_names[goal]} check",
+                    "summary": " · ".join(x for x in (head, "Free") if x), "status": "succeeded", "display_status": "succeeded",
+                    "bucket": "research", "created_at": rec["at"], "updated_at": rec["at"], "completed_at": rec["at"], "to": free_pages[goal]})
+    return out
 
 
 async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict, data: dict, llm=None, search=None, fetcher=None,

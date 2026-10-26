@@ -1558,7 +1558,13 @@ async def idea_validation_step(ctx):
         # launch plan for something else), and nothing written back to the business.
         own = idea_of(data, {})
         idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
-        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP"})
+        # Where it is unsaid: where the owner is, in their currency (the owner, 26 Oct: GBP and no country for a Nigerian
+        # business's idea), never anything else from the business
+        from app.modules.agent.research import task_currency
+        p = data.get("workspace_profile") or {}
+        idea["location"] = idea["location"] or ", ".join(x for x in (str(p.get("city") or "").strip(), str(p.get("country") or "").strip()) if x)
+        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or task_currency(data) or "GBP",
+                     **({"country": str(p["country"]).strip()} if str(p.get("country") or "").strip() and not ctx.answers.get("location") else {})})
     else:
         idea = idea_of(data, ctx.answers)
     idea = await _fill_idea(ctx, idea) if idea.get("description") else idea
@@ -1573,11 +1579,13 @@ async def idea_validation_step(ctx):
         # What the records don't give, estimated for this idea and place, said as estimates and changeable on Idea
         # Validation (the owner, 25 Oct: "agent is supposed to fill and smart populate these"), never left as "still needed"
         idea = await _estimate_economics(ctx, idea)
-    if not separate:
-        # The draft in Idea Validation History, for the owner to accept or reject: one per idea, so a Comprehensive run after
-        # an upgrade updates the same draft (with the same answers), never a second one.
-        import hashlib
-        idea["history_id"] = "agent-" + hashlib.sha1(str(idea.get("description") or ctx.run["id"]).strip().lower().encode()).hexdigest()[:12]
+    # The draft in Idea Validation History, for the owner to accept or reject: one per idea, so a Comprehensive run after
+    # an upgrade updates the same draft (with the same answers), never a second one. A separate idea has its own too, so
+    # "Open" goes to its result, never the empty start (the owner, 26 Oct: "why is open validation form bringing me here?")
+    idea = await _fill_whole_form(ctx, idea)
+    import hashlib
+    idea["history_id"] = "agent-" + hashlib.sha1(str(idea.get("description") or ctx.run["id"]).strip().lower().encode()).hexdigest()[:12]
+    idea["history_business"] = ctx.run["business_id"]      # where its draft is kept, a separate idea's too
     await fill_validation_form(ctx, idea)
     feature = "idea_validation_comprehensive" if depth == "comprehensive" else "idea_validation"
     r = await _studio(ctx, feature, ctx.rt.studio.validate_idea(user_id=ctx.actor.user_id,
@@ -1590,6 +1598,7 @@ async def idea_validation_step(ctx):
         r = {**r, "evidence": "insufficient", "gaps": gaps}
     if separate:
         await _keep_separate_idea(ctx, idea, r)
+        await _draft_in_history(ctx, idea, r)
     else:
         await _keep(ctx, "validation", {k: v for k, v in r.items() if k not in ("payload", "quick")})
         await _draft_in_history(ctx, idea, r)
@@ -1605,8 +1614,11 @@ async def idea_validation_step(ctx):
     summary = (head
                + (f" Biggest risk: {risks[0].rstrip('.')}." if risks else "") + (f" First step: {steps[0].rstrip('.')}." if steps else "")
                + (" The full report, with its research, will be on Idea Validation in a few minutes." if r.get("full_report") == "pending" else ""))
-    links = [{"label": "draft in Idea Validation", "to": f"/validation?history_id={idea['history_id']}&history_type=v4_validation"}
-             if idea.get("history_id") else {"label": "the Idea Validation form", "to": "/validation"}]
+    # The results dashboard, and the form to change the answers (the owner, 26 Oct: "there should be option to load the
+    # validation result dashboard")
+    saved = f"/validation?history_id={idea['history_id']}&history_type=v4_validation" if idea.get("history_id") else None
+    links = ([{"label": "the validation results", "to": f"{saved}&view=results", "primary": True}, {"label": "the Idea Validation form", "to": saved}]
+             if saved else [{"label": "the Idea Validation form", "to": "/validation"}])
     if depth == "basic":
         plan = await ctx.rt.meter.plan(ctx.actor.user_id)
         if plan == "explorer":
@@ -1658,6 +1670,27 @@ async def _draft_in_history(ctx, idea: dict, r: dict) -> None:
         ctx.run.setdefault("state", {})["draft"] = {"id": d["id"], "status": d["status"]}
     except Exception:      # noqa: BLE001 - the score stands on the task either way
         logger.warning("idea validation draft not saved to History for %s", ctx.run["business_id"], exc_info=True)
+
+
+async def _fill_whole_form(ctx, idea: dict) -> dict:
+    """Every question on the Idea Validation form that is still empty, answered by the Agent (validation_fill), kept on the
+    idea so the form the owner opens and the validation that runs are the same (the owner, 26 Oct: "many things are empty")."""
+    from app.modules.agent import research, validation_fill
+    from app.modules.agent.services import validation_payload
+    form = {k: v for k, v in validation_payload(idea, None).items() if k.startswith("step") and isinstance(v, dict)}
+    if len(str(idea.get("description") or "").split()) <= 4:      # only its name: the descriptions are the Agent's to write
+        for s, f in (("step1", "idea_tagline"), ("step1", "idea_description"), ("step5", "solution_description")):
+            (form.get(s) or {}).pop(f, None)
+    facts = {k: idea.get(k) for k in ("name", "description", "customer", "problem", "industry", "location", "country", "currency") if idea.get(k)}
+    facts.update({k: v for k, v in (idea.get("known") or {}).items() if k in ("price", "cost", "monthly_sales") and v})
+    filled, took = await validation_fill.fill(research._default_llm(ctx.actor.user_id), form, facts)
+    if not took:
+        return idea
+    fill: dict = {}
+    for key in took:      # only what the Agent answered, never the owner's own words again
+        s, f = key.split(".", 1)
+        fill.setdefault(s, {})[f] = filled[s][f]
+    return {**idea, "form_fill": fill}
 
 
 async def fill_validation_form(ctx, idea: dict) -> None:

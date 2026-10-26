@@ -64,7 +64,7 @@ export default function BusinessAssistant() {
         link: reply.runId ? `/agent/runs/${reply.runId}` : null, links: (reply.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to })) }]);
     },
     onChanged: () => window.dispatchEvent(new CustomEvent("ea:credits:refresh")),
-    onDetails: (runId) => { window.location.assign(`/agent/runs/${runId}`); },
+    onDetails: (runId, to) => { window.location.assign(to || `/agent/runs/${runId}`); },
   });
 
   /** One reply from the Agent, put where it belongs: a message, a question in a dialog, or a task to watch. */

@@ -55,6 +55,9 @@ describe("Accept after an edit (the owner's QA, 20 Oct)", () => {
     await act(async () => { fireEvent.click(within(group()).getByRole("button", { name: "Accept" })); });
     expect(document.querySelector("[data-research-value]").textContent).toContain("300");
     expect(within(group()).getByRole("button", { name: "Accept" }).getAttribute("aria-pressed")).toBe("true");
+    // Something is said on the press, and only Accept looks pressed (the owner, 26 Oct: "clicked on accept and nothing happened")
+    expect(within(group()).getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelector("[data-accepted-note]").textContent).toBe("Accepted, with your edit. Press Use what I accepted to keep it.");
   });
 
   it("an unsaved edit is saved by Accept", async () => {

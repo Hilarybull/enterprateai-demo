@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, expect, it, vi } from "vitest";
 import * as client from "../api/client";
 import ResearchSummary, { AdoptedBanner, shortMoney } from "./ResearchSummary";
+import { InlineResearch } from "./ResearchReview";
 
 // Toasts said by the one toast system (22 Oct), collected for the checks below
 const toasts = [];
@@ -50,4 +51,31 @@ it("becomes one line once adopted, and says amounts short", () => {
   render(<AdoptedBanner run={{ ...RUN, status: "adopted", adopted_at: "2026-10-20T10:00:00Z", items: RUN.items.map((i) => (i.derive ? { ...i, decision: "accepted" } : i)) }} onOpen={() => {}} />);
   expect(document.querySelector("[data-adopted-banner]").textContent).toBe("You adopted 2 drafts on 20 Oct · See what I did");
   expect([shortMoney(3000000, "NGN"), shortMoney(993397, "NGN"), shortMoney(25000, "GBP")]).toEqual(["₦3m", "₦993K", "£25K"]);
+});
+
+it("a customer plan's run is said as the customer plan, never funding (the owner, 26 Oct)", () => {
+  vi.spyOn(client, "apiRequest").mockResolvedValue({});
+  render(<ResearchSummary businessId="b1" run={{ ...RUN, goal: "more_customers", answers: {} }} />);
+  expect(document.querySelector("[data-summary-head]").textContent).toMatch(/ for your customer plan\.$/);
+});
+
+it("a customer plan's findings show at once, not behind See everything I used (the owner, 26 Oct)", () => {
+  vi.spyOn(client, "apiRequest").mockResolvedValue({});
+  render(<InlineResearch businessId="b1" run={{ ...RUN, goal: "more_customers", answers: {}, deliverables: undefined, figures: undefined }} />);
+  expect(document.querySelector("[data-see-everything]")).toBeNull();
+  expect(document.querySelector("[data-research-item]")).toBeTruthy();
+});
+
+it("after accepting, a customer plan says what was kept, with no score or criteria table (the owner, 26 Oct)", async () => {
+  const run = { id: "rc1", goal: "more_customers", status: "review", answers: {}, context: {},
+    items: [{ id: "f1", kind: "researched", topic: "channels", label: "How similar businesses find customers", value: "Flyers and social media", sources: [{ url: "https://x", title: "X" }] }] };
+  vi.spyOn(client, "apiRequest").mockResolvedValue({ research: { ...run, status: "adopted", before: { score: null }, after: { score: null }, changes: [{ criterion: "c", label: "C", before: "met", after: "met" }],
+    items: [{ ...run.items[0], decision: "accepted" }] } });
+  render(<InlineResearch businessId="b1" run={run} />);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Use what I accepted" })); });
+  expect(document.querySelector("[data-applied-line]").textContent).toBe("Saved to your customer plan: 1 finding.");
+  expect(document.querySelector("[data-kept]").textContent).toContain("Flyers and social media");
+  expect(document.querySelector("[data-criteria-changes]")).toBeNull();
+  expect(screen.queryByText(/Score/)).toBeNull();
 });

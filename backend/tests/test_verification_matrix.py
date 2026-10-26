@@ -256,8 +256,12 @@ def test_a_second_idea_in_a_workspace_that_has_one_gets_its_own_record():
     d = env.businesses["A"]["data"]
     before = json.dumps(d["workspace_profile"], sort_keys=True)
     r = _drive(env, "Validate my idea: a mobile dog grooming van for busy owners in Leeds")
-    assert r["status"] in ("succeeded", "nothing_to_do") and json.dumps(d["workspace_profile"], sort_keys=True) == before
+    # Waiting in Needs Approval, as the business's own idea is (the owner, 26 Oct); the business is left exactly as it was
+    assert r["status"] in ("succeeded", "nothing_to_do", "waiting_for_review") and json.dumps(d["workspace_profile"], sort_keys=True) == before
     assert list(d.get("agent_ideas") or {}) and "dog grooming" in json.dumps(d["agent_ideas"]).lower()
+    draft = next(x for x in d["agent_drafts"] if x["kind"] == "idea_validation")
+    assert draft["status"] == "pending" and draft["to"].startswith("/validation?history_id=agent-")      # "Open" goes to this result
+    assert any(e["id"] == draft["ref"] and e["status"] == "pending" for e in d["validation_history"])
 
 
 def test_the_whole_sales_chain():

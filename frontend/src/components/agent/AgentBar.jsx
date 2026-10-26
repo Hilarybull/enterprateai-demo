@@ -17,7 +17,7 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState(null);      // { text, check?, offers? }
   const [said, setSaid] = useState("");      // the owner's own words, shown above the answer
-  const flow = useTaskFlow({ say: (r) => setReply(r ? { text: r.text, offers: r.offers } : null), onChanged: () => onChanged?.(), onDetails: (id) => onOpenRun?.(id) });
+  const flow = useTaskFlow({ say: (r) => setReply(r ? { text: r.text, offers: r.offers } : null), onChanged: () => onChanged?.(), onDetails: (id, to) => onOpenRun?.(id, to) });
 
   async function ask(req) {
     if (!businessId || busy) return;

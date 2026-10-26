@@ -680,6 +680,9 @@ function Field({ f, value, onChange, at = "card" }) {
  */
 // The result card, loaded when a check's result is shown in the chat itself (the Agent Centre, the dashboard Agent: R-7)
 
+// Each free check's button, and what it says while it works
+const FREE_CHECK_GO = { business_risks: ["Check my risks", "Checking your risks…"], more_customers: ["See my customer plan", "Working it out…"] };
+
 export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const { session, busy, answer, startOver, carryOn, here, closed, setClosed } = flow;
   // Never "Working…" for more than 10 seconds without saying so.
@@ -715,7 +718,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const [changingRecap, setChangingRecap] = useState(false);
   const recapDone = recapOk || Boolean(session?.verification?.sent);
   // The risk check moves on only when [Check my risks] is pressed (R-7, R-8, 24 Oct): never by itself after the last answer
-  const risky = session?.goal_key === "business_risks";
+  // The free checks (the risk check, winning more customers): one press, never a list to confirm, the result in one request
+  const risky = FREE_CHECK_GO[session?.goal_key] !== undefined;
   const [awaitingText, setAwaitingText] = useState("");      // what was sent, shown at once while it is read      // turns taken in this card (before the server's reply is in)
   useEffect(() => { setAnsweredHere(new Set()); }, [session?.id]);      // said-chips that were clicked: their fields are open to change
   const [currency, setCurrency] = useState(null);
@@ -794,6 +798,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   }, [placement, phone, closed, session]);
   const [picking, setPicking] = useState(false);      // "Change something": which answer
   const [riskBusy, setRiskBusy] = useState(false);
+  const [multiPicked, setMultiPicked] = useState([]);      // a pick-several question's choices so far
+  useEffect(() => { setMultiPicked([]); }, [currentQuestion?.key]);      // eslint-disable-line react-hooks/exhaustive-deps
   // The check done: one short line and a button to the result's own page, never the result in the chat (the owner's brief,
   // 25 Oct), from the landing page, the dashboard's Agent card and the Agent Centre alike
   const [done, setDone] = useState(null);      // { text, cta, to }
@@ -812,7 +818,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
       // One request (the owner's brief, 25 Oct: the result in under 5 seconds): the answers kept, the free hand-off, the result
       const out = await apiRequest(`/task-sessions/${session.id}/risk-check`, "POST", { answers }, { timeoutMs: 30000 });
       if (out?.business_id) useWorkspaceStore.getState().setWorkspaceId(out.business_id);
-      if (out?.result) setDone(resultLine(out.result, out.session?.handoff, "business_risks"));
+      if (out?.result) setDone(resultLine(out.result, out.session?.handoff, session.goal_key));
     } catch { setError("Your risks couldn't be checked just now. Nothing was lost: try again."); } finally { setRiskBusy(false); }
   };
   // Everything came from the records and nothing was asked: straight on to the result, never a list to confirm first
@@ -820,7 +826,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const straightOn = useRef("");
   useEffect(() => {
     const rows = session?.summary || [];
-    const all = session?.goal_key !== "business_risks" && rows.length > 0 && rows.every((r) => r.from_records || r.key === "currency");
+    const all = !risky && rows.length > 0 && rows.every((r) => r.from_records || r.key === "currency");
     if (!session?.id || session?.next !== "questions" || currentQuestion || !questions.length || !all || busy || editing.size || straightOn.current === session.id) return;
     straightOn.current = session.id;
     answer(Object.fromEntries(questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => [q.key, values[q.key]])), true);
@@ -835,7 +841,9 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     return () => clearTimeout(timer);
   }, [currentQuestion?.key]);      // eslint-disable-line react-hooks/exhaustive-deps
   // The conversation so far: each question already answered, with the answer under it (tap to change it).
-  const shownValue = (q, v) => (v === "unknown" ? (q.unsure || "Not sure") : q.type === "date" && ukDate(v) ? ukDate(v) : q.type === "choice" ? (q.options.find((o) => String(o.value) === String(v))?.label || String(v))
+  const shownValue = (q, v) => (v === "unknown" ? (q.unsure || "Not sure") : q.type === "date" && ukDate(v) ? ukDate(v)
+    : q.type === "choice" && q.multi && String(v).includes(",") ? String(v).split(",").map((x) => q.options.find((o) => String(o.value) === x.trim())?.label || x.trim()).join(", ")
+    : q.type === "choice" ? (q.options.find((o) => String(o.value) === String(v))?.label || String(v))
     : q.prefix && v !== "" && !Number.isNaN(Number(v)) ? `${sign || q.prefix}${Number(v).toLocaleString("en-GB")}` : String(v));
   useEffect(() => {      // each turn: the newest question in view inside the card, and the cursor back in the reply box
     if (typing) return;
@@ -861,6 +869,13 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     const changing = editing.has(currentQuestion.key);
     // (the question's own default, "1" for a quantity, is still offered as a suggestion: QA P2-3)
     const kept = changing ? (values[currentQuestion.key] || session?.inputs?.[currentQuestion.key] || "") : (currentQuestion.default ?? "");
+    // A pick-several question: the current answer is ticked, never typed back as codes ("ads,walk_in": the owner, 26 Oct)
+    if (currentQuestion.multi) {
+      const known = new Set((currentQuestion.options || []).map((o) => String(o.value)));
+      setMultiPicked(changing ? String(kept || "").split(",").map((x) => x.trim()).filter((x) => known.has(x)) : []);
+      setDraftValue("");
+      return;
+    }
     setDraftValue(kept === "unknown" ? "" : kept);      // "not known" is never typed back into the box
   }, [currentQuestion?.key, currentQuestion?.default]);      // eslint-disable-line react-hooks/exhaustive-deps
   const step = session?.next;
@@ -908,6 +923,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   };
   const recapRows = said.filter((r) => r.key !== "currency");      // what the recap would list: the currency alone is nothing to check
   const recapShown = recapStep && !reasking && recapRows.length > 0 && !recapDone && !risky;      // the risk check: [Check my risks], never a list
+  // The free checks' one press, with a box to type a change to any answer (the owner, 26 Oct: "want to change my response")
+  const freeGoShown = ["questions", "identity", "prepare"].includes(step) && !currentQuestion && questions.length > 0 && risky && !done && (!recapOk || compact || here);
   // "Here's what I'll use:" only above the recap itself (the owner's brief, 25 Oct: never an empty step); a change said at the
   // recap keeps its "Got it, ..." without it
   const RECAP_LINE = /\s*Here's what I'll use(?::| now\.)\s*$/;
@@ -924,6 +941,27 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     apiRequest(`/task-sessions/${session.id}/case-changes`, "GET").then((r) => { if (live) setCaseChanges(r?.changes || []); }).catch(() => {});
     return () => { live = false; };
   }, [changesKey]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // "Change something": which answer, every question, so what is missing can be added too (the owner, 24 Oct: "change
+  // something is not working well"); the same in the free checks (the owner, 26 Oct: "why is there no change something?")
+  const changePick = () => (
+    <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Which answer to change" data-change-pick>
+      {questions.filter((q) => !q.hidden).map((q) => {
+        const has = values[q.key] !== "" && values[q.key] != null && values[q.key] !== "unknown";
+        const name = q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : q.label;
+        return (
+          <button key={q.key} type="button" onClick={() => { setPicking(false); open(q.key); }} data-change-key={q.key}
+            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">
+            {/* The free checks have no list above: each says what was answered (the owner, 26 Oct: "can't see my answers") */}
+            {has ? (risky ? <>{name}: <span className="font-normal">{shownValue(q, values[q.key])}</span></> : name) : `Add: ${name.toLowerCase()}`}
+          </button>
+        );
+      })}
+    </div>
+  );
+  // "Change something": the answers to pick from brought into view in the chat (the owner, 26 Oct)
+  useEffect(() => {
+    if (picking) requestAnimationFrame(() => document.querySelector("[data-change-pick]")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }));
+  }, [picking]);
   // "Change something": its rows brought into view (the owner's QA, 21 Oct).
   useEffect(() => {
     if (!changingRecap) return;
@@ -1219,7 +1257,10 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
             // here, never a jump to another page (R-7).
             <div className="flex flex-wrap items-center gap-3" data-risk-check-go>
               <button type="button" disabled={busy || riskBusy} onClick={checkRisks} data-check-my-risks
-                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{riskBusy ? "Checking your risks…" : "Check my risks"}</button>
+                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{riskBusy ? FREE_CHECK_GO[session.goal_key][1] : FREE_CHECK_GO[session.goal_key][0]}</button>
+              <button type="button" disabled={riskBusy} onClick={() => setPicking((v) => !v)} aria-expanded={picking} data-free-check-change
+                className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change something</button>
+              {picking && <div className="w-full">{changePick()}</div>}
             </div>
           )}
           {done && (
@@ -1231,7 +1272,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
               )}
             </div>
           )}
-          {step === "questions" && !currentQuestion && questions.length > 0 && session?.goal_key !== "business_risks" && (
+          {step === "questions" && !currentQuestion && questions.length > 0 && !risky && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-summary>
               <p className="text-[13px] font-semibold text-slate-900">Here's what I've got:</p>
               <ul className="mt-1.5 space-y-0.5">
@@ -1245,21 +1286,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                   className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Continue</button>
                 <button type="button" onClick={() => setPicking((v) => !v)} aria-expanded={picking} className="text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Change something</button>
               </div>
-              {picking && (
-                <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Which answer to change" data-change-pick>
-                  {/* Every question, so what is missing can be added too (the owner, 24 Oct: "change something is not working well") */}
-                  {questions.filter((q) => !q.hidden).map((q) => {
-                    const has = values[q.key] !== "" && values[q.key] != null && values[q.key] !== "unknown";
-                    const name = q.noun ? q.noun[0].toUpperCase() + q.noun.slice(1) : q.label;
-                    return (
-                      <button key={q.key} type="button" onClick={() => { setPicking(false); open(q.key); }} data-change-key={q.key}
-                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">
-                        {has ? name : `Add: ${name.toLowerCase()}`}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              {picking && changePick()}
             </div>
           )}
 
@@ -1280,7 +1307,28 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                   <p role="status" className="text-[12px] text-slate-500" data-reading>Reading your reply…</p>
                 </>
               )}
-              {currentQuestion.type === "choice" ? (
+              {currentQuestion.type === "choice" && currentQuestion.multi ? (
+                // Several at once (the owner, 25 Oct: "can be multichoice"): each a toggle, then Done; one that excludes the rest
+                // ("I don't have customers yet", "Not sure") is sent on its own at once
+                <div className="space-y-2" data-question-multi>
+                  <div className="flex flex-wrap gap-2" role="group" aria-label={currentQuestion.label}>
+                    {[...currentQuestion.options, ...(currentQuestion.unsure && !currentQuestion.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((o) => {
+                      const alone = ["none", "unknown"].includes(String(o.value));
+                      const on = multiPicked.includes(String(o.value));
+                      return (
+                        <button key={o.value} type="button" disabled={busy} aria-pressed={on} data-quick-reply data-multi-option={o.value}
+                          onClick={() => (alone ? submitQuestion(o.value, false) : setMultiPicked((had) => (had.includes(String(o.value)) ? had.filter((x) => x !== String(o.value)) : [...had, String(o.value)])))}
+                          className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${on ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300"}`}>
+                          {on ? "✓ " : ""}{o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button type="button" disabled={busy || multiPicked.length === 0} onClick={() => submitQuestion(multiPicked.join(","), false)} data-multi-done
+                    className="rounded-xl bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                    {multiPicked.length ? `Done (${multiPicked.length})` : "Pick one or more"}</button>
+                </div>
+              ) : currentQuestion.type === "choice" ? (
                 <div className="flex flex-wrap gap-2" role="group" aria-label={currentQuestion.label} data-question-choice>
                   {[...currentQuestion.options, ...(currentQuestion.unsure && !currentQuestion.options.some((o) => o.value === "unknown") ? [{ value: "unknown", label: currentQuestion.unsure }] : [])].map((o) => (
                     <button key={o.value} type="button" disabled={busy} onClick={() => submitQuestion(o.value, false)} data-quick-reply
@@ -1407,7 +1455,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                 {!busy && <ArrowRightIcon />}
               </button>
             </div>
-          ) : recapShown ? (
+          ) : recapShown || freeGoShown ? (
             <div className="flex w-full items-center gap-2" data-composer data-recap-composer>
               <input aria-label="Change something in your own words" placeholder="Or type what to change" value={fixText}
                 onChange={(e) => setFixText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendFix(); } }}

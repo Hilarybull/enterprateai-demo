@@ -805,13 +805,17 @@ export default function BlueprintPage() {
     const t = appToast({ kind: "pending", title: decision === "accept" ? "Accepting your business plan…" : "Rejecting the draft…" });
     try {
       await apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}/decide`, "POST", { decision });
-      appToast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "This is now your business plan." : "Nothing else was changed." });
+      appToast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "This is now your business plan." : "The draft has been deleted." });
     } catch {
       appToast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(decision) }] });
       return;      // the bar stays, to try again
     }
     const next = new URLSearchParams(bpSearchParams);
     next.delete("review");
+    if (decision === "reject") {      // deleted (the owner, 26 Oct): back to the list, never a page for a plan that is gone
+      next.delete("document_id");
+      refreshSavedDocs();
+    }
     setBpSearchParams(next, { replace: true });
   }
 

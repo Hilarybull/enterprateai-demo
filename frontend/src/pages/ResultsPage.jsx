@@ -425,6 +425,10 @@ export default function ResultsPage() {
       await apiRequest(`/validation/${workspaceId}`, "PATCH", {
         data: patchPayload.data
       });
+      // The Agent's draft decided here too: out of Needs Approval, and deleted on reject (the owner, 26 Oct)
+      const agentDraft = !isServiceIdeaView && (Array.isArray(ws?.data?.agent_drafts) ? ws.data.agent_drafts : [])
+        .find((d) => d?.kind === "idea_validation" && d?.status === "pending" && d?.ref === ws?.data?.active_validation_id);
+      if (agentDraft) await apiRequest(`/businesses/${workspaceId}/agent-drafts/${agentDraft.id}/decide`, "POST", { decision: status === "accepted" ? "accept" : "reject" });
       setDecision(status);
       if (!isServiceIdeaView) setDecisionStatusStore(status);
       if (isServiceIdeaView) setServiceDecisionStatusStore(status);

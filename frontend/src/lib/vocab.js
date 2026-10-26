@@ -51,10 +51,11 @@ export function statusWords(result, latest) {
   const ready = !partial && (Number.isFinite(n) ? n >= readyAt && failed === 0 : gaps === 0);
   // Risks are said as risks, never "Not ready yet" (the owner, 24 Oct)
   const sentence = kind === "risks" ? (gaps ? `${gaps} ${gaps === 1 ? "risk" : "risks"} to act on.` : "No risks found in your records.")
+    : kind === "customers" ? (gaps ? `${gaps} ${gaps === 1 ? "thing" : "things"} to fix to win more customers.` : "Nothing in your records is holding back new customers.")
     : ready ? READY[kind] : `${NOT_YET[kind]}${gaps ? ` ${gaps} ${gaps === 1 ? "thing" : "things"} to do first.` : ""}`;
   const coverage = Math.max(0, Math.min(100, Math.round(Number(latest?.coverage ?? result?.evidence_coverage ?? 0))));
   const known = `${partial ? "Based on" : "I know"} ${coverage}% ${(WORDS.coverage[kind] || WORDS.coverage.other)}`;
-  const score = kind === "risks" ? "" : Number.isFinite(n) ? `${n}/100` : String(result?.score ?? "");      // risks: no total
+  const score = kind === "risks" || kind === "customers" ? "" : Number.isFinite(n) ? `${n}/100` : String(result?.score ?? "");      // no total
   return { score, sentence, known, ready, kind };
 }
 

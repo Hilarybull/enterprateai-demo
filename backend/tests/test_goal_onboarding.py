@@ -134,7 +134,8 @@ def test_the_homepage_offers_goals_first_then_quick_tasks_all_backed_by_a_regist
     assert s["prompt"] == "What do you want EnterprateAI to do for your business?"
     # Only funding until the others are ready (the owner, 22 Oct); typed, they are still understood
     # risks back on (24 Oct); launch and idea validation back on (the owner, 25 Oct)
-    assert [g["label"] for g in s["goals"]] == ["I need funding", "I want to launch a product/service", "Test a business idea", "Help me understand my business risks"]
+    assert [g["label"] for g in s["goals"]] == ["I need funding", "I need more customers", "I want to launch a product/service", "Test a business idea",
+                                                "Help me understand my business risks"]      # customers on too (25 Oct)
     assert goals.resolve(text="Test a business idea")["goal_key"] == "test_idea"
     # Off the chips (13 Oct 2026), still understood when typed.
     assert goals.resolve(text="Improve my cash flow")["goal_key"] == "cash_flow" and goals.resolve(text="Help me grow my business")["goal_key"] == "grow"
@@ -529,7 +530,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
             assert " credits" in out["confirm"]["message"] and out["confirm"]["message"].startswith("I'll ")
             out = client.post(f"/task-sessions/{g['id']}/prepare", json={"confirmed": True}).json()
         # The risk check is a free calculation shown as its result: no background task (R-1, 24 Oct)
-        started = out["handoff"].get("run_id") or out["handoff"].get("subject_id") or (goal["key"] == "business_risks" and out["handoff"].get("free"))
+        started = out["handoff"].get("run_id") or out["handoff"].get("subject_id") or (goal["key"] in goals.FREE_CHECKS and out["handoff"].get("free"))
         assert out["state"] in ("awaiting_review", "handed_off") and started, (goal["key"], out["handoff"])
         assert "blocked" not in out["handoff"] and "Upgrade" not in str(out["handoff"].get("message") or "")
     # What does stop a task is AI Credits. With none left it is said (never swallowed), what was told is kept, and it goes through once there are credits.

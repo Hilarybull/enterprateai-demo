@@ -28,8 +28,10 @@ def test_the_agents_validation_is_a_pending_draft_in_history():
     entry = history[0]
     assert entry["id"].startswith("agent-") and entry["status"] == "pending" and entry["type"] == "v4_validation" and entry["source"] == "agent"
     assert entry["payload"]["step1"]["idea_type"] == "Training or education" and entry["score"] == 68
-    link = res["run"]["state"]["outcome"]["links"][0]
-    assert link == {"label": "draft in Idea Validation", "to": f"/validation?history_id={entry['id']}&history_type=v4_validation"}
+    links = res["run"]["state"]["outcome"]["links"]
+    saved = f"/validation?history_id={entry['id']}&history_type=v4_validation"
+    # The results dashboard first, then the form (the owner, 26 Oct)
+    assert links[:2] == [{"label": "the validation results", "to": f"{saved}&view=results", "primary": True}, {"label": "the Idea Validation form", "to": saved}]
 
 
 def test_the_full_report_updates_the_same_draft(monkeypatch):

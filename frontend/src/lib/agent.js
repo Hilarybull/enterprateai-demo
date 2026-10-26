@@ -97,6 +97,22 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
 
 export const getAgentSummary = (businessId) => apiRequestCached(`/businesses/${businessId}/agent/summary`);
 export const getRun = (runId) => apiRequest(`/workflow-runs/${runId}`, "GET");
+/** Where "See details" goes: the task's own result when it has one (an idea's validation results), else its task page
+ *  (the owner, 26 Oct: "see details should be going to the validation result not agent centre"). */
+export async function detailsOf(runId, { wait = 0 } = {}) {
+  // `wait`: seconds to give a task just started to reach its result (an idea's validation takes a few)
+  const until = Date.now() + wait * 1000;
+  for (;;) {
+    try {
+      const got = await getRun(runId);
+      const run = got?.run || got;
+      const to = (run?.outcome?.links || []).find((l) => l.primary)?.to;
+      if (to) return to;
+      if (!["queued", "running"].includes(run?.status) || Date.now() >= until) return `/agent/runs/${runId}`;
+    } catch { if (Date.now() >= until) return `/agent/runs/${runId}`; }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 export const listRuns = (businessId, query = "") => apiRequest(`/businesses/${businessId}/workflow-runs${query}`, "GET");
 export const approveAction = (runId, approvalId) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/approve`, "POST", {}, { timeoutMs: 120000 }));
 export const rejectAction = (runId, approvalId, note) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/reject`, "POST", { note: note || null }));

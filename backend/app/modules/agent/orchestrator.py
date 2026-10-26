@@ -2108,11 +2108,9 @@ class Orchestrator:
             granted = bool(await _has_platform_grant(req.requesting_actor_id, "full_access"))
         except Exception:      # noqa: BLE001 - no grant read: the plan decides
             granted = False
-        # The free Basic check first, always; the paid Comprehensive one only when asked for (G3, 23 Oct: "validate my idea"
-        # went straight to its 25-credit price)
-        asked_full = bool(_re.search(r"\b(fully|full validation|comprehensive|in depth|in-depth|deep|thorough|with research|research (?:it|the market)|market research)\b",
-                                     str(req.raw_input or ""), _re.I))
-        return "comprehensive" if asked_full and not quick and (plan != "explorer" or granted) else "basic"
+        # Basic is the free plan's (the owner, 26 Oct: "basic is for free plan"): a paid plan gets Comprehensive, its price
+        # asked first, unless the owner asks for a quick check
+        return "comprehensive" if not quick and (plan != "explorer" or granted) else "basic"
 
     async def approve_with_email(self, run_id: str, approval_id: str, user_id: str, new_email: str, email: str | None = None) -> dict:
         """[Approve and send] with the address typed in the approval drawer (the owner's QA, 15 Oct): the email is saved on the

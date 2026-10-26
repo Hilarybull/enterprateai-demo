@@ -9,6 +9,7 @@ import { QuestionForm } from "../components/agent/AgentBits";
 import { trackGoal } from "../components/GoalLauncher";
 import { ButtonSpinner, LoadError, ShellSkeleton } from "../components/Skeleton";
 import { useWorkspaceStore } from "../store/workspace";
+import { detailsOf } from "../lib/agent";
 
 // Where a task begun on the homepage carries on after sign-in (PRD-GO-001). It binds the task to
 // the account, connects the business (the one already there, or a new one), prepares the work,
@@ -156,6 +157,11 @@ export default function StartPage({ framed = false }) {
         // Nothing was prepared (the plan doesn't include it, the month's tasks are used up, no AI Credits): said here, with the way forward.
         setProblem(done.handoff.message || "That couldn't be started just now.");
         setStage("blocked");
+        return;
+      }
+      // Signed in, an idea's chat ends in its full validation (the owner, 26 Oct): its results, never the quick idea check
+      if (done.goal_key === "test_idea" && done.handoff?.run_id) {
+        navigate(await detailsOf(done.handoff.run_id, { wait: 20 }), { replace: true });
         return;
       }
       if (done.first_value) {

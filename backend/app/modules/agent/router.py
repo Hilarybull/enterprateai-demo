@@ -334,6 +334,12 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         return _result({"kind": "check", "capability": "risk_concentration", "goal_key": "business_risks",
                         "said": ((body.text or "").strip() or "Help me understand my business risks")[:500],
                         "message": "Business risks: I'll read what I can from your records and ask only what they don't show."})
+    # Winning more customers: the same chat everywhere (the owner, 25 Oct: "the landing, dashboard and agent centre agents"),
+    # read from the records and asking only what they don't show
+    if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice") \
+            and (_goals.resolve(text=body.text) or {}).get("goal_key") == "more_customers":
+        return _result({"kind": "check", "goal_key": "more_customers", "said": body.text.strip()[:500],
+                        "message": "More customers: I'll read what I can from your records and ask only what they don't show."})
     if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice") and body.business_id:
         # A business plan asked for while plans already wait for review (the owner, 25 Oct: "why didn't it add a link to them,
         # ask if I want to create a new one?"): each opens, or a new one is made, never only a sentence about them
@@ -1394,7 +1400,15 @@ async def list_runs(
     counts: dict[str, int] = {}
     for r in runs:
         counts[r["bucket"]] = counts.get(r["bucket"], 0) + 1
-    counts["history"] = len(runs)      # every task: what the History tab's number is, whatever page is showing
+    # Every "Do all for me" run, from every flow, is in History too (the owner, 26 Oct), never in the other tabs
+    try:
+        from app.modules.agent import research as _research
+        researched = _research.history_rows(await orch.rt.business.load(business_id) or {})
+    except Exception:      # noqa: BLE001 - the tasks are listed whatever happens to these
+        researched = []
+    counts["history"] = len(runs) + len(researched)      # every task: what the History tab's number is, whatever page is showing
+    if bucket == "history":
+        runs = sorted(runs + researched, key=lambda r: str(r.get("created_at") or ""), reverse=True)
     if bucket and bucket != "history":
         runs = [r for r in runs if r["bucket"] == bucket]
     if capability:

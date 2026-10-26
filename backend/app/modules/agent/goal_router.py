@@ -220,7 +220,7 @@ async def start_session(body: StartIn, request: Request):
         except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
             user, biz = None, None
     session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency)
-    if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan", "business_risks"):
+    if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan", "business_risks", "more_customers"):
         try:
             session = await _from_records(session, user, body.business_id, biz)
         except Exception:      # noqa: BLE001 - asked as usual
@@ -1196,12 +1196,21 @@ async def decide_draft(business_id: str, draft_id: str, body: DraftDecisionIn, u
     d = await orch.rt.business.mutate(business_id, lambda data: drafts.decide(data, draft_id, body.decision))
     if not d:
         raise HTTPException(status_code=404, detail="Not found.")
+    r = await orch.rt.store.get_run(d["run_id"]) if d.get("run_id") else None
+    if body.decision == "reject" and d.get("kind") == "business_plan" and d.get("ref") and d.get("ref") != d.get("run_id"):
+        # A rejected business plan is deleted, as a rejected idea validation is (the owner, 26 Oct: "not only idea
+        # rejection, business plan too"): the document goes from Business Blueprints, kept by whoever it was written for
+        try:
+            from app.modules.blueprint.repository import delete_document
+            await delete_document(user_id=(r or {}).get("requester_id") or user["id"], document_id=str(d["ref"]))
+        except Exception:      # noqa: BLE001 - the draft is rejected whatever happens to the document
+            logger.warning("rejected business plan %s not deleted", d.get("ref"), exc_info=True)
     if d.get("run_id"):
-        r = await orch.rt.store.get_run(d["run_id"])
         if r:
             state = {**(r.get("state") or {}), "draft": {"id": d["id"], "status": d["status"]}}
             await orch.rt.store.update_run(r["id"], {"state": state})
-    return {"draft": d, "message": "Accepted." if body.decision == "accept" else "Rejected. Nothing else was changed."}
+    gone = d.get("kind") in ("idea_validation", "business_plan")
+    return {"draft": d, "message": "Accepted." if body.decision == "accept" else "Rejected and deleted." if gone else "Rejected. Nothing else was changed."}
 
 
 class ConflictIn(BaseModel):
@@ -1574,9 +1583,14 @@ async def quick_check_questions(business_id: str, goal_key: str, said: str | Non
     read = _read_said(said, goal_key, {**(await goals.understood_answers(said, goal_key)), **goals.extract(said, goal_key)}) if said and said.strip() else {}
     # QA R8-8: the latest result for this check (and offering), shown on return instead of asking the questions again.
     last = dict((data.get("quick_check_answers") or {}).get(goal_key) or {})
-    if goal_key == "business_risks" and last.get("result"):
+    if goal_key in goals.FREE_CHECKS and last.get("result"):
         # Worked out again from its answers and today's records, never an old copy (the owner, 24 Oct: "it has a different score")
         last["result"] = first_value.assess(goal_key, last.get("answers") or {}, data)
+        # With the research already run for it, as the result screen shows it (the owner, 26 Oct: "what I got last time
+        # disappeared"): its findings to review, never a second "Do all for me"
+        from app.modules.agent import research as _research
+        if goal_key in _research.CAPABILITY and last["result"]:
+            last["result"]["research"] = _research.research_state(data, goal_key, answers=last.get("answers") or {})
     # The conversation as usual, from the current data (the owner's QA, 22 Oct: "it's not using the current data like when
     # coming from the landing page"): what the funding case already holds is shown once, "From your funding case", and
     # not asked; only what is missing is asked. What the owner says now wins over the case.
@@ -1775,8 +1789,8 @@ async def session_risk_check(session_id: str, body: RiskCheckIn, user=Depends(ge
     workspace connected when it isn't yet, the free hand-off (R-1) and the result. Rules only: no model, no task, no charge."""
     session = await _session(session_id)
     _mine(session, user)
-    if session.get("goal_key") != "business_risks":
-        raise HTTPException(status_code=409, detail="This isn't a risk check.")
+    if session.get("goal_key") not in goals.FREE_CHECKS:      # the risk check, and winning more customers (25 Oct)
+        raise HTTPException(status_code=409, detail="This isn't a free check.")
     if not session.get("user_id"):
         session = await goals.attach(get_store(), session, user["id"])
     if body.answers:
@@ -1787,7 +1801,7 @@ async def session_risk_check(session_id: str, body: RiskCheckIn, user=Depends(ge
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
     if goals.public(session)["missing"]:
-        raise HTTPException(status_code=409, detail="A few details are still needed before your risks can be checked.")
+        raise HTTPException(status_code=409, detail="A few details are still needed first.")
     try:
         session = await goals.prepare(get_store(), session, get_orchestrator(), user["id"], user.get("email"))      # keeps the answers once
     except PermissionError as e:

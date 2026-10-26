@@ -51,6 +51,10 @@ function badge(i) {
 
 // A note said once per section ("A Nigeria figure, used for an Abuja business"), not under every source.
 const NOTES_SAID = new WeakMap();
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-26" as "26 Oct 2026"; anything else as it is. */
+const dayWords = (v) => { const m = String(v || "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(v || ""); };
+const KIND_OF_SOURCE = { 1: "Official source", 2: "Trade body or report", 3: "Company or news page" };
 function Sources({ list, notes = null }) {
   if (!list?.length) return null;
   const said = notes || new Set();
@@ -62,12 +66,17 @@ function Sources({ list, notes = null }) {
         return (
           <li key={s.url} className="min-w-0 break-words text-[12px] text-slate-500" data-research-source>
             <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="font-medium text-brand-700 underline-offset-2 hover:underline">{s.title || s.url}</a>
-            {(s.publisher || s.site) && <span className="block">{s.publisher || s.site}</span>}
-            <span className="block" data-source-date>{s.date ? `Dated ${s.date}` : "No date given"}</span>
-            {s.tier && <span data-source-tier className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 text-[11px] font-semibold text-slate-600">{s.tier_label || `Tier ${s.tier}`}</span>}
-            {s.quote && <q data-source-quote className="mt-0.5 block whitespace-normal break-words italic text-slate-600">{s.quote}</q>}
-            {(s.accessed || s.region) && <span className="block text-[11px]">{s.region ? `Covers ${s.region}${s.period ? `, ${s.period}` : ""}. ` : ""}{s.accessed ? `Checked ${s.accessed}.` : ""}</span>}
+            <span className="block" data-source-line>
+              {[s.publisher || s.site, s.tier ? KIND_OF_SOURCE[s.tier] : null, s.date && s.date !== "undated" ? dayWords(s.date) : "undated"].filter(Boolean).join(" · ")}
+            </span>
             {note && <span data-region-note className="block text-[11px] text-amber-700">{note}</span>}
+            {(s.quote || s.region) && (
+              <details className="mt-0.5">
+                <summary className="cursor-pointer text-[11.5px] font-semibold text-slate-600">What it says</summary>
+                {s.quote && <q data-source-quote className="mt-0.5 block whitespace-normal break-words italic text-slate-600">{s.quote}</q>}
+                <span className="block text-[11px]">{s.region ? `Covers ${s.region}${s.period ? `, ${s.period}` : ""}. ` : ""}{s.accessed ? `Checked ${dayWords(s.accessed)}.` : ""}</span>
+              </details>
+            )}
           </li>
         );
       })}
@@ -404,6 +413,24 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
     } finally { setBusy(false); }
   }
 
+  if (done && done.goal === "more_customers") {
+    // The customer plan has no score (the owner, 26 Oct: "i don't understand" the score and criteria table): what was kept, said plainly
+    const kept = (done.items || []).filter((x) => x.decision === "accepted" || x.decision === "edited" || x.decision === "answered");
+    return (
+      <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-[13px] text-emerald-950" data-research-adopted>
+        <p className="font-semibold" data-applied-line>{kept.length ? `Saved to your customer plan: ${kept.length} ${kept.length === 1 ? "finding" : "findings"}.` : "Nothing saved: you didn't accept any findings."}</p>
+        {kept.length > 0 && (
+          <ul className="mt-2 space-y-1.5" data-kept>{kept.map((x) => (
+            <li key={x.id}><span className="font-semibold">{x.label}:</span> {x.decision === "edited" ? x.edited_value : x.decision === "answered" ? x.answer : x.value}</li>))}
+          </ul>
+        )}
+        {done.items?.length > 0 && (
+          <button type="button" onClick={reopen} data-research-reopen
+            className="mt-3 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-emerald-900 hover:bg-emerald-100">Change what I kept</button>
+        )}
+      </div>
+    );
+  }
   if (done) {
     const b = done.before || {};
     const a = done.after || {};
@@ -479,8 +506,13 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
         <p role="status" className="mb-2 text-[13px] text-slate-700" data-research-used>
           {creditCopy.doneVariable({ used: run.charged, findings: new Set(items.filter((i) => i.sources?.length && ["researched", "estimated"].includes(i.kind) && i.basis !== "calculated").map((i) => i.topic)).size, balance: run.balance })}</p>
       ) : null}
-      {run.counts && <p className="text-[12px] text-slate-500" data-research-counts>
-        {run.counts.researched} found online · {run.counts.estimated} my estimates · {run.counts.reused} already on record · {run.counts.calculated} worked out · {run.counts.asked} to answer · {run.counts.sources} sources</p>}
+      {run.counts && (() => {
+        const c = run.counts;
+        const parts = [[c.researched, "found online"], [c.estimated, c.estimated === 1 ? "estimate" : "estimates"], [c.reused, "already on record"],
+          [c.calculated, "worked out"], [c.asked, c.asked === 1 ? "question for you" : "questions for you"]].filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`);
+        if (!parts.length) return null;
+        return <p className="text-[12px] text-slate-500" data-research-counts>{parts.join(", ")}{c.sources ? `, from ${c.sources} source${c.sources === 1 ? "" : "s"}` : ""}.</p>;
+      })()}
       {!reviewing && <>
         <Draft r={run} />
         <p className="mt-3 text-[12.5px] text-slate-600" data-review-prompt>
@@ -499,9 +531,9 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
       </>}
       {reviewing && <>
       {draftOf(run) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
-      <p className="mt-1 text-[13px] font-semibold text-slate-900">An answer for every gap. Nothing counts until you adopt it.</p>
+      <p className="mt-1 text-[13px] font-semibold text-slate-900">Nothing counts until you accept it.</p>
       {yours.length > 0 && <p className="mt-0.5 text-[12px] text-slate-500" data-your-answers-note>Your own answers ({yours.map((i) => i.label).join(", ")}) are used as you gave them. To change one, edit it in Your answers above.</p>}
-      {undecided.length > 0 && <button type="button" onClick={adoptAll} data-adopt-all className="mt-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-800 hover:bg-brand-100">Adopt all ({undecided.length})</button>}
+      {undecided.length > 1 && <button type="button" onClick={adoptAll} data-adopt-all className="mt-2 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-800 hover:bg-brand-100">Accept all ({undecided.length})</button>}
       <ul className="mt-2 space-y-3">
         {(() => { NOTES_SAID.set(items, new Set()); return null; })()}
         {items.map((i) => {
@@ -539,11 +571,8 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
                     : i.value == null && (i.derive || i.basis === "calculated") ? "Needs the figures below it" : withUnit(i.field, i.value, currency)}{i.basis === "benchmark" && i.number != null && String(i.number) !== String(i.value) ? ` (using ${withUnit(i.field, i.number, currency)})` : ""}</p>
                   {i.working?.length > 0 && <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[12px] text-slate-600" data-working>{i.working.map((w) => <li key={w}>{w}</li>)}</ul>}
                   <Sources list={i.sources} notes={NOTES_SAID.get(items)} />
-                  {i.standard && <p className="mt-1 text-[11px] text-slate-500" data-research-standard>{i.kind === "researched" ? "Researched: " : "Not researched: "}{i.standard}.</p>}
                   {Array.isArray(i.range) && <p className="mt-0.5 text-[11px] text-amber-700" data-research-range>Sources disagree: {money(i.range[0])} to {money(i.range[1])}. Both are shown; neither is averaged.</p>}
                   {i.kind !== "researched" && i.method && <p className="mt-0.5 text-[11px] text-slate-500" data-research-method>Method: {i.method}</p>}
-                  {i.retrieved_at && <p className="mt-0.5 text-[11px] text-slate-500" data-research-freshness>Found {String(i.retrieved_at).slice(0, 10)}. {FRESH_NOTE(i)}</p>}
-                  {i.used_for && <p className="mt-1 text-[11px] text-slate-500" data-used-for>Used for: {i.used_for}</p>}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label={`Your decision: ${i.label}`}>
                     {/* A calculated figure is worked out again from the inputs above when you check again: it has no Edit of its
                         own (an edit there was thrown away). Change the inputs it uses instead (the owner's QA, 15 Oct). */}
@@ -552,17 +581,19 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
                     {(!editableItem(i) ? [["accept", "Accept"], ["reject", "Reject"]] : [["accept", "Accept"], ["edit", "Edit"], ["reject", "Reject"]]).map(([k, label]) => (
                       // A saved edit is what is accepted (the owner's QA, 20 Oct: Accept after Save put the old figure back):
                       // Accept keeps it, shown pressed; only Reject, or Edit again, changes it.
-                      <button key={k} type="button" aria-pressed={d.decision === k || (k === "accept" && d.decision === "edit" && d.saved)} onClick={() => (k === "edit"
+                      <button key={k} type="button" aria-pressed={k === "edit" ? d.decision === "edit" && !d.saved : d.decision === k || (k === "accept" && d.decision === "edit" && d.saved)} onClick={() => (k === "edit"
                         ? set(i.id, { decision: "edit", value: d.value ?? String(i.number ?? i.value ?? ""), saved: false, before: d.decision === "edit" ? d.before : d.decision,
                             restore: d.decision === "edit" && d.saved ? d.value : d.restore })
-                        : k === "accept" && d.decision === "edit" && d.saved ? null
+                        : k === "accept" && d.decision === "edit" && d.saved ? set(i.id, { pressed: true })
                         : k === "accept" && d.decision === "edit" && String(d.value ?? "").trim() ? saveEdit(i)
                         : set(i.id, { decision: k, value: d.value, saved: undefined, before: undefined, pressed: k === "accept" || undefined }))}
-                        className={pill(d.decision === k || (k === "accept" && d.decision === "edit" && d.saved))}>{label}</button>
+                        className={pill(k === "edit" ? d.decision === "edit" && !d.saved : d.decision === k || (k === "accept" && d.decision === "edit" && d.saved))}>{label}</button>
                     ))}
+                    {/* Said on the press (the owner, 26 Oct: "clicked on accept and nothing happened") */}
+                    {(d.decision === "accept" || (d.decision === "edit" && d.saved)) && d.pressed && (
+                      <span className="text-[12px] font-semibold text-emerald-700" data-accepted-note>{d.decision === "edit" ? "Accepted, with your edit." : "Accepted."} Press Use what I accepted to keep it.</span>)}
                   </div>
                   {(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-calculated-note>Worked out from the figures above, and updated as you change them.</p>}
-                  {i.kind === "researched" && !(i.derive || i.basis === "calculated") && <p className="mt-1 text-[11.5px] text-slate-500" data-researched-note>From a checked source. Accept it, edit it to use your own figure, or reject it.</p>}
                   {/* Closed once saved (the owner's QA, 20 Oct): the new figure shows above; Edit opens it again. Open while a save failed. */}
                   {d.decision === "edit" && editableItem(i) && (!d.saved || failed[i.id]) && (() => {
                     const u = unitsOf(i.field, currency);
@@ -601,11 +632,11 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
       {run.deliverables && <Figures list={run.figures} />}
       {error && <p role="alert" className="mt-2 text-[12px] text-rose-700">{error}</p>}
       {open.length > 0 && <p className="mt-3 text-[12px] text-violet-800" data-questions-left>{open.length === 1 ? "1 question left" : `${open.length} questions left`}: answer or skip each.</p>}
-      {undecided.length > 0 && <p className="mt-1 text-[12px] text-slate-500" data-undecided>{undecided.length} not adopted yet: they won't count unless you adopt them.</p>}
+      {undecided.length > 0 && <p className="mt-1 text-[12px] text-slate-500" data-undecided>{undecided.length === 1 ? "1 not accepted yet." : `${undecided.length} not accepted yet.`}</p>}
       {busy && <p role="status" className="mt-2 text-[12.5px] text-slate-600" data-applying>Saving and checking your score…</p>}
       <button type="button" disabled={busy} onClick={() => adopt()} aria-busy={busy} data-research-adopt
         className="mt-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
-        {busy ? "Checking again…" : "Use what I adopted and check again"}
+        {busy ? "Checking again…" : "Use what I accepted"}
       </button>
       </>}
     </section>
@@ -622,7 +653,8 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
 export function InlineResearch({ businessId, run, onAdopted = null, retry = null }) {
   const [all, setAll] = useState(false);
   const empty = Boolean(run?.error) || !(run?.items || []).some((i) => i.derive || i.kind === "question" || (i.sources || []).length);
-  if (all || empty) return <ResearchReview businessId={businessId} run={run} onAdopted={onAdopted} retry={retry} />;
+  // The customer plan's findings are shown at once, never behind "See everything I used" (the owner, 26 Oct: "why is it hidden?")
+  if (all || empty || run?.goal === "more_customers") return <ResearchReview businessId={businessId} run={run} onAdopted={onAdopted} retry={retry} />;
   return <ResearchSummary businessId={businessId} run={run} onAdopted={onAdopted} onSeeAll={() => setAll(true)} />;
 }
 

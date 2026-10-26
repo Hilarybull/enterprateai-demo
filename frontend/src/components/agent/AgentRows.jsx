@@ -36,7 +36,8 @@ const actionOf = (r) => (r.status === "awaiting_approval" ? "Review" : r.pending
 export function grouped(runs) {
   const by = new Map();
   for (const r of runs) {
-    const key = `${r.workflow_key}|${titleOf(r).toLowerCase()}`;
+    // Each "Do all for me" run is its own row: when it ran, what it cost (the owner, 26 Oct)
+    const key = r.kind === "research" ? r.id : `${r.workflow_key}|${titleOf(r).toLowerCase()}`;
     by.set(key, [...(by.get(key) || []), r]);
   }
   return [...by.values()].map((list) => {
