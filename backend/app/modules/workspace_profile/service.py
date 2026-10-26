@@ -28,7 +28,9 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
     data = ws.data or {}
     profile = data.get("workspace_profile")
     if not profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace profile not found")
+        # Not filled in at sign-up: an empty profile to fill in, never an error (the owner, 26 Oct: "HTTP 404: Workspace profile
+        # not found" on Account > Workspace); the workspace is still known, so the app opens on it
+        return {"workspace_id": str(ws.id), "profile": {}, "updated_at": ws.updated_at}
     _OPERATING_STAGE_MAP = {"growth": "growing"}
     _DELIVERY_MODEL_MAP = {"manual_only": "manual", "fully_automated": "automated"}
     normalized = dict(profile)

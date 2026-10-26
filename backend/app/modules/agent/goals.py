@@ -123,7 +123,7 @@ GOALS: list[dict[str, Any]] = [
     {"key": "cash_flow", "mode": "business_goal", "label": "Improve my cash flow", "chip": False, "outcome": "See what drives cash and act on it",
      "class": COMPOSITE, "start": "scenario_help", "path": ["payment_followup", "new_invoice", "record_expense", "scenario_help", "risk_concentration"],
      "say": "I can show what is driving your cash, chase unpaid invoices for you, get invoices out faster and model what a change would do.",
-     "boundary": "The figures come from your own records, worked out exactly: nothing is estimated for you.",
+     "boundary": "",      # how it is worked out is never told in the chat (the owner, 26 Oct)
      "questions": [_f("owed", "Are customers paying you late?", "choice",
                       options=[{"value": "yes", "label": "Yes, often"}, {"value": "some", "label": "Sometimes"}, {"value": "no", "label": "No"}]),
                    _f("pressure", "What is the biggest pressure on cash right now?", "text")]},
@@ -136,14 +136,14 @@ GOALS: list[dict[str, Any]] = [
      "label": "Test a business idea", "outcome": "Score a business idea and see its risks",
      "class": DIRECT, "start": "idea_validation", "path": ["idea_validation", "market_size", "business_plan_draft"],
      "say": "I can score your idea, show the risks and next steps, and size the market for it.",
-     "boundary": "The score comes from the validation engine, from what you tell me: I won't make up demand.",
+     "boundary": "",      # never told in the chat (the owner, 26 Oct: "remove telling the user about engine")
      "questions": [_f("description", "What is the idea? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text", required=True),
                    _f("problem", "What problem does it solve for them?", "textarea", required=True)]},
     {"key": "business_risks", "mode": "business_goal",      # back on the landing shortcuts: its free check is built (the owner, 24 Oct)
      "label": "Help me understand my business risks", "outcome": "See the risks in the business and what to do about them",
      "class": COMPOSITE, "start": "risk_concentration", "path": ["risk_concentration", "scenario_help", "readiness_refresh"],
      "say": "I can show where the business is fragile: reliance on a few customers, late payment and cash, and what a shock would do.",
-     "boundary": "Risks are worked out from your records, so the more of the business is on record, the more I can see.",
+     "boundary": "",      # how it is worked out is never told in the chat (the owner, 26 Oct)
      "questions": [_f("worry", "What worries you most about the business right now?", "text")]},
     # Quick tasks: for someone who knows the document they want.
     {"key": "create_invoice", "mode": "quick_task", "label": "Create Invoice", "outcome": "An invoice ready for your approval",
