@@ -120,7 +120,9 @@ export default function StartPage({ framed = false }) {
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
     // the moment it is ready. The task carries on behind it; nothing waits for it.
     let shown = false;
-    if (known?.first_value) {
+    // An idea goes to its full validation's results, never the quick viability score first (the owner, 26 Oct: "why is idea
+    // validation from the landing page showing viability score instead of the idea validation results")
+    if (known?.first_value && known?.goal_key !== "test_idea") {
       fetchFirstValue(sessionId).then((fv) => {
         if (!fv?.result || asking.current) return;
         // A funding or launch result is never shown here before its need is on the case (the owner's QA, 22 Oct: "this is
@@ -161,7 +163,7 @@ export default function StartPage({ framed = false }) {
       }
       // Signed in, an idea's chat ends in its full validation (the owner, 26 Oct): its results, never the quick idea check
       if (done.goal_key === "test_idea" && done.handoff?.run_id) {
-        navigate(await detailsOf(done.handoff.run_id, { wait: 20 }), { replace: true });
+        navigate(await detailsOf(done.handoff.run_id, { wait: 60 }), { replace: true });
         return;
       }
       if (done.first_value) {

@@ -570,6 +570,17 @@ describe("carrying on after sign-in", () => {
     expect(events()).toEqual([{ name: "dashboard_handoff_completed", session_id: "sess-1" }]);
   });
 
+  it("an idea's chat opens its full validation's results, never the quick viability score (the owner, 26 Oct)", async () => {
+    const idea = (over) => session({ goal_key: "test_idea", goal_label: "Test a business idea", first_value: true, ...over });
+    answer = (path, method) => (/attach-user$/.test(path) ? idea({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? idea({ authenticated: true, state: "awaiting_review", next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-9", run_id: "run-9" } })
+      : /workflow-runs\/run-9$/.test(path) ? { run: { status: "succeeded", outcome: { links: [{ label: "the validation results", to: "/validation?history_id=agent-1&history_type=v4_validation&view=results", primary: true }] } } }
+      : method === "GET" ? {} : undefined);
+    mount();
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/validation?history_id=agent-1&history_type=v4_validation&view=results"));
+    expect(calls.some((c) => /first-value$/.test(c.path))).toBe(false);      // the quick score is never fetched or shown first
+  });
+
   it("someone with a workspace carries on inside the real app, and the last step is named for the work being done", async () => {
     let letPrepare;
     answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })

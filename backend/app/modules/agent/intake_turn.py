@@ -565,6 +565,19 @@ def said_unsure(message: str) -> bool:
     return is_unsure(message) or bool(_UNSURE_IN.search(str(message or "")))
 
 
+_GOAL_WORDS = re.compile(r"^\s*(?:i\s+(?:want|need|would like)\s+to\s+|help\s+me\s+(?:to\s+)?|please\s+|can\s+you\s+|let'?s\s+)?"
+                         r"(?:test|validate|check|score|assess|evaluate)\s+(?:a|an|my|this|the|our)?\s*(?:new\s+|business\s+|startup\s+|product\s+|service\s+)*idea\s*[.!?]*\s*$", re.I)
+
+
+def just_the_goal(text: str) -> bool:
+    """"Test a business idea", "Validate my idea": the goal said, not an answer to any of its questions."""
+    t = str(text or "").strip()
+    if _GOAL_WORDS.match(t):
+        return True
+    from app.modules.agent import goals as _goals
+    return any(t.lower().rstrip(".!? ") == str(g.get("label") or "").lower() for g in _goals.GOALS)
+
+
 def slot_words(key: str, slots: dict | None = None) -> str:
     return SLOT_WORDS.get(key) or f"the {key.replace('_', ' ')}"
 
@@ -794,6 +807,13 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
         values = {k: v for k, v in values.items() if k != target}
         unsure_help = (f"That is fine, a rough guess for {slot_words(target)} is enough for now." if by_key[target].get("type") == "number"
                        else f"That is fine, a short answer for {slot_words(target)} is enough, or pick the closest option.")
+    # A goal's own words are never an answer (the owner, 26 Oct: "Test a business idea" kept as the idea: "Test a business
+    # idea, nice", then "₦25,000 a idea" and the summary listing it as the product): the question is asked instead
+    for key in [k for k, v in values.items() if isinstance(v, str) and just_the_goal(v)]:
+        values.pop(key)
+        for rec in records:
+            if rec.get("slot") == key:
+                rec["kept"], rec["why"] = False, "goal_words"
     merged = {**known, **values}
     nxt = next_slot(slots, merged)
     if intent == "correction" and values:
