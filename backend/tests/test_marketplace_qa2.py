@@ -231,10 +231,9 @@ def test_r2_the_server_asks_before_a_second_public_profile_and_keeps_the_answer_
     run(s.update_profile(U(OWNER), "A", {"description": "We help small firms set prices that hold.", "service_area": "Leeds and remote", "service_tags": ["Pricing"]}))
     view = run(s.update_preferences(U(OWNER), "A", {"enquiries": {"enabled": True}}))
     assert [(p["slug"], p["matched_on"]) for p in view["possible_duplicates"]] == [("northwind-advisory-ltd-leeds", "registered number")]
-    with pytest.raises(Conflict) as e:
-        run(s.activate(U(OWNER), "A"))
-    assert e.value.code == "possible_duplicate" and e.value.detail["profile"]["slug"] == "northwind-advisory-ltd-leeds" and "Northwind Advisory Ltd" in e.value.message
-    assert env.businesses["A"]["data"]["marketplace"].get("is_active") is not True and len(s.store.rows["profiles"]) == 1      # nothing published, no second profile
+    # Listing never waits on the claim (the owner, 26 Oct): it goes live, and the match is still asked about on the profile
+    first = run(s.activate(U(OWNER), "A"))
+    assert first["is_published"] is True and [p["slug"] for p in first["possible_duplicates"]] == ["northwind-advisory-ltd-leeds"]
     with pytest.raises(Invalid):
         run(s.answer_duplicate(U(OWNER), "A", "northwind-advisory-ltd-leeds", "mine"))
     with pytest.raises(d.NotFound):
@@ -271,8 +270,8 @@ def test_r2_claiming_the_match_clears_the_question_and_the_api_maps_it(monkeypat
         client = TestClient(app, raise_server_exceptions=False)
         assert client.patch("/businesses/A/marketplace-profile", json={"changes": {"description": "We help small firms set prices that hold.", "service_area": "Leeds", "service_tags": ["Pricing"]}}).status_code == 200
         assert client.patch("/businesses/A/marketplace-opportunity-preferences", json={"changes": {"enquiries": {"enabled": True}}}).status_code == 200
-        blocked = client.post("/businesses/A/marketplace-profile/activate", json={"publish": True})
-        assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "possible_duplicate" and blocked.json()["detail"]["profile"]["matched_on"] == "website"
+        live = client.post("/businesses/A/marketplace-profile/activate", json={"publish": True})      # never held for the claim (26 Oct)
+        assert live.status_code == 200 and live.json()["possible_duplicates"][0]["matched_on"] == "website"
         assert client.post("/businesses/A/marketplace-profile/duplicate-answers", json={"profile_id": "no-such-profile"}).status_code == 404
     finally:
         app.dependency_overrides.pop(get_current_user, None)

@@ -20,7 +20,7 @@ const PLANS = [
     creditsCaption: "£0 forever",
     desc: "Start simple. For new businesses getting organised",
     ctaLabel: "Get started free",
-    features: ["50 welcome AI credits (valid 60 days)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
+    features: ["50 welcome AI credits (one-off, no expiry)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
     highlight: false,
   },
   {

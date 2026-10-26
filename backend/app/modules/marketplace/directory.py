@@ -2346,16 +2346,13 @@ class DirectoryService:
         check = activation_of(settings, verified_claim=verified)
         if publish and not check["ready"]:
             raise Invalid({i["key"]: i.get("fix") or f"Still needed: {i['label']}." for i in check["items"] if not i["done"] and not i.get("optional")})
-        if publish and not settings["is_published"]:
-            likely = await self._duplicates(business_id, ctx["data"], profile)
-            if likely:
-                # One business, one public profile. The owner claims the existing one, or says it isn't theirs.
-                raise Conflict("possible_duplicate", f"The Marketplace already has a profile that may be this business: {likely[0]['name']}. "
-                               "Claim and link it, or tell us it isn't your business, before publishing.", {"profile": likely[0], "profiles": likely})
+        # Listing never waits on a claim (the owner, 26 Oct: "users don't need to clear claiming before listing"): a possible
+        # duplicate is said on the profile page, to claim or dismiss, never a reason not to publish
         if publish and not settings["is_published"] and not verified:
             same = await self._name_matches(business_id, ctx["data"], profile)
             if same:
-                # A profile under another business's name can't go live unverified, whether or not the real one is visible.
+                # A profile under another business's exact name can't go live unverified: that guards against impersonation,
+                # it is not a claim (kept, 26 Oct)
                 raise Conflict("verification_required", f"Another Marketplace profile already uses the name {same[0]['name']}. If it is your business, claim it. "
                                "If it isn't, verify your own business before publishing.", {"profile": same[0], "profiles": same})
         if publish and self._plan_of:

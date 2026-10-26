@@ -39,7 +39,10 @@ const NOT_YET = { funding: "Not ready for funding yet.", launch: "Not ready to l
 /** "42/100 · Not ready for funding yet. 3 things to do first." and "I know 50% of what funders ask for". */
 export function statusWords(result, latest) {
   const kind = kindOf(result);
-  const gaps = Array.isArray(result?.case_steps) ? result.case_steps.length : (result?.blockers || []).length;
+  // A funding or launch result counts its case's open actions, the number the dashboard pin shows (the owner, 26 Oct: "7 things"
+  // after the chat, "13" on the pin): one count from one source
+  const caseOpen = Number.isInteger(result?.assessment?.open_actions) ? result.assessment.open_actions : null;
+  const gaps = Array.isArray(result?.case_steps) ? result.case_steps.length : caseOpen ?? (result?.blockers || []).length;
   const failed = (result?.blockers || []).filter((b) => b.kind === "failed").length;
   let n = typeof latest?.score === "string" ? Number(String(latest.score).split("/")[0]) : Number(result?.score);
   // Not enough known for the check's own score: the score from what is known, with its basis (never "no score").

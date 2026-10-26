@@ -260,7 +260,8 @@ def test_an_existing_user_resumes_into_their_own_business_and_another_account_ca
     s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Strategy Workshop", "amount": 1500, "customer_email": "buyer@brighttech.test", "vat_rate": 20}}).json()
     assert {k: v for k, v in s["inputs"].items() if k in ("customer", "item", "amount")} == {"customer": "BrightTech Ltd", "item": "Strategy Workshop", "amount": 1500.0} and s["proposed"] == {} and s["next"] == "identity"
     assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "BrightTech Ltd"), ("What is their email address?", "buyer@brighttech.test"), ("What is it for?", "Strategy Workshop"),
-                                                                ("What price for each?", "£1,500"), ("Do you charge VAT on this?", "20")]
+                                                                ("What price for each?", "£1,500"), ("Do you charge VAT on this?", "20%"),
+                                                                ("Total", "£1,800 including VAT")]      # VAT as a rate, and the total (26 Oct)
     who["user"] = OWNER
     resumed = client.post(f"/task-sessions/{s['id']}/resume").json()
     assert resumed["business_id"] == "A" and len([b for b in env.businesses.values() if b["owner"] == OWNER]) == 1      # no duplicate business

@@ -259,6 +259,12 @@ def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     gates_known = all(g["state"] != UNKNOWN for g in gates)
     known_points = sum(Decimal(c["score"]) * c["weight"] / Decimal(100) for c in known)
     score = known_points if all_known and (gates_known or not profile["score_needs_gates"]) else None
+    # The score so far, from what the owner has answered (the owner, 26 Oct: "i told you score based on the user answers",
+    # "why 0"): each criterion's share of its checks passed, so a criterion with one check still open counts what passed.
+    # The same as the full score once everything is known.
+    answered = sum(Decimal(c["weight"]) * Decimal(sum(1 for ch in c.get("checks") or [] if ch.get("state") == PASSED)) / Decimal(max(1, len(c.get("checks") or [])))
+                   for c in criteria if c["score"] is None)
+    known_points = known_points + answered
     t = profile["thresholds"]
     if any(g["state"] == FAILED for g in gates):
         classification = "not_ready"

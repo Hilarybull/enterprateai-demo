@@ -92,8 +92,8 @@ export default function MarketplaceProfilePage() {
     if (busy) return;
     if (!on && !(await confirmDialog("Your profile will no longer be shown on the Marketplace. Your profile, offerings and settings are kept, and you can publish it again at any time.",
       { title: "Unpublish your profile?", confirmLabel: "Unpublish", danger: true }))) return;
-    // One business, one public profile: before making a second, the owner says whether the existing one is theirs.
-    if (on && !profile.is_published && candidates.length) { setAsking(candidates[0]); return; }
+    // Publishing never waits on a possible match (the owner, 26 Oct: "users don't need to clear claiming before listing"):
+    // the match stays on this page, to claim or dismiss whenever the owner likes
     const mine = ++latest.current;
     setBusy(on ? "publish" : "unpublish");
     setDone(null);

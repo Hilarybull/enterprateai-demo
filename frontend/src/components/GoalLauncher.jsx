@@ -1214,8 +1214,9 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                     <li key={r.key} className="flex items-center gap-3 px-3 py-2 text-[13px]" data-recap-row={r.key}>
                       <span className="w-20 shrink-0 text-slate-500">{RECAP_LABEL[r.key] || String(r.label || r.key).replace(/[?.:]+$/, "")}</span>
                       <span className="min-w-0 flex-1 break-words font-medium text-slate-900">{r.key === "currency" ? shownCurrency : r.value}</span>
-                      <button type="button" data-said-chip={r.key} onClick={() => { open(r.key); setChangingRecap(false); }}
-                        className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">Change</button>
+                      {/* The total is worked out from the rest: changed through them, never on its own (26 Oct) */}
+                      {!r.worked_out && <button type="button" data-said-chip={r.key} onClick={() => { open(r.key); setChangingRecap(false); }}
+                        className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-[12px] font-semibold text-slate-700 hover:border-brand-300">Change</button>}
                     </li>
                   ))}
                 </ul>

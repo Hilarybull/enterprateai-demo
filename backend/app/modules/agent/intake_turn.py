@@ -292,7 +292,7 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
         elif key in ("customer", "customer_name") and lead and q.get("type") not in ("number", "choice"):
             lead[0] = f"{lead[0]} for {low(value)}"
         elif key in LEAD and q.get("type") not in ("number", "choice"):
-            lead.append(str(value))
+            lead.append(str(value).strip().rstrip(".!?;,"))      # never "...Lagos., nice" (the owner, 26 Oct)
         elif key == "price" and isinstance(value, (int, float)):
             rest.append(f"{_money(value, currency)} a {unit}")
         elif key == "cost" and isinstance(value, (int, float)):
@@ -301,8 +301,14 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
             rest.append(f"about {_count(value)} a month")
         elif key == "capacity" and isinstance(value, (int, float)):
             rest.append(f"up to {_count(value)} delivered a month")
+        elif key == "quantity" and isinstance(value, (int, float)):
+            rest.append(f"{_count(value)} of them")      # never "the quantity: 10" (the owner, 26 Oct)
+        elif key == "vat_rate" and isinstance(value, (int, float)):
+            rest.append("no VAT" if float(value) == 0 else f"VAT at {value:g}%")
+        elif key == "due_days" and isinstance(value, (int, float)):
+            rest.append(f"{_count(value)} days")
         elif q.get("type") == "number" and isinstance(value, (int, float)) and not q.get("prefix"):
-            rest.append(f"{slot_words(key)}: {_count(value)}")      # every figure with its name (G4: a bare "120.0")
+            rest.append(f"{_count(value)} {re.sub(r'^the ', '', slot_words(key))}")      # every figure with its name (G4: a bare "120.0")
         elif q.get("prefix") and isinstance(value, (int, float)):
             rest.append(_money(value, currency))
         elif key in ("use", "purpose"):
@@ -336,6 +342,8 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
     natural = _natural(captured, slots, keys, currency, unit) if not lead else None
     if natural:
         said = natural
+    elif lead and not joined and len(" ".join(lead).split()) > 8:
+        said = "Thanks, that helps."      # a whole sentence is never echoed back (the owner, 26 Oct: "...Lagos., nice")
     elif lead and not joined:
         said = f"{cap(', '.join(lead))}, nice." if keys[0] in ("sell", "description", "item") and len(lead) == 1 else f"{cap(' and '.join(lead))}, got it."
     elif lead:

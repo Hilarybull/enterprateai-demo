@@ -42,25 +42,17 @@ def test_an_extra_seat_brings_250_credits_once_per_payment(monkeypatch):
     assert granted == [250, 500]
 
 
-def test_what_is_left_of_the_welcome_credits_expires_after_60_days_on_explorer_only(monkeypatch):
-    now = datetime(2026, 12, 20, tzinfo=timezone.utc)
-    wallet = {"created_at": (now - timedelta(days=61)).isoformat(), "available_credits": 70, "lifetime_credits_used": 20}
+def test_the_welcome_credits_never_expire(monkeypatch):
+    """The owner, 26 Oct: "it should not have expiration": once used up they are over; until then they stay."""
+    now = datetime(2027, 6, 20, tzinfo=timezone.utc)
+    wallet = {"created_at": (now - timedelta(days=400)).isoformat(), "available_credits": 30, "lifetime_credits_used": 20}
     taken = []
-
-    async def select(*a, **k):
-        return []
 
     async def deduct(user_id, amount, reason):
         taken.append((amount, reason))
-    monkeypatch.setattr(credits, "sb_select", select)
     monkeypatch.setattr(credits, "deduct_credits_admin", deduct)
-    out = asyncio.run(credits.expire_welcome_credits("u1", wallet, "explorer", now))
-    assert taken == [(30, "Welcome credits expired after 60 days")] and out["available_credits"] == 40      # 50 less 20 used; the 20 bought stay
-    taken.clear()
-    assert asyncio.run(credits.expire_welcome_credits("u1", wallet, "starter_insight", now)) == wallet and taken == []
-    young = {**wallet, "created_at": (now - timedelta(days=10)).isoformat()}
-    assert asyncio.run(credits.expire_welcome_credits("u1", young, "explorer", now)) == young and taken == []
-    assert credits.welcome_expires_at(young) == now + timedelta(days=50)
+    assert asyncio.run(credits.expire_welcome_credits("u1", wallet, "explorer", now)) == wallet and taken == []
+    assert credits.welcome_expires_at(wallet) is None
 
 
 # ── The team on Decision Engine: seats, the team's plan for members, pooled credits within an allowance ──

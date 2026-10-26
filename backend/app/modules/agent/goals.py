@@ -1005,7 +1005,14 @@ def _shown(field: dict, value: Any) -> str:
             return ", ".join(labels.get(v.strip(), v.strip()) for v in value.split(",") if v.strip())
         return next((o["label"] for o in field.get("options") or [] if o["value"] == value), str(value))
     if field.get("type") == "number" and isinstance(value, (int, float)):
-        return f"{field.get('prefix', '')}{value:,.2f}".replace(".00", "")
+        # As its button says it ("No VAT", "7.5%", "14 days"), else with its unit (the owner, 26 Oct: VAT shown as "7.50" or "0")
+        chip = next((c["label"] for c in field.get("chips") or [] if isinstance(c.get("value"), (int, float)) and float(c["value"]) == float(value)), None)
+        if chip:
+            return chip
+        if field.get("suffix") == "%":
+            return "No VAT" if field.get("key") == "vat_rate" and float(value) == 0 else f"{value:g}%"
+        text = f"{value:,.2f}"
+        return f"{field.get('prefix', '')}{text[:-3] if text.endswith('.00') else text}"
     return str(value)
 
 
@@ -1042,6 +1049,15 @@ def _summary(session: dict) -> list[dict]:
             and f["key"] not in set(session.get("not_on_record") or [])]
     if session.get("currency") and session["currency"] != DEFAULT_CURRENCY and any(f.get("prefix") for f in _questions(session)):
         rows.append({"key": "currency", "label": "Currency", "value": session["currency"], "proposed": not session.get("currency_confirmed")})
+    # An invoice or quotation says what it comes to (the owner, 26 Oct: "no total")
+    price, many, vat = answers.get("amount"), answers.get("quantity") or 1, answers.get("vat_rate")
+    if session.get("goal_key") in ("create_invoice", "create_quotation") and isinstance(price, (int, float)) and isinstance(many, (int, float))             and isinstance(vat, (int, float)):      # once VAT is known: never a total that leaves it out
+        rate = float(vat) if isinstance(vat, (int, float)) else 0.0
+        total = float(price) * float(many) * (1 + rate / 100)
+        sign = SIGNS.get(session.get("currency") or DEFAULT_CURRENCY, "£")
+        text = f"{total:,.2f}"
+        rows.append({"key": "total", "label": "Total", "value": f"{sign}{text[:-3] if text.endswith('.00') else text}" + (" including VAT" if rate else ""),
+                     "proposed": False, "worked_out": True})
     return rows
 
 

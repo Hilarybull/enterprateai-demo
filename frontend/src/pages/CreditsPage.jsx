@@ -144,7 +144,7 @@ export default function CreditsPage() {
           {available.toLocaleString()}
         </div>
         <div className="text-sm text-white/70">
-          {planCode === "explorer" ? `${welcomeWords(creditInfo)}. What is left of the 50 welcome credits expires after 60 days.` : "Purchase more credits when needed"}
+          {planCode === "explorer" ? `${welcomeWords(creditInfo)}. The 50 welcome credits don't expire; once they're used, they're gone.` : "Purchase more credits when needed"}
         </div>
         <div className="mt-3 grid grid-cols-3 gap-3">
           <div className="rounded-xl bg-white/10 px-3 py-2">

@@ -15,7 +15,7 @@ export const PLANS = [
     cta: "Get started free",
     ctaStyle: "solid",
     features: [
-      "50 welcome AI credits (valid 60 days)",
+      "50 welcome AI credits (one-off, no expiry)",
       "AI Agent access (credit-based)",
       "1 user seat",
       "Invoices, Quotes, Receipts & Contracts",

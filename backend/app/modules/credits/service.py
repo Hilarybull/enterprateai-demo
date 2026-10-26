@@ -225,14 +225,16 @@ async def _initial_credits_for_user(user_id: str) -> tuple[int, str]:
     return credits, plan_code
 
 
-# Explorer's 50 welcome AI credits are valid for 60 days (the pricing PDF, 19 Oct 2026). What is left of them then
-# expires; credits bought or refunded never do, and a paid plan's credits follow that plan.
+# Explorer's 50 welcome AI credits never expire (the owner, 26 Oct: "it should not have expiration"): given once, and once
+# used up they are over, never topped up (monthly credits are only issued when a paid plan's invoice is paid).
 WELCOME_CREDITS = 50
-WELCOME_DAYS = 60
+WELCOME_DAYS: int | None = None      # was 60 (19 Oct); no expiry since 26 Oct
 WELCOME_EXPIRED_REASON = "Welcome credits expired after 60 days"
 
 
 def welcome_expires_at(wallet: dict | None) -> datetime | None:
+    if WELCOME_DAYS is None:
+        return None      # never: the welcome credits don't expire
     try:
         opened = datetime.fromisoformat(str((wallet or {}).get("created_at")).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -247,7 +249,8 @@ def welcome_left(wallet: dict | None) -> int:
 
 
 async def expire_welcome_credits(user_id: str, wallet: dict | None, plan_code: str, now: datetime | None = None) -> dict | None:
-    """On Explorer, after 60 days, what is left of the welcome credits expires, once. Returns the wallet as it is now."""
+    """No expiry while WELCOME_DAYS is None (26 Oct): the wallet as it is. Kept for a set expiry: on Explorer, what is left
+    of the welcome credits then expires, once."""
     now = now or datetime.now(timezone.utc)
     ends = welcome_expires_at(wallet)
     left = welcome_left(wallet)
@@ -313,7 +316,7 @@ async def get_balance_info(user_id: str) -> dict:
     monthly_allocation = int((plan_cfg or {}).get("credits_per_period") or 0)
     ends = welcome_expires_at(wallet) if plan_code == "explorer" else None
     return {
-        # Explorer: when what is left of the 50 welcome credits expires (60 days after they were given).
+        # Explorer: when what is left of the 50 welcome credits expires; None, as they don't (26 Oct).
         "welcome_expires_at": ends.isoformat() if ends and ends > datetime.now(timezone.utc) and welcome_left(wallet) > 0 else None,
         "welcome_left": welcome_left(wallet) if plan_code == "explorer" else 0,
         "available_credits": wallet["available_credits"] if wallet else 0,

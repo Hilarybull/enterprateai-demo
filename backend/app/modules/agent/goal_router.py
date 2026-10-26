@@ -531,8 +531,16 @@ async def first_results(business_id: str, user=Depends(get_current_user)):
                 found[goal] = {"goal_key": goal, "at": latest.get("created_at"), "result": first_value.after_review(goal, latest["full_result"], latest),
                                "adopted": latest.get("version")}
     items = []
+    from app.modules.agent import assessment_summary
     for row in found.values():
         result = {**row["result"], **first_value.at_a_glance(row["result"])}
+        # One score everywhere (the owner, 26 Oct: 30/100 here, 0/100 on the case): a funding or launch result shows its case's
+        plan_id = ((row["result"].get("assessment") or {}).get("initiative_id") or (row["result"].get("assessment") or {}).get("subject_id")) if row["goal_key"] == "launch" else None
+        if row["goal_key"] == "need_funding" or plan_id:
+            case = await assessment_summary.current(get_orchestrator(), user["id"], business_id, "funding" if row["goal_key"] == "need_funding" else "launch",
+                                                    user.get("email"), subject_id=plan_id)
+            if isinstance((case or {}).get("score"), (int, float)):
+                result.update({"chat_score": result.get("score"), "score": case["score"], "score_partial": bool(case.get("score_partial")), "assessment": case})
         from app.modules.agent import research as _research
         if row["goal_key"] in _research.CAPABILITY:
             result["research"] = _research.research_state(data, row["goal_key"])

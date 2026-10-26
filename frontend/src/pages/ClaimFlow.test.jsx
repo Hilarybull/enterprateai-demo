@@ -536,33 +536,20 @@ describe("QA round 2", () => {
     await screen.findByText("Tidied 1 profile. Their old addresses still open.");
   });
 
-  it("R-2: asks whether an existing profile is theirs before publishing, and keeps the answer on the server", async () => {
+  it("publishing never waits on a possible match; the match stays on the page to claim or dismiss (the owner, 26 Oct)", async () => {
     useWorkspaceStore.setState({ workspaceId: "ws9" });
     const match = { ...unclaimed, matched_on: "website" };
-    let answered = false;
-    const mine = (over = {}) => settings({ directory: null, activation: { ready: true, items: [{ key: "description", label: "A public description", done: true }] }, possible_duplicates: answered ? [] : [match], ...over });
+    let published = false;
+    const mine = (over = {}) => settings({ directory: null, activation: { ready: true, items: [{ key: "description", label: "A public description", done: true }] }, possible_duplicates: [match], is_published: published, ...over });
     routes = [{ method: "GET", match: /businesses\/ws9\/marketplace-profile$/, reply: () => ({ body: mine() }) }, { method: "GET", match: /business-claims$/, reply: () => ({ body: { items: [] } }) },
-      { method: "POST", match: /duplicate-answers$/, reply: () => { answered = true; return { body: mine() }; } },
-      { method: "POST", match: /activate$/, reply: () => (answered ? { body: mine({ is_published: true }) }
-        : { status: 409, body: { detail: { code: "possible_duplicate", message: "x", profile: match } } }) }];
-    mount("/marketplace-profile", <MarketplaceProfilePage />, "/marketplace-profile");
-    await screen.findByText(/We found an existing Marketplace profile/);
-    expect(sent("GET", /claimable-businesses/).length).toBe(0);          // the server works out the matches; the page doesn't guess
-    fireEvent.click(screen.getByRole("button", { name: "Activate Marketplace Profile" }));
-    await screen.findByText("Before you publish: is this your business?");
-    expect(sent("POST", /activate$/).length).toBe(0);                     // nothing is published until they answer
-    fireEvent.click(screen.getByRole("button", { name: "Claim and link it" }));
-    expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}?source=signup_match`);
-    cleanup();
+      { method: "POST", match: /activate$/, reply: () => { published = true; return { body: mine() }; } }];
     mount("/marketplace-profile", <MarketplaceProfilePage />, "/marketplace-profile");
     await screen.findByText(/We found an existing Marketplace profile/);
     fireEvent.click(screen.getByRole("button", { name: "Activate Marketplace Profile" }));
-    fireEvent.click(await screen.findByRole("button", { name: "This isn't my business" }));
     await screen.findByText("Published. Your profile is now on the Marketplace.");
-    expect(sent("POST", /duplicate-answers$/)[0].body).toEqual({ profile_id: "p1", answer: "not_mine" });
-    expect(sent("POST", /activate$/).length).toBe(1);
-    expect(screen.queryByText(/We found an existing Marketplace profile/)).toBeNull();
-    expect(Object.keys(localStorage).some((k) => /not-mine/.test(k))).toBe(false);      // nothing kept in the browser
+    expect(sent("POST", /activate$/).length).toBe(1);                     // straight away, never held for the claim
+    expect(screen.queryByText("Before you publish: is this your business?")).toBeNull();
+    expect(screen.getByText(/We found an existing Marketplace profile/)).toBeTruthy();      // still there to claim or dismiss
   });
 
   it("R-2: a match the page didn't know about is still asked about when the server refuses", async () => {

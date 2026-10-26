@@ -44,6 +44,7 @@ def contract_of(pick: dict | None, kind: str) -> dict | None:
     out = {k: pick.get(k) for k in CONTRACT}
     out["score_partial"] = bool(pick.get("score_partial"))      # "so far": the points from what is known (23 Oct)
     out["evidence_coverage"] = pick.get("evidence_coverage", pick.get("coverage"))
+    out["open_actions"] = pick.get("open_actions")      # "N things to do": the one count every surface shows (26 Oct)
     if kind == "launch":
         out.update({k: pick.get(k) for k in ("initiative_id", "launch_type", "scope", "target_date", "lifecycle_status")})
     else:
