@@ -74,7 +74,10 @@ def test_5_dashboard_business_plan_asks_what_it_is_for_before_any_price(owner):
 
 def test_6_dashboard_idea_check_is_free_first_and_paid_only_on_request(owner):
     env, client = owner
-    free = ask(client, "validate my idea: a mobile drone window cleaning service in Leeds")
+    # A paid plan's validation is Comprehensive, its price first (the owner, 26 Oct: "basic is for free plan"); Basic when asked
+    full = ask(client, "validate my idea: a mobile drone window cleaning service in Leeds")
+    assert full["kind"] == "needs_confirmation" and "credits" in full["message"]
+    free = ask(client, "validate my idea, just a quick check: a mobile drone window cleaning service in Leeds")
     assert free["kind"] == "workflow" and free["run"]["substatus"] == "waiting_for_information"      # asks what is missing, free
     paid = ask(client, "validate my idea fully: a mobile drone window cleaning service in Leeds")
     assert paid["kind"] == "needs_confirmation" and "credits" in paid["message"]      # its price first

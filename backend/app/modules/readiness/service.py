@@ -872,6 +872,11 @@ class ReadinessService:
             if owner and "team.responsibilities" not in theirs and people and any(not _fo._said(x.get("owner")) for x in people):
                 fills["team.responsibilities"] = [{**x, "owner": x.get("owner") if _fo._said(x.get("owner")) else owner} for x in people]
                 prov["team.responsibilities"] = {"source": "Suggested by the Agent: you, as the owner. Name someone else if it isn't you.", "as_of": today.isoformat()}
+            elif owner and "team.responsibilities" not in theirs and "team.responsibilities" not in fills and not people:
+                # None yet: the workspace's owner for each, never left at "None added yet" (the owner, 26 Oct: "it didn't add the
+                # workspace admin")
+                fills["team.responsibilities"] = [{"area": "Delivering the plan", "owner": owner}, {"area": "Winning customers", "owner": owner}]
+                prov["team.responsibilities"] = {"source": "Suggested by the Agent: you, as the owner. Name someone else if it isn't you.", "as_of": today.isoformat()}
             if owner and "market.acquisition_owner" not in theirs and "market.acquisition_owner" not in fills and not _fo._said((case.get("market") or {}).get("acquisition_owner")):
                 fills["market.acquisition_owner"] = owner
                 prov["market.acquisition_owner"] = {"source": "Suggested by the Agent: you, as the owner.", "as_of": today.isoformat()}
@@ -1177,6 +1182,49 @@ class ReadinessService:
     _CATEGORY_OF = ((r"hir|staff|recruit|salar|team|people|employ", "People"), (r"market|advert|promot|brand|sales", "Marketing and sales"),
                     (r"equip|machine|van|vehicle|tool|kit|bay", "Equipment"), (r"product|software|develop|build", "Product"),
                     (r"premis|rent|fit.?out|operat|stock|inventory", "Operations"))
+
+    @classmethod
+    def _lines_scaled(cls, case: dict) -> list[dict] | None:
+        """The spending lines there, each scaled by the same share so they add up to the target (whole amounts, the last line
+        taking what rounding leaves). None when they already add up, or there is no target or no amount to scale."""
+        def num(v):
+            try:
+                return float(str(v).replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+        target = num(case.get("target_amount"))
+        lines = [dict(a) for a in case.get("use_of_funds") or [] if isinstance(a, dict)]
+        amounts = [num(a.get("amount")) or 0 for a in lines]
+        total = sum(amounts)
+        if not target or target <= 0 or not lines or total <= 0 or abs(total - target) <= 1:
+            return None
+        out, left = [], round(target)
+        for n, (line, amount) in enumerate(zip(lines, amounts)):
+            share = left if n == len(lines) - 1 else round(target * amount / total)
+            left -= share if n < len(lines) - 1 else 0
+            out.append({**line, "amount": str(max(share, 0))})
+        return out
+
+    @classmethod
+    def lines_for_request(cls, before: dict, wanted: dict) -> list[dict] | None:
+        """The spending lines for a new funding request (the owner, 26 Oct: "it should update based on the new request"): the
+        same purpose with a new amount, the lines there scaled to it in the same shares; a new purpose, or no lines yet, one line
+        for it at the whole amount. None when nothing changes. The case follows the latest request; only the workspace profile
+        is never written over."""
+        target = wanted.get("target_amount") or before.get("target_amount")
+        purpose = str(wanted.get("purpose") or before.get("purpose") or "").strip()
+        if not target or not purpose:
+            return None
+        norm = lambda v: " ".join(str(v or "").lower().split())      # noqa: E731
+        lines = [a for a in before.get("use_of_funds") or [] if isinstance(a, dict)]
+        if lines and norm(purpose) == norm(before.get("purpose")):
+            return cls._lines_scaled({"target_amount": target, "use_of_funds": lines})
+        try:
+            amount = str(round(float(str(target).replace(",", ""))))
+        except ValueError:
+            return None
+        category = next((c for pattern, c in cls._CATEGORY_OF if re.search(pattern, purpose, re.I)), "Other")
+        return [{"id": uuid.uuid4().hex[:12], "category": category, "amount": amount, "purpose": purpose[:1].upper() + purpose[1:]}]
 
     @classmethod
     def _agent_lines(cls, case: dict) -> list[dict] | None:

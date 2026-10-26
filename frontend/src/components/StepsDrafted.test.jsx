@@ -44,7 +44,7 @@ describe("the next steps", () => {
   it("before research: one button per step and one Do all for me, with its price", () => {
     render(<MemoryRouter><Card r={result({ state: "none", max: 60 })} /></MemoryRouter>);
     expect(document.querySelector("[data-step-do-it]")).toBeNull();      // no button on a card (the owner, 20 Oct)
-    expect(document.querySelector("[data-do-all]").textContent).toBe("Do all for me");
+    expect(document.querySelector("[data-do-all]").textContent).toBe("Do all for me · up to 60 credits")      // funding says its price (26 Oct);
     expect(screen.queryByText(/Help me become funding-ready/)).toBeNull();
   });
 });

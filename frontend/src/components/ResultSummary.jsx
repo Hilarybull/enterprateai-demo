@@ -583,6 +583,10 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
   const researched = Boolean(run);
   const total = (result?.criteria || []).length || steps.length + (result?.strengths || []).length;
   const ready = Math.max(0, total - steps.length);
+  // Funding readiness says its price on the button (the owner, 26 Oct: "60 credits per each do it all for me", "funding
+  // readiness"); elsewhere the price is in the window it opens
+  const fundingPrice = kindOf(result) === "funding" && typeof (prices?.all ?? result?.research?.max) === "number" && (prices?.all ?? result?.research?.max) > 0
+    ? (prices?.all ?? result?.research?.max) : null;
   if (!steps.length) return null;
   return (
     <section className="mt-6" aria-label={WORDS.nextSteps} data-next-steps>
@@ -614,7 +618,7 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
             {/* A spinner at once, while the price is fetched (the owner's brief, 20 Oct). */}
             {working && <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-            {working ? "Getting the price…" : "Do all for me"}</button>
+            {working ? "Getting the price…" : `Do all for me${fundingPrice ? ` · up to ${fundingPrice} credits` : ""}`}</button>
         )}
         {/* What it does, in one line, on the customer plan (the owner, 26 Oct: "what's the do all for me for?") */}
         {!researched && onDoIt && result?.assessment_type === "customer_growth_foundation" && result?.premium_next_action?.explains && (

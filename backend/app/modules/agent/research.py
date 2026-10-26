@@ -1492,17 +1492,33 @@ def _fields_of(text: str) -> dict:
     return out
 
 
+# The plans and assumptions a funder reads, the Agent's to propose from what is known about the business: asked once more
+# when the first answer left them out or said "not stated" (the owner, 26 Oct: "why wasn't it filled? What sets you apart?")
+PROPOSALS = ("market.differentiation", "market.acquisition_approach", "market.acquisition_owner", "market.acquisition_cost",
+             "milestones", "team.gaps", "risks")
+_PROPOSE_AGAIN = (" These fields are proposals, not facts: always propose something specific to this business from its offer,"
+                  " place, customers, prices and team, as a careful adviser would. Never say it is not stated or not known.")
+
+
 async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = None) -> dict[str, str]:
-    """The case's fields drafted from the facts, one model call; {} when there is no model or it fails (never a guess).
-    `only`: just these fields (those still blank)."""
+    """The case's fields drafted from the facts; {} when there is no model or it fails (never a guess). `only`: just these
+    fields (those still blank). The proposals still empty after the first answer are asked once more, on their own."""
     fields = only if only else (CASE_DRAFT_FIELDS.get(goal) or {})
+    out = await _draft_once(llm, goal, facts, fields)
+    missing = {k: v for k, v in fields.items() if k in PROPOSALS and k not in out}
+    if missing and llm is not None and goal == "need_funding":
+        out.update(await _draft_once(llm, goal, facts, missing, extra=_PROPOSE_AGAIN))
+    return out
+
+
+async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = "") -> dict[str, str]:
     if llm is None or not fields:
         return {}
     prompt = ("FIELDS (key: what to write):\n" + "\n".join(f"- {k}: {v}" for k, v in fields.items())
               + "\n\nFACTS:\n" + json.dumps(facts, default=str, ensure_ascii=False)[:9000])
     try:
         # Room for every field (900 tokens cut the reply off mid-way, the owner's QA, 22 Oct)
-        system = _DRAFT_SYSTEM_LAUNCH if goal == "launch" else _DRAFT_SYSTEM
+        system = (_DRAFT_SYSTEM_LAUNCH if goal == "launch" else _DRAFT_SYSTEM) + extra
         res = await asyncio.wait_for(llm.generate_text(system=system, prompt=prompt, feature="agent_research", max_tokens=2400), timeout=DRAFT_TIMEOUT_SECONDS)
         raw = _fields_of(getattr(res, "text", None) or "")
     except Exception:      # noqa: BLE001 - the drafts are a help; the run carries on without them

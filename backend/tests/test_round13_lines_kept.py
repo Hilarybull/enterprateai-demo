@@ -1,4 +1,5 @@
-"""The owner, 25 Oct: a new amount never changes the use-of-funds lines; the case shows them against the new amount."""
+"""The owner, 26 Oct ("it should update based on the new request"): a new amount scales the use-of-funds lines to it, in the
+same shares; a new purpose sets the old lines aside. (Earlier, 25 Oct, the lines were kept as they were.)"""
 from test_goal_onboarding import world, _funding, OWNER, run  # noqa: F401
 from app.modules.readiness import rules
 from app.modules.readiness.service import service_for
@@ -20,7 +21,7 @@ def _lines(svc, cid):
     return [(x["purpose"], x["amount"]) for x in run(svc.store.get("subjects", cid))["data"].get("use_of_funds") or []]
 
 
-def test_a_new_amount_for_the_same_purpose_keeps_the_lines(world):
+def test_a_new_amount_for_the_same_purpose_scales_the_lines(world):
     env, store, client, who = world
     svc, cid = _case(env, client, who)
     sid, asked = _funding(client, amount=45000, use="a second van and hiring one cleaner")
@@ -28,7 +29,7 @@ def test_a_new_amount_for_the_same_purpose_keeps_the_lines(world):
     client.post(f"/task-sessions/{sid}/prepare")
     data = run(svc.store.get("subjects", cid))["data"]
     assert float(data["target_amount"]) == 45000
-    assert _lines(svc, cid) == [("A second van", "30000"), ("Hiring one cleaner", "20000")]      # never rescaled for you
+    assert _lines(svc, cid) == [("A second van", "27000"), ("Hiring one cleaner", "18000")]      # the same shares, at the new amount
 
 
 def test_a_different_purpose_still_sets_the_old_lines_aside(world):

@@ -2535,13 +2535,19 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                         await svc.set_status(user_id, session["business_id"], kind, sid, "reactivate", email)
                         row = await svc.store.get("subjects", sid) or row
                     before = row.get("data") or {}
+                    # The spending lines follow the new request (the owner, 26 Oct): scaled to a new amount, or one line for a new purpose
+                    lines = svc.lines_for_request(before, payload) if how in ("replace", "update") else None
+                    if lines:
+                        chat_prov = {**chat_prov, "use_of_funds": stamp}
                     if how == "replace":
-                        made = await svc.replace_need(user_id, session["business_id"], sid, {**payload, "title": title}, email, provenance=chat_prov,
-                                                      summary=need_summary(before))
+                        made = await svc.replace_need(user_id, session["business_id"], sid, {**payload, "title": title, **({"use_of_funds": lines} if lines else {})},
+                                                      email, provenance=chat_prov, summary=need_summary(before))
                         did = f'I replaced "{before.get("title") or "your funding case"}" with this funding need. The previous version is in History'
                     elif how == "update":
                         changed = {d["path"].split(".")[0] for d in case_diff(before, wanted)}
                         only = {k: v for k, v in payload.items() if k in changed}
+                        if lines and {"target_amount", "purpose"} & changed:
+                            only["use_of_funds"] = lines
                         made = (await svc.update_subject(user_id, session["business_id"], kind, sid, row["revision"], only, email, provenance=chat_prov)
                                 if only else row)
                         did = (f'I updated "{before.get("title") or noun}": {diff_line(case_diff(before, wanted), before, wanted)}' if only
