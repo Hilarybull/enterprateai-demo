@@ -88,6 +88,16 @@ function CurrencyChoice({ q, sessionId, onSettled }) {
   );
 }
 
+// What a visitor said on the landing page, with what they answered there, carried into the Agent's conversation once they are
+// signed in, as a signed-in owner's words are (the owner, 28 Oct: "after signing, it should continue in the agent center")
+function carriedText(session) {
+  const said = String(session?.resolution?.original_goal || session?.original_goal || "").trim();
+  const answers = { ...(session?.proposed || {}), ...(session?.inputs || {}) };
+  const told = Object.entries(answers).filter(([k, v]) => !k.startsWith("_") && ["string", "number"].includes(typeof v) && String(v).trim() && !String(said).includes(String(v)))
+    .map(([, v]) => String(v).trim());
+  return [said, told.join(", ")].filter(Boolean).join(". ").slice(0, 500);
+}
+
 export default function StartPage({ framed = false }) {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -116,6 +126,23 @@ export default function StartPage({ framed = false }) {
   }, [stage, result, settled, navigate]);
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
+    // Funding, launch and an idea are conversations: carried on there with what was said and answered here, never prepared on
+    // this page (the same as a signed-in owner's message from the landing page)
+    const words = known && !confirmed ? carriedText(known) : "";
+    if (words && known.business_id) {
+      const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
+      // Exactly as a signed-in owner's message from the landing page goes (GoalLauncher): a conversation where it lives, a case
+      // question to the dashboard Agent; a task (an invoice, a quotation, a plan) is prepared here as before, from its answers
+      const to = asked?.converse && asked.to ? `${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(words)}`
+        : asked?.converse ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
+      if (to) {
+        try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
+        useWorkspaceStore.getState().setWorkspaceId(known.business_id);
+        trackGoal("dashboard_handoff_completed", { session_id: sessionId });
+        navigate(to, { replace: true });
+        return;
+      }
+    }
     setSettled(false);
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
     // the moment it is ready. The task carries on behind it; nothing waits for it.

@@ -34,11 +34,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 async function open() {
-  render(<BusinessAssistant />);
-  await act(async () => { fireEvent.click(screen.getAllByRole("button")[0]); });
+  // The Agent Centre's chat: always open there (the owner, 27 Oct)
+  await act(async () => { render(<BusinessAssistant />); });
 }
 async function ask(text) {
-  fireEvent.change(screen.getByPlaceholderText(/Ask about customers/), { target: { value: text } });
+  fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: text } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
 }
 const sent = (pattern) => calls.filter((c) => c.method === "POST" && pattern.test(c.path));
@@ -132,5 +132,63 @@ describe("the chat bubble is the Agent", () => {
     expect(replyText({ kind: "workflow", runs: [{}, {}], run: {} })).toMatch(/I've started 2 tasks/);
     expect(replyText({ kind: "answer", message: "A", evidence: [{ label: "L", value: "V" }], source: "S" })).toBe("A\n\n• L: V\n\nS");
     expect(replyText(null)).toBe("");
+  });
+});
+
+describe("a task's questions", () => {
+  it("are asked in the chat with their options as buttons, never in a dialog", async () => {
+    replies = [{ kind: "needs_input", capability: "business_plan_draft", params: { existing_plan: "new", plan_for: "new", idea: "yam farming" },
+      message: "Happy to draft your business plan. One quick question so it fits.",
+      fields: [{ key: "purpose", label: "Who will read it?", type: "choice", options: [{ value: "investors", label: "Investors, to raise funding" }, { value: "planning", label: "Me and my team, to plan" }] }] },
+    { kind: "answer", message: "Drafting it now.", conversational: true }];
+    await open();
+    await ask("new one...yam farming");
+    expect(await screen.findByText(/One quick question so it fits\. Who will read it\?/)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Me and my team, to plan" })); });
+    await waitFor(() => expect(sent(/\/agent\/requests$/).at(-1).body).toMatchObject({ capability: "business_plan_draft",
+      params: { existing_plan: "new", plan_for: "new", idea: "yam farming", purpose: "planning" } }));
+  });
+});
+
+describe("asking again", () => {
+  it("gets its answer again; only a questioned answer is not repeated", async () => {
+    replies = [{ kind: "answer", message: "You have 5 business plans. Open one, or create a new one?", conversational: true }];
+    await open();
+    await ask("I need a business plan");
+    await ask("I need business plan");
+    await waitFor(() => expect(screen.getAllByText("You have 5 business plans. Open one, or create a new one?").length).toBe(2));
+    expect(screen.queryByText(/I've said that already/)).toBeNull();
+    await ask("but you said I only have 3");
+    expect(await screen.findByText(/I've said that already/)).toBeTruthy();
+  });
+});
+
+describe("a priced task", () => {
+  it("says its price with Start in the chat, and go ahead starts it, confirmed", async () => {
+    replies = [{ kind: "needs_confirmation", reason_codes: ["price_confirmation_required"], capability: "business_plan_draft", price: 40, balance: 254,
+      params: { existing_plan: "new", purpose: "investors" }, message: "I'll write your business plan, for investors. It costs 40 credits, and you have 254." },
+    { kind: "answer", message: "Drafting it now.", conversational: true }];
+    await open();
+    await ask("business plan for investors");
+    expect(await screen.findByRole("button", { name: "Start" })).toBeTruthy();
+    await ask("go ahead");
+    await waitFor(() => expect(sent(/\/agent\/requests$/).at(-1).body).toMatchObject({ capability: "business_plan_draft", confirmed: true,
+      params: { existing_plan: "new", purpose: "investors" } }));
+    expect(screen.queryByRole("button", { name: "Not now" })).toBeNull();      // its buttons go once it is answered
+  });
+});
+
+describe("a draft made by a task", () => {
+  it("is shown in the chat to approve, edit or reject, with its full page a link away", async () => {
+    replies = [{ kind: "workflow", run: { id: "run1", status: "succeeded", title: "Business Plan Draft",
+      outcome: { plan: { title: "yam farming" }, links: [{ label: "draft business plan", to: "/blueprint?tab=business-plans&review=d1" }] } },
+      message: "Your business plan is ready to review." }];
+    await open();
+    await ask("business plan for yam farming");
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Open full document/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /See details/ })).toBeNull();
   });
 });

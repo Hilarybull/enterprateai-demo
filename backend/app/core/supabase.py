@@ -325,6 +325,8 @@ async def _sb_select(
                 q = q.like(col, value)
             elif op == "ilike":
                 q = q.ilike(col, value)
+            elif op == "is":      # ("workspace_id", "is", "null")
+                q = q.is_(col, value)
             else:      # never a silent no-op: a dropped filter would return every row
                 raise ValueError(f"Unsupported filter operator: {op}")
         if order:

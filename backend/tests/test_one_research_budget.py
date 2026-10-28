@@ -40,11 +40,12 @@ def test_a_step_done_is_free_and_do_all_costs_only_what_is_left():
     data = {**DATA, "research_runs": {"rr_step": run}}
     out = research.step_prices("need_funding", result, i, ctx, 60, True, data, ANSWERS)
     assert out["steps"][step] == 0 and step in out["done"]
-    assert out["spent"] == paid and out["all"] == 60 - paid
+    # A full funding run is the list price, every new run (the owner, 28 Oct): one step's own price stays its share
+    assert out["spent"] == paid and out["all"] == 60
     assert paid + sum(out["steps"].values()) <= 60
     # "Do all" never reopens one step's research; the same step does, free.
     assert research.reuse_for(data, "need_funding", plan["base"], ANSWERS) is None
     assert research.reuse_for(data, "need_funding", plan["base"] + ":" + step, ANSWERS, only=[step])["id"] == "rr_step"
     # And "Do all" leaves out what that step already paid for.
     after = research.priced_plan("need_funding", result, i, ctx, 60, data, ANSWERS)
-    assert not set(mine) & {t["topic"] for t in after["topics"]} and after["price"] <= 60 - paid
+    assert not set(mine) & {t["topic"] for t in after["topics"]} and after["price"] == 60

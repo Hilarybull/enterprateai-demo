@@ -49,3 +49,25 @@ def test_new_details_make_a_new_draft_and_the_same_request_twice_does_not():
     env.submit(text="draft a business plan", capability="business_plan_draft", params={"answers": {**first, "customer": "Schools in Bristol"}})
     calls = [c[1] for c in env.orch.rt.studio.calls if c[0] == "draft_plan"]
     assert len(calls) == 2 and calls[1]["customer"] == "Schools in Bristol"
+
+
+def test_a_plan_for_another_offering_than_the_profiles_never_gets_the_profiles_offering():
+    """The owner, 27 Oct: "Business Plan for Land Clearing" had an executive summary about balcony washing: the task took
+    the idea as the business's own, so the profile describing another offering went to the writer."""
+    env = Env()
+    run(env.orch.rt.business.mutate("A", lambda d: d.setdefault("workspace_profile", {}).update({"about_company": "We offer balcony washing for flats in Lagos"})))
+    env.submit(text="draft a business plan", capability="business_plan_draft", params={"answers": {"description": "Land clearing for farms", "customer": "Farm owners"}})
+    calls = [c for c in env.orch.rt.studio.calls if c[0] == "draft_plan"]
+    assert calls      # written, not asked about
+    idea = calls[-1][1]
+    from app.modules.agent.services import owner_words
+    assert owner_words(idea)["separate_idea"] is True      # the writer is given nothing of the profile's balcony washing
+    assert "balcony" not in str(idea.get("description", "")).lower()
+
+
+def test_an_offering_sharing_only_a_kind_of_work_or_a_place_is_another_offering():
+    """The owner, 27 Oct: the Drone Cleaning plan was about "car cleaning for busy office workers"."""
+    from app.modules.agent.workflows import _shares_offering
+    assert not _shares_offering("Drone cleaning", "Car washing and interior cleaning for busy office workers in Abuja")
+    assert not _shares_offering("Balcony washing in Abuja", "Car wash and detailing in Abuja")
+    assert _shares_offering("a mobile car wash in Abuja", "Car wash and detailing")

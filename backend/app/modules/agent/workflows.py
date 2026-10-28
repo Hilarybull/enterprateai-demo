@@ -1792,6 +1792,27 @@ def _plan_on_record(data: dict, key: str | None) -> dict | None:
     return plan if isinstance(plan, dict) and plan.get("document_id") else None
 
 
+_OFFERING_STOP = {"business", "businesses", "service", "services", "company", "with", "from", "that", "this", "their", "your", "they", "them", "offer",
+                  "offers", "provide", "provides", "small", "local", "help", "helps", "people", "customers", "clients", "quality", "professional"}
+
+
+# What a service does, said of many offerings alike: "Drone cleaning" and "car cleaning" are not the same offering (the owner,
+# 27 Oct: the Drone Cleaning plan was about "car cleaning for busy office workers")
+_ACTIVITY = {"cleaning", "clean", "cleaner", "cleaners", "washing", "wash", "repair", "repairs", "delivery", "care", "management", "consulting",
+             "consultancy", "installation", "maintenance", "hire", "rental", "sales", "supply", "shop", "store", "and", "the", "for", "our", "mobile",
+             "home", "office", "online"}
+_WHERE_WHO = re.compile(r"\b(?:in|for|at|to|across|around|near|within|serving)\b.*$", re.I)
+
+
+def _shares_offering(a: str, b: str) -> bool:
+    """Two descriptions of the same offering share a word that says what it is ("car" in "car wash" and "a mobile car wash in
+    Abuja"): only what it is counts, never who it is for, where, or what kind of work it is."""
+    def words(t: str) -> set[str]:
+        core = _WHERE_WHO.sub("", str(t or "").lower())
+        return {w for w in re.findall(r"[a-z]{3,}", core) if w not in _OFFERING_STOP and w not in _ACTIVITY}
+    return bool(words(a) & words(b))
+
+
 async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
     """The idea a task is about, and whether it is a separate one (A2). F1: a plan, a letter or a market size for an idea
     other than the business's own is that idea's: only what was said about it, named for it (never the business's
@@ -1819,9 +1840,15 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
         idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True, "purpose": purpose})
         return idea, True
     if not separate:
-        # Their own words chosen over a profile that speaks of something else (G1): the writer is told so too
-        clash = ctx.answers.get("profile_conflict") == "said"
-        return {**idea_of(data, ctx.answers), "said": said, "purpose": purpose, **({"profile_clash": True} if clash else {})}, False
+        # Their own words chosen over a profile that speaks of something else (G1): the writer is told so too. So is an
+        # offering said for this task that isn't the one the profile describes (the owner, 27 Oct: "Business Plan for Land
+        # Clearing" with an executive summary about balcony washing): their words, never the other offering's
+        mine = idea_of(data, ctx.answers)
+        profiled = idea_of(data, {})
+        said_offering = str(ctx.answers.get("description") or "").strip()
+        differs = bool(said_offering and profiled.get("description") and not _shares_offering(said_offering, profiled["description"]))
+        clash = ctx.answers.get("profile_conflict") == "said" or differs
+        return {**mine, "said": said, "purpose": purpose, **({"profile_clash": True} if clash else {})}, False
     own = idea_of(data, {})
     idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
     idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True})

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AgentAvatar } from "./AgentShell";
-import { agentErrorMessage, submitAgentRequest } from "../../lib/agent";
+import { agentErrorMessage, caseChatPath, offerFor, submitAgentRequest, toSidePanel } from "../../lib/agent";
 import { useAuthStore } from "../../store/auth";
 import { useTaskFlow } from "./TaskFlow";
 import { AgentGoalChat } from "../GoalLauncher";
@@ -48,11 +48,17 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
     setReply({ text: res?.message || "Done.", offers: [...(res?.actions || []), ...(res?.offers || [])] });
   }
 
-  const send = (e) => {
+  const send = async (e) => {
     e.preventDefault();
     const said = text.trim();
     if (!said) return;
     setText("");
+    // Typed at the buttons ("yes, go ahead", "open it"): that button, as a click would (the owner, 27 Oct)
+    const chosen = reply?.offers && offerFor(said, reply.offers);
+    if (chosen) { press(chosen); return; }
+    const there = await caseChatPath(businessId, said);      // funding or a launch: its case's Assistant tab (27 Oct)
+    if (there) { setReply(null); navigate(there); return; }
+    if (toSidePanel(said)) { setReply(null); return; }      // the conversation, by the side (27 Oct)
     // Answered here, in the Agent Centre (the owner's brief, 25 Oct: a result shows where the question was asked), by the
     // same request and the same chat as the dashboard's Agent card
     setReply(null);
@@ -73,8 +79,9 @@ export default function AgentBar({ businessId, onChanged, onOpenRun }) {
         <AgentAvatar size={32} working={busy} />
         <p className="shrink-0 text-sm font-semibold">{first ? `Hi ${first}` : "Hi"}</p>
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask EnterprateAI…" aria-label="Ask EnterprateAI"
-          className="min-w-0 flex-1 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/40" />
-        <span className="inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-emerald-300"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-400" />Online</span>
+          className="order-last min-w-0 basis-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/60 focus:outline-none focus:ring-2 focus:ring-white/40 sm:order-none sm:basis-auto sm:flex-1" />
+        {/* On a phone the box has its own row under the greeting (the owner's test, 27 Oct: it was squeezed between them) */}
+        <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-emerald-300 sm:ml-0"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-400" />Online</span>
       </form>
       {busy && !reply && <p role="status" className="mt-2 text-[13px] text-white/85">Working on it…</p>}
       {reply && (

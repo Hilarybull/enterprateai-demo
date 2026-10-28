@@ -15,7 +15,7 @@ export const TYPE_OF = (key) => (
     : /fund/.test(key || "") ? "Funding"
     : /launch/.test(key || "") ? "Launch"
     : /idea|market_size|business_plan/.test(key || "") ? "Ideas" : "Other");
-const TYPES = ["Invoices", "Quotations", "Funding", "Launch", "Ideas", "Other"];
+export const TYPES = ["Invoices", "Quotations", "Funding", "Launch", "Ideas", "Other"];
 const STALE_DAYS = 7;
 
 const ago = (at) => {
@@ -91,8 +91,10 @@ function QuestionPanel({ run, onClose, onDone }) {
     </div>, document.body);
 }
 
-export default function AgentRows({ runs, empty, onOpen, onReview, onChanged }) {
-  const [type, setType] = useState("");
+// `type` given: the filter chips are the page's (the Agent Centre's side panel has them at its top). `compact`: one narrow column.
+export default function AgentRows({ runs, empty, onOpen, onReview, onChanged, type: chosen, compact = false }) {
+  const [own, setType] = useState("");
+  const type = chosen !== undefined ? chosen : own;
   const [q, setQ] = useState("");
   const [asking, setAsking] = useState(null);
   const [gone, setGone] = useState(new Set());       // answered or cleared, folding away
@@ -108,12 +110,12 @@ export default function AgentRows({ runs, empty, onOpen, onReview, onChanged }) 
   return (
     <div data-agent-rows>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-        {TYPES.map((t) => (
+        {chosen === undefined && TYPES.map((t) => (
           <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(type === t ? "" : t)}
             className={`rounded-full px-3 py-1 text-[12.5px] font-semibold ${type === t ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</button>
         ))}
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tasks" aria-label="Search tasks"
-          className="ml-auto w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] sm:w-56 dark:border-slate-700 dark:bg-slate-950" />
+          className={`ml-auto w-full rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] dark:border-slate-700 dark:bg-slate-950 ${compact ? "" : "sm:w-56"}`} />
       </div>
       {stale.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 bg-amber-50/70 px-4 py-2 text-[13px] text-amber-900" data-stale-bar>
@@ -127,22 +129,22 @@ export default function AgentRows({ runs, empty, onOpen, onReview, onChanged }) 
       ) : (
         <ul className="divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map(({ row: r, older }) => (
-            <li key={r.id} data-agent-row className="grid min-h-[64px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2.5 md:grid-cols-[auto_minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] max-[480px]:grid-cols-[auto_minmax(0,1fr)]">
+            <li key={r.id} data-agent-row className={`grid min-h-[64px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2.5 ${compact ? "" : "md:grid-cols-[auto_minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] max-[480px]:grid-cols-[auto_minmax(0,1fr)]"}`}>
               <Icon type={TYPE_OF(r.workflow_key)} />
               <button type="button" onClick={() => open(r)} className="min-w-0 text-left">
                 <span className="block truncate text-[14px] font-semibold text-slate-900 dark:text-slate-100">{titleOf(r)}</span>
                 <span className="mt-0.5 flex flex-wrap gap-1.5">
                   {older.length > 0 && <span className="rounded-full bg-slate-100 px-1.5 text-[11px] font-semibold text-slate-600" data-similar>{older.length + 1} similar</span>}
                   {isStale(r) && <span className="rounded-full bg-amber-50 px-1.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200" data-stale>Stale</span>}
-                  <span className="truncate text-[12.5px] text-slate-500 md:hidden">{needOf(r)}</span>
+                  <span className={`truncate text-[12.5px] text-slate-500 ${compact ? "" : "md:hidden"}`}>{needOf(r)}</span>
                 </span>
               </button>
-              <span className="hidden truncate text-[13px] text-slate-600 md:block dark:text-slate-300" data-need>{needOf(r)}</span>
-              <span className="hidden whitespace-nowrap text-[12px] text-slate-400 md:block">{ago(r.updated_at || r.created_at)}</span>
+              {!compact && <span className="hidden truncate text-[13px] text-slate-600 md:block dark:text-slate-300" data-need>{needOf(r)}</span>}
+              {!compact && <span className="hidden whitespace-nowrap text-[12px] text-slate-400 md:block">{ago(r.updated_at || r.created_at)}</span>}
               <span className="flex items-center gap-2 max-[480px]:col-span-2">
                 {older.length > 0 && (
                   <button type="button" onClick={() => { fold(older.map((o) => o.id)); setClearing(older); setToast(`Kept the latest. ${older.length} older ${older.length === 1 ? "copy" : "copies"} cleared.`); }}
-                    className="whitespace-nowrap text-[12px] font-semibold text-slate-500 hover:text-slate-800" data-keep-latest>Keep latest</button>
+                    className="whitespace-nowrap text-[12px] font-semibold text-slate-500 hover:text-slate-800" data-keep-latest>Clear older copies</button>
                 )}
                 <button type="button" onClick={() => open(r)} data-row-action
                   className="whitespace-nowrap rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:border-brand-300 hover:text-brand-700 max-[480px]:w-full dark:border-slate-700 dark:text-slate-200">{actionOf(r)}</button>

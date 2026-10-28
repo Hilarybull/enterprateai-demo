@@ -84,13 +84,13 @@ TOPICS: dict[str, dict] = {
     "prerequisites": {"label": "Licences, registrations and insurance ({country})", "query": "licence registration insurance requirements to start a {sector} business in {country}"},
     "positioning": {"label": "How competitors position their prices", "query": "{offering} budget vs premium providers {place} {country}"},
     "price_sensitivity": {"label": "How customers react to price", "query": "{customer} price sensitivity {offering} {country}"},
-    "segments": {"label": "Customer segments with the most demand", "query": "who buys {offering} customer segments {country}"},
+    "segments": {"label": "Customer segments with the most demand", "query": "who buys {offering} in {place} customer segments {country}"},
     "local_demand": {"label": "Demand signals where you sell", "query": "{offering} demand trends {place} {country}"},
     "market": {"label": "Market size and growth ({country})", "query": "{sector} market size growth {country}"},
-    "route_equity": {"label": "Equity schemes ({country})", "query": "equity investment tax relief schemes for small businesses {country}"},
+    "route_equity": {"label": "Equity schemes ({country})", "query": "{sector} investors {amount} equity investment schemes for small businesses {country}"},
     "route_loan": {"label": "Loans for small businesses ({country})",
-                   "query": "SME loan products development bank microfinance bank commercial bank {country} interest rate eligibility"},
-    "route_grant": {"label": "Grants ({place}, {country})", "query": "small business grants {place} {country}"},
+                   "query": "{sector} SME loan {amount} development bank microfinance bank commercial bank {country} interest rate eligibility"},
+    "route_grant": {"label": "Grants ({place}, {country})", "query": "{sector} small business grants {place} {country}"},
     # Benchmarks for figures only the owner knows: a typical value for this sector, size and country, with a source.
     "bench_fixed_costs": {"label": "Monthly fixed costs", "query": "average monthly running costs of a {size} {sector} business in {country}", "number": "fixed_costs"},
     "bench_cost": {"label": "Cost per sale", "query": "cost to deliver one {offering} in {country} materials labour", "number": "cost"},
@@ -110,7 +110,7 @@ ALT_QUERY = {
     "prerequisites": "{sector} business permit requirements {country} {year}",
     "positioning": "premium {offering} {place} {country}",
     "price_sensitivity": "affordable {offering} {country} customers",
-    "segments": "{offering} target customers {country}",
+    "segments": "{offering} target customers {place} {country}",
     "local_demand": "{offering} {place} {country} {year}",
     "market": "{sector} industry {country} report {year}",
     "route_equity": "early stage investors {sector} {country} angel network",
@@ -284,8 +284,10 @@ def context_of(data: dict | None, i: dict) -> dict:
     size = raw or (f"{i['team_size']:g}-person" if i.get("team_size") else "small")
     # The case's own currency when the owner said one (₦, naira, NGN), else the business default: never empty.
     currency = str(i.get("currency") or "").upper() or task_currency(data)
+    amount = first_value._num(i.get("amount"))
+    big = (f"{amount / 1e6:g} million" if amount and amount >= 1e6 else f"{amount:,.0f}" if amount else "")
     return {"offering": offering, "sector": sector, "place": place, "country": country, "customer": words(i.get("customer")), "size": size,
-            "currency": currency}
+            "currency": currency, "amount": f"{big} {currency}".strip() if big else ""}
 
 
 def looking_at(topics: list[dict], ctx: dict) -> list[str]:
@@ -467,6 +469,17 @@ def _day_words(d: date) -> str:
     return f"{d.day} {d.strftime('%b')}" + ("" if d.year == date.today().year else f" {d.year}")
 
 
+def paid_invoices(data: dict | None, today: date | None = None) -> list[tuple[dict, date, float]]:
+    """Money received on invoices, each in the workspace's currency, with the day it was paid: the one reading of revenue
+    the research, the Assistant tab and the funding check share (the owner's test, 27 Oct: ₦994,276 in one place, 1,060 in
+    another). A part-paid invoice counts, as on Business Operations."""
+    from app.modules.agent import business as bz
+    today = today or date.today()
+    invs = [i for i in ((data or {}).get("financials") or {}).get("invoices") or [] if isinstance(i, dict) and not i.get("archived")
+            and bz.status_of(i) not in ("draft", "void", "voided", "cancelled")]
+    return [(i, _paid_on(i, today), bz.in_base(data or {}, i, bz.invoice_received(i)) or 0) for i in invs if bz.invoice_received(i) > 0]
+
+
 def records_of(data: dict | None, today: date | None = None) -> list[tuple[str, Any, str]]:
     """Figures the business's own records give, each with where it came from: money received on invoices (sales a month
     and paying customers), money in less money out (cash now) and expenses paid (monthly fixed costs). Only what is on
@@ -476,9 +489,7 @@ def records_of(data: dict | None, today: date | None = None) -> list[tuple[str, 
     today = today or date.today()
     fin = data.get("financials") or {}
     sign = lambda n: money(n, task_currency(data))      # noqa: E731
-    invs = [i for i in fin.get("invoices") or [] if isinstance(i, dict) and not i.get("archived")
-            and bz.status_of(i) not in ("draft", "void", "voided", "cancelled")]
-    paid = [(i, _paid_on(i, today), bz.in_base(data, i, bz.invoice_received(i)) or 0) for i in invs if bz.invoice_received(i) > 0]
+    paid = paid_invoices(data, today)
     out: list[tuple[str, Any, str]] = []
     if paid:
         since = today - timedelta(days=92)
@@ -1072,14 +1083,14 @@ def derive(key: str, i: dict, currency: str | None = None) -> dict:
 # ── Search and extraction ────────────────────────────────────────────────────────────────────────────────────────
 
 def query_of(topic: str, ctx: dict) -> str:
-    fill = {k: ctx.get(k) or "" for k in ("offering", "sector", "place", "country", "customer", "size")}
+    fill = {k: ctx.get(k) or "" for k in ("offering", "sector", "place", "country", "customer", "size", "amount")}
     return " ".join(TOPICS[topic]["query"].format(**fill).split())[:200]
 
 
 def alt_query_of(topic: str, ctx: dict, year: int | None = None) -> str | None:
     if topic not in ALT_QUERY:
         return None
-    fill = {**{k: ctx.get(k) or "" for k in ("offering", "sector", "place", "country", "customer", "size")}, "year": year or _now().year}
+    fill = {**{k: ctx.get(k) or "" for k in ("offering", "sector", "place", "country", "customer", "size", "amount")}, "year": year or _now().year}
     if fill["place"] and fill["place"] == fill["country"]:
         fill["place"] = ""
     return " ".join(ALT_QUERY[topic].format(**fill).split())[:200]
@@ -1287,6 +1298,10 @@ def read_items(raw: dict | None, topics: list[dict], by_n: dict[int, dict], now:
             confidence = 0.3
         if state == ESTIMATED:
             confidence = min(confidence, 0.5)
+        # Never more sure than the sources allow (the owner, 28 Oct: one undated listing marked High): one source is at most
+        # medium (low when undated); high needs two or more dated ones
+        dated = [r for r in cited if r.get("date")]
+        confidence = min(confidence, 0.9 if len(dated) >= 2 else 0.6 if len(cited) >= 2 or dated else 0.4)
         item = {"id": secrets.token_hex(6), "kind": state, "topic": topic["topic"], "criterion": topic["criterion"], "label": topic["label"],
                 "used_for": topic.get("used_for") or topic["label"], "value": value, "state": state, "confidence": round(confidence, 2),
                 "sources": [{"title": r["title"], "url": r["url"], "site": site_of(r["url"]), "date": r["date"] or None} for r in cited[:3]],
@@ -1436,18 +1451,20 @@ _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, spec
                  "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
                  "where FACTS give none, say so plainly. Plans and assumptions are yours to propose from what FACTS say about the "
                  "business (its offer, prices, place, customers, team): what sets it apart, how it will win customers (named channels "
-                 "and first steps that suit it), a realistic monthly budget or cost per customer for that (with the currency, said as "
-                 "an assumption), milestones, gaps, risks. Fill every field you can; return null only when nothing sensible can be "
-                 "said. Write only about this business, never about another offering. Reply with JSON only: "
+                 "and first steps that suit it), milestones, gaps, risks. Never write an amount of money, a cost, a price or a count of "
+                 "sales that FACTS don't give: return null for that field instead, so the owner is asked. Never mention FACTS, and never "
+                 "say a value is assumed. Fill every other field you can; return null only when nothing sensible can be said. Write "
+                 "only about this business, never about another offering. Reply with JSON only: "
                  "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
 
 _DRAFT_SYSTEM_LAUNCH = ("You fill in a small business's plan to launch one offering. Write plain, specific sentences the owner can act on. "
                         "Facts about the past (customers, sales, revenue, suppliers, approvals) come only from FACTS: never invent them. Plans and "
                         "assumptions are yours to propose from what FACTS say about the business and this offering (its price, cost, place, customers, "
-                        "team): delivery terms, the launch message, a realistic channel budget and target, the first month's volume, success "
-                        "measures, what to do when something goes wrong, and the suppliers, people and systems it depends on. Numbers are whole "
-                        "numbers in the plan's currency. Write only about this offering, never about another one or about funding. Fill every "
+                        "team): delivery terms, the launch message, a target, the first month's volume, success measures, what to do when "
+                        "something goes wrong, and the suppliers, people and systems it depends on. Never write an amount of money, a cost or a "
+                        "price that FACTS don't give: return null for it, so the owner is asked. Never mention FACTS. Numbers are whole numbers "
+                        "in the plan's currency. Write only about this offering, never about another one or about funding. Fill every "
                         "field you can; return null only when nothing sensible can be said. Reply with JSON only: "
                         "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
@@ -1469,9 +1486,10 @@ def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, fou
     rec = [{"figure": k, "value": v, "from": w} for k, v, w in records_of(data)]
     seen = [{"topic": x.get("label") or x.get("topic"), "found": str(x.get("value") or "")[:400], "source": ((x.get("sources") or [{}])[0] or {}).get("title")}
             for x in (found or []) if x.get("sources")][:8]
+    # Older chat answers stay out of the drafts until the owner confirms them (the owner, 28 Oct: a risk about "office workers…
+    # subscription" from an earlier chat): only the figures worked out, as numbers, and never the words said
     return {"profile": profile, "catalogue": products, "marketplace": listing, "records": rec, "currency": task_currency(data),
-            "answers": {k: v for k, v in (answers or {}).items() if v not in (None, "")},
-            "figures": {k: v for k, v in (i or {}).items() if not str(k).startswith("_") and v not in (None, "")}, "research": seen}
+            "figures": {k: v for k, v in (i or {}).items() if not str(k).startswith("_") and isinstance(v, (int, float)) and not isinstance(v, bool)}, "research": seen}
 
 
 def _fields_of(text: str) -> dict:
@@ -1511,6 +1529,45 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
     return out
 
 
+_LEAK = re.compile(r"\b(?:FACTS|assum(?:e|ed|ing|ption)|not specified)\b", re.I)
+_MONEY = re.compile(r"(?:[₦£$€]\s?|\b(?:NGN|GBP|USD|EUR|KES|GHS|ZAR)\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|million|thousand)?", re.I)
+
+
+def _figures_known(facts: dict) -> set[float]:
+    """Every number the business's own facts hold, to check a draft's figures against."""
+    found = set()
+    for n in re.findall(r"\d[\d,]*(?:\.\d+)?", json.dumps(facts, default=str, ensure_ascii=False)):
+        try:
+            found.add(round(float(n.replace(",", "")), 2))
+        except ValueError:
+            continue
+    return found
+
+
+# The currency after the figure too ("4000 NGN", "20,000 naira revenue")
+_MONEY_AFTER = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(k|m|million|thousand)?\s*(?:NGN|GBP|USD|EUR|KES|GHS|ZAR|naira|pounds?|dollars?|euros?|cedis?|shillings?|rand)\b", re.I)
+
+
+def money_figures(text: str) -> list[float]:
+    """Every money figure in a text, the currency before it or after it."""
+    out = []
+    for amount, unit in [*_MONEY.findall(text), *_MONEY_AFTER.findall(text)]:
+        try:
+            out.append(round(float(amount.replace(",", "")) * ({"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6}.get(unit.lower(), 1) if unit else 1), 2))
+        except ValueError:
+            continue
+    return out
+
+
+def _grounded_draft(value, known: set[float]) -> bool:
+    """A draft whose money figures are all on record, and with none of the writer's own words in it (the owner, 28 Oct:
+    "₦1,200,000 from 40 sales" with a ₦25,000 price; "fixed costs of ₦40,000" with none on record; "not specified in FACTS")."""
+    text = json.dumps(value, default=str, ensure_ascii=False) if not isinstance(value, str) else value
+    if _LEAK.search(text):
+        return False
+    return all(n in known for n in money_figures(text))
+
+
 async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = "") -> dict[str, str]:
     if llm is None or not fields:
         return {}
@@ -1525,9 +1582,12 @@ async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = ""
         logger.info("case drafts skipped", exc_info=True)
         return {}
     out = {}
+    known = _figures_known(facts)
     for k, v in raw.items():
         if k not in fields:
             continue
+        if not _grounded_draft(v, known):
+            continue      # a figure not on record, or the writer's own words leaking: asked instead (the owner, 28 Oct)
         if k in CASE_LIST_FIELDS:
             keys = CASE_LIST_FIELDS[k]
             rows = [{c: " ".join(str((r or {}).get(c) or "").split())[:300] for c in keys} for r in (v if isinstance(v, list) else []) if isinstance(r, dict)]
@@ -1538,8 +1598,9 @@ async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = ""
         text = " ".join(str(v or "").split())
         if k in NUMBER_DRAFTS:
             m = re.search(r"\d[\d,]*(?:\.\d+)?", text)      # a number only, or nothing
-            if m and float(m.group().replace(",", "")) > 0:
-                out[k] = str(round(float(m.group().replace(",", ""))))
+            money_field = k in ("market.budget", "economics.price_per_unit", "economics.variable_cost_per_unit", "economics.fixed_costs_monthly")
+            if m and float(m.group().replace(",", "")) > 0 and (not money_field or round(float(m.group().replace(",", "")), 2) in known):
+                out[k] = str(round(float(m.group().replace(",", ""))))      # an amount only when it is on record; else asked
             continue
         if text and text.lower() not in ("null", "none", "unknown", "n/a") and not NOT_SAID.search(text) and not _NOTHING_FOUND.search(text):
             out[k] = text[:600]
@@ -1975,6 +2036,29 @@ def fingerprint_of(answers: dict, inputs: dict, topics: list[str], country: str 
     return hashlib.sha256(json.dumps({"said": said, "country": _norm_said(country)}, sort_keys=True).encode()).hexdigest()[:16]
 
 
+# A replaced run kept as a History line (the owner, 28 Oct: the workspace held 26 old runs, 592 KB, and every page waited on
+# it): what History, the price and "already paid for" read stay; its findings and drafts go, but for the newest few per check
+KEEP_FULL_REPLACED = 3
+_RUN_LINE = ("id", "goal", "capability", "status", "created_at", "updated_at", "case_id", "only", "base", "fingerprint", "topics", "charged",
+             "findings", "counts", "error", "replaced_by", "answers", "trimmed")
+
+
+def compact_runs(runs: dict, keep: int = KEEP_FULL_REPLACED) -> dict:
+    """The research runs with every replaced one past the newest `keep` per check (and case) cut down to its History line."""
+    replaced: dict[tuple, list] = {}
+    for rid, r in runs.items():
+        if isinstance(r, dict) and r.get("status") == "replaced":
+            replaced.setdefault((r.get("goal"), str(r.get("case_id") or "")), []).append(rid)
+    for ids in replaced.values():
+        for rid in sorted(ids, key=lambda i: str(runs[i].get("created_at") or ""), reverse=True)[keep:]:
+            r = runs[rid]
+            if r.get("trimmed"):
+                continue
+            base = r.get("base") or _fingerprint_of_run(r)      # worked out while its inputs are still there
+            runs[rid] = {**{k: r[k] for k in _RUN_LINE if k in r}, "base": base, "trimmed": True}
+    return runs
+
+
 def _fingerprint_of_run(r: dict) -> str:
     """A saved run's fingerprint, worked out again (runs saved before the rule above match too)."""
     return fingerprint_of(r.get("answers") or {}, r.get("inputs") or {}, r.get("topics") or [], (r.get("context") or {}).get("country"))
@@ -2024,8 +2108,10 @@ def research_state(data: dict | None, goal: str, now: datetime | None = None, an
     run = runs[0]
     findings = sum(1 for x in run.get("items") or [] if x.get("sources") and x.get("kind") in (RESEARCHED, ESTIMATED))
     told = answers if answers is not None else ((((data or {}).get("quick_check_answers") or {}).get(goal) or {}).get("answers") or {})
+    # Only what the owner said: a value the run took from the records ("office workers" from the profile) is not a change
+    # (the owner, 28 Oct: research done in 29 seconds read as "your answers changed" at once, and the progress never ended)
     changed = bool(told) and any(_norm_said(told.get(k)) != _norm_said((run.get("answers") or {}).get(k)) for k in SEARCH_KEYS
-                                 if k in told or k in (run.get("answers") or {}))      # a figure changed is worked out again, free
+                                 if k in told)      # a figure changed is worked out again, free
     old = (now - datetime.fromisoformat(run["created_at"])).total_seconds() >= REUSE_RESEARCH_DAYS * 86400
     at = run["created_at"][:10]
     if run.get("status") == "review" and not changed and not old:
@@ -2134,6 +2220,7 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
             if r.get("goal") == goal and r.get("status") == "review" and not r.get("only") and not only:
                 r["status"], r["replaced_by"] = "replaced", run_id
         _runs(d)[run_id] = run
+        compact_runs(_runs(d))
         return run
     held = await orch.rt.business.mutate(business_id, _put)
     if held["id"] != run_id:
@@ -2205,7 +2292,7 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
                 # Loans are offered to small businesses everywhere: none found is the search failing, said in the log.
                 logger.warning("research run %s: search failure, no new loan products found for %s", run_id, ctx.get("country") or "the business's country")
                 diag["search_failure"] = "route_loan"
-            found, charged = await charge_fields(orch, user["id"], run_id, found, cost, feature_of(goal), len(topics))
+            found, charged = await charge_fields(orch, user["id"], run_id, found, cost, feature_of(goal), len(topics), flat=flat_price(goal, only))
         except asyncio.TimeoutError as e:
             if time.perf_counter() - t0 < RESEARCH_SECONDS - 1:      # a step inside timed out (the model): a failure, said as one
                 logger.warning("research run %s failed: %s", run_id, e, exc_info=True)
@@ -2341,6 +2428,8 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
         r.update({"status": "adopted" if status == "review" and carried and not tally["open"] else status, "decisions": carried,
                   "items": all_items, "charged": charged, "error": error, "deliverables": deliverables, "diagnostics": diag, "case_drafts": case_drafts,
                   "findings": len({x.get("topic") for x in all_items if billable(x) and x.get("sources") and not x.get("carried_from")}),
+                  "price_warning": price_warning(all_items, next((v for v in ((r.get("inputs") or {}).get("price"), (r.get("inputs") or {}).get("price_per_unit"),
+                                                                            (r.get("case_figures") or {}).get("price")) if v not in (None, "")), None)),
                   # one count of drafts from the start, the same the steps and every later adopt say (the owner's QA, 21 Oct)
                   "drafts": tally,
                   "unavailable": bool(error and (error.startswith("unavailable") or not research_on)),
@@ -2508,10 +2597,19 @@ def priced_plan(goal: str, result: dict, i: dict, ctx: dict | None, cap: int, da
     todo = [t for t in topics if t["topic"] not in done]
     if only:
         keep = set(only)
+        chosen = ROUTE_OF_ANSWER.get(str(i.get("route") or "").strip().lower()) if goal == "need_funding" else None
+        for crit in only:
+            for kind, key in PLAN.get(goal, {}).get(crit, []):
+                if kind == R and not (chosen and key.startswith("route_") and key != chosen) and not any(t["topic"] == key for t in todo):
+                    todo.append({"topic": key, "criterion": crit, "label": label_of(key, ctx), "query": query_of(key, ctx or {}), "used_for": crit})
+                    share.setdefault(key, max(share.values() or [0]) or int(cap or 0) // 3)
         todo = [t for t in todo if t.get("criterion") in keep]
         items = [x for x in items if x.get("criterion") in keep]
         waiting = [w for w in waiting if str(w).split(":")[0] in keep]
     price = min(left, sum(share[t["topic"]] for t in todo)) if (todo and connected_now) else 0
+    if flat_price(goal, only) and topics:
+        todo = [t for t in topics if t["topic"] not in done] or list(topics)      # a new run looks again at all of it
+        price = int(cap or 0) if connected_now else 0
     return {"topics": todo, "items": items, "waiting": waiting, "price": price, "base": base, "left": left, "spent": spent,
             "done": done, "share": share, "all_topics": topics}
 
@@ -2529,9 +2627,46 @@ def step_prices(goal: str, result: dict, i: dict, ctx: dict | None, cap: int, co
     return {"steps": out, "all": plan["price"], "spent": plan["spent"], "done": done}
 
 
+PRICE_TOPICS = ("comparable_prices", "bench_price")
+
+
+def price_warning(items: list[dict], own) -> dict | None:
+    """Your price set against what the research found (the owner, 26 Oct: similar sold for twice the owner's price or more,
+    and it wasn't said): {"yours", "low", "high", "side"} when yours is well below or above, else None."""
+    try:
+        yours = float(str(own).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    if yours <= 0:
+        return None
+    for x in items:
+        if x.get("topic") not in PRICE_TOPICS or not x.get("sources"):
+            continue
+        rng = x.get("range") if isinstance(x.get("range"), (list, tuple)) and len(x.get("range")) == 2 else None
+        if not rng:
+            found = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", str(x.get("value") or "")) if float(n.replace(",", "")) >= 1]
+            found = [n for n in found if yours / 20 <= n <= yours * 20]      # prices, never a year or a pack size
+            rng = [min(found), max(found)] if found else None
+        if not rng:
+            continue
+        low, high = float(min(rng)), float(max(rng))
+        side = "below" if yours < 0.8 * low else "above" if yours > 1.25 * high else None
+        if side:
+            return {"yours": yours, "low": low, "high": high, "side": side, "label": x.get("label")}
+    return None
+
+
 def per_finding(cap: int, topics: int) -> int:
     """What one finding costs: the run's maximum shared over what it looks up (60 over 6 topics is 10 each)."""
     return math.ceil(cap / max(1, topics)) if cap else 0
+
+
+FLAT_PRICE = {"need_funding"}      # research and drafting at the list price, not per finding (the owner, 28 Oct)
+
+
+def flat_price(goal: str | None, only: list[str] | None = None) -> bool:
+    """A full run of a check priced at its list price: every new run costs it; one step on its own keeps its share."""
+    return goal in FLAT_PRICE and not only
 
 
 def price_for(found: list[dict], cap: int, topics: int) -> tuple[int, int]:
@@ -2540,7 +2675,8 @@ def price_for(found: list[dict], cap: int, topics: int) -> tuple[int, int]:
     return findings, min(cap, findings * per_finding(cap, topics))
 
 
-async def charge_fields(orch, user_id: str, run_id: str, found: list[dict], price: int, feature: str = FEATURE, topics: int = 1) -> tuple[list[dict], int]:
+async def charge_fields(orch, user_id: str, run_id: str, found: list[dict], price: int, feature: str = FEATURE, topics: int = 1,
+                        flat: bool = False) -> tuple[list[dict], int]:
     """Up to the check's price (the price list's, the quote's maximum), and only for what was found: the maximum is reserved
     once (its key is the run), then what wasn't found is given straight back. Nothing found with a checked source: nothing
     charged. With too few credits, what the research found is asked instead, never shown for free."""
@@ -2549,6 +2685,8 @@ async def charge_fields(orch, user_id: str, run_id: str, found: list[dict], pric
         # §5: nothing met the Researched standard (checked sources): no research is charged, and it is said so.
         return [{**x, "charge_note": "I couldn't find anything useful this time, so nothing was charged."} for x in found], 0
     findings, used = price_for(found, price, topics)
+    if flat and findings:
+        used = price      # the list price, whatever share was found (still nothing when nothing was found)
     if not used:
         return found, 0
     try:

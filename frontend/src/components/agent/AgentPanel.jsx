@@ -10,7 +10,8 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "../../lib/toast";
 import { apiRequest } from "../../api/client";
 import ProfileUpdates from "./ProfileUpdates";
-import { agentErrorMessage, cancelRun, clearConversation, detailsOf, getConversation, getRun, replyText, submitAgentRequest } from "../../lib/agent";
+import { PostponeChoice, chatActions, said as sayDone } from "./ChatActions";
+import { agentErrorMessage, approveAction, cancelRun, caseChatPath, clearConversation, detailsOf, getConversation, getRun, offerFor, replyText, submitAgentRequest, toSidePanel } from "../../lib/agent";
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
@@ -95,9 +96,11 @@ const ASK_KEY = "ea_agent_ask";      // a question handed over from another page
 let sharedAsk = null;      // { text, businessId, promise }: the one request for a handed-over question, whichever copy shows it
 let lastAsk = null;        // { text, businessId, res, at }: its answer, shown again by a copy that appears after it came back
 
-export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null }) {
+export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null, handoff = false }) {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
+  // One way to act on a button, clicked or typed
+  const pick = (o) => (o.dismiss ? setReply(null) : o.start ? send({ ...o.start, sourceChannel: "ui_action", confirmed: true }) : o.post ? postOffer(o.post) : o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }));
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState(null);      // { tone, text, runId, upgrade }
   // A task started here stays here: its questions open in a dialog on this page, what it prepares
@@ -275,6 +278,13 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     // What is typed is answered while the dashboard is "Updating…" (the owner's brief, 25 Oct); only a task started from a
     // tile waits for the fresh dashboard
     if (!businessId || busy || (paused && req?.capability && req?.sourceChannel !== "text")) return undefined;
+    // On the dashboard a message typed here goes to the Agent Centre, the one general chat (the owner, 28 Oct); a tile's
+    // task still starts here
+    if (handoff && req?.sourceChannel === "text" && String(req?.text || "").trim() && !req?.capability) {
+      setPrompt("");
+      navigate(`/agent?chat=${encodeURIComponent(String(req.text).trim().slice(0, 500))}`);
+      return undefined;
+    }
     lastAsk = null;      // a new message: the handed-over answer is no longer the current one
     setBusy(true);
     if (req?.text && req.sourceChannel === "text") setAsked(req.text);
@@ -476,7 +486,18 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
 
       {/* The send button sits flush at the right end of the box at every width. */}
       <form data-agent-field className="mt-3 flex items-center gap-2 rounded-xl border-2 border-white bg-white py-1.5 pl-3.5 pr-1.5 shadow-lg shadow-indigo-950/30 focus-within:ring-4 focus-within:ring-white/40"
-        onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) send({ text: prompt.trim(), sourceChannel: "text" }); }}>
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!prompt.trim()) return;
+          // Typed at the Agent's buttons ("yes, go ahead", "open it"): that button, never a click insisted on (the owner, 27 Oct)
+          const chosen = reply && offerFor(prompt, [...(reply.actions || []), ...(reply.offers || [])]);
+          if (chosen) { setPrompt(""); pick(chosen); return; }
+          // Funding or a launch: on its case's Assistant tab (the owner's mockups, 27 Oct); anything else, by the side
+          const there = await caseChatPath(businessId, prompt);
+          if (there) { setPrompt(""); setReply(null); navigate(there); return; }
+          if (toSidePanel(prompt.trim())) { setPrompt(""); setReply(null); return; }      // the conversation, by the side
+          send({ text: prompt.trim(), sourceChannel: "text" });
+        }}>
         <span className="text-brand-500"><Icon name="sparkle" className="h-4 w-4" /></span>
         <input ref={promptBox} value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} disabled={busy}
           aria-label="Ask the EnterprateAI Agent"
@@ -546,7 +567,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             <div className="mt-2 flex flex-wrap gap-2">
               {[...(reply.actions || []), ...(reply.offers || [])].map((o) => (
                 <button key={o.label} type="button" disabled={busy}
-                  onClick={() => (o.dismiss ? setReply(null) : o.start ? send({ ...o.start, sourceChannel: "ui_action", confirmed: true }) : o.post ? postOffer(o.post) : o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }))}
+                  onClick={() => pick(o)}
                   className={o.upgrade ? "rounded-lg bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
                     : "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold hover:bg-slate-50 disabled:opacity-60 dark:bg-slate-900"}>
                   {o.label}
@@ -624,6 +645,33 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
   // Said the moment it is pressed (the owner, 25 Oct: "there was no toast to let me know it's processing"): a pending toast
   // and the button's own words, turning into the result in place
   const [deciding, setDeciding] = useState({});      // draft id: "accept" | "reject"
+  const [later, setLater] = useState(null);      // the row asking "Remind me when?"
+  const keyOf = (item) => item.approval_id || item.draft_id || draftReview(item.to) || item.run_id || item.title;
+  // Approve and Postpone as Agent Centre has them (the owner's QA, 27 Oct: the same labels on the dashboard), said once in a toast
+  const approve = async (item) => {
+    const k = keyOf(item);
+    if (deciding[k]) return;
+    setDeciding((d) => ({ ...d, [k]: "accept" }));
+    const t = toast({ kind: "pending", title: `Approving ${item.title || "it"}…` });      // said the moment it is pressed (the owner, 25 Oct)
+    try {
+      if (item.approval_id) await approveAction(item.run_id, item.approval_id);
+      else await apiRequest(`/businesses/${businessId}/agent-drafts/${item.draft_id || draftReview(item.to)}/decide`, "POST", { decision: "accept" });
+      toast({ id: t, kind: "success", title: `${item.title || "It"} approved` });      // the same toast, its result: once
+      onChanged?.();
+    } catch (e) {
+      toast({ id: t, kind: "error", title: agentErrorMessage(e, "That couldn't be approved just now."), detail: "Nothing was sent or changed." });
+    } finally { setDeciding((d) => { const n = { ...d }; delete n[k]; return n; }); }
+  };
+  const postpone = async (item, when) => {
+    setLater(null);
+    const act = chatActions(businessId);
+    const k = keyOf(item);
+    try {
+      const got = await act.postpone(k, when);
+      sayDone(`${item.title} postponed to ${got.day}`, async () => { await act.postpone(k, "undo"); onChanged?.(); });
+      onChanged?.();
+    } catch (e) { toast({ kind: "error", title: agentErrorMessage(e, "That couldn't be postponed just now.") }); }
+  };
   const decideDraft = async (item, decision) => {
     const id = item.draft_id || draftReview(item.to);
     if (!id || !businessId || deciding[id]) return;
@@ -663,14 +711,16 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
         </button>
       </div>
       {/* On a wide screen the list takes the Agent card's height and scrolls inside it; it never makes the row taller. */}
-      <div className="mt-3 min-h-0 flex-1 space-y-2.5 overflow-y-auto max-xl:max-h-[22rem]" data-testid="needs-approval-list">
+      {/* On a phone: the first three, in the page's own scroll (no list scrolling inside it), and "View all" (the owner's test, 27 Oct) */}
+      <div className="mt-3 min-h-0 flex-1 space-y-2.5 overflow-y-auto max-xl:max-h-[22rem] max-sm:max-h-none max-sm:overflow-visible" data-testid="needs-approval-list">
         {rows.length === 0 ? (
           <div data-m="fadeIn" className="flex h-full min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 text-center dark:border-slate-700">
             <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Nothing needs your approval.</p>
             <p className="mt-1 text-[12px] text-slate-400">Anything the Agent prepares to send will wait here for you.</p>
           </div>
-        ) : rows.map(({ key, item, entering, leaving }) => (
-          <Collapse key={key} leaving={leaving}>
+        ) : rows.map(({ key, item, entering, leaving }, index) => (
+          <div key={key} className={index >= 3 ? "max-sm:hidden" : undefined}>
+          <Collapse leaving={leaving}>
           <button type="button" data-approval-row disabled={paused || leaving} title={paused ? PAUSED_TIP : undefined} onClick={() => (item.type === "draft" && item.to ? navigate(item.to) : setEditing(item.run_id))}
             {...(entering ? { "data-m": "slideDown" } : {})}
             className={`flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-left transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 ${entering ? "m-flash" : ""}`}>
@@ -688,19 +738,22 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
             <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">{item.age}</span>
             <span className="shrink-0 text-slate-400"><Icon name="chevron" className="h-3 w-3" /></span>
           </button>
-          {item.type === "draft" && (item.draft_id || draftReview(item.to)) && (
-            // Accept, Edit or Reject here, as on the open draft (the owner's QA, 23 Oct)
-            <div className="-mt-1 flex items-center gap-3 rounded-b-xl border border-t-0 border-slate-200 px-3 py-1.5 dark:border-slate-700" data-draft-actions>
-              {(() => { const now = deciding[item.draft_id || draftReview(item.to)]; return (<>
-              <button type="button" disabled={paused || leaving || Boolean(now)} aria-busy={now === "accept"} onClick={() => decideDraft(item, "accept")} className="text-[12px] font-semibold text-emerald-700 hover:underline disabled:opacity-60">{now === "accept" ? "Accepting…" : "Accept"}</button>
-              <button type="button" disabled={paused || leaving || Boolean(now)} onClick={() => navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`)} className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-60">Edit</button>
-              <button type="button" disabled={paused || leaving || Boolean(now)} aria-busy={now === "reject"} onClick={() => decideDraft(item, "reject")} className="text-[12px] font-semibold text-slate-600 hover:underline disabled:opacity-60">{now === "reject" ? "Rejecting…" : "Reject"}</button>
-              </>); })()}
-            </div>
-          )}
+          {/* Review, Approve, Edit and Postpone: the Agent Centre's own words for the same items (the owner's QA, 27 Oct) */}
+          <div className="-mt-1 flex flex-wrap items-center gap-3 rounded-b-xl border border-t-0 border-slate-200 px-3 py-1.5 dark:border-slate-700" data-draft-actions>
+            <button type="button" disabled={paused || leaving} onClick={() => (item.type === "draft" && item.to ? navigate(item.to) : setEditing(item.run_id))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Review</button>
+            <button type="button" disabled={paused || leaving || Boolean(deciding[keyOf(item)])} aria-busy={Boolean(deciding[keyOf(item)])} onClick={() => approve(item)} className="text-[12px] font-semibold text-blue-700 hover:underline disabled:opacity-60">{deciding[keyOf(item)] ? "Approving…" : "Approve"}</button>
+            <button type="button" disabled={paused || leaving} onClick={() => (item.type === "draft" && item.to ? navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`) : setEditing(item.run_id))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Edit</button>
+            <button type="button" disabled={paused || leaving} onClick={() => setLater(later === keyOf(item) ? null : keyOf(item))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Postpone</button>
+          </div>
+          {later === keyOf(item) && <PostponeChoice onPick={(when) => postpone(item, when)} onClose={() => setLater(null)} />}
           </Collapse>
+          </div>
         ))}
       </div>
+      {rows.length > 3 && (
+        <button type="button" onClick={() => navigate("/agent?tab=needs_approval")} data-approvals-view-all
+          className="mt-2 self-start text-[13px] font-semibold text-brand-700 hover:underline sm:hidden dark:text-brand-300">View all ({rows.length})</button>
+      )}
       {editing && (
         <DraftDrawer runId={editing} startEditing={false} onClose={() => setEditing(null)} onSaved={() => onChanged?.()} onOpenTask={(id) => { setEditing(null); navigate(`/agent/runs/${id}`); }} />
       )}

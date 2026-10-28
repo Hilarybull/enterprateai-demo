@@ -34,3 +34,30 @@ def test_the_funding_chat_updates_the_lines_with_the_new_amount(world):
     lines = row["data"].get("use_of_funds") or []
     total = sum(float(str(x.get("amount") or 0)) for x in lines if isinstance(x, dict))
     assert not lines or abs(total - target) <= 1      # the case starts in step with its request
+
+
+def test_fixed_cost_lines_are_worked_out_again_not_scaled():
+    """₦25,000 → ₦25,000,000 with ₦40,000 a month fixed costs: working capital 2 months, reserve 1 month, the purpose the rest."""
+    from app.modules.readiness.service import ReadinessService
+    was = {"target_amount": 25000, "purpose": "Staff payment", "economics": {"fixed_costs_monthly": 40000},
+           "use_of_funds": [{"id": "a", "amount": "24700", "purpose": "Staff payment", "category": "People", "period": "2027-04"},
+                            {"id": "b", "amount": "200", "purpose": "Working capital: two months of fixed costs", "category": "Operations"},
+                            {"id": "c", "amount": "100", "purpose": "Reserve: one month of fixed costs", "category": "Reserve"}]}
+    out = ReadinessService.lines_for_request(was, {"target_amount": 25000000})
+    assert [(x["id"], x["amount"]) for x in out] == [("a", "24880000"), ("b", "80000"), ("c", "40000")]
+    # lines the owner wrote themselves still scale in the same shares
+    own = {**was, "use_of_funds": [{"id": "a", "amount": "15000", "purpose": "Staff payment"}, {"id": "b", "amount": "10000", "purpose": "Laptops"}]}
+    assert [x["amount"] for x in ReadinessService.lines_for_request(own, {"target_amount": 50000})] == ["30000", "20000"]
+
+
+def test_fixed_costs_from_research_are_not_used_for_the_lines():
+    """The owner, 28 Oct: fixed costs research put in, never entered by them: those lines left empty to be asked."""
+    from app.modules.readiness.service import ReadinessService
+    was = {"target_amount": 25000, "purpose": "Staff payment", "economics": {"fixed_costs_monthly": 40000},
+           "provenance": {"economics.fixed_costs_monthly": {"value": 40000, "source": "your research (not adopted yet)"}},
+           "use_of_funds": [{"id": "a", "amount": "24700", "purpose": "Staff payment", "category": "People"},
+                            {"id": "b", "amount": "200", "purpose": "Working capital: two months of fixed costs", "category": "Operations"},
+                            {"id": "c", "amount": "100", "purpose": "Reserve: one month of fixed costs", "category": "Reserve"}]}
+    out = ReadinessService.lines_for_request(was, {"target_amount": 25000000})
+    assert [(x["id"], x["amount"]) for x in out] == [("a", "25000000"), ("b", ""), ("c", "")]
+    assert ReadinessService.owner_fixed_costs(was) is None and ReadinessService._agent_lines(was) is None

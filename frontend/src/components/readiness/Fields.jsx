@@ -167,7 +167,8 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence,
 
 function Provenance({ entry }) {
   // Where an answer came from is said once, on its section (the owner's brief, 20 Oct); here only "Changed by you", on a
-  // field you edited yourself.
+  // field you edited yourself; "From you" on one you told the Agent in chat.
+  if (/^From you\b/.test(String(entry?.source || ""))) return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-from-you>From you</p>;
   if (!entry || !/\b(you|your edit|edited|changed)\b/i.test(String(entry.source || "")) || /chat|agent|records|profile|research|invoices|expenses|catalogue/i.test(String(entry.source || ""))) return null;
   return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-changed-by-you>Changed by you</p>;
 }
@@ -224,9 +225,11 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
 /** The Agent's draft for one field, waiting beside it (the owner's brief, 25 Oct; F-10): Accept puts it in the field, Edit
  *  puts it there to change, Reject removes it for good. A field that already holds a value keeps it until Accept. */
 export function DraftBox({ field, draft, data, onChange, inputId }) {
+  const amount = field.type === "money" && /^\s*-?\d[\d,]*(\.\d+)?\s*$/.test(String(draft.value ?? ""));
+  const sign = getCurrencySymbol(data?.currency) || "";
   const shown = Array.isArray(draft.value)
     ? draft.value.map((r) => Object.entries(r || {}).filter(([k, v]) => k !== "id" && v).map(([, v]) => v).join(": ")).filter(Boolean)
-    : [String(draft.value)];
+    : [amount ? `${sign}${Math.round(Number(String(draft.value).replace(/,/g, ""))).toLocaleString("en-GB")}` : String(draft.value)];
   const rest = () => Object.fromEntries(Object.entries(data?.agent_drafts || {}).filter(([k]) => k !== field.key));
   const use = (focus) => {
     onChange(field.key, draft.value);
@@ -242,7 +245,7 @@ export function DraftBox({ field, draft, data, onChange, inputId }) {
     <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-2.5 text-[13px] text-slate-800 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-slate-100" data-agent-draft={field.key}>
       <p className="text-[12px] font-semibold text-indigo-700 dark:text-indigo-300">{replaces ? "AI suggestion" : "AI draft"}</p>
       {shown.length > 1 ? <ul className="mt-1 list-disc space-y-0.5 pl-5">{shown.map((t) => <li key={t}>{t}</li>)}</ul> : <p className="mt-1 whitespace-pre-wrap">{shown[0]}</p>}
-      <p className="mt-1 text-[12px] text-slate-500">Drafted {draft.source || "from your records and research"}.{replaces ? " Your current answer stays until you accept." : ""}</p>
+      <p className="mt-1 text-[12px] text-slate-500">{/^suggested/i.test(String(draft.source || "")) ? `${String(draft.source)[0].toUpperCase()}${String(draft.source).slice(1)}.` : `Drafted ${draft.source || "from your records and research"}.`}{replaces ? " Your current answer stays until you accept." : ""}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <Btn kind="primary" className="!px-3 !py-1 text-[12.5px]" onClick={() => use(false)} data-draft-accept>Accept</Btn>
         <Btn className="!px-3 !py-1 text-[12.5px]" onClick={() => use(true)} data-draft-edit>Edit</Btn>

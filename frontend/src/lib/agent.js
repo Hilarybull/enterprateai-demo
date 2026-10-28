@@ -42,6 +42,11 @@ function setConversation(businessId, turns) {
   memoryConversations.set(key, kept);
   try { sessionStorage.setItem(key, JSON.stringify(kept)); } catch { /* fine without it */ }
 }
+/** An earlier conversation, opened again: what the Agent is told was said, so it carries on from there (27 Oct). */
+export function continueConversation(businessId, messages) {
+  if (!businessId) return;
+  setConversation(businessId, (messages || []).filter((m) => (m.role === "user" || m.role === "assistant") && m.content).map((m) => ({ role: m.role, content: String(m.content).slice(0, 4000) })));
+}
 export function clearConversation(businessId) {
   if (!businessId) return;
   const key = conversationKey(businessId);
@@ -69,7 +74,7 @@ export function replyText(res) {
   return res.message || "";
 }
 
-export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false }) {
+export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false, page = null, caseId = null }) {
   const typed = typeof text === "string" && text.trim() ? text.trim() : null;
   const history = typed ? getConversation(businessId).slice(-18) : [];
   const sent = apiRequest("/agent/requests", "POST", {
@@ -84,6 +89,9 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
     confirmed: Boolean(confirmed),      // a priced task's price was shown and Start pressed
     // The task is started and carried on by the server; the screen watches it and shows its step.
     background: Boolean(background),
+    // Sent from a module's own Assistant: its conversation answers, never another module's (the owner, 27 Oct)
+    ...(page ? { page } : {}),
+    ...(caseId ? { case_id: caseId } : {}),      // the case or plan the page is on: its answer is about that one (28 Oct)
   }, { timeoutMs: 120000 });
   if (typed) {
     // Both sides of the exchange are kept, so the next message carries them.
@@ -188,7 +196,7 @@ export function agentErrorMessage(e, fallback = "Something went wrong. Please tr
     return "Can't reach EnterprateAI right now. Check your connection; nothing was changed, so it's safe to retry.";
   }
   if (e?.code === "TIMEOUT") {
-    return "That's taking longer than expected. It may still finish, so check the Agent Centre before trying again.";
+    return "That's taking longer than expected. It may still finish, so give it a minute before trying again.";
   }
   const status = e?.status || Number(raw.match(/^HTTP (\d+):/)?.[1]) || 0;
   let data = e?.data;
@@ -272,3 +280,50 @@ export function runTone(run) {
   if (run.status === "cancelled") return "slate";
   return "indigo";
 }
+
+// A typed reply to the Agent's buttons (the owner, 27 Oct: "it recommends actions in the chat, and no option to type to go
+// ahead", "it should be smart"): "yes" or "go ahead" is the first button, a button's own name is that button, "not now" closes
+// them; anything else is a new message (null).
+const _YES_WORDS = /\b(?:yes|yeah|yep|yup|ok|okay|sure|go ahead|go on|go for it|do it|do that|start it|start|proceed|continue|please do|please|sounds good|lets do it|lets go|thats fine|fine|alright|great|perfect|cool)\b/g;
+// Every word a yes-word ("yes, go ahead", "ok do it please"): a yes, never one that says something more
+const _isYes = (text) => {
+  const t = _plain(text);
+  return t.length > 0 && t.replace(_YES_WORDS, " ").replace(/\b(?:and|then|now|just)\b/g, " ").trim() === "";
+};
+const _NO = /^\s*(?:no|nope|not now|cancel|stop|later|skip|leave it|never mind)\b[\s.!]*$/i;
+const _plain = (t) => String(t || "").toLowerCase().replace(/[“”"'’.,!?]/g, "").replace(/\s+/g, " ").trim();
+export function offerFor(text, offers) {
+  const all = (offers || []).filter((o) => o && o.label);
+  const live = all.filter((o) => !o.dismiss);
+  if (!live.length) return null;
+  const said = _plain(text);
+  if (!said) return null;
+  if (_NO.test(text)) return all.find((o) => o.dismiss) || { dismiss: true };
+  // A button named: "open it" for the only Open, "start a new launch plan", "fix allocations"
+  const named = live.find((o) => { const l = _plain(o.label); return said === l || (said.length > 3 && (said.includes(l) || l.includes(said))); })
+    || (/^\s*open\b/i.test(text) ? live.filter((o) => /^open\b/i.test(o.label)).length === 1 && live.find((o) => /^open\b/i.test(o.label)) : null);
+  if (named) return named;
+  return _isYes(text) ? live[0] : null;
+}
+
+// The Agent panel's conversations, kept on the server per person and business (the owner, 27 Oct: "hope it stores history
+// conversations too"): the list, one, and saving the current one.
+export const listChats = (businessId) => apiRequest(`/businesses/${businessId}/agent/chats`, "GET");
+export const getChat = (businessId, id) => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "GET");
+export const saveChat = (businessId, id, messages) => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "PUT", { messages });
+/** A typed message carried on in the side panel when it is on the page (the owner, 27 Oct: "it should be by the side");
+ *  false when it isn't, and the caller answers in place as before. */
+export function toSidePanel(text) {
+  const detail = { text, handled: false };
+  try { window.dispatchEvent(new CustomEvent("ea:chat", { detail })); } catch { return false; }
+  return detail.handled;
+}
+/** Where a funding or launch message is carried on (the owner's mockups, 27 Oct): its case's Assistant tab when there is one
+ *  case to open, with the message sent there; null for anything else (or no answer within a few seconds). */
+export async function caseChatPath(businessId, text) {
+  const said = String(text || "").trim();
+  if (!businessId || !said) return null;
+  const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: businessId, text: said }, { timeoutMs: 10000 }).catch(() => null);
+  return asked?.converse && asked.to ? `${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(said.slice(0, 500))}` : null;
+}
+export const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;

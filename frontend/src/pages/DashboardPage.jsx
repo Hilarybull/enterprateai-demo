@@ -751,7 +751,7 @@ export default function DashboardPage() {
         {/* The Agent row as soon as its summary is here; the figures and insights below load after it. */}
         {agentSummary && !dashFailed && (
           <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]" data-agent-row-early>
-            <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} />
+            <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
             <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
           </div>
         )}
@@ -781,7 +781,7 @@ export default function DashboardPage() {
       {/* Needs Approval always sits beside the Agent card (below it on narrow screens), also when it is empty. */}
       <div {...enter("fadeUp", 0)} className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
         {/* A remembered copy is showing while the fresh one loads: approvals and anything that starts a task wait for it. */}
-        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} />
+        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
         <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
       </div>
 

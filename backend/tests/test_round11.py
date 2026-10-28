@@ -346,7 +346,10 @@ def test_owners_and_a_first_milestone_are_filled_for_the_owner():
     assert out["market"]["acquisition_owner"] == "Hilary (owner)"
     m = out["milestones"][0]
     assert (m["target"], m["baseline"], m["due_date"]) == ("10 paying customers", "2 paying customers", "2027-10-28")
-    assert out["purpose_milestone_id"] == m["id"] and out["market"]["acquisition_milestone_id"] == m["id"]
+    # Linked once the milestone is the case's own, never to a milestone still waiting as a draft (the owner, 28 Oct)
+    assert out.get("purpose_milestone_id") is None and not (out.get("market") or {}).get("acquisition_milestone_id")
+    approved = _fill(rules.FUNDING, {"data": {**row["data"], "milestones": [m]}}, {"_owner_name": "Hilary (owner)"}, date(2026, 10, 22))
+    assert approved["purpose_milestone_id"] == m["id"] and approved["market"]["acquisition_milestone_id"] == m["id"]
 
 
 def test_a_cut_off_draft_reply_keeps_its_complete_fields():
@@ -445,7 +448,7 @@ def test_the_launch_drafts_are_its_own_numbers_and_instructions():
             return R()
     only = {k: research.CASE_DRAFT_FIELDS["launch"][k] for k in ("market.budget", "planned_volume.amount", "offer.delivery_terms", "delivery.dependencies")}
     out = asyncio.run(research.draft_case_fields(LLM(), "launch", {"currency": "NGN"}, only=only))
-    assert out["market.budget"] == "20000" and out["planned_volume.amount"] == "15"
+    assert "market.budget" not in out and out["planned_volume.amount"] == "15"      # a budget not on record is asked, never drafted (28 Oct)
     assert out["offer.delivery_terms"].startswith("Washed at the office") and out["delivery.dependencies"][0]["name"] == "Water supply"
     assert "launch one offering" in LLM.seen["system"] and "funding case" not in LLM.seen["system"]
 

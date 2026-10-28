@@ -111,8 +111,8 @@ describe("readiness detail", () => {
     expect(screen.getAllByText("Need from you").length).toBeGreaterThan(0);
     expect(screen.getByRole("progressbar", { name: "Evidence coverage" }).getAttribute("aria-valuenow")).toBe("80");
     expect(screen.getAllByText(/A first launch: there is no trading history/).length).toBeGreaterThan(0);
-    // Three tabs (the owner's brief, 20 Oct); the decision is on Advanced.
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Inputs", "Advanced"]);
+    // Assistant first (the owner's mockups, 27 Oct); the decision is on Advanced.
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Documents"]);
     expect(document.getElementById("adv-decision")).toBeTruthy();
   });
 
@@ -284,37 +284,53 @@ describe("arriving from a goal started on the homepage", () => {
 });
 
 describe("the case page (the owner's brief, 20 Oct)", () => {
-  it("opens on Overview, with three tabs, one primary button and Pin, Run again and Archive in a menu", async () => {
-    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
+  it("opens on the Assistant (the owner's mockups, 27 Oct), with the conversation beside the business and the score", async () => {
+    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) },
+      { method: "GET", match: /assistant-context/, reply: () => ({ body: { business: { name: "Acme", stage: "Growth", sector: "Software" }, revenue: { total: 0, months: Array(12).fill(0), currency: "GBP", has_any: false },
+        records: [{ key: "profile", label: "Business profile", available: true }], activity: [], approvals: { count: 0, items: [] }, research: { state: "none" }, working: false } }) }];
     mount("/launch/s1");
-    await screen.findByRole("tab", { name: "Overview" });
-    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Inputs", "Advanced"]);
-    const header = document.querySelector("[data-case-header]");
-    expect(header.querySelector("[data-case-eyebrow]").textContent).toBe("Launch readiness");
-    expect([...header.querySelectorAll("button")].filter((b) => !b.hasAttribute("data-case-menu") && !b.hasAttribute("data-pill")).map((b) => b.textContent)).toEqual(["Edit inputs"]);
-    fireEvent.click(header.querySelector("[data-case-menu]"));
-    expect(within(header).getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["Pin to dashboard", "Run the check again", "All launches", "Archive"]);
-    expect(document.querySelectorAll("[data-case-status]").length).toBe(1);      // the status once per page
+    await screen.findByRole("tab", { name: "Assistant" });
+    expect(screen.getByRole("tab", { name: "Assistant" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Documents"]);
+    expect(document.querySelector("[data-assistant-header] h1").textContent).toBe("Launch Readiness: Bookkeeping launch");      // the service named
+    expect(await screen.findByText("Readiness Snapshot")).toBeTruthy();
+    for (const side of ["launch-snapshot", "launch-why-not", "quick"]) expect(document.querySelector(`[data-side="${side}"]`)).toBeTruthy();      // idea-06's side column
+    expect(screen.getByPlaceholderText("Ask EnterprateAI anything…")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "How ready is my launch?" })).toBeTruthy();
   });
 
-  it("old addresses still open: tab=setup is Your answers, tab=results is Overview", async () => {
+  it("the Checklist has one primary button and Pin, Run again and Archive in a menu", async () => {
+    routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
+    mount("/launch/s1?tab=overview");
+    await screen.findByRole("tab", { name: "Checklist" });
+    expect(screen.getByRole("tab", { name: "Checklist" }).getAttribute("aria-selected")).toBe("true");
+    // The same header on every tab (the owner's QA, 27 Oct), Edit inputs only in the menu
+    const header = document.querySelector("[data-assistant-header]");
+    expect(header.querySelector("h1").textContent).toBe("Launch Readiness: Bookkeeping launch");
+    expect([...header.querySelectorAll("button")].filter((b) => !b.hasAttribute("data-case-menu")).map((b) => b.textContent)).toEqual([]);
+    fireEvent.click(header.querySelector("[data-case-menu]"));
+    expect(within(header).getAllByRole("menuitem").map((b) => b.textContent)).toEqual(["Inputs", "Advanced", "Pin to dashboard", "Run the check again", "All launches", "Archive"]);
+    expect(document.querySelector("[data-case-areas]")).toBeTruthy();      // where each area stands, at the top of the Checklist
+    expect(document.querySelector("[data-case-side]")).toBeTruthy();      // and the side column beside it
+  });
+
+  it("old addresses still open: tab=setup is Your answers, tab=results is the Checklist", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
     mount("/launch/s1?tab=setup");
     expect(await screen.findByLabelText("Who is this launch for?")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Inputs" }).getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector("[data-menu-tab]").textContent).toContain("Inputs");      // from the ⋯ menu now, not a tab
     cleanup();
     mount("/launch/s1?tab=results");
-    await screen.findByRole("tab", { name: "Overview" });
-    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")).toBe("true");
+    await screen.findByRole("tab", { name: "Checklist" });
+    expect(screen.getByRole("tab", { name: "Checklist" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("an unchecked case says so once, with what to do, and no coverage line", async () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject({ assessment: null, summary: { classification: null } }) }) }];
-    mount("/launch/s1");
-    await screen.findByRole("tab", { name: "Overview" });
-    expect(document.querySelector("[data-case-status]").textContent).toBe("Not checked yet. Run the check to see your score.");
+    mount("/launch/s1?tab=overview");
+    await screen.findByRole("tab", { name: "Checklist" });
     expect(screen.queryByText(/^I know \d+%/)).toBeNull();
-    expect(within(document.querySelector("[data-case-header]")).getByRole("button", { name: "Run the check" })).toBeTruthy();
+    expect(within(document.querySelector("[data-assistant-header]")).getByRole("button", { name: "Run the check" })).toBeTruthy();
+    expect(await screen.findByText("Not checked yet. Ask me if you're ready to launch.")).toBeTruthy();      // said once, beside the page
   });
 });

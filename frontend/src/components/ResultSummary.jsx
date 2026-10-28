@@ -357,11 +357,11 @@ function Step({ result, step, onAnswered, draft = null, researched = false, onRe
   return (
     <li className={`${card} flex h-full flex-col gap-2`} data-next-step={step.key}>
       <div className="flex items-start justify-between gap-2">
-        <p className="line-clamp-2 text-[14px] font-semibold text-slate-900 dark:text-slate-100" title={step.title} data-step-title>{step.title}</p>
+        <p className="text-[14px] font-semibold leading-snug text-slate-900 dark:text-slate-100" title={step.title} data-step-title>{step.title}</p>
         <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${adopted && ready ? "bg-emerald-50 text-emerald-800" : ready ? "bg-indigo-50 text-indigo-800" : step.kind === "failed" ? "bg-rose-50 text-rose-900" : step.kind === "partial" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-step-badge>
           {saysNone ? step.badge : adopted && ready ? "Done" : dismissed ? "Dismissed" : theirs ? "Your answer" : ready ? (draft.new ? "New" : "Draft ready") : step.badge}</span>
       </div>
-      <p className="line-clamp-2 text-[12.5px] leading-5 text-slate-600 dark:text-slate-300">{step.why}</p>
+      <p className="text-[12.5px] leading-5 text-slate-600 dark:text-slate-300">{step.why}</p>
       {step.prefill && !draft && <p className="text-[12.5px] leading-5 text-slate-800 dark:text-slate-100" data-step-prefill>{step.prefill.text}</p>}
       {ready && (
         // The draft in the card (the owner's QA, 21 Oct), with one Adopt: applied at once, then checked again.
@@ -574,7 +574,7 @@ function DraftQuestion({ runId, item }) {
 const OWNERS_OWN = (st) => Boolean(st?.ownerOnly || st?.attest || st?.review || st?.confirmOffer || st?.confirmForecast || st?.noCommitments || st?.prereqDone || st?.confirmCapacity
   || /^confirm\./.test(String(st?.key || "")));
 
-export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = null, prices = null, readyToggle = false, working = false, businessId = null, onApplied = null }) {
+export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = null, prices = null, readyToggle = false, working = false, businessId = null, onApplied = null, doAll = true }) {
   const applier = useApplyResearch(businessId, run, result, onApplied);
   const currency = run?.context?.currency || null;
   const [all, setAll] = useState(false);
@@ -603,7 +603,8 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
       {false && (
         <p role="status" data-apply-status />
       )}
-      <ol className="mt-3 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {/* Two columns at most, every title and reason in full (the owner, 28 Oct: cut off at 1024 in three columns) */}
+      <ol className="mt-3 grid gap-4 md:grid-cols-2">
         {steps.slice(0, every ? steps.length : 3).map((s) => <Step key={s.key} result={result} step={s} onAnswered={onAnswered} draft={researched && !s.field ? draftFor(run, s.key) : null}
           researched={researched && !s.field} onReview={onReview} onDoIt={onDoIt} price={prices?.steps?.[s.key]} done={(prices?.done || []).includes(s.key)}
           applier={businessId && run ? applier : null} currency={currency} figures={figuresFor(run, draftFor(run, s.key))} />)}
@@ -612,7 +613,7 @@ export function NextSteps({ result, onDoIt, onAnswered, run = null, onReview = n
         {/* On a case: only while this need is not researched yet (the owner's QA, 22 Oct: hidden after a run, shown for a new need) */}
         {/* Only when research can do something: never beside steps that are the owner's own press (the owner, 23 Oct: "why is
             do it all still showing" beside "Mark reviewed") */}
-        {!researched && onDoIt && steps.some((st) => !OWNERS_OWN(st)) && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
+        {doAll && !researched && onDoIt && steps.some((st) => !OWNERS_OWN(st)) && !(Array.isArray(result?.case_steps) && ["review", "adopted"].includes(result?.research?.state)) && (
           // The one research button for every step: its price first, in the spending modal (focus on "Not now").
           <button type="button" onClick={() => onDoIt(null)} disabled={working} aria-busy={working}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-80 max-sm:w-full" data-do-all>
@@ -682,7 +683,7 @@ export function FoundForYou({ businessId, result, onSeeAll, run: given }) {
   return (
     <section className="mt-6" aria-label={WORDS.found} data-found-for-you>
       <h3 className="text-[16px] font-semibold text-slate-900 dark:text-slate-100">{WORDS.found}</h3>
-      <ul className="mt-3 grid gap-3 xl:grid-cols-3">
+      <ul className="mt-3 grid gap-3 md:grid-cols-2">
         {found.slice(0, 3).map((i) => {
           const d = adopted ? { decision: i.decision === "accepted" || i.decision === "edited" ? "accept" : i.decision ? "reject" : null } : picked[i.id] || {};
           return (
@@ -691,7 +692,7 @@ export function FoundForYou({ businessId, result, onSeeAll, run: given }) {
                 <p className="text-[14px] font-semibold text-slate-900 dark:text-slate-100">{i.label}</p>
                 <span className="shrink-0 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-800">{foundWord(i)}</span>
               </div>
-              <p className="line-clamp-3 flex-1 text-[12.5px] leading-5 text-slate-600 dark:text-slate-300" title={i.value}>{i.value}</p>
+              <p className="flex-1 text-[12.5px] leading-5 text-slate-600 dark:text-slate-300" title={i.value}>{i.value}</p>
               <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 pt-1" data-finding-actions>
               {!adopted && (
                 <div className="flex flex-wrap gap-2">

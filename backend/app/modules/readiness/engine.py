@@ -926,7 +926,7 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         critical_undone = [p for p in undone if p.get("critical")]
         critical_expired = [x for x in (at_launch(p) for p in applicable if p.get("critical") and p.get("status") == "completed") if x]
         if critical_undone or critical_expired:
-            parts = ([f"Required and not completed: {', '.join(p.get('name') or 'A prerequisite' for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
+            parts = ([f"Required and not completed: {', '.join(str(p.get('name') or 'A prerequisite').rstrip('. ') for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
             b["B3"] = _res(FAILED, " ".join(parts), trigger={"prerequisites": [p.get("id") for p in critical_undone]}, source="Operational prerequisites")
             dated = sorted(str(p["required_by"])[:10] for p in critical_undone if parse_day(p.get("required_by")))
             if dated:

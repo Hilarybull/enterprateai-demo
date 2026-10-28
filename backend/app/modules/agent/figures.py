@@ -21,6 +21,15 @@ def day_words(value: Any) -> str:
     return f"{d.day} {d.strftime('%b')} {d.year}"
 
 
+def months_on_record(first: date | None, today: date) -> int:
+    """The months a three-month figure is averaged over: three, or fewer while the business has traded for less (the
+    owner's QA, 21 Oct: two invoices from 20 Oct are one month, never a third of their total; 27 Oct: "the simulation uses
+    ₦331,425 a month, the workspace card ₦994,276 for 12 months")."""
+    if not first:
+        return 3
+    return max(1, min(3, (today.year - first.year) * 12 + today.month - first.month + 1))
+
+
 def _when(rec: dict) -> date | None:
     from app.modules.agent import business as bz
     return bz.parse_day(rec.get("paid_at") or rec.get("date") or rec.get("expense_date") or rec.get("issued_at") or rec.get("issue_date") or rec.get("created_at"))
@@ -42,10 +51,17 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
             out.update({"top_customer": conc["top_customers"][0]["customer"], "top_share": float(conc["top1_share_pct"]), "clients": conc["customer_count"],
                         "customers": [{"name": c["customer"], "share": float(c["share_pct"])} for c in conc["top_customers"]]})
             out["sources"]["top_share"] = "your paid invoices"
-        recent = bz.revenue_by_customer(data, since=since)
+        # Money received on invoices, the reading the workspace card, the research and the funding check share
+        from app.modules.agent import research
+        paid = research.paid_invoices(data, today)
+        first = min((d for _i, d, _v in paid), default=None)
+        recent = [v for _i, d, v in paid if d >= since]
         if recent:
-            out["revenue_monthly"] = round(sum(recent.values()) / 3, 2)
-            out["sources"]["revenue_monthly"] = "your paid invoices in the last 3 months"
+            months = months_on_record(first, today)
+            out["revenue_monthly"] = round(sum(recent) / months, 2)
+            out["revenue_months"] = months
+            out["sources"]["revenue_monthly"] = ("money received on your invoices this month" if months == 1 else
+                                                 f"money received on your invoices over the last {months} months, a month on average")
         invs = [i for i in fin.get("invoices") or [] if not i.get("archived")]
         out["invoices"] = len(invs)
         if invs:
@@ -53,7 +69,8 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
         spent = [e for e in fin.get("expenses") or [] if not e.get("archived") and bz.status_of(e) == "paid" and (_when(e) or date.min) >= since]
         if spent:
             total = sum(bz.money(e.get("price") or e.get("total_amount") or e.get("amount")) for e in spent)
-            out["costs_monthly"] = round(total / 3, 2)
+            began = min([d for d in [first, *(_when(e) for e in fin.get("expenses") or [] if not e.get("archived"))] if d], default=None)
+            out["costs_monthly"] = round(total / months_on_record(began, today), 2)
             out["expenses_counted"] = len(spent)
             days = sorted({_when(e) for e in spent if _when(e)})
             out["expense_days"] = [x.isoformat() for x in days]

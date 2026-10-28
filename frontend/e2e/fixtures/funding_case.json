@@ -1,0 +1,2050 @@
+{
+ "id": "eee8694f-189e-4d93-9be6-feced22e9120",
+ "business_id": "A",
+ "type": "funding_case",
+ "status": "active",
+ "revision": 1,
+ "title": "\u00a325m equity investment to buy car wash equipment",
+ "profile": "funding.equity.uk_service_software@0.2",
+ "data": {
+  "currency": "GBP",
+  "stage": "trading",
+  "target_amount": 25000000.0,
+  "purpose": "buy car wash equipment",
+  "route_preference": "equity",
+  "traction": {
+   "summary": "Paying customers"
+  },
+  "timing_confirmed": true,
+  "receipt_date": "2027-01-31",
+  "pinned": true,
+  "title": "\u00a325m equity investment to buy car wash equipment",
+  "route": "equity",
+  "jurisdiction": "UK",
+  "business_model": "service",
+  "profile": "funding.equity.uk_service_software@0.2",
+  "provenance": {
+   "currency": {
+    "value": "GBP",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "purpose": {
+    "value": "buy car wash equipment",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "route_preference": {
+    "value": "equity",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "traction.summary": {
+    "value": "Paying customers",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "target_amount": {
+    "value": 25000000.0,
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "receipt_date": {
+    "value": "2027-01-31",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   },
+   "stage": {
+    "value": "trading",
+    "source": "From your funding chat, 28 Oct",
+    "as_of": "2026-10-28"
+   }
+  },
+  "editors": [
+   "owner@a.test"
+  ],
+  "owner": "owner@a.test"
+ },
+ "created_at": "2026-10-01T09:00:00+00:00",
+ "updated_at": "2026-10-01T09:00:00+00:00",
+ "can": {
+  "funding.read": true,
+  "funding.edit": true,
+  "funding.assess": true,
+  "funding.review": true,
+  "funding.export": true,
+  "business.membership.manage": true
+ },
+ "checklist_updated": null,
+ "has_products": true,
+ "related_done": {
+  "marketplace": false,
+  "plan": false,
+  "launch": false
+ },
+ "checklist_note": null,
+ "profile_definition": {
+  "key": "funding.equity.uk_service_software@0.2",
+  "id": "funding.equity.uk_service_software",
+  "version": "0.2",
+  "subject_type": "funding_case",
+  "available": true,
+  "title": "Equity preparation",
+  "route": "equity",
+  "jurisdiction": "UK",
+  "description": "Preparation for initial equity discussions, for UK service and software businesses.",
+  "status_note": "Pilot checklist. Weights and thresholds are proposals that have not been calibrated against funding outcomes.",
+  "score_needs_gates": false,
+  "thresholds": {
+   "conditionally_ready": 60,
+   "ready": 75
+  },
+  "wording": {
+   "ready": "Prepared for initial equity discussions against this checklist.",
+   "conditionally_ready": "Preparation gaps remain.",
+   "not_ready": "Not prepared yet against this checklist.",
+   "insufficient_evidence": "Not enough evidence to assess yet.",
+   "disclaimer": "This measures preparation against the checklist. It is not the likelihood of securing investment and does not replace an investor's own assessment."
+  },
+  "freshness_days": {
+   "cash_position": 30,
+   "operating_results": 90,
+   "forecast": 30,
+   "evidence": 180,
+   "attestation": 180
+  },
+  "forecast_months": 12,
+  "criteria": [
+   {
+    "code": "C1",
+    "title": "Funding purpose",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C1.A",
+      "label": "Positive target, currency and intended receipt date confirmed",
+      "missing": "Enter the amount you want to raise, its currency and when you expect to receive it, then confirm them.",
+      "kind": "computed"
+     },
+     {
+      "code": "C1.B",
+      "label": "Purpose links to a measurable milestone",
+      "missing": "Say what the funding is for and link it to a milestone with a measure and a target.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Funding goal",
+     "section": "goal"
+    },
+    "section": "goal"
+   },
+   {
+    "code": "C2",
+    "title": "Use of funds",
+    "weight": 15,
+    "checks": [
+     {
+      "code": "C2.A",
+      "label": "Allocations reconcile exactly to the target",
+      "missing": "Allocate the whole amount, including any reserve and fundraising costs.",
+      "kind": "computed"
+     },
+     {
+      "code": "C2.B",
+      "label": "Every allocation has a period and a purpose, or a reserve rationale",
+      "missing": "Give each allocation a month and a purpose (or, for a reserve, why it is held).",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Use of funds",
+     "section": "finances"
+    },
+    "section": "finances"
+   },
+   {
+    "code": "C3",
+    "title": "Financial preparation",
+    "weight": 20,
+    "checks": [
+     {
+      "code": "C3.A",
+      "label": "The monthly forecast is complete and reconciles",
+      "missing": "Complete the monthly cash forecast: opening cash, and receipts and payments for every month.",
+      "kind": "computed"
+     },
+     {
+      "code": "C3.B",
+      "label": "Material receipts and payments have documented assumptions and sources",
+      "missing": "Write down the assumption behind your receipts and your payments, and where each comes from.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Cash forecast",
+     "section": "finances"
+    },
+    "section": "finances"
+   },
+   {
+    "code": "C4",
+    "title": "Demand evidence",
+    "weight": 15,
+    "checks": [
+     {
+      "code": "C4.A",
+      "label": "At least one dated customer or market evidence item is attached",
+      "missing": "Attach at least one dated piece of customer or market evidence.",
+      "kind": "computed"
+     },
+     {
+      "code": "C4.B",
+      "label": "Its relevance to the target customer and offer is confirmed by a reviewer",
+      "missing": "Have a reviewer confirm the evidence is relevant to your target customer and offer.",
+      "kind": "attested"
+     }
+    ],
+    "tool": {
+     "label": "Evidence",
+     "section": "traction"
+    },
+    "section": "traction"
+   },
+   {
+    "code": "C5",
+    "title": "Business economics",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C5.A",
+      "label": "Pricing and direct and fixed costs are provided on a consistent basis",
+      "missing": "Enter your price, direct cost per sale and monthly fixed costs.",
+      "kind": "computed"
+     },
+     {
+      "code": "C5.B",
+      "label": "Break-even and capacity findings and their limitations are reviewed and explained",
+      "missing": "Have a reviewer confirm the break-even and capacity findings, and their limits, have been reviewed.",
+      "kind": "attested"
+     }
+    ],
+    "tool": {
+     "label": "Finances",
+     "section": "finances"
+    },
+    "section": "finances"
+   },
+   {
+    "code": "C6",
+    "title": "Market and growth plan",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C6.A",
+      "label": "Target segment and differentiation are documented",
+      "missing": "Describe your target segment and what sets you apart.",
+      "kind": "computed"
+     },
+     {
+      "code": "C6.B",
+      "label": "The acquisition approach has an owner, cost assumptions and a measurable milestone",
+      "missing": "Give your acquisition approach an owner, a cost assumption and a milestone.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Business and market",
+     "section": "market"
+    },
+    "section": "market"
+   },
+   {
+    "code": "C7",
+    "title": "Team and delivery",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C7.A",
+      "label": "Key execution responsibilities have named owners",
+      "missing": "Name who is responsible for each key area.",
+      "kind": "computed"
+     },
+     {
+      "code": "C7.B",
+      "label": "Material capacity and dependency gaps have documented actions",
+      "missing": "List any capacity or dependency gaps with the action for each, or confirm there are none.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Team and delivery",
+     "section": "team"
+    },
+    "section": "team"
+   },
+   {
+    "code": "C8",
+    "title": "Materials and risks",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C8.A",
+      "label": "Required preparation documents exist and are reviewed",
+      "missing": "Provide and review the four preparation documents.",
+      "kind": "computed"
+     },
+     {
+      "code": "C8.B",
+      "label": "Known material risks and funding-timing issues are disclosed with actions",
+      "missing": "List known material risks, each with an action, or confirm there are none.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Documents and risks",
+     "section": "documents"
+    },
+    "section": "documents"
+   }
+  ],
+  "gates": [
+   {
+    "code": "G1",
+    "label": "A confirmed positive funding target and explicit timing",
+    "criterion": "C1",
+    "remedy": "Enter a funding target above zero and the date you expect to receive it, then confirm them.",
+    "covers": "C1.A"
+   },
+   {
+    "code": "G2",
+    "label": "Allocations reconcile to the target",
+    "criterion": "C2",
+    "remedy": "Change the allocations or the target so they are equal. The target is never changed for you.",
+    "covers": "C2.A"
+   },
+   {
+    "code": "G3",
+    "label": "A complete, internally reconciled forecast",
+    "criterion": "C3",
+    "remedy": "Complete every month of the forecast and correct any invalid figures.",
+    "covers": "C3.A"
+   },
+   {
+    "code": "G4",
+    "label": "No unresolved contradictory figures across the case documents",
+    "criterion": "C8",
+    "remedy": "Review each document and resolve any figure that disagrees with the case.",
+    "covers": null
+   }
+  ],
+  "required_documents": [
+   {
+    "key": "executive_summary",
+    "label": "Executive summary or equivalent pitch content"
+   },
+   {
+    "key": "use_of_funds_schedule",
+    "label": "Use-of-funds schedule",
+    "record": "use_of_funds"
+   },
+   {
+    "key": "forecast",
+    "label": "Monthly forecast",
+    "record": "forecast"
+   },
+   {
+    "key": "team_summary",
+    "label": "Team and ownership summary"
+   }
+  ],
+  "sections": [
+   {
+    "key": "goal",
+    "title": "Funding goal",
+    "fields": [
+     {
+      "key": "title",
+      "label": "Case title",
+      "type": "text",
+      "help": "The name of this funding case. Its amount should match the target below."
+     },
+     {
+      "key": "target_amount",
+      "label": "How much do you want to raise?",
+      "type": "money",
+      "help": "Leave blank if you don't know yet. The forecast can help you work it out."
+     },
+     {
+      "key": "currency",
+      "label": "Currency",
+      "type": "select",
+      "options": [
+       "GBP",
+       "USD",
+       "EUR",
+       "NGN",
+       "GHS",
+       "KES",
+       "ZAR",
+       "CAD",
+       "AUD",
+       "INR"
+      ]
+     },
+     {
+      "key": "receipt_date",
+      "label": "When do you expect to receive it?",
+      "type": "date"
+     },
+     {
+      "key": "purpose",
+      "label": "What is the funding for?",
+      "type": "textarea"
+     },
+     {
+      "key": "route_preference",
+      "label": "Route you're considering",
+      "type": "select",
+      "options": [
+       "equity",
+       "loan",
+       "grant",
+       "unsure"
+      ],
+      "labels": {
+       "equity": "Equity",
+       "loan": "Loan",
+       "grant": "Grant",
+       "unsure": "Not sure yet"
+      }
+     },
+     {
+      "key": "milestones",
+      "label": "Milestones",
+      "type": "list",
+      "item": "milestone",
+      "fields": [
+       {
+        "key": "outcome",
+        "label": "Outcome",
+        "type": "text"
+       },
+       {
+        "key": "measure",
+        "label": "How it is measured",
+        "type": "text"
+       },
+       {
+        "key": "baseline",
+        "label": "Where it is now",
+        "type": "text"
+       },
+       {
+        "key": "target",
+        "label": "Target",
+        "type": "text"
+       },
+       {
+        "key": "due_date",
+        "label": "Due",
+        "type": "date"
+       },
+       {
+        "key": "owner",
+        "label": "Owner",
+        "type": "text"
+       }
+      ]
+     },
+     {
+      "key": "purpose_milestone_id",
+      "label": "Which milestone does the funding pay for?",
+      "type": "ref",
+      "of": "milestones",
+      "show": "outcome"
+     }
+    ]
+   },
+   {
+    "key": "market",
+    "title": "Business and market",
+    "fields": [
+     {
+      "key": "business_model",
+      "label": "Business model",
+      "type": "select",
+      "options": [
+       "service",
+       "software"
+      ]
+     },
+     {
+      "key": "stage",
+      "label": "Trading so far",
+      "type": "select",
+      "options": [
+       "pre_revenue",
+       "trading"
+      ],
+      "labels": {
+       "pre_revenue": "Not trading yet",
+       "trading": "Trading"
+      }
+     },
+     {
+      "key": "market.target_segment",
+      "label": "Who is your target customer?",
+      "type": "textarea"
+     },
+     {
+      "key": "market.location",
+      "label": "Where the business trades",
+      "type": "text"
+     },
+     {
+      "key": "market.differentiation",
+      "label": "What sets you apart?",
+      "type": "textarea"
+     },
+     {
+      "key": "market.acquisition_approach",
+      "label": "How will you win customers?",
+      "type": "textarea"
+     },
+     {
+      "key": "market.acquisition_owner",
+      "label": "Who owns customer acquisition?",
+      "type": "text"
+     },
+     {
+      "key": "market.acquisition_cost",
+      "label": "What do you assume it costs?",
+      "type": "text",
+      "help": "For example a monthly budget or a cost per customer."
+     },
+     {
+      "key": "market.acquisition_milestone_id",
+      "label": "Milestone it is measured by",
+      "type": "ref",
+      "of": "milestones",
+      "show": "outcome"
+     }
+    ]
+   },
+   {
+    "key": "traction",
+    "title": "Traction",
+    "fields": [
+     {
+      "key": "traction.summary",
+      "label": "What demand have you seen so far?",
+      "type": "textarea",
+      "help": "Research, enquiries, pilots or sales. If you have no sales yet, say so: nothing is filled in for you."
+     },
+     {
+      "key": "traction.customers",
+      "label": "Paying customers now",
+      "type": "number"
+     },
+     {
+      "key": "traction.monthly_revenue",
+      "label": "Revenue each month",
+      "type": "money"
+     },
+     {
+      "key": "traction.results_through",
+      "label": "Trading results are recorded up to",
+      "type": "date",
+      "when": {
+       "stage": "trading"
+      }
+     }
+    ],
+    "evidence": [
+     "C4.A"
+    ],
+    "attest": [
+     "C4.B"
+    ]
+   },
+   {
+    "key": "finances",
+    "title": "Finances and use of funds",
+    "fields": [
+     {
+      "key": "economics.price",
+      "label": "Price per sale",
+      "type": "money"
+     },
+     {
+      "key": "economics.direct_cost",
+      "label": "Direct cost per sale",
+      "type": "money"
+     },
+     {
+      "key": "economics.fixed_costs_monthly",
+      "label": "Fixed costs each month",
+      "type": "money"
+     },
+     {
+      "key": "use_of_funds",
+      "label": "Use of funds",
+      "type": "list",
+      "item": "allocation",
+      "fields": [
+       {
+        "key": "category",
+        "label": "Category",
+        "type": "select",
+        "options": [
+         "People",
+         "Product",
+         "Marketing and sales",
+         "Operations",
+         "Equipment",
+         "Fundraising costs",
+         "Reserve",
+         "Other"
+        ]
+       },
+       {
+        "key": "amount",
+        "label": "Amount",
+        "type": "money"
+       },
+       {
+        "key": "period",
+        "label": "Month",
+        "type": "month"
+       },
+       {
+        "key": "purpose",
+        "label": "Purpose",
+        "type": "text"
+       },
+       {
+        "key": "rationale",
+        "label": "Reserve rationale",
+        "type": "text",
+        "help": "For a reserve: why it is held."
+       },
+       {
+        "key": "milestone_id",
+        "label": "Milestone",
+        "type": "ref",
+        "of": "milestones",
+        "show": "outcome"
+       }
+      ]
+     }
+    ],
+    "forecast": true,
+    "attest": [
+     "C5.B"
+    ]
+   },
+   {
+    "key": "team",
+    "title": "Team and delivery",
+    "fields": [
+     {
+      "key": "team.responsibilities",
+      "label": "Who is responsible for what",
+      "type": "list",
+      "item": "responsibility",
+      "fields": [
+       {
+        "key": "area",
+        "label": "Area",
+        "type": "text"
+       },
+       {
+        "key": "owner",
+        "label": "Owner",
+        "type": "text"
+       }
+      ]
+     },
+     {
+      "key": "team.gaps",
+      "label": "Capacity and dependency gaps",
+      "type": "list",
+      "item": "gap",
+      "fields": [
+       {
+        "key": "gap",
+        "label": "Gap",
+        "type": "text"
+       },
+       {
+        "key": "action",
+        "label": "Action",
+        "type": "text"
+       }
+      ]
+     },
+     {
+      "key": "team.no_gaps",
+      "label": "There are no material capacity or dependency gaps",
+      "type": "boolean"
+     }
+    ]
+   },
+   {
+    "key": "documents",
+    "title": "Documents and risks",
+    "fields": [
+     {
+      "key": "risks",
+      "label": "Known material risks",
+      "type": "list",
+      "item": "risk",
+      "fields": [
+       {
+        "key": "risk",
+        "label": "Risk",
+        "type": "text"
+       },
+       {
+        "key": "action",
+        "label": "Action",
+        "type": "text"
+       },
+       {
+        "key": "kind",
+        "label": "Type",
+        "type": "select",
+        "options": [
+         "general",
+         "funding_timing"
+        ],
+        "labels": {
+         "general": "General",
+         "funding_timing": "Funding timing"
+        }
+       }
+      ]
+     },
+     {
+      "key": "no_known_risks",
+      "label": "There are no known material risks",
+      "type": "boolean"
+     }
+    ],
+    "documents": true
+   }
+  ]
+ },
+ "sections": [
+  {
+   "key": "goal",
+   "title": "Funding goal",
+   "answered": 6,
+   "total": 8
+  },
+  {
+   "key": "market",
+   "title": "Business and market",
+   "answered": 2,
+   "total": 9
+  },
+  {
+   "key": "traction",
+   "title": "Traction",
+   "answered": 1,
+   "total": 4
+  },
+  {
+   "key": "finances",
+   "title": "Finances and use of funds",
+   "answered": 0,
+   "total": 5
+  },
+  {
+   "key": "team",
+   "title": "Team and delivery",
+   "answered": 0,
+   "total": 3
+  },
+  {
+   "key": "documents",
+   "title": "Documents and risks",
+   "answered": 0,
+   "total": 2
+  }
+ ],
+ "forecast": null,
+ "forecast_draft": null,
+ "evidence": [],
+ "assessment": {
+  "id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+  "subject_id": "eee8694f-189e-4d93-9be6-feced22e9120",
+  "subject_type": "funding_case",
+  "execution_status": "succeeded",
+  "profile": "funding.equity.uk_service_software@0.2",
+  "as_of": "2026-10-01",
+  "created_at": "2026-10-01T09:00:00+00:00",
+  "completed_at": "2026-10-01T09:00:00+00:00",
+  "subject_revision": 1,
+  "requested_by": "owner@a.test",
+  "failure": null,
+  "result": {
+   "subject_type": "funding_case",
+   "profile": "funding.equity.uk_service_software@0.2",
+   "profile_title": "Equity preparation",
+   "ruleset_version": "0.2",
+   "engine_versions": {
+    "readiness": "readiness-engine-0.1",
+    "forecast": "cash-forecast-0.1"
+   },
+   "score": null,
+   "score_display": null,
+   "known_points": 5.0,
+   "coverage": 0,
+   "gate_completeness": 25,
+   "classification": "insufficient_evidence",
+   "headline": "Not enough evidence to assess yet.",
+   "blocker_count": 0,
+   "criteria": [
+    {
+     "code": "C1",
+     "title": "Funding purpose",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "goal",
+     "tool": {
+      "label": "Funding goal",
+      "section": "goal"
+     },
+     "checks": [
+      {
+       "code": "C1.A",
+       "label": "Positive target, currency and intended receipt date confirmed",
+       "kind": "computed",
+       "how_to": "Enter the amount you want to raise, its currency and when you expect to receive it, then confirm them.",
+       "state": "passed",
+       "reason": "\u00a325,000,000, expected 31 Jan 2027."
+      },
+      {
+       "code": "C1.B",
+       "label": "Purpose links to a measurable milestone",
+       "kind": "computed",
+       "how_to": "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.",
+       "state": "unknown",
+       "reason": "What the funding is for is entered. It isn't linked to a milestone yet."
+      }
+     ]
+    },
+    {
+     "code": "C2",
+     "title": "Use of funds",
+     "weight": 15,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "finances",
+     "tool": {
+      "label": "Use of funds",
+      "section": "finances"
+     },
+     "checks": [
+      {
+       "code": "C2.A",
+       "label": "Allocations reconcile exactly to the target",
+       "kind": "computed",
+       "how_to": "Allocate the whole amount, including any reserve and fundraising costs.",
+       "state": "unknown",
+       "reason": "Enter the target and at least one allocation."
+      },
+      {
+       "code": "C2.B",
+       "label": "Every allocation has a period and a purpose, or a reserve rationale",
+       "kind": "computed",
+       "how_to": "Give each allocation a month and a purpose (or, for a reserve, why it is held).",
+       "state": "unknown",
+       "reason": "No allocations yet."
+      }
+     ]
+    },
+    {
+     "code": "C3",
+     "title": "Financial preparation",
+     "weight": 20,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "finances",
+     "tool": {
+      "label": "Cash forecast",
+      "section": "finances"
+     },
+     "checks": [
+      {
+       "code": "C3.A",
+       "label": "The monthly forecast is complete and reconciles",
+       "kind": "computed",
+       "how_to": "Complete the monthly cash forecast: opening cash, and receipts and payments for every month.",
+       "state": "unknown",
+       "reason": "There is no monthly cash forecast yet."
+      },
+      {
+       "code": "C3.B",
+       "label": "Material receipts and payments have documented assumptions and sources",
+       "kind": "computed",
+       "how_to": "Write down the assumption behind your receipts and your payments, and where each comes from.",
+       "state": "unknown",
+       "reason": "There is no forecast to document yet."
+      }
+     ]
+    },
+    {
+     "code": "C4",
+     "title": "Demand evidence",
+     "weight": 15,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "traction",
+     "tool": {
+      "label": "Evidence",
+      "section": "traction"
+     },
+     "checks": [
+      {
+       "code": "C4.A",
+       "label": "At least one dated customer or market evidence item is attached",
+       "kind": "computed",
+       "how_to": "Attach at least one dated piece of customer or market evidence.",
+       "state": "unknown",
+       "reason": "No customer or market evidence is attached yet."
+      },
+      {
+       "code": "C4.B",
+       "label": "Its relevance to the target customer and offer is confirmed by a reviewer",
+       "kind": "attested",
+       "how_to": "Have a reviewer confirm the evidence is relevant to your target customer and offer.",
+       "state": "unknown",
+       "reason": "There is no evidence to review yet."
+      }
+     ]
+    },
+    {
+     "code": "C5",
+     "title": "Business economics",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "finances",
+     "tool": {
+      "label": "Finances",
+      "section": "finances"
+     },
+     "checks": [
+      {
+       "code": "C5.A",
+       "label": "Pricing and direct and fixed costs are provided on a consistent basis",
+       "kind": "computed",
+       "how_to": "Enter your price, direct cost per sale and monthly fixed costs.",
+       "state": "unknown",
+       "reason": "Enter your price, direct cost per sale and monthly fixed costs."
+      },
+      {
+       "code": "C5.B",
+       "label": "Break-even and capacity findings and their limitations are reviewed and explained",
+       "kind": "attested",
+       "how_to": "Have a reviewer confirm the break-even and capacity findings, and their limits, have been reviewed.",
+       "state": "unknown",
+       "reason": "No reviewer has confirmed this yet."
+      }
+     ]
+    },
+    {
+     "code": "C6",
+     "title": "Market and growth plan",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "market",
+     "tool": {
+      "label": "Business and market",
+      "section": "market"
+     },
+     "checks": [
+      {
+       "code": "C6.A",
+       "label": "Target segment and differentiation are documented",
+       "kind": "computed",
+       "how_to": "Describe your target segment and what sets you apart.",
+       "state": "unknown",
+       "reason": "Not filled in yet: target segment, differentiation.",
+       "missing": [
+        "target segment",
+        "differentiation"
+       ]
+      },
+      {
+       "code": "C6.B",
+       "label": "The acquisition approach has an owner, cost assumptions and a measurable milestone",
+       "kind": "computed",
+       "how_to": "Give your acquisition approach an owner, a cost assumption and a milestone.",
+       "state": "unknown",
+       "reason": "Not filled in yet: acquisition approach, owner, cost assumption, a measurable milestone.",
+       "missing": [
+        "acquisition approach",
+        "owner",
+        "cost assumption",
+        "a measurable milestone"
+       ]
+      }
+     ]
+    },
+    {
+     "code": "C7",
+     "title": "Team and delivery",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "team",
+     "tool": {
+      "label": "Team and delivery",
+      "section": "team"
+     },
+     "checks": [
+      {
+       "code": "C7.A",
+       "label": "Key execution responsibilities have named owners",
+       "kind": "computed",
+       "how_to": "Name who is responsible for each key area.",
+       "state": "unknown",
+       "reason": "No responsibilities are listed yet."
+      },
+      {
+       "code": "C7.B",
+       "label": "Material capacity and dependency gaps have documented actions",
+       "kind": "computed",
+       "how_to": "List any capacity or dependency gaps with the action for each, or confirm there are none.",
+       "state": "unknown",
+       "reason": "List any gaps, or confirm there are none."
+      }
+     ]
+    },
+    {
+     "code": "C8",
+     "title": "Materials and risks",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "documents",
+     "tool": {
+      "label": "Documents and risks",
+      "section": "documents"
+     },
+     "checks": [
+      {
+       "code": "C8.A",
+       "label": "Required preparation documents exist and are reviewed",
+       "kind": "computed",
+       "how_to": "Provide and review the four preparation documents.",
+       "state": "unknown",
+       "reason": "Not provided yet: Executive summary or equivalent pitch content, Use-of-funds schedule, Monthly forecast, Team and ownership summary."
+      },
+      {
+       "code": "C8.B",
+       "label": "Known material risks and funding-timing issues are disclosed with actions",
+       "kind": "computed",
+       "how_to": "List known material risks, each with an action, or confirm there are none.",
+       "state": "unknown",
+       "reason": "List known material risks, or confirm there are none."
+      }
+     ]
+    }
+   ],
+   "gates": [
+    {
+     "code": "G1",
+     "label": "A confirmed positive funding target and explicit timing",
+     "criterion": "C1",
+     "severity": "critical",
+     "remedy": "Enter a funding target above zero and the date you expect to receive it, then confirm them.",
+     "state": "passed",
+     "reason": "\u00a325,000,000, expected 31 Jan 2027."
+    },
+    {
+     "code": "G2",
+     "label": "Allocations reconcile to the target",
+     "criterion": "C2",
+     "severity": "critical",
+     "remedy": "Change the allocations or the target so they are equal. The target is never changed for you.",
+     "state": "unknown",
+     "reason": "Enter the target and at least one allocation."
+    },
+    {
+     "code": "G3",
+     "label": "A complete, internally reconciled forecast",
+     "criterion": "C3",
+     "severity": "critical",
+     "remedy": "Complete every month of the forecast and correct any invalid figures.",
+     "state": "unknown",
+     "reason": "There is no monthly cash forecast yet."
+    },
+    {
+     "code": "G4",
+     "label": "No unresolved contradictory figures across the case documents",
+     "criterion": "C8",
+     "severity": "critical",
+     "remedy": "Review each document and resolve any figure that disagrees with the case.",
+     "state": "unknown",
+     "reason": "Documents that have not been provided and reviewed can't be checked for contradictions."
+    }
+   ],
+   "gaps": [
+    {
+     "code": "C1.B",
+     "group": 2,
+     "criterion": "C1",
+     "title": "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.",
+     "why": "What the funding is for is entered. It isn't linked to a milestone yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Purpose links to a measurable milestone",
+     "weight": 10,
+     "order": 0,
+     "section": "goal",
+     "tool": {
+      "label": "Funding goal",
+      "section": "goal"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C2.A",
+     "group": 2,
+     "criterion": "C2",
+     "title": "Allocate the whole amount, including any reserve and fundraising costs.",
+     "why": "Enter the target and at least one allocation.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Allocations reconcile exactly to the target",
+     "weight": 15,
+     "order": 1,
+     "section": "finances",
+     "tool": {
+      "label": "Use of funds",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C2.B",
+     "group": 2,
+     "criterion": "C2",
+     "title": "Give each allocation a month and a purpose (or, for a reserve, why it is held).",
+     "why": "No allocations yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Every allocation has a period and a purpose, or a reserve rationale",
+     "weight": 15,
+     "order": 1,
+     "section": "finances",
+     "tool": {
+      "label": "Use of funds",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C3.A",
+     "group": 2,
+     "criterion": "C3",
+     "title": "Complete the monthly cash forecast: opening cash, and receipts and payments for every month.",
+     "why": "There is no monthly cash forecast yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "The monthly forecast is complete and reconciles",
+     "weight": 20,
+     "order": 2,
+     "section": "finances",
+     "tool": {
+      "label": "Cash forecast",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C3.B",
+     "group": 2,
+     "criterion": "C3",
+     "title": "Write down the assumption behind your receipts and your payments, and where each comes from.",
+     "why": "There is no forecast to document yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Material receipts and payments have documented assumptions and sources",
+     "weight": 20,
+     "order": 2,
+     "section": "finances",
+     "tool": {
+      "label": "Cash forecast",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C4.A",
+     "group": 2,
+     "criterion": "C4",
+     "title": "Attach at least one dated piece of customer or market evidence.",
+     "why": "No customer or market evidence is attached yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "At least one dated customer or market evidence item is attached",
+     "weight": 15,
+     "order": 3,
+     "section": "traction",
+     "tool": {
+      "label": "Evidence",
+      "section": "traction"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C4.B",
+     "group": 2,
+     "criterion": "C4",
+     "title": "Have a reviewer confirm the evidence is relevant to your target customer and offer.",
+     "why": "There is no evidence to review yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Its relevance to the target customer and offer is confirmed by a reviewer",
+     "weight": 15,
+     "order": 3,
+     "section": "traction",
+     "tool": {
+      "label": "Evidence",
+      "section": "traction"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C5.A",
+     "group": 2,
+     "criterion": "C5",
+     "title": "Enter your price, direct cost per sale and monthly fixed costs.",
+     "why": "Enter your price, direct cost per sale and monthly fixed costs.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Pricing and direct and fixed costs are provided on a consistent basis",
+     "weight": 10,
+     "order": 4,
+     "section": "finances",
+     "tool": {
+      "label": "Finances",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C5.B",
+     "group": 2,
+     "criterion": "C5",
+     "title": "Have a reviewer confirm the break-even and capacity findings, and their limits, have been reviewed.",
+     "why": "No reviewer has confirmed this yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Break-even and capacity findings and their limitations are reviewed and explained",
+     "weight": 10,
+     "order": 4,
+     "section": "finances",
+     "tool": {
+      "label": "Finances",
+      "section": "finances"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C6.A",
+     "group": 2,
+     "criterion": "C6",
+     "title": "Describe your target segment and what sets you apart.",
+     "why": "Not filled in yet: target segment, differentiation.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Target segment and differentiation are documented",
+     "weight": 10,
+     "order": 5,
+     "section": "market",
+     "tool": {
+      "label": "Business and market",
+      "section": "market"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C6.B",
+     "group": 2,
+     "criterion": "C6",
+     "title": "Give your acquisition approach an owner, a cost assumption and a milestone.",
+     "why": "Not filled in yet: acquisition approach, owner, cost assumption, a measurable milestone.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "The acquisition approach has an owner, cost assumptions and a measurable milestone",
+     "weight": 10,
+     "order": 5,
+     "section": "market",
+     "tool": {
+      "label": "Business and market",
+      "section": "market"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C7.A",
+     "group": 2,
+     "criterion": "C7",
+     "title": "Name who is responsible for each key area.",
+     "why": "No responsibilities are listed yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Key execution responsibilities have named owners",
+     "weight": 10,
+     "order": 6,
+     "section": "team",
+     "tool": {
+      "label": "Team and delivery",
+      "section": "team"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C7.B",
+     "group": 2,
+     "criterion": "C7",
+     "title": "List any capacity or dependency gaps with the action for each, or confirm there are none.",
+     "why": "List any gaps, or confirm there are none.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Material capacity and dependency gaps have documented actions",
+     "weight": 10,
+     "order": 6,
+     "section": "team",
+     "tool": {
+      "label": "Team and delivery",
+      "section": "team"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C8.A",
+     "group": 2,
+     "criterion": "C8",
+     "title": "Provide and review the four preparation documents.",
+     "why": "Not provided yet: Executive summary or equivalent pitch content, Use-of-funds schedule, Monthly forecast, Team and ownership summary.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Required preparation documents exist and are reviewed",
+     "weight": 10,
+     "order": 7,
+     "section": "documents",
+     "tool": {
+      "label": "Documents and risks",
+      "section": "documents"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C8.B",
+     "group": 2,
+     "criterion": "C8",
+     "title": "List known material risks, each with an action, or confirm there are none.",
+     "why": "List known material risks, or confirm there are none.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Known material risks and funding-timing issues are disclosed with actions",
+     "weight": 10,
+     "order": 7,
+     "section": "documents",
+     "tool": {
+      "label": "Documents and risks",
+      "section": "documents"
+     },
+     "also": [],
+     "due_date": null
+    }
+   ],
+   "confidence": {
+    "level": "low",
+    "reasons": [
+     "Some required evidence is missing."
+    ],
+    "note": "Forecasts remain assumptions at every confidence level."
+   },
+   "stale_checks": [],
+   "missing": [
+    {
+     "code": "C1.B",
+     "label": "Purpose links to a measurable milestone",
+     "reason": "What the funding is for is entered. It isn't linked to a milestone yet."
+    },
+    {
+     "code": "C2.A",
+     "label": "Allocations reconcile exactly to the target",
+     "reason": "Enter the target and at least one allocation."
+    },
+    {
+     "code": "C2.B",
+     "label": "Every allocation has a period and a purpose, or a reserve rationale",
+     "reason": "No allocations yet."
+    },
+    {
+     "code": "C3.A",
+     "label": "The monthly forecast is complete and reconciles",
+     "reason": "There is no monthly cash forecast yet."
+    },
+    {
+     "code": "C3.B",
+     "label": "Material receipts and payments have documented assumptions and sources",
+     "reason": "There is no forecast to document yet."
+    },
+    {
+     "code": "C4.A",
+     "label": "At least one dated customer or market evidence item is attached",
+     "reason": "No customer or market evidence is attached yet."
+    },
+    {
+     "code": "C4.B",
+     "label": "Its relevance to the target customer and offer is confirmed by a reviewer",
+     "reason": "There is no evidence to review yet."
+    },
+    {
+     "code": "C5.A",
+     "label": "Pricing and direct and fixed costs are provided on a consistent basis",
+     "reason": "Enter your price, direct cost per sale and monthly fixed costs."
+    },
+    {
+     "code": "C5.B",
+     "label": "Break-even and capacity findings and their limitations are reviewed and explained",
+     "reason": "No reviewer has confirmed this yet."
+    },
+    {
+     "code": "C6.A",
+     "label": "Target segment and differentiation are documented",
+     "reason": "Not filled in yet: target segment, differentiation."
+    },
+    {
+     "code": "C6.B",
+     "label": "The acquisition approach has an owner, cost assumptions and a measurable milestone",
+     "reason": "Not filled in yet: acquisition approach, owner, cost assumption, a measurable milestone."
+    },
+    {
+     "code": "C7.A",
+     "label": "Key execution responsibilities have named owners",
+     "reason": "No responsibilities are listed yet."
+    },
+    {
+     "code": "C7.B",
+     "label": "Material capacity and dependency gaps have documented actions",
+     "reason": "List any gaps, or confirm there are none."
+    },
+    {
+     "code": "C8.A",
+     "label": "Required preparation documents exist and are reviewed",
+     "reason": "Not provided yet: Executive summary or equivalent pitch content, Use-of-funds schedule, Monthly forecast, Team and ownership summary."
+    },
+    {
+     "code": "C8.B",
+     "label": "Known material risks and funding-timing issues are disclosed with actions",
+     "reason": "List known material risks, or confirm there are none."
+    }
+   ],
+   "disclaimer": "This measures preparation against the checklist. It is not the likelihood of securing investment and does not replace an investor's own assessment.",
+   "status_note": "Pilot checklist. Weights and thresholds are proposals that have not been calibrated against funding outcomes.",
+   "route_note": null,
+   "metrics": {
+    "forecast": {
+     "state": "missing",
+     "issues": [],
+     "missing": [
+      "A monthly cash forecast"
+     ],
+     "required": [],
+     "months": [],
+     "min_cash": null,
+     "first_negative_month": null,
+     "excluded_financing": [],
+     "basis": {},
+     "formula_version": "cash-forecast-0.1",
+     "label": "This is a monthly projection. It cannot show whether every payment within a month can be made on its day.",
+     "currency": null,
+     "opening_cash": null
+    },
+    "baseline_min_cash": null,
+    "first_negative_month": null,
+    "funded_min_cash": null,
+    "funded_first_negative_month": null,
+    "funding_timing_gap": null,
+    "milestone_coverage": [],
+    "economics": {
+     "state": "unavailable",
+     "reason": "Price and costs are not all entered."
+    },
+    "runway": {
+     "state": "unknown",
+     "reason": "The forecast is not complete."
+    }
+   },
+   "data_basis": {
+    "months": {},
+    "label": null,
+    "note": null
+   },
+   "documents": [
+    {
+     "key": "executive_summary",
+     "label": "Executive summary or equivalent pitch content",
+     "source": null,
+     "exists": false,
+     "reviewed": false,
+     "needs_review": false
+    },
+    {
+     "key": "use_of_funds_schedule",
+     "label": "Use-of-funds schedule",
+     "source": null,
+     "exists": false,
+     "reviewed": false,
+     "needs_review": false
+    },
+    {
+     "key": "forecast",
+     "label": "Monthly forecast",
+     "source": null,
+     "exists": false,
+     "reviewed": false,
+     "needs_review": false
+    },
+    {
+     "key": "team_summary",
+     "label": "Team and ownership summary",
+     "source": null,
+     "exists": false,
+     "reviewed": false,
+     "needs_review": false
+    }
+   ],
+   "risks": [],
+   "evidence_used": [],
+   "limitations": [
+    "This is a monthly projection. It cannot show whether every payment within a month can be made on its day.",
+    "Forecast figures are assumptions, however well evidenced.",
+    "Ownership and team information describes preparation. It is not a legal verification."
+   ]
+  },
+  "freshness": {
+   "status": "current",
+   "reason": null,
+   "as_of": "2026-10-01"
+  },
+  "can_retry": false
+ },
+ "actions": [
+  {
+   "id": "86b2b7e4-a8cc-4c60-a500-770c56759df8",
+   "code": "C1.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.",
+   "why": "What the funding is for is entered. It isn't linked to a milestone yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Purpose links to a measurable milestone",
+   "group": 2,
+   "criterion": "C1",
+   "section": "goal",
+   "tool": {
+    "label": "Funding goal",
+    "section": "goal"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "20621dbd-39ff-4c2b-8380-d241bc5d8909",
+   "code": "C2.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Allocate the whole amount, including any reserve and fundraising costs.",
+   "why": "Enter the target and at least one allocation.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Allocations reconcile exactly to the target",
+   "group": 2,
+   "criterion": "C2",
+   "section": "finances",
+   "tool": {
+    "label": "Use of funds",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "42557f7d-d33f-44a5-88b9-96ee69f9de64",
+   "code": "C2.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Give each allocation a month and a purpose (or, for a reserve, why it is held).",
+   "why": "No allocations yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Every allocation has a period and a purpose, or a reserve rationale",
+   "group": 2,
+   "criterion": "C2",
+   "section": "finances",
+   "tool": {
+    "label": "Use of funds",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "bbe4725c-a1ec-4176-8835-42b98b77d56d",
+   "code": "C3.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Complete the monthly cash forecast: opening cash, and receipts and payments for every month.",
+   "why": "There is no monthly cash forecast yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "The monthly forecast is complete and reconciles",
+   "group": 2,
+   "criterion": "C3",
+   "section": "finances",
+   "tool": {
+    "label": "Cash forecast",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "93595185-1b81-4bca-b7d3-512866e0ff37",
+   "code": "C3.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Write down the assumption behind your receipts and your payments, and where each comes from.",
+   "why": "There is no forecast to document yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Material receipts and payments have documented assumptions and sources",
+   "group": 2,
+   "criterion": "C3",
+   "section": "finances",
+   "tool": {
+    "label": "Cash forecast",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "74679195-2ab5-4b51-bed8-3f034167d2bb",
+   "code": "C4.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Attach at least one dated piece of customer or market evidence.",
+   "why": "No customer or market evidence is attached yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "At least one dated customer or market evidence item is attached",
+   "group": 2,
+   "criterion": "C4",
+   "section": "traction",
+   "tool": {
+    "label": "Evidence",
+    "section": "traction"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "39a9169c-0da6-4079-b7e5-1099c570eb91",
+   "code": "C4.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Have a reviewer confirm the evidence is relevant to your target customer and offer.",
+   "why": "There is no evidence to review yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Its relevance to the target customer and offer is confirmed by a reviewer",
+   "group": 2,
+   "criterion": "C4",
+   "section": "traction",
+   "tool": {
+    "label": "Evidence",
+    "section": "traction"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "3798d039-75d7-46a4-8a79-c6d5340b34ad",
+   "code": "C5.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Enter your price, direct cost per sale and monthly fixed costs.",
+   "why": "Enter your price, direct cost per sale and monthly fixed costs.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Pricing and direct and fixed costs are provided on a consistent basis",
+   "group": 2,
+   "criterion": "C5",
+   "section": "finances",
+   "tool": {
+    "label": "Finances",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "b63fe820-e211-425b-b061-7ffc41b71a19",
+   "code": "C5.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Have a reviewer confirm the break-even and capacity findings, and their limits, have been reviewed.",
+   "why": "No reviewer has confirmed this yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Break-even and capacity findings and their limitations are reviewed and explained",
+   "group": 2,
+   "criterion": "C5",
+   "section": "finances",
+   "tool": {
+    "label": "Finances",
+    "section": "finances"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "193bd2e1-b103-4966-9371-c5a206b609f2",
+   "code": "C6.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Describe your target segment and what sets you apart.",
+   "why": "Not filled in yet: target segment, differentiation.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Target segment and differentiation are documented",
+   "group": 2,
+   "criterion": "C6",
+   "section": "market",
+   "tool": {
+    "label": "Business and market",
+    "section": "market"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "de7e7d26-e63b-476d-9b2e-4b3406bcb80a",
+   "code": "C6.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Give your acquisition approach an owner, a cost assumption and a milestone.",
+   "why": "Not filled in yet: acquisition approach, owner, cost assumption, a measurable milestone.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "The acquisition approach has an owner, cost assumptions and a measurable milestone",
+   "group": 2,
+   "criterion": "C6",
+   "section": "market",
+   "tool": {
+    "label": "Business and market",
+    "section": "market"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "e4c89de9-3ba3-4630-85d5-3b57a40d9ea0",
+   "code": "C7.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Name who is responsible for each key area.",
+   "why": "No responsibilities are listed yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Key execution responsibilities have named owners",
+   "group": 2,
+   "criterion": "C7",
+   "section": "team",
+   "tool": {
+    "label": "Team and delivery",
+    "section": "team"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "9efe2709-b0d9-40ad-b998-c6e9cd93aa78",
+   "code": "C7.B",
+   "status": "open",
+   "revision": 1,
+   "title": "List any capacity or dependency gaps with the action for each, or confirm there are none.",
+   "why": "List any gaps, or confirm there are none.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Material capacity and dependency gaps have documented actions",
+   "group": 2,
+   "criterion": "C7",
+   "section": "team",
+   "tool": {
+    "label": "Team and delivery",
+    "section": "team"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "becfa2d7-1e22-4cd3-bf10-40515a08e13d",
+   "code": "C8.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Provide and review the four preparation documents.",
+   "why": "Not provided yet: Executive summary or equivalent pitch content, Use-of-funds schedule, Monthly forecast, Team and ownership summary.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Required preparation documents exist and are reviewed",
+   "group": 2,
+   "criterion": "C8",
+   "section": "documents",
+   "tool": {
+    "label": "Documents and risks",
+    "section": "documents"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "fbf7a7d3-2edb-43f0-a2e1-b890bafbfb87",
+   "code": "C8.B",
+   "status": "open",
+   "revision": 1,
+   "title": "List known material risks, each with an action, or confirm there are none.",
+   "why": "List known material risks, or confirm there are none.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Known material risks and funding-timing issues are disclosed with actions",
+   "group": 2,
+   "criterion": "C8",
+   "section": "documents",
+   "tool": {
+    "label": "Documents and risks",
+    "section": "documents"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  }
+ ],
+ "summary": {
+  "business_id": "A",
+  "assessment_id": "ef4ca6c3-1929-42c2-808e-1c3be4eb3e27",
+  "profile_version": "funding.equity.uk_service_software@0.2",
+  "classification": "insufficient_evidence",
+  "score": 5,
+  "known_score": 5,
+  "confidence": "low",
+  "freshness": "current",
+  "freshness_reason": null,
+  "blocker_count": 0,
+  "next_action_id": "86b2b7e4-a8cc-4c60-a500-770c56759df8",
+  "title": "\u00a325m equity investment to buy car wash equipment",
+  "headline": "Not enough evidence to assess yet.",
+  "as_of": "2026-10-01",
+  "next_action": {
+   "id": "86b2b7e4-a8cc-4c60-a500-770c56759df8",
+   "title": "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.",
+   "section": "goal"
+  },
+  "open_actions": 15,
+  "missing_count": 15,
+  "blockers": [],
+  "execution_status": "succeeded",
+  "score_partial": true,
+  "not_ready_why": "15 things still to add, starting with: purpose links to a measurable milestone.",
+  "case_id": "eee8694f-189e-4d93-9be6-feced22e9120",
+  "coverage": 0,
+  "route": "equity",
+  "lifecycle_status": "active",
+  "pack": {
+   "ready": 0,
+   "total": 4,
+   "items": [
+    {
+     "key": "executive_summary",
+     "label": "Executive summary or equivalent pitch content",
+     "ready": false
+    },
+    {
+     "key": "use_of_funds_schedule",
+     "label": "Use-of-funds schedule",
+     "ready": false
+    },
+    {
+     "key": "forecast",
+     "label": "Monthly forecast",
+     "ready": false
+    },
+    {
+     "key": "team_summary",
+     "label": "Team and ownership summary",
+     "ready": false
+    }
+   ]
+  }
+ },
+ "decisions": null,
+ "scenarios_available": true
+}

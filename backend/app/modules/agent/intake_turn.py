@@ -569,10 +569,14 @@ _GOAL_WORDS = re.compile(r"^\s*(?:i\s+(?:want|need|would like)\s+to\s+|help\s+me
                          r"(?:test|validate|check|score|assess|evaluate)\s+(?:a|an|my|this|the|our)?\s*(?:new\s+|business\s+|startup\s+|product\s+|service\s+)*idea\s*[.!?]*\s*$", re.I)
 
 
-def just_the_goal(text: str) -> bool:
+def just_the_goal(text: str, key: str | None = None) -> bool:
     """"Test a business idea", "Validate my idea": the goal said, not an answer to any of its questions."""
     t = str(text or "").strip()
     if _GOAL_WORDS.match(t):
+        return True
+    # A question about the goal ("How ready am I to launch?") is never what is sold or launched (the owner, 26 Oct)
+    from app.modules.agent import readiness_answer
+    if readiness_answer.asked_about(t) or (key in LEAD or key is None) and re.match(r"^\s*(?:how|what|why|when|where|which|can|could|should|is|are|am|do|does)\b.*\?\s*$", t, re.I):
         return True
     from app.modules.agent import goals as _goals
     return any(t.lower().rstrip(".!? ") == str(g.get("label") or "").lower() for g in _goals.GOALS)
@@ -809,7 +813,7 @@ async def turn(*, goal_key: str, message: str, slots: list[dict], known: dict, p
                        else f"That is fine, a short answer for {slot_words(target)} is enough, or pick the closest option.")
     # A goal's own words are never an answer (the owner, 26 Oct: "Test a business idea" kept as the idea: "Test a business
     # idea, nice", then "₦25,000 a idea" and the summary listing it as the product): the question is asked instead
-    for key in [k for k, v in values.items() if isinstance(v, str) and just_the_goal(v)]:
+    for key in [k for k, v in values.items() if isinstance(v, str) and just_the_goal(v, k)]:
         values.pop(key)
         for rec in records:
             if rec.get("slot") == key:

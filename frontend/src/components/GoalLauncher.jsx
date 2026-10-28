@@ -202,7 +202,18 @@ export function useGoalFlow({ inApp = false } = {}) {
     trackGoal("entry_mode_selected", { entry_mode: body.entry_mode, ...(body.key ? { key: body.key } : {}) });
     const began = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
-      keep(await retryOnce(() => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...chatWorkspace() })));
+      // Signed in on the landing page, a question about a case that exists ("How ready am I for funding?") is answered as the
+      // dashboard Agent answers it, never the questions again (the owner, 26 Oct)
+      const ws = chatWorkspace();
+      const said = body.text || [...(offer.goals || []), ...(offer.tasks || [])].find((g) => g.key === body.key)?.label || "";
+      if (!inApp && here && ws.business_id && said) {
+        const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: ws.business_id, text: said }, { timeoutMs: 12000 }).catch(() => null);
+        // Funding and launch are conversations, in the chat panel (the owner, 27 Oct); any other case question, the dashboard Agent
+        if (asked?.converse && asked.to) { navigate(`${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(said)}`); return true; }
+        if (asked?.converse) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }      // the one general chat
+        if (asked?.kind) { navigate(`/dashboard?ask=${encodeURIComponent(said)}`); return true; }
+      }
+      keep(await retryOnce(() => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws })));
       // Time to the first question, measured and logged (the target is under 1.5 seconds).
       const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - began);
       trackGoal("first_question_shown", { ms });
@@ -214,7 +225,7 @@ export function useGoalFlow({ inApp = false } = {}) {
       setBusy(false);
       setPending("");
     }
-  }, [busy, keep, retryOnce, offer]);
+  }, [busy, keep, retryOnce, offer, inApp, here, navigate]);
   const answer = useCallback(async (answers, confirm = false, said = null, messageId = null) => {
     if (!session) return false;
     setBusy(true);

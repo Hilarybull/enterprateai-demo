@@ -45,14 +45,15 @@ const mount = (onChanged = vi.fn()) => {
 };
 
 describe("Needs Approval on the dashboard", () => {
-  it("shows each approval as one clickable row with no Edit button", () => {
+  it("shows each approval as one clickable row with the Agent Centre's Review, Approve, Edit and Postpone", () => {
     mount();
     const list = screen.getByTestId("needs-approval-list");
     const rows = [...list.querySelectorAll("[data-approval-row]")];
     expect(rows.length).toBe(2);
     expect(rows.every((r) => r.tagName === "BUTTON")).toBe(true);
-    expect(within(list).getAllByRole("button").length).toBe(2);                 // the rows themselves, nothing else to press
-    expect(within(list).queryByRole("button", { name: /^Edit/ })).toBeNull();
+    // The same words as the Agent Centre for the same items (the owner's QA, 27 Oct)
+    expect([...list.querySelectorAll("[data-draft-actions]")].map((bar) => [...bar.querySelectorAll("button")].map((b) => b.textContent)))
+      .toEqual([["Review", "Approve", "Edit", "Postpone"], ["Review", "Approve", "Edit", "Postpone"]]);
     expect(rows[0].textContent).toContain("Quote #QUO-12");
     expect(rows[0].textContent).toContain("Ready to send to Frank");
     expect(rows[0].textContent).toContain("2m");

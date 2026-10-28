@@ -426,8 +426,11 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
     can = lambda capability: agent_config.plan_allows(ent["plan"], capability)      # noqa: E731
     spend = autostart.budget(policy, runs, now)
     if doing and spend["paused"] and spend["cap"] >= 0:
-        suggestions.append({"key": "budget", "icon": "info", "tone": "amber", "mood": "needs_you",
-                            "text": "Paused: this month's automatic budget is used up. Raise it in Agent settings.",
+        # Not a problem, and not the credits (the owner's QA, 27 Oct: "paused" showed while 285 credits were left): only the
+        # Agent's own starting of tasks waits, at the monthly limit the owner set; their credits are for anything they ask
+        suggestions.append({"key": "budget", "icon": "info", "tone": "slate", "mood": "fyi",
+                            "text": f"The Agent has used the {spend['cap']} credits a month you allowed for tasks it starts by itself, so it waits until next month. "
+                                    "Your credits are still there for anything you ask it to do. You can raise the limit in Agent settings.",
                             "action": {"to": "/agent?settings=1"}})
     from app.modules.agent.twins import without_twins
     for r in sorted(without_twins(runs), key=lambda r: r.get("created_at") or "")[-40:]:      # a task asked twice is shown once (QA U8)
@@ -488,6 +491,10 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
             named = {}
     needs_approval = sorted([*(approval_card(a, now) for a in pending), *(_drafts.card(d, named.get(str(d.get("ref")))) for d in waiting)],
                             key=lambda c: c.get("created_at") or "", reverse=True) if actor.can_send or actor.can_prepare else []
+    # Postponed by this person until a day they picked (the owner, 27 Oct): out of the list and its count until then
+    from app.modules.agent import chat_actions
+    later = chat_actions.postponed(data, user_id, now)
+    needs_approval = [c for c in needs_approval if chat_actions.card_key(c) not in later]
 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     used = sum(1 for r in runs if (r.get("created_at") or "") >= month_start)

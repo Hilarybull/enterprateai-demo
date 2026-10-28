@@ -35,7 +35,8 @@ def test_the_run_drafts_from_the_workspace_facts_and_keeps_only_its_fields():
     model = Model('{"fields": {"market.acquisition_owner": "The founder", "market.acquisition_cost": "About ₦50,000 a month on Instagram ads",'
                   ' "traction.summary": null, "made.up": "x"}}')
     out = asyncio.run(research.draft_case_fields(model, "need_funding", research.workspace_facts(DATA, {"amount": 5000000}, {}, [])))
-    assert out == {"market.acquisition_owner": "The founder", "market.acquisition_cost": "About ₦50,000 a month on Instagram ads"}
+    # A cost not on record is never drafted: it is asked (the owner, 28 Oct: "Drafts must not invent figures")
+    assert out == {"market.acquisition_owner": "The founder"}
     assert "Waterless wash" in model.prompts[0]      # the facts it drafted from are the workspace's own
 
 

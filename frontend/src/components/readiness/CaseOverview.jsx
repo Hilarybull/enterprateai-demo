@@ -261,7 +261,7 @@ export function PackStrip({ pack, caseReady, to, locked = false }) {
       <p className="text-[14px] text-slate-800 dark:text-slate-100"><span className="font-semibold">Funding pack:</span> {text}
         {!complete && left.length > 0 && <span className="block text-[12.5px] text-slate-500 dark:text-slate-400">Still to do: {left.join(", ")}.</span>}</p>
       <button type="button" onClick={() => navigate(locked ? "/pricing" : to)} data-pack-cta
-        className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-800 hover:border-brand-300 max-sm:w-full dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+        className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-800 hover:border-brand-300 max-sm:w-full dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
         {locked ? "See plans" : complete ? "View funding pack" : "Finish the pack"}</button>
     </section>
   );

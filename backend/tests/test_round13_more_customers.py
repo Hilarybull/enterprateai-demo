@@ -162,4 +162,6 @@ def test_every_do_all_run_and_free_check_is_in_the_agent_centre_history(world, m
     assert mine["research:f1"]["title"] == "Do all for me: Funding readiness" and mine["research:f1"]["to"] == "/funding/case9?tab=results"
     assert mine["check:business_risks"]["title"] == "Risk check" and mine["check:business_risks"]["summary"] == "2 risks to act on · Free"
     others = client.get("/businesses/A/workflow-runs?bucket=completed").json()["items"]
-    assert not [r for r in others if r.get("kind") == "research"]      # only in History
+    # Ended research is in Recently Completed too, a newer run's replaced one not (the owner, 28 Oct)
+    done = {r["id"] for r in others if r.get("kind") == "research"}
+    assert "research:c1:done" not in done and {"research:c2:done", "research:f1:done"} <= done

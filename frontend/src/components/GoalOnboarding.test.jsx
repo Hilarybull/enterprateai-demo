@@ -457,12 +457,12 @@ describe("the hero", () => {
     const preview = grid.querySelector("[data-hero-right] [data-hero-preview]");
     for (const cls of ["hidden", "md:flex", "w-4/5", "lg:w-full", "isolate"]) expect(preview.className).toContain(cls);
     expect(preview.className).not.toContain("lg:invisible");
-    expect(preview.querySelector("[data-mock-greeting]").textContent).toMatch(/^(Good (morning|afternoon|evening)|Hello)$/);      // the time of day, and no name
+    expect(preview.querySelector("[data-mock-greeting]").textContent).toMatch(/^(Good (morning|afternoon|evening)|Hi|Hello)$/);      // the time of day, and no name
     expect(preview.textContent).toContain("Here's what happened today.");
     expect(preview.textContent).not.toMatch(/Jordan/);
-    // Three greetings only: evening runs on through the night (never "Hello").
+    // The time of day, and "Hi" from midnight to 5am (the owner, 28 Oct: not "Good evening" at midnight; never "Hello")
     expect([greetingAt(1), greetingAt(4), greetingAt(5), greetingAt(11), greetingAt(12), greetingAt(16), greetingAt(17), greetingAt(21), greetingAt(22), greetingAt(23)]).toEqual(
-      ["Good evening", "Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening", "Good evening"]);
+      ["Hi", "Hi", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening", "Good evening"]);
     expect(preview.textContent).toContain("Smarter");
     expect(preview.querySelector("[data-hero-dots]").className).toContain("lg:hidden");      // on a tablet the dot grid travels with the image
     expect(preview.querySelector("[data-hero-dots]").nextElementSibling.className).toContain("lg:rotate-1");
@@ -630,6 +630,18 @@ describe("carrying on after sign-in", () => {
     expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Replace", "Just update the changed details", "Cancel"]);
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByRole("group", { name: choose.label })).toBeTruthy();      // a late quick result never covers the question
+  });
+
+  // Signed in, a conversation from the landing page carries on in its chat, as a signed-in owner's message does (the owner,
+  // 28 Oct: "after signing, it should continue in the agent center"), with what was said and answered there
+  it("funding carries on in its own conversation, with the answers given on the landing page", async () => {
+    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /readiness-question$/.test(path) ? { kind: "funding", converse: true, to: "/funding/f1?tab=assistant" } : {});
+    mount();
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/funding/f1?tab=assistant&message=${encodeURIComponent("I need funding. 50000, trading")}`));
+    expect(posts(/readiness-question$/)[0].body).toEqual({ business_id: "biz-1", text: "I need funding. 50000, trading" });
+    expect(posts(/\/prepare$/).length).toBe(0);
   });
 
   it("a task the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {

@@ -380,8 +380,13 @@ function DocumentView({ businessId, subject, doc, entry }) {
   return null;
 }
 
+const EQUITY_ONLY = ["executive_summary", "team_summary"];      // engine.EQUITY_ONLY_DOCUMENTS
+
 export function RequiredDocuments({ businessId, subject, onChanged, recheck = null }) {
-  const docs = subject.profile_definition?.required_documents || [];
+  // A loan or a grant isn't asked for the equity-only items, as its check and the pack strip count them (the owner, 26 Oct:
+  // "2 of 2" on the strip, the executive and team summaries still "to do" here)
+  const route = String(subject.data?.route_preference || "").toLowerCase();
+  const docs = (subject.profile_definition?.required_documents || []).filter((d) => !(["loan", "grant"].includes(route) && EQUITY_ONLY.includes(d.key)));
   const entries = subject.data?.documents || {};
   const assessed = Object.fromEntries((subject.assessment?.result?.documents || []).map((d) => [d.key, d]));
   const [problem, setProblem] = useState(null);
@@ -479,6 +484,15 @@ export function RequiredDocuments({ businessId, subject, onChanged, recheck = nu
   );
 }
 
+// What each document is for, on its card (the owner's QA, 27 Oct: "the Prepare actions as cards with a short description")
+const MATERIAL_ABOUT = {
+  readiness_report: "Where your case stands: score, findings and next steps.",
+  executive_summary: "One page for a funder: the need, the business and the plan.",
+  pitch_outline: "The order to tell your story in, slide by slide.",
+  launch_checklist: "What is done and what is left before you launch.",
+};
+const DOC_CARD = "rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
+
 export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
   const [state, setState] = useState({ loading: true, kinds: [], items: [] });
   const [openDoc, setOpenDoc] = useState(null);
@@ -507,37 +521,54 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
     setOpenDoc(doc); setBody(doc.body || ""); await load(); onChanged();
   });
 
-  if (state.loading) return <p className="text-[13px] text-slate-500" role="status">Loading documents…</p>;
+  if (state.loading) return <div className="grid gap-3 sm:grid-cols-2" role="status" aria-label="Loading documents">{[0, 1].map((i) => <div key={i} className={`${DOC_CARD} h-28 animate-pulse`} />)}</div>;
+  const shown = showOld ? state.items : state.items.filter((m) => m.status !== "superseded");
+  const canMake = Boolean(can[`${feature}.export`]) && Boolean(subject.assessment);
   return (
-    <div className="space-y-3">
-      {!subject.assessment && <Notice>Documents are prepared from a completed check. Run the check first.</Notice>}
-      <div className="flex flex-wrap gap-2">
-        {state.kinds.map((k) => (
-          <Btn key={k.kind} disabled={!can[`${feature}.export`] || !subject.assessment || Boolean(busy)} onClick={() => make(k.kind)}>
-            {busy === `make-${k.kind}` ? "Preparing…" : `Prepare ${k.title.toLowerCase()}`}
-          </Btn>
-        ))}
-      </div>
-      {problem && <Notice tone="rose" role="alert">{problem} Nothing was duplicated; you can try again.</Notice>}
-      <ul className="space-y-2">
-        {/* The latest of each document only (the owner's QA, 21 Oct: "if you replace, you remove the old one"); earlier
-            versions are kept, behind one link. */}
-        {(showOld ? state.items : state.items.filter((m) => m.status !== "superseded")).map((m) => (
-          <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{m.title} <span className="font-normal text-slate-400">· version {m.version}</span></p>
-              <p className="text-[12px] text-slate-500">From the check of {dateLabel(m.as_of)} · {m.status === "superseded" ? "Replaced by a newer version" : m.status === "reviewed" ? `Reviewed by ${m.reviewed_by}` : "Draft"}{m.edited ? " · edited" : ""}</p>
-              {m.needs_review && <p className="text-[12px] font-medium text-amber-700 dark:text-amber-300">Needs review: {m.needs_review_reason}</p>}
-            </div>
-            {/* One menu per document, as on an invoice: open it, download it, or share it by link or email. */}
-            <MaterialMenu canExport={Boolean(can[`${feature}.export`])}
-              onOpen={() => open(m.id)}
-              onPdf={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}
-              onText={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}
-              onShare={() => setSharing(m)} />
+    <div className="space-y-5">
+      <section>
+        <p className="mb-2 text-[15px] font-bold text-slate-900 dark:text-slate-50">Your documents</p>
+        {shown.length ? (
+          // The latest of each document only (the owner's QA, 21 Oct); earlier versions are kept, behind one link
+          <ul className="grid gap-3 sm:grid-cols-2" data-case-docs>{shown.map((m) => (
+            <li key={m.id} className={DOC_CARD} data-case-doc>
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" onClick={() => open(m.id)} className="min-w-0 text-left">
+                  <span className="block text-[15px] font-semibold text-slate-900 hover:text-blue-700 dark:text-slate-50">{m.title}</span>
+                  <span className="block text-[12.5px] text-slate-500">Version {m.version} · {dateLabel(m.as_of)}{m.edited ? " · edited" : ""}</span>
+                </button>
+                <span className={`shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] font-medium ${m.status === "reviewed" ? "bg-emerald-50 text-emerald-700" : m.status === "superseded" ? "bg-slate-100 text-slate-600" : "bg-amber-50 text-amber-800"}`}>
+                  {m.status === "reviewed" ? "Reviewed" : m.status === "superseded" ? "Replaced" : "Draft"}</span>
+              </div>
+              {m.needs_review && <p className="mt-2 text-[12.5px] font-medium text-amber-700 dark:text-amber-300">Needs review: {m.needs_review_reason}</p>}
+              <div className="mt-3 flex items-center gap-2">
+                <Btn kind="primary" disabled={Boolean(busy) || !can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}>Download</Btn>
+                <MaterialMenu canExport={Boolean(can[`${feature}.export`])}
+                  onOpen={() => open(m.id)}
+                  onPdf={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}
+                  onText={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}
+                  onShare={() => setSharing(m)} />
+              </div>
+            </li>
+          ))}</ul>
+        ) : (
+          <div className={`${DOC_CARD} border-dashed text-center`} data-case-docs-empty>
+            <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-100">No documents yet</p>
+            <p className="mt-1 text-[13.5px] text-slate-500">{subject.assessment ? "Prepare one below. Each is written from your latest check; anything missing is shown as a gap, never filled in." : "Documents are prepared from a completed check. Run the check first."}</p>
+          </div>
+        )}
+      </section>
+      <section>
+        <p className="mb-2 text-[15px] font-bold text-slate-900 dark:text-slate-50">Prepare a document</p>
+        <ul className="grid gap-3 sm:grid-cols-2" data-case-prepare>{state.kinds.map((k) => (
+          <li key={k.kind} className={`${DOC_CARD} flex flex-col`}>
+            <p className="text-[15px] font-semibold text-slate-900 dark:text-slate-50">{k.title}</p>
+            <p className="mt-1 flex-1 text-[13px] text-slate-500">{MATERIAL_ABOUT[k.kind] || "Written from your latest check."}</p>
+            <div className="mt-3"><Btn disabled={!canMake || Boolean(busy)} onClick={() => make(k.kind)}>{busy === `make-${k.kind}` ? "Preparing…" : "Prepare"}</Btn></div>
           </li>
-        ))}
-      </ul>
+        ))}</ul>
+      </section>
+      {problem && <Notice tone="rose" role="alert">{problem} Nothing was duplicated; you can try again.</Notice>}
       {state.items.filter((m) => m.status === "superseded").length > 0 && (
         <button type="button" onClick={() => setShowOld((v) => !v)} aria-expanded={showOld} className="text-[12.5px] font-semibold text-brand-700 hover:underline" data-earlier-versions>
           {showOld ? "Hide earlier versions" : `Show earlier versions (${state.items.filter((m) => m.status === "superseded").length})`}</button>

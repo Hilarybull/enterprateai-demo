@@ -993,13 +993,15 @@ class Orchestrator:
             # what it is for, asked once, then its price
             asked = await self._plan_questions(req)
             if asked:
-                return {**asked, "capability": capability}
+                # What was already said goes with the question and comes back with the answer (the owner, 28 Oct: "new one....palm
+                # oil selling", then "A bank or lender", made a plan for the whole business)
+                return {**asked, "capability": capability, "params": dict(req.params or {})}
         if capability == "idea_validation" and req.source_channel in ("text", "voice") and not getattr(req, "essential_handoff", False) \
                 and not {"idea_for", "answers", "subject_id"} & set(req.params or {}) and not _names_an_idea(req.raw_input):
             # The same for an idea's check (the owner's QA, 23 Oct): which idea, asked before anything is spent
             asked = await self._idea_questions(req)
             if asked:
-                return {**asked, "capability": capability}
+                return {**asked, "capability": capability, "params": dict(req.params or {})}
         for key in ("plan_for", "idea_for"):
             chosen = str((req.params or {}).get(key) or "")
             if capability in ("business_plan_draft", "idea_validation") and chosen.startswith("launch:"):
@@ -1293,7 +1295,8 @@ class Orchestrator:
         fields.append({"key": "purpose", "label": "Who will read it?", "type": "choice", "required": True, "options": [
             {"value": "investors", "label": "Investors, to raise funding"}, {"value": "lender", "label": "A bank or lender, for a loan"},
             {"value": "partners", "label": "Partners or suppliers"}, {"value": "planning", "label": "Me and my team, to plan"}]})
-        return {"kind": "needs_input", "message": "Happy to draft your business plan. Two quick questions so it fits.", "fields": fields}
+        asks = len([f for f in fields if not f.get("show_if")])
+        return {"kind": "needs_input", "message": f"Happy to draft your business plan. {'One quick question' if asks == 1 else 'Two quick questions'} so it fits.", "fields": fields}
 
     async def _targets(self, req: AgentRequest, wf: WorkflowDefinition, actor: Actor) -> dict:
         """Resolve what the workflow should act on. Never guesses between several candidates."""

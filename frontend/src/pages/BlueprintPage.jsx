@@ -821,9 +821,17 @@ export default function BlueprintPage() {
 
   async function refreshSavedDocs() {
     try {
-      const res = await apiRequest("/blueprint/documents?limit=100", "GET");
+      const [res, plans] = await Promise.all([apiRequest("/blueprint/documents?limit=100", "GET"),
+        workspaceIdStored ? apiRequest(`/businesses/${workspaceIdStored}/business-plans`, "GET").catch(() => null) : Promise.resolve(null)]);
       const allowedTypes = new Set(DOCUMENTS.map((doc) => doc.id));
-      const docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
+      let docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
+      // Business plans as the Agent counts them (the owner, 27 Oct: 8 here, 10 in Agent Centre, 3 in the chat): this business's
+      // plans, one row a plan with its older copies as versions, "Needs review" while the Agent's draft waits
+      if (plans?.items) {
+        docs = [...docs.filter((d) => d.type !== "business_plan"), ...plans.items.map((pl) => ({
+          id: pl.versions?.[0]?.id || pl.id, type: "business_plan", title: pl.title, company_name: pl.subject, updated_at: pl.updated_at,
+          status: pl.needs_review ? "review" : "draft", versions: pl.versions || [], to: pl.to }))];
+      }
       setSavedDocs(docs);
       writeBlueprintCache(authEmail, docs);
       return docs;
@@ -1218,6 +1226,7 @@ export default function BlueprintPage() {
   }
 
   async function openSavedDocument(docItem) {
+    if (String(docItem?.id || "").startsWith("draft:") && docItem.to) { window.location.assign(docItem.to); return; }      // a draft not saved yet: its review
     setFromValidation(false);
     setError(null);
     const cachedContent = docItem?.type ? docByType[docItem.type]?.document_markdown : null;
@@ -3398,11 +3407,21 @@ export default function BlueprintPage() {
                                 className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
                                 {String(d.title || "Untitled Plan").replace(" — ", ": ")}
                               </button>
+                              {/* Older copies of the same plan, as its versions (the owner, 27 Oct: never listed as separate plans) */}
+                              {(d.versions || []).length > 1 && (
+                                <details className="mt-0.5 text-xs text-slate-500" data-plan-versions>
+                                  <summary className="cursor-pointer select-none">{d.versions.length} versions</summary>
+                                  <ul className="mt-1 space-y-0.5">{d.versions.map((v, i) => (
+                                    <li key={v.id}><button type="button" onClick={() => openSavedDocument({ ...d, id: v.id, versions: [] })} className="hover:text-indigo-600">
+                                      {i === 0 ? "Latest" : `Version ${d.versions.length - i}`}, {fmtDate(v.updated_at).split(",")[0]}</button></li>
+                                  ))}</ul>
+                                </details>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
-                                {s.charAt(0).toUpperCase() + s.slice(1)}
+                                {s === "review" ? "Needs review" : s.charAt(0).toUpperCase() + s.slice(1)}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(d.updated_at).split(",")[0]}</td>

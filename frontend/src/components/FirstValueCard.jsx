@@ -154,7 +154,8 @@ export function latestOf(result) {
       earlier: "Full check: not enough evidence to score yet", unscoredCheck: full };
   }
   const where = full.kind === "funding" ? `/funding/${full.case_id}` : full.kind === "launch" ? `/launch/${full.initiative_id}` : null;
-  return { full, score: outOf(full.score), band: CLASS_LABEL[full.classification] || "Not checked yet", coverage: full.evidence_coverage ?? 0,
+  // A score so far is "Not ready yet", never "Insufficient evidence" beside a number (the owner, 26 Oct), as the case page says it
+  return { full, score: `${outOf(full.score)}${full.score_partial ? " so far" : ""}`, band: full.score_partial ? "Not ready yet" : CLASS_LABEL[full.classification] || "Not checked yet", coverage: full.evidence_coverage ?? 0,
     source: `${full.title ? `${full.title} · ` : ""}Full check${full.as_of ? ` · ${shortDay(full.as_of)}` : ""}`, to: where,
     open: full.kind === "funding" ? "Open funding case" : full.kind === "launch" ? "Open launch plan" : null,
     earlier: `Earlier: ${first} (first result)` };
@@ -376,7 +377,9 @@ export function PremiumConfirm({ result, confirm: given, working: busy, onStart,
     return () => window.removeEventListener("keydown", key);
   }, [confirm, working, onClose]);
   if (!confirm || typeof document === "undefined") return null;
-  const price = pending ? "Working out the price…" : creditCopy.confirmVariable({ action: confirm.action || "Research your gaps", max: confirm.max ?? confirm.cost, balance: confirm.balance });
+  const price = pending ? "Working out the price…" : confirm.variable === false
+    ? creditCopy.confirmFixed({ action: confirm.action || "Research your gaps", cost: confirm.max ?? confirm.cost, balance: confirm.balance })
+    : creditCopy.confirmVariable({ action: confirm.action || "Research your gaps", max: confirm.max ?? confirm.cost, balance: confirm.balance });
   const steps = (result?.blockers || []).length;
   const plan = confirm.plan || {};
   const n = (k) => Number(plan[k]) || 0;
@@ -564,7 +567,7 @@ function RiskGaps({ items, onAnswer }) {
 }
 
 export default function FirstValueCard({ result: given, onDismiss = null, onContinue = null, continueLabel = "Open my dashboard", className = "", onPremium = null, extra = null,
-  initialServed = null, onUpdated = null, onReload = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null, onAnswer = null }) {
+  initialServed = null, onUpdated = null, onReload = null, hideStatus = false, hideOpen = false, embedded = false, run: runGiven = null, onRun = null, onAnswer = null, doAll = true }) {
   const navigate = useNavigate();
   const [edited, setEdited] = useState(null);      // the result after "Save and check again"
   useEffect(() => { setEdited(null); }, [given?._session]);
@@ -644,7 +647,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
 
   return (
     <section aria-label={result.headline} data-first-value={result.assessment_type} data-m="fadeUp"
-      className={`rounded-2xl border border-brand-200 bg-white p-5 text-left shadow-sm sm:p-6 dark:border-brand-900 dark:bg-slate-900 ${className}`}>
+      className={`rounded-2xl border border-brand-200 bg-white p-5 text-left shadow-sm sm:p-6 dark:border-brand-900 dark:bg-slate-900 ${embedded ? "ea-embedded" : ""} ${className}`}>
       <div className={`flex flex-wrap items-start justify-between gap-3 ${embedded ? "hidden" : ""}`} data-fv-head>
         <div className="min-w-0">
           {/* A small grey eyebrow and the case's own name (the owner's brief, 20 Oct). */}
@@ -699,7 +702,8 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       )}
 
       {!reviewing && <SavedNotice />}
-      {(reviewing || result.case_steps?.length > 0) && <NextSteps result={result} run={run} prices={prices} working={working} businessId={workspaceId}
+      {/* On the case page, no "Do all for me" under the steps: the Assistant offers it (the owner, 28 Oct: "remove the do all for me here") */}
+      {(reviewing || result.case_steps?.length > 0) && <NextSteps result={result} run={run} prices={prices} working={working} businessId={workspaceId} doAll={doAll && !embedded}
         onApplied={async (out) => {
           if (out?.research) { setRunNow(out.research); onRun?.(out.research); }
           const r = (await fetchFirstValue(result._session).catch(() => null))?.result; if (r) { setEdited(r); onUpdated?.(r); } return r;

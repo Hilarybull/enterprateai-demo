@@ -12,7 +12,7 @@ import uuid
 from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import File, UploadFile, APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.modules.agent import config as agent_config
@@ -169,9 +169,31 @@ def _public_run(run: dict) -> dict:
     return out
 
 
+def run_label(run: dict) -> str:
+    """The task named for what it is about (the owner, 28 Oct: two rows called just "Business Plan Draft", two "Receipt
+    Sending"): the plan's subject, or the document's number and customer."""
+    state = run.get("state") or {}
+    title = str(run.get("title") or "Task")
+    out = state.get("outcome") or {}
+    plan = out.get("plan") if isinstance(out.get("plan"), dict) else {}
+    answers = state.get("answers") or {}
+    what = str(plan.get("title") or answers.get("description") or answers.get("idea") or "").strip()
+    if what:
+        what = re.sub(r"^business plan\s*(?:for|:)?\s*", "", what, flags=re.I).strip()
+        return f"{title}: {what[:60]}" if what and what.lower() not in title.lower() else title
+    ref = str(state.get("invoice_reference") or state.get("quote_reference") or state.get("receipt_number") or "").strip()
+    who = str(state.get("customer_name") or answers.get("customer_name") or (state.get("rfq") or {}).get("company") or "").strip()
+    if ref and who:
+        return f"{title}, {ref} for {who}"
+    if ref or who:
+        return f"{title}, {ref}" if ref else f"{title} for {who}"
+    return title
+
+
 def _public_run_body(run: dict, no_dashes) -> dict:
     state = run.get("state") or {}
     return {
+        "label": no_dashes(run_label(run)),
         **{k: run.get(k) for k in ("id", "business_id", "workflow_key", "workflow_version", "capability", "family", "title",
                                    "status", "substatus", "reason_code", "goal", "source_channel", "source_reference",
                                    "recommendation_id", "current_step", "summary", "next_action", "pending_question",
@@ -284,9 +306,304 @@ class AgentRequestIn(BaseModel):
     confirmed: bool = False
     locale: str = "en-GB"
     background: bool = False      # return as soon as the task exists; the caller watches it
+    # Sent from a module's own Assistant (a funding case, a launch plan, the idea): its conversation answers, never another's
+    page: str | None = Field(default=None, pattern="^(funding|launch|idea)$")
+    case_id: str | None = Field(default=None, max_length=80)      # the plan's page it was sent from: the plan it is about (28 Oct)
+
+
+class ReadinessAskIn(BaseModel):
+    business_id: str = Field(..., max_length=80)
+    text: str = Field(..., max_length=2000)
+
+
+# ── The Agent panel's conversations, kept (the owner, 27 Oct: "hope it stores history conversations too") ──────────
+CHATS_KEPT, MESSAGES_KEPT = 30, 60
+
+
+class ChatIn(BaseModel):
+    title: str = Field(default="", max_length=120)
+    messages: list[dict] = Field(default_factory=list)
+
+
+def _chat_message(m: dict) -> dict | None:
+    """What is kept of a message: who said it, the words, and its buttons (never anything else the page held)."""
+    role = m.get("role") if m.get("role") in ("user", "assistant") else None
+    text = str(m.get("content") or "").strip()[:4000]
+    if not role or not text:
+        return None
+    links = [{"label": str(x.get("label") or "")[:80], "to": str(x.get("to") or "")[:300]} for x in m.get("links") or [] if isinstance(x, dict) and x.get("to")][:4]
+    prompts = [{"label": str(x.get("label") or "")[:80], "prompt": str(x.get("prompt") or "")[:300]} for x in m.get("prompts") or [] if isinstance(x, dict) and x.get("prompt")][:4]
+    # The Assistant tab's cards, by type only: drawn again from the live case and records when the conversation is opened
+    cards = [_card_kept(x) for x in m.get("cards") or [] if isinstance(x, dict) and x.get("type") in _CARD_TYPES][:4]
+    at = str(m.get("at") or "")[:32]
+    return {"role": role, "content": text, **({"links": links} if links else {}), **({"prompts": prompts} if prompts else {}),
+            **({"cards": cards} if cards else {}), **({"at": at} if at else {})}
+
+
+_CARD_TYPES = {"records", "result", "next", "score_change", "choose", "progress", "approvals", "idea_inputs", "viability", "launch_fit", "risk",
+               "scenario", "preview", "segments", "findings"}
+
+
+def _card_kept(x: dict) -> dict:
+    """A card as it is saved. Most are drawn again from the live records; a scenario keeps its own figures (they were worked
+    out then), a preview keeps which draft it was, to open again (the owner's QA, 27 Oct: "the chat is lost after a reload")."""
+    out = {k: x[k] for k in ("type", "case_id", "before", "after", "price", "reuse", "score", "options", "topics", "fixed") if x.get(k) is not None}
+    short = lambda v, n=200: str(v or "")[:n]      # noqa: E731
+    if x.get("type") == "scenario":
+        out.update({"title": short(x.get("title"), 120), "summary": short(x.get("summary"), 600), "months": x.get("months") if isinstance(x.get("months"), int) else None,
+                    "worse": bool(x.get("worse")), "kind": short(x.get("kind"), 40),
+                    "rows": [{k: short(r.get(k), 60) for k in ("label", "before", "after")} for r in x.get("rows") or [] if isinstance(r, dict)][:5]})
+    if x.get("type") == "preview" and isinstance(x.get("item"), dict):
+        out["item"] = {k: short(x["item"].get(k), 120) for k in ("title", "draft_id", "run_id", "approval_id", "to", "kind") if x["item"].get(k)}
+    return out
+
+
+async def _chats_of(user: dict, business_id: str) -> list[dict]:
+    try:
+        actor, _ = await get_orchestrator().actor_for(user["id"], business_id, user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    if not actor.can_view:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    data = await get_orchestrator().rt.business.load(business_id) or {}
+    return list(((data.get("agent_chats") or {}).get(str(user["id"])) or []))
+
+
+class ChatScenarioIn(BaseModel):
+    kind: str = Field(pattern="^(order_reduction|payment_delay)$")
+
+
+@router.post("/businesses/{business_id}/agent/chat/scenario")
+async def chat_scenario(business_id: str, body: ChatScenarioIn, user=Depends(get_current_user)):
+    """A scenario run from the chat on the business's own figures, its result as a card (the owner, 27 Oct). Saves nothing."""
+    from app.modules.agent import chat_actions, goal_router
+    await goal_router._business_for(user, business_id)
+    return await chat_actions.start_scenario(user, business_id, body.kind)
+
+
+@router.get("/businesses/{business_id}/agent/chat/scenario/{job}")
+async def chat_scenario_job(business_id: str, job: str, user=Depends(get_current_user)):
+    """A scenario still running after the first wait: its card when done, or {"pending": true}."""
+    from app.modules.agent import chat_actions, goal_router
+    await goal_router._business_for(user, business_id)
+    out = chat_actions.scenario_job(user, job)
+    if out is None:
+        raise HTTPException(status_code=404, detail="That scenario isn't running any more.")
+    return out
+
+
+class ChatPostponeIn(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    when: str = Field(pattern="^(tomorrow|next_week|undo)$")      # undo: back in the list now (the toast's Undo)
+
+
+@router.post("/businesses/{business_id}/agent/chat/postpone")
+async def chat_postpone(business_id: str, body: ChatPostponeIn, user=Depends(get_current_user)):
+    """An item waiting for approval, put away until tomorrow or next week: out of the list and its count until then."""
+    from app.modules.agent import chat_actions, goal_router
+    await goal_router._business_for(user, business_id)
+    until = None if body.when == "undo" else chat_actions.until_of(body.when, get_orchestrator().rt.clock())
+
+    def _put(d: dict) -> None:
+        mine = d.setdefault("agent_postponed", {}).setdefault(str(user["id"]), {})
+        if until is None:
+            mine.pop(body.key, None)
+        else:
+            mine[body.key] = until.isoformat()
+    await get_orchestrator().rt.business.mutate(business_id, _put)
+    return {"key": body.key, "until": until.isoformat() if until else None}
+
+
+@router.get("/businesses/{business_id}/agent/chat/preview")
+async def chat_preview(business_id: str, run_id: str | None = Query(default=None), draft_id: str | None = Query(default=None), user=Depends(get_current_user)):
+    """What a waiting item says, to read in the chat."""
+    from app.modules.agent import chat_actions, goal_router
+    await goal_router._business_for(user, business_id)
+    return await chat_actions.preview(user, business_id, run_id=run_id, draft_id=draft_id)
+
+
+class ChatReviseIn(BaseModel):
+    instruction: str = Field(min_length=2, max_length=1000)
+    run_id: str | None = Field(default=None, max_length=80)
+    draft_id: str | None = Field(default=None, max_length=80)
+
+
+@router.post("/businesses/{business_id}/agent/chat/revise")
+async def chat_revise(business_id: str, body: ChatReviseIn, user=Depends(get_current_user)):
+    """The owner's change, typed in the chat, made to a waiting draft; it waits for approval again."""
+    from app.modules.agent import chat_actions, goal_router
+    await goal_router._business_for(user, business_id)
+    try:
+        return await chat_actions.revise(user, business_id, body.instruction, run_id=body.run_id, draft_id=body.draft_id)
+    except AccessDenied as e:
+        raise _denied(e)
+    except Conflict as e:
+        raise _conflict(e)
+
+
+@router.post("/businesses/{business_id}/agent/chat/attach")
+async def chat_attach(business_id: str, file: UploadFile = File(...), user=Depends(get_current_user)):
+    """A document attached in the chat: kept with the business's evidence, and what it seems to be."""
+    from app.modules.agent import chat_actions, goal_router
+    from app.modules.readiness import service as readiness_service
+    await goal_router._business_for(user, business_id)
+    content = await file.read(readiness_service.MAX_FILE_BYTES + 1)
+    if len(content) > readiness_service.MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="That file is too large to attach here.")
+    try:
+        return await chat_actions.attach(user, business_id, file.filename or "document", file.content_type or "application/octet-stream", content)
+    except Exception as e:      # noqa: BLE001 - said plainly
+        message = getattr(e, "message", None) or str(e) or "That file couldn't be saved."
+        raise HTTPException(status_code=400, detail=message) from e
+
+
+@router.get("/businesses/{business_id}/agent/assistant-context")
+async def assistant_context(business_id: str, kind: str = Query(default="funding", pattern="^(funding|launch|idea)$"), case_id: str | None = Query(default=None),
+                            user=Depends(get_current_user)):
+    """What the Assistant tab shows beside the conversation (the owner's mockups, 27 Oct): the business, its revenue, what the
+    Agent knows from its records, recent activity, approvals waiting and whether "Do all for me" is still working. Read only."""
+    from app.core.supabase import read_cache
+    from app.modules.agent import assistant_context as ctx_mod, goal_router
+    with read_cache():      # the access check and the context read the same row: read once (the owner's QA, 27 Oct: the idea page took 25s)
+        await goal_router._business_for(user, business_id)
+        return await ctx_mod.context(get_orchestrator(), user, business_id, kind, case_id)
+
+
+@router.get("/businesses/{business_id}/business-plans")
+async def business_plans(business_id: str, user=Depends(get_current_user)):
+    """The business's plans, one list for Blueprints, the Agent and its counts: versions folded, "needs review" one way."""
+    from app.core.supabase import read_cache
+    from app.modules.agent import goal_router, plans as plans_mod
+    with read_cache():
+        data = await goal_router._business_for(user, business_id)
+        return await plans_mod.for_business(get_orchestrator(), user, business_id, data)
+
+
+@router.get("/businesses/{business_id}/agent/activity")
+async def agent_activity(business_id: str, user=Depends(get_current_user)):
+    """The business's full recent history, newest first, for the sheet beside the chat ("View all" on Recent activity). Read only."""
+    from app.modules.agent import assistant_context as ctx_mod, goal_router
+    from app.core.supabase import read_cache
+    with read_cache():
+        data = await goal_router._business_for(user, business_id)      # read once: the access check already loads it
+    return {"items": ctx_mod.activity(data or {}, get_orchestrator().rt.clock(), limit=60)}
+
+
+@router.get("/businesses/{business_id}/agent/chats")
+async def list_chats(business_id: str, user=Depends(get_current_user)):
+    """The person's own conversations with the Agent in this business, newest first: never anyone else's."""
+    chats = list(reversed(sorted(await _chats_of(user, business_id), key=lambda c: str(c.get("at") or ""))))      # the latest saved first on a tie
+    return {"items": [{"id": c["id"], "title": c.get("title") or "Conversation", "at": c.get("at"), "count": len(c.get("messages") or [])} for c in chats]}
+
+
+@router.get("/businesses/{business_id}/agent/chats/{chat_id}")
+async def get_chat(business_id: str, chat_id: str, user=Depends(get_current_user)):
+    from app.core.supabase import read_cache
+    with read_cache():
+        chats = await _chats_of(user, business_id)
+    chat = next((c for c in chats if c.get("id") == chat_id), None)
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    return chat
+
+
+@router.put("/businesses/{business_id}/agent/chats/{chat_id}")
+async def save_chat(business_id: str, chat_id: str, body: ChatIn, user=Depends(get_current_user)):
+    await _chats_of(user, business_id)      # access first
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", chat_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That conversation can't be saved.")
+    messages = [x for x in (_chat_message(m) for m in body.messages if isinstance(m, dict)) if x][-MESSAGES_KEPT:]
+    now = get_orchestrator().rt.clock().isoformat()
+    first = next((m["content"] for m in messages if m["role"] == "user"), "")
+    title = (body.title or first or "Conversation").strip()[:80]
+
+    def _apply(d: dict) -> None:
+        mine = [c for c in (d.setdefault("agent_chats", {}).get(str(user["id"])) or []) if c.get("id") != chat_id]
+        mine.append({"id": chat_id, "title": title, "at": now, "messages": messages})
+        d["agent_chats"][str(user["id"])] = sorted(mine, key=lambda c: str(c.get("at") or ""))[-CHATS_KEPT:]
+    await get_orchestrator().rt.business.mutate(business_id, _apply)
+    return {"id": chat_id, "title": title, "at": now, "count": len(messages)}
+
+
+_PAGE_NAME = {"funding": "your funding case", "launch": "Launch Readiness", "idea": "Idea Validation"}
+
+
+async def _elsewhere(user: dict, business_id: str, kind: str) -> dict:
+    """A message for another module's own conversation: where it goes on (the page sends it there), nothing answered here."""
+    to = "/check/idea?tab=assistant" if kind == "idea" else None
+    if not to:
+        try:
+            case_id = await asyncio.wait_for(_case_to_open(user, business_id, kind), 4.0)
+        except Exception:      # noqa: BLE001
+            case_id = None
+        to = f"/{kind}/{case_id}?tab=assistant" if case_id else ("/launch?tab=assistant" if kind == "launch" else "/agent")
+    return {"kind": "answer", "message": f"That's for {_PAGE_NAME[kind]}. I'll carry on there.", "actions": [{"label": f"Open {_PAGE_NAME[kind]}", "to": to}],
+            "conversational": True, "elsewhere": to}
+
+
+async def _case_to_open(user: dict, business_id: str, kind: str) -> str | None:
+    from app.modules.agent import goal_router
+    from app.modules.readiness import rules as _rr
+    from app.modules.readiness.service import service_for
+    await goal_router._business_for(user, business_id)      # someone who can see this business, else nothing
+    rows = [r for r in await service_for(get_orchestrator()).store.list("subjects", business_id, kind=_rr.FUNDING if kind == "funding" else _rr.LAUNCH, limit=50)
+            if r.get("status") not in ("archived", "cancelled")]
+    if kind == "launch":
+        return str(rows[0]["id"]) if len(rows) == 1 else None
+    rows.sort(key=lambda r: (bool((r.get("data") or {}).get("pinned")), str(r.get("created_at") or "")), reverse=True)
+    return str(rows[0]["id"]) if rows else None
+
+
+@router.post("/agent/readiness-question")
+async def readiness_question(body: ReadinessAskIn, user=Depends(get_current_user)):
+    """Read only: whether a message asks where an existing funding or launch case stands (the owner, 26 Oct: the landing page
+    started the questions again instead of answering "How ready am I for funding?"). Nothing is started or charged."""
+    from app.modules.agent import converse, converse_idea, converse_launch, readiness_answer
+    if not converse.wants_funding(body.text) and converse_idea.wants_idea(body.text):
+        return {"kind": "idea", "converse": True, "case_id": "idea", "to": "/check/idea?tab=assistant"}      # its own Assistant tab
+    kind = "funding" if converse.wants_funding(body.text) else "launch" if converse_launch.wants_launch(body.text) else None
+    if kind:
+        # A conversation now (the owner, 27 Oct): on the case's own Assistant tab when there is one case to open (the funding
+        # case the dashboard shows, or the only launch plan), else in the chat panel
+        out = {"kind": kind, "converse": True}
+        try:
+            # The case rows alone, never their scores (the owner, 27 Oct: the landing page waited on them, gave up and started
+            # the questionnaire): the pinned funding case, else the newest; the only launch plan. A few seconds at most.
+            case_id = await asyncio.wait_for(_case_to_open(user, body.business_id, kind), 4.0)
+            if case_id:
+                out.update({"case_id": case_id, "to": f"/{kind}/{case_id}?tab=assistant"})
+        except Exception:      # noqa: BLE001 - slow, no access or no module: the chat panel
+            pass
+        if kind == "launch" and not out.get("to"):
+            # No launch plan yet, or several: Launch Readiness's own conversation, which asks which service (the owner, 27 Oct)
+            out["to"] = "/launch?tab=assistant"
+        return out
+    kind = readiness_answer.asked_about(body.text)
+    if not kind:
+        return {"kind": None}
+    try:
+        subjects = await _subjects_with_summary(user, body.business_id, kind)
+    except Exception:      # noqa: BLE001 - no access or no module: not a readiness answer
+        return {"kind": None}
+    return {"kind": kind if subjects else None}
+
+
+def _reads_once(fn):
+    """The workspace record read once for the whole request, not at every step (the owner, 28 Oct: "That's taking longer
+    than expected" in the Agent Centre; the record is read several times a message). Any save forgets what was read, and
+    nothing is kept past a few seconds, so work that carries on afterwards still sees what others changed."""
+    import functools
+    from app.core.supabase import read_cache
+
+    @functools.wraps(fn)
+    async def inner(*args, **kwargs):
+        with read_cache():
+            return await fn(*args, **kwargs)
+    return inner
 
 
 @router.post("/agent/requests")
+@_reads_once
 async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
     """One entry point for the Assistant, dashboard actions, events and future voice (s4, s8)."""
     if body.source_channel not in USER_CHANNELS:
@@ -307,6 +624,61 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         except Exception:      # noqa: BLE001
             return _result({"kind": "answer", "message": "I couldn't save that just now. Please try again in a moment."})
         return _result({"kind": "answer", "message": f"Got it, I'll call you {called['first_name']}.", "first_name": called["first_name"], "full_name": called["full_name"]})
+    if (body.text or "").strip() and not body.capability and body.business_id and body.source_channel in ("text", "voice"):
+        # Funding as a conversation (the owner, 27 Oct: "just by typing... not these static deterministic chats"): the model
+        # reads the message with the case and does it; without a model, or when it can't, the scripted chat below answers
+        from app.modules.agent import converse, goals as _goals_for_routing
+        try:
+            known = await get_orchestrator().rt.business.load(body.business_id) or {}
+        except Exception:      # noqa: BLE001
+            known = {}
+        from app.modules.agent import converse_idea, converse_launch
+        # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
+        other = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key") not in (None, "need_funding", "launch", "test_idea")
+        # An earlier conversation opened from History carries on as it was (the owner, 27 Oct: "can't continue previous convo")
+        earlier = [{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]]
+        was = next((k for t in reversed(earlier) if t["role"] == "user"
+                    for k in (("funding" if converse.wants_funding(t["content"]) else "idea" if converse_idea.wants_idea(t["content"])
+                               else "launch" if converse_launch.wants_launch(t["content"]) else None),) if k), None)
+        clock = get_orchestrator().rt.clock()
+        # Launch as a conversation too (the owner, 27 Oct: "let's do other flows"); funding words first, as before
+        # An idea too (the owner's mockups, 27 Oct): "is it worth launching?" is the idea's, and so is "am I ready to launch?"
+        # asked about the idea being tested
+        in_idea = converse.in_conversation(known, user["id"], clock, "idea")
+        topic = ("funding" if converse.wants_funding(body.text) else "idea" if converse_idea.wants_idea(body.text) else
+                 "idea" if in_idea and converse_launch.wants_launch(body.text) and not re.search(r"\b(?:new|another|second)\b", body.text, re.I) else
+                 "launch" if converse_launch.wants_launch(body.text) else
+                 None if other else "funding" if converse.in_conversation(known, user["id"], clock) else
+                 "launch" if converse.in_conversation(known, user["id"], clock, "launch") else "idea" if in_idea else was)
+        if body.page and not other:
+            # A module page's own thread (the owner, 27 Oct: a launch reply was saved in the idea's chat): its own topic, unless the
+            # message plainly belongs to another module, which is taken there and never answered here
+            elsewhere = ("funding" if body.page != "funding" and converse.wants_funding(body.text) else
+                         "idea" if body.page == "funding" and converse_idea.wants_idea(body.text) else
+                         "launch" if body.page == "funding" and converse_launch.wants_launch(body.text) else
+                         "idea" if body.page == "launch" and converse_idea.wants_idea(body.text) else None)
+            if elsewhere:
+                return _result(await _elsewhere(user, body.business_id, elsewhere))
+            topic = body.page
+        # The answer to the business plans' "Open one, or create a new one?" is theirs, never a funding or launch chat's that was
+        # open (the owner, 28 Oct: "new one...yam farming" became "a new funding case for yam farming")
+        said_last = [t["content"] for t in reversed(earlier) if t["role"] == "assistant"][:3]
+        plan_talk = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key") == "create_business_plan"
+        if (plan_talk or any(_PLANS_ASKED in str(x) for x in said_last[:1])) and not converse.wants_funding(body.text):
+            topic = None
+        # "Validate my idea" is the Idea Validation itself, as before (the owner, 28 Oct: "why is the validation not here? that
+        # was how it was working"): its fields filled, its results to accept, modify or reject, and its approval waiting. The
+        # idea page's own Assistant stays the quick conversation about the idea.
+        from app.modules.agent.intent import _GOAL_RULES as _intent_rules
+        validating = next((rx for cap, rx in _intent_rules if cap == "idea_validation"), None)
+        if topic == "idea" and body.page != "idea" and validating is not None and validating.search(body.text):
+            topic = None
+        if topic:
+            talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn}[topic]
+            talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
+                                **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}))
+            if talked:
+                return _result(talked)
     if body.text and not body.capability and body.business_id:
         # "Change the amount in my funding readiness to £60,000": a change to the one funding case, confirmed first, never a
         # new intake (the owner's QA, 15 Oct).
@@ -341,17 +713,10 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         return _result({"kind": "check", "goal_key": "more_customers", "said": body.text.strip()[:500],
                         "message": "More customers: I'll read what I can from your records and ask only what they don't show."})
     if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice") and body.business_id:
-        # A business plan asked for while plans already wait for review (the owner, 25 Oct: "why didn't it add a link to them,
-        # ask if I want to create a new one?"): each opens, or a new one is made, never only a sentence about them
-        if ((_goals.resolve(text=body.text) or {}).get("goal_key")) == "create_business_plan":
-            waiting = await _plans_waiting(user, body.business_id)
-            if waiting:
-                names = ", ".join(f"“{w['name']}”" for w in waiting[:3])
-                n = len(waiting)
-                return _result({"kind": "answer", "conversational": False,
-                                "message": f"You have {n} business plan{'s' if n != 1 else ''} waiting for your review: {names}. Open one, or create a new one?",
-                                "offers": [{"label": f"Open “{w['short']}”", "to": w["to"]} for w in waiting[:3]]
-                                          + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]})
+        # Business plans, one list everywhere (the owner, 27 Oct: "3 business plans" counted only the drafts; Blueprints had 10)
+        planned = await _plans_turn(user, body)
+        if planned is not None:
+            return _result(planned)
     if (body.text or "").strip() and not body.capability and body.source_channel in ("text", "voice"):
         # A readiness question, or a funding need stated: answered from the case summary by rules, with buttons (G6)
         from app.modules.agent import readiness_answer
@@ -966,6 +1331,8 @@ async def list_documents(
         out = (r.get("state") or {}).get("outcome") or {}
         if not kind or r.get("status") != "succeeded" or out.get("reused") or not out.get("links") or (r.get("state") or {}).get("refunded"):
             continue      # refunded: it never reached the owner (F1), so it is not one of their documents
+        if r.get("workflow_key") == "business_plan_draft":
+            continue      # business plans: from the one list of plans, below (the owner, 27 Oct: 10 here, 8 in Blueprints)
         label, part = kind
         made = out.get(part) if isinstance(out.get(part), dict) else {}
         named = ", ".join(out.get("documents") or []) if part == "documents" else (made.get("title") or label)
@@ -974,6 +1341,15 @@ async def list_documents(
             "currency": None, "status": "prepared", "status_label": "Ready for your review", "date": str(r.get("completed_at") or r.get("updated_at") or "")[:10],
             "updated_at": r.get("completed_at") or r.get("updated_at"), "run_id": r["id"], "approval_id": None, "can_edit": False, "from_agent": True,
             "to": out["links"][0].get("to"),
+        })
+    # Business plans as Blueprints lists them: one row a plan (its older copies are versions), named for its business
+    from app.modules.agent import plans as plans_mod
+    for p in (await plans_mod.for_business(orch, user, business_id, data))["items"]:
+        items.append({
+            "kind": "business_plan_draft", "kind_label": "Business plan", "id": f"plan:{p['id']}", "reference": p["title"], "party": "", "total": None, "currency": None,
+            "status": "prepared" if p["needs_review"] else "saved", "status_label": "Ready for your review" if p["needs_review"] else "Saved in Blueprints",
+            "date": str(p.get("updated_at") or "")[:10], "updated_at": p.get("updated_at"), "run_id": None, "approval_id": None, "draft_id": p.get("draft_id"),
+            "versions": len(p.get("versions") or []), "can_edit": False, "from_agent": True, "to": p.get("to"),
         })
     # Waiting for approval first; then newest first by the document's own date (its last change breaks a tie).
     items.sort(key=lambda d: (d["status"] == "awaiting_approval", str(d.get("date") or ""), str(d.get("updated_at") or "")), reverse=True)
@@ -1002,6 +1378,63 @@ async def list_documents(
 
 
 # B9: documents the Agent prepares for review, by the task that makes them: (label, where the outcome keeps it).
+_PLANS_ASKED = "Open one, or create a new one?"
+_MAKE_NEW = re.compile(r"\b(?:create|start|write|draft|make)\b.{0,20}\b(?:new|another)\b|\bnew (?:business )?plan\b|\b(?:a )?new one\b", re.I)
+_NEW_PLAN = re.compile(r"\b(?:new|another|create|start|write|draft|make)\b", re.I)
+_DOUBT = re.compile(r"\b(?:but you said|you said|i thought|only (?:have|had)|that'?s (?:not right|wrong)|isn'?t right|why (?:only|did you say)|how come)\b", re.I)
+_FILLER = re.compile(r"\b(?:please|can you|could you|i want|i'd like|let'?s|(?:create|start|write|draft|make)(?: me)?(?: a| an)?(?: new| another)?(?: one)?|a new one|new one|another one|"
+                     r"business plan|plan|for|called|named|about|it'?s|it is)\b", re.I)
+
+
+def _named_in(text: str) -> str:
+    """What a new plan is for, as said with the ask ("create a new one, Drone cleaning" is "Drone cleaning")."""
+    left = " ".join(_FILLER.sub(" ", str(text or "")).replace(",", " ").split()).strip(" .!?:")
+    return left[:80] if len(left) >= 3 else ""
+
+
+async def _plans_turn(user: dict, body) -> dict | None:
+    """A business plan asked for, a new one asked for after the list, or the list questioned: answered from the one list of
+    plans (agent/plans.py). None when the message is about something else."""
+    from app.modules.agent import goals as _goals, plans as plans_mod
+    text = str(body.text or "").strip()
+    said = [t.content or "" for t in reversed(body.history or []) if t.role == "assistant"][:3]
+    after_list = any(_PLANS_ASKED in x for x in said)
+    asked = ((_goals.resolve(text=text) or {}).get("goal_key")) == "create_business_plan"
+    if asked and _MAKE_NEW.search(text):
+        after_list = True      # "create a new business plan": a new one, whatever was said before (the owner, 28 Oct)
+    if not asked and not after_list:
+        return None
+    try:
+        await get_orchestrator().actor_for(user["id"], body.business_id, user.get("email"))
+        listed = await plans_mod.for_business(get_orchestrator(), user, body.business_id)
+    except Exception:      # noqa: BLE001 - no access: an ordinary message
+        return None
+    items, n, waiting = listed["items"], listed["total"], listed["needs_review"]
+    if after_list and _DOUBT.search(text):
+        # Questioned: what each number counts, said plainly (the owner, 27 Oct: "but you said I only have 3" got the same reply)
+        names = ", ".join(f"“{i['subject']}”" for i in items[:8])
+        return {"kind": "answer", "conversational": False, "message":
+                f"Sorry, I wasn't clear. {waiting} of your plans {'is' if waiting == 1 else 'are'} waiting for your review; you have {n} business plan{'s' if n != 1 else ''} in all: {names}."
+                + (f" And {n - 8} more." if n > 8 else "") + " Would you like to open one, or create a new one?",
+                "offers": [{"label": f"Open “{i['subject'][:32]}”", "to": i["to"]} for i in items[:3]] + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]}
+    if after_list and (_NEW_PLAN.search(text) or (not asked and _named_in(text))):
+        # A new one, said: started, never asked again whether to open the old one (the owner, 27 Oct). Named with it, it is for that
+        name = _named_in(text)
+        params = {"existing_plan": "new", **({"plan_for": "new", "idea": name} if name else {})}
+        return await get_orchestrator().submit(AgentRequest(
+            requesting_actor_id=user["id"], business_id=body.business_id, source_channel="ui_action", raw_input=f"Business plan for {name}" if name else text,
+            requested_capability="business_plan_draft", params=params, locale=body.locale,
+            history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-6:]]), email=user.get("email"))
+    if not asked or not n:
+        return None
+    shown = items[:5]
+    names = ", ".join(f"“{i['subject']}”{' (waiting for your review)' if i['needs_review'] else ''}" for i in shown)
+    head = f"You have {n} business plan{'s' if n != 1 else ''}" + (f", {waiting} waiting for your review" if waiting else "") + f": {names}"
+    return {"kind": "answer", "conversational": False, "message": head + (f", and {n - 5} more" if n > 5 else "") + f". {_PLANS_ASKED}",
+            "offers": [{"label": f"Open “{i['subject'][:32]}”", "to": i["to"]} for i in shown[:3]]
+                      + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]}
+
+
 async def _plans_waiting(user: dict, business_id: str) -> list[dict]:
     """The business plans the Agent drafted that wait for the owner's review, newest first: {name, short, to}."""
     from app.modules.agent import drafts
@@ -1105,9 +1538,13 @@ async def agent_briefing(business_id: str, user=Depends(get_current_user)):
         if not actor.can_view:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have access to this business.")
         pending = await summary_mod.pending_approvals(orch.rt.store, business_id, orch.rt.clock())
+        # The drafts waiting too, as the Needs Approval panel beside it counts them (the owner, 26 Oct: "2 approvals waiting"
+        # on the card, 4 in the panel)
+        from app.modules.agent import drafts as _drafts
+        waiting = len(_drafts.pending(await orch.rt.business.load(business_id) or {}))
     except AccessDenied as e:
         raise _denied(e)
-    return await _briefing(user, business_id, len(pending) if (actor.can_send or actor.can_prepare) else 0)
+    return await _briefing(user, business_id, len(pending) + waiting if (actor.can_send or actor.can_prepare) else 0)
 
 
 @router.post("/agent/seen")
@@ -1357,6 +1794,7 @@ async def agent_charges(business_id: str, limit: int = Query(default=100, ge=1, 
 
 
 @router.get("/businesses/{business_id}/workflow-runs")
+@_reads_once
 async def list_runs(
     business_id: str,
     bucket: str | None = Query(default=None),          # active | needs_approval | needs_attention | completed | history
@@ -1396,6 +1834,10 @@ async def list_runs(
         # same definition the dashboard uses); one whose approval has lapsed needs attention.
         if pr["bucket"] == "needs_approval" and r["id"] not in waiting:
             pr["bucket"] = "needs_attention"
+        if r.get("status") == "succeeded" and ((r.get("state") or {}).get("draft") or {}).get("status") == "pending":
+            # A draft waiting for review counts with the approvals, as the dashboard's Needs Approval does (the owner, 26 Oct:
+            # 4 there, 2 here)
+            pr["bucket"] = "needs_approval"
         runs.append(pr)
     counts: dict[str, int] = {}
     for r in runs:
@@ -1407,6 +1849,61 @@ async def list_runs(
     except Exception:      # noqa: BLE001 - the tasks are listed whatever happens to these
         researched = []
     counts["history"] = len(runs) + len(researched)      # every task: what the History tab's number is, whatever page is showing
+    # A plan named only "Business Plan Draft": named by its saved document, read once for all of them (the owner, 28 Oct)
+    unnamed = {str(((r.get("outcome") or {}).get("plan") or {}).get("document_id")): r for r in runs
+               if r.get("workflow_key") == "business_plan_draft" and r.get("label") == r.get("title") and ((r.get("outcome") or {}).get("plan") or {}).get("document_id")}
+    if unnamed:
+        try:
+            from app.core.supabase import sb_select
+            from app.modules.agent import plans as _plans
+            for doc in await sb_select("blueprint_documents", filters=[("id", "in", list(unnamed))], columns="id,title,company_name") or []:
+                subject = _plans.subject_of(doc.get("title")) or _plans.subject_of(doc.get("company_name"))
+                if subject and str(doc["id"]) in unnamed:
+                    unnamed[str(doc["id"])]["label"] = f"{unnamed[str(doc['id'])]['title']}: {subject}"
+        except Exception:      # noqa: BLE001 - named as before
+            pass
+    # Two rows still saying the same: each says the day it was made, so none reads as another's twin
+    from datetime import datetime
+    same: dict[str, int] = {}
+    for r in runs:
+        same[str(r.get("label") or r.get("title"))] = same.get(str(r.get("label") or r.get("title")), 0) + 1
+    for r in runs:
+        name = str(r.get("label") or r.get("title"))
+        if same.get(name, 0) > 1 and r.get("created_at"):
+            try:
+                d = datetime.fromisoformat(str(r["created_at"]).replace("Z", "+00:00"))
+                r["label"] = f"{name}, {d.day} {d.strftime('%b')}"
+            except ValueError:
+                pass
+    # Research still running is in Active too, with where it stands (the owner, 28 Oct: "Active shows 0 tasks, so nothing ran")
+    running = [{**r, "bucket": "active", "status": "running", "display_status": "running", "id": f"{r['id']}:active"} for r in researched if r.get("research_state") == "Researching"]
+    # Started from the chat and not on record as a run yet: in Active from the moment it starts (the owner, 28 Oct)
+    try:
+        from app.modules.agent import assistant_context as _ctx
+        held = (await orch.rt.business.load(business_id) or {}).get("agent_working") or {}
+        now_ = orch.rt.clock()
+        for cid, w in held.items():
+            if isinstance(w, dict) and not w.get("failed") and _ctx.working({"agent_working": held}, cid, now_) and not running:
+                topic = str(w.get("topic") or "funding")
+                case = topic in ("funding", "launch")
+                name = ({"launch": "Do all for me: Launch readiness", "funding": "Do all for me: Funding readiness", "test_idea": "Market research for your idea",
+                         "more_customers": "Customer segments research"}.get(topic) or f"Research: {topic.replace('_', ' ')}")
+                running.append({"id": f"working:{cid}", "title": name, "label": name, "summary": "Researching",
+                                "bucket": "active", "status": "running", "display_status": "running", "created_at": w.get("at"), "kind": "research",
+                                "to": f"/{topic}/{cid}?tab=assistant" if case else None})
+    except Exception:      # noqa: BLE001 - the list stands without it
+        pass
+    if running and bucket != "history":
+        runs = running + runs
+        counts["active"] = counts.get("active", 0) + len(running)
+    # ... and in Recently Completed once it ends, the last fortnight's (the owner, 28 Oct)
+    from datetime import timedelta
+    since = (orch.rt.clock() - timedelta(days=14)).isoformat()
+    ended = [{**r, "bucket": "completed", "id": f"{r['id']}:done"} for r in researched
+             if str(r.get("workflow_key") or "").startswith("research_") and r.get("research_state") not in ("Researching", "Replaced by a newer run") and str(r.get("created_at") or "") >= since]
+    if ended and bucket != "history":
+        runs = runs + ended
+        counts["completed"] = counts.get("completed", 0) + len(ended)
     if bucket == "history":
         runs = sorted(runs + researched, key=lambda r: str(r.get("created_at") or ""), reverse=True)
     if bucket and bucket != "history":

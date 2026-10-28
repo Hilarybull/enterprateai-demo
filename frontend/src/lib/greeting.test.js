@@ -6,7 +6,7 @@ const at = (iso) => new Date(iso);
 
 describe("the greeting", () => {
   it("follows the time of day: morning from 05:00, afternoon from 12:00, evening from 17:00, and evening on through the night to 04:59", () => {
-    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening"]);
+    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Hi", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Hi"]);
     expect(hourIn("Africa/Lagos", at("2026-10-08T13:30:00Z"))).toBe(14);      // by the timezone given, not the device
     expect(hourIn("Not/AZone", at("2026-10-08T13:30:00Z"))).toBe(at("2026-10-08T13:30:00Z").getHours());
   });

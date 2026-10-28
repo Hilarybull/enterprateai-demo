@@ -3,7 +3,7 @@ import { apiRequest } from "../api/client";
 import { refusalMessage } from "../lib/entitlement";
 import { getCurrencySymbol } from "../lib/currencies";
 import { creditCopy } from "../lib/creditCopy";
-import ResearchSummary from "./ResearchSummary";
+import ResearchSummary, { PriceWarning } from "./ResearchSummary";
 
 // QA PF3/R7/R9 (First-Value PRD 8.4, 9.4, 10.4, 11.5, 13): an answer for every gap, before anything is asked.
 //   Researched:  found, with its sources (title, site, date, link) and what it is used for.
@@ -513,6 +513,7 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
         if (!parts.length) return null;
         return <p className="text-[12px] text-slate-500" data-research-counts>{parts.join(", ")}{c.sources ? `, from ${c.sources} source${c.sources === 1 ? "" : "s"}` : ""}.</p>;
       })()}
+      <PriceWarning run={run} currency={currency} />
       {!reviewing && <>
         <Draft r={run} />
         <p className="mt-3 text-[12.5px] text-slate-600" data-review-prompt>

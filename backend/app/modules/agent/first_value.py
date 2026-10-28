@@ -538,7 +538,8 @@ def customers(a: dict, data: dict | None = None, now: datetime | None = None, si
     # 26 Oct: "why show old one... haven't done do it all")
     from app.modules.agent import research as _research
     rs = _research.research_state(data, "more_customers", answers=a)
-    if rs.get("state") in ("review", "adopted"):
+    # ... and only once its findings are approved: nothing goes on the plan while they wait for review (the owner, 28 Oct)
+    if rs.get("state") == "adopted":
         out["plan"] = customer_plan(a, data, f, co, sign, rs.get("run_id"))
         # The channel card opens the plan's first step (the owner, 26 Oct: "yet no link to fix it")
         for b in out["blockers"]:
@@ -1002,6 +1003,7 @@ def offering_on_record(answers: dict | None, data: dict | None, priced_only: boo
 
 # ── In the app (QA P1-7): the same short conversation, with what the Company already holds filled in ──
 
+_STAGE_OF_DASHBOARD = {"idea": "idea", "pre_launch": "pre_revenue", "startup": "trading", "operating": "trading", "growth": "growing"}
 _STAGE_FOR_FUNDING = {"idea": "idea", "pre_revenue": "pre_revenue", "early_revenue": "trading", "established": "trading", "growing": "growing", "growth": "growing"}
 FROM_RECORDS = "From your business profile"
 FROM_PROPOSAL = "From an earlier answer, not saved to your profile"
@@ -1076,8 +1078,18 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
     if goal_key == "more_customers" and co["priced"]:      # the price to quote, from the catalogue (25 Oct)
         first = co["priced"][0]
         out["price"] = f"{first['base_price']:g} for {first['name']}"
-    if goal_key == "need_funding" and profile.get("operating_stage") in _STAGE_FOR_FUNDING and profile.get("operating_stage") != "idea":
-        out["stage"] = _STAGE_FOR_FUNDING[profile["operating_stage"]]
+    if goal_key == "need_funding":
+        # Where the business is, as the dashboard reads it (the owner's test, 27 Oct: "Not trading yet" beside two paying
+        # customers): the stage given at sign-up until the records show the business is further on
+        from app.modules.agent import dashboard
+        try:
+            seen = _STAGE_OF_DASHBOARD.get(dashboard.stage_of(data or {}, datetime.now(timezone.utc)).get("stage"))
+        except Exception:      # noqa: BLE001
+            seen = None
+        if seen and seen != "idea":
+            out["stage"] = seen
+        elif profile.get("operating_stage") in _STAGE_FOR_FUNDING and profile.get("operating_stage") != "idea":
+            out["stage"] = _STAGE_FOR_FUNDING[profile["operating_stage"]]
     if goal_key == "price_offer" and co["priced"]:
         first = co["priced"][0]
         out["sell"], out["price"] = first["name"], first["base_price"]

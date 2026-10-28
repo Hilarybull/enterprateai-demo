@@ -235,9 +235,8 @@ describe("the chat bubble does the same", () => {
   it("opens a task's question in a dialog and puts the result in the conversation, without leaving the page", async () => {
     const assign = vi.fn();
     const before = window.location.href;
-    render(<BusinessAssistant />);
-    await act(async () => { fireEvent.click(screen.getAllByRole("button")[0]); });
-    fireEvent.change(screen.getByPlaceholderText(/Ask about customers/), { target: { value: "need a quotation" } });
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "need a quotation" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
     const dialog = screen.getByRole("dialog", { name: "A few details" });
     fireEvent.click(within(dialog).getByText("Frank"));
@@ -259,5 +258,15 @@ describe("a button elsewhere on the dashboard", () => {
     await act(async () => { followInAgentBox({ run: asking }); });
     expect(screen.getByRole("dialog", { name: "A few details" })).toBeTruthy();
     expect(onTheDashboard()).toBeTruthy();
+  });
+});
+
+describe("on the dashboard, a typed message goes to the Agent Centre", () => {
+  it("hands what was typed to the one general chat (the owner, 28 Oct)", async () => {
+    render(<MemoryRouter initialEntries={["/dashboard"]}><Routes><Route path="/dashboard" element={<AgentPanel businessId="b1" summary={SUMMARY} onChanged={() => {}} handoff />} />
+      <Route path="/agent" element={<p data-testid="centre">{new URLSearchParams(window.location.search).get("chat") || "agent centre"}</p>} /></Routes></MemoryRouter>);
+    fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "how many business plans do i have" } });
+    fireEvent.submit(screen.getAllByRole("textbox")[0].closest("form"));
+    expect(await screen.findByTestId("centre")).toBeTruthy();
   });
 });

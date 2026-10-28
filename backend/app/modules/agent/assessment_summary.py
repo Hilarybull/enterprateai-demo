@@ -96,7 +96,7 @@ ANSWER_PATH = {"team": "team.responsibilities", "customers": "market.target_segm
                "where": "market.location", "customer": "market.target_segment"}
 
 
-def adopted_fields(adopted: list[dict], case_drafts: dict, today: str) -> dict:
+def adopted_fields(adopted: list[dict], case_drafts: dict, today: str, case_now: dict | None = None) -> dict:
     """What an adopt puts on the case, by path: the use-of-funds lines, the answers given, the Agent's drafts for the case's
     fields. Only values; where each goes empty or different is decided by the caller."""
     out: dict = {}
@@ -107,10 +107,11 @@ def adopted_fields(adopted: list[dict], case_drafts: dict, today: str) -> dict:
             for n, line in enumerate(x["table"]):
                 name = str(line.get("line") or "")
                 cat = "Reserve" if name.lower().startswith("reserve") else "Operations" if name.lower().startswith("working capital") else "Other"
-                rows.append({"id": f"uof{n + 1}", "category": cat, "amount": str(line.get("amount")), "purpose": name,
-                             **({"rationale": name} if cat == "Reserve" else {})})
+                rows.append({"id": f"uof{n + 1}", "category": cat, "amount": str(line.get("amount")), "purpose": name})
             if rows:
-                out["use_of_funds"] = rows
+                # Checked against the case as it is now: its purpose and category, adding up to its amount (the owner, 27 Oct)
+                from app.modules.readiness.service import ReadinessService
+                out["use_of_funds"] = ReadinessService.lines_checked(rows, case_now or {})
         elif x.get("kind") == "question" or x.get("decision") == "answered":
             path = ANSWER_PATH.get(str(x.get("field") or ""))
             text = str(value or "").strip()
@@ -135,6 +136,28 @@ def saved_options(adopted: list[dict], today: str) -> list[dict]:
                     "text": str(x.get("value") or "")[:600], "source": {"url": src.get("url"), "publisher": src.get("publisher") or src.get("site"),
                                                                         "date": src.get("date")}, "saved_at": today})
     return out
+
+
+def source_of(path: str, value, data: dict, adopted: list[dict]) -> str:
+    """Where a draft came from, in the words its tag reads (the owner, 28 Oct: "2 paying customers" tagged External research):
+    the business's own records when it states a figure they hold, the research when one of its findings is behind it, else
+    the Agent's suggestion."""
+    import json as _json
+    import re as _re
+    from app.modules.agent import research
+    text = value if isinstance(value, str) else _json.dumps(value, default=str, ensure_ascii=False)
+    held = set()
+    for _k, v, _w in research.records_of(data):
+        try:
+            held.add(round(float(v), 2))
+        except (TypeError, ValueError):
+            continue
+    said = {round(float(n.replace(",", "")), 2) for n in _re.findall(r"\d[\d,]*(?:\.\d+)?", text) if n.replace(",", "").replace(".", "").isdigit()}
+    if held & said:
+        return "from your business records"
+    if any(x.get("sources") and (x.get("field") == path or x.get("path") == path or x.get("topic") == path) for x in adopted if isinstance(x, dict)):
+        return "from external research"
+    return "suggested by the Agent"
 
 
 async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str, float], said: dict, reference: str,
@@ -193,16 +216,17 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 # the owner rejected is offered again, and the owner's values are never touched.
                 pending = dict(data.get("agent_drafts") or {})
                 rejected = set(data.get("rejected_drafts") or [])
-                for path, value in adopted_fields(adopted or [], case_drafts or {}, today).items():
+                biz = await orch.rt.business.load(business_id) or {}
+                for path, value in adopted_fields(adopted or [], case_drafts or {}, today, data).items():
                     held = _get(data, path)
                     if path in rejected or value in (None, "", [], {}) or (held not in (None, "", [], {}) and str(held).strip() == str(value).strip()):
                         continue
-                    pending[path] = {"value": value, "source": "from your records and research", "at": today,
+                    pending[path] = {"value": value, "source": source_of(path, value, biz, adopted or []), "at": today,
                                      **({"replaces": held} if held not in (None, "", [], {}) else {})}
                 if pending != (data.get("agent_drafts") or {}):
                     changes["agent_drafts"] = pending
                 adopted, case_drafts = [], {}
-            for path, value in adopted_fields(adopted or [], case_drafts or {}, today).items():
+            for path, value in adopted_fields(adopted or [], case_drafts or {}, today, data).items():
                 held = _get(data, path)
                 if held in (None, "", [], {}) or (isinstance(held, str) and not _fv._said(held)):
                     _put(changes, path, value)
@@ -228,6 +252,21 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 _put(changes, "customers.target_segment", str(said["customer"]))
             if kind == "launch" and said.get("problem") and not _get(data, "customers.problem"):
                 _put(changes, "customers.problem", str(said["problem"]))
+            if as_drafts:
+                # Research never writes into the case (the owner, 28 Oct: "everything it fills goes in as a draft waiting for
+                # approval, and the score only changes after approval"): the rest it would fill waits beside its field too
+                pending = dict(changes.get("agent_drafts") or data.get("agent_drafts") or {})
+                rejected = set(data.get("rejected_drafts") or [])
+                for top, v in list(changes.items()):
+                    if top in ("agent_drafts", "purpose_milestone_id", "funding_options"):
+                        continue
+                    for path, value in ([(f"{top}.{k}", x) for k, x in v.items()] if isinstance(v, dict) else [(top, v)]):
+                        if path == "market.acquisition_milestone_id" or path in rejected or value in (None, "", [], {}):
+                            continue
+                        pending.setdefault(path, {"value": value, "source": "suggested by the Agent", "at": today})
+                    changes.pop(top)
+                changes["agent_drafts"] = pending
+                said_from = {}
             if changes:
                 merged = {k: {**(data.get(k) or {}), **v} if isinstance(v, dict) else v for k, v in changes.items()}
                 await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email,

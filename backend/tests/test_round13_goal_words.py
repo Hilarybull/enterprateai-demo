@@ -30,3 +30,9 @@ def test_the_idea_is_asked_instead(monkeypatch):
     slots = goals.questions_for("test_idea")
     r = asyncio.run(intake_turn.turn(goal_key="test_idea", message="Test a business idea", slots=slots, known={}, asked="description", llm=_Llm()))
     assert "description" not in (r.get("values") or {}) and "Test a business idea" not in str(r.get("ack") or "")
+
+
+def test_a_question_about_the_goal_is_never_the_product_but_a_worry_still_counts():
+    """The owner, 26 Oct: "Got it: a how ready am I to launch?. What are you launching?"."""
+    assert intake_turn.just_the_goal("How ready am I to launch?", "sell")
+    assert not intake_turn.just_the_goal("What if my biggest client leaves?", "worry")      # a risk chat's answer, kept

@@ -1,0 +1,2098 @@
+{
+ "id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+ "business_id": "A",
+ "type": "launch_initiative",
+ "status": "preparing",
+ "revision": 1,
+ "title": "Mobile car detailing",
+ "profile": "launch.commercial_service.uk@0.2",
+ "data": {
+  "launch_type": "initial_business",
+  "name": "Mobile car detailing",
+  "scope": "commercial",
+  "audience": "office workers",
+  "geography": "Abuja",
+  "offer": {
+   "price": 15000
+  },
+  "customers": {
+   "target_segment": "office workers"
+  },
+  "economics": {
+   "price_per_unit": 15000,
+   "variable_cost_per_unit": 6000,
+   "confirmed_at": "2026-10-01"
+  },
+  "business_model": "service",
+  "profile": "launch.commercial_service.uk@0.2",
+  "provenance": {
+   "launch_type": {
+    "source": "No paid invoices on record",
+    "as_of": "2026-10-01",
+    "value": "initial_business"
+   }
+  },
+  "editors": [
+   "owner@a.test"
+  ],
+  "owner": "owner@a.test"
+ },
+ "created_at": "2026-10-01T09:00:00+00:00",
+ "updated_at": "2026-10-01T09:00:00+00:00",
+ "can": {
+  "launch.read": true,
+  "launch.edit": true,
+  "launch.assess": true,
+  "launch.review": true,
+  "launch.export": true,
+  "business.membership.manage": true,
+  "launch.decide": true
+ },
+ "checklist_updated": null,
+ "has_products": true,
+ "related_done": {
+  "marketplace": false,
+  "plan": false,
+  "launch": true
+ },
+ "checklist_note": null,
+ "profile_definition": {
+  "key": "launch.commercial_service.uk@0.2",
+  "id": "launch.commercial_service.uk",
+  "version": "0.2",
+  "subject_type": "launch_initiative",
+  "available": true,
+  "title": "Commercial service launch",
+  "scope": "commercial",
+  "jurisdiction": "UK",
+  "description": "A first commercial launch, or a new service within an existing business.",
+  "status_note": "Pilot checklist. It is self-reviewed and is not a compliance certificate: it does not claim to list every requirement that applies to you.",
+  "score_needs_gates": true,
+  "thresholds": {
+   "conditionally_ready": 60,
+   "ready": 75
+  },
+  "wording": {
+   "ready": "Prepared for the defined launch scope against this checklist.",
+   "conditionally_ready": "Preparation gaps remain.",
+   "not_ready": "Not prepared yet for the defined launch scope.",
+   "insufficient_evidence": "Not enough evidence to assess yet.",
+   "disclaimer": "This measures preparation for the launch you defined. It does not guarantee demand, profit, regulatory compliance or survival."
+  },
+  "freshness_days": {
+   "cash_position": 30,
+   "forecast": 30,
+   "economics": 30,
+   "capacity": 30,
+   "evidence": 180,
+   "attestation": 180
+  },
+  "forecast_months": 6,
+  "months_after_launch": 3,
+  "final_check_days": 7,
+  "criteria": [
+   {
+    "code": "C1",
+    "title": "Customer and demand",
+    "weight": 15,
+    "checks": [
+     {
+      "code": "C1.A",
+      "label": "Target segment, problem and dated demand evidence are documented",
+      "missing": "Describe your target customer and their problem, and attach dated demand evidence.",
+      "kind": "computed"
+     },
+     {
+      "code": "C1.B",
+      "label": "Evidence relevance and limitations are explicitly reviewed",
+      "missing": "Confirm you have reviewed how relevant the evidence is and what it does not show.",
+      "kind": "attested"
+     }
+    ],
+    "tool": {
+     "label": "Customers and offer",
+     "section": "customers"
+    },
+    "section": "customers"
+   },
+   {
+    "code": "C2",
+    "title": "Offer and pricing",
+    "weight": 15,
+    "checks": [
+     {
+      "code": "C2.A",
+      "label": "Launch scope, price, delivery terms and customer promise are confirmed",
+      "missing": "Fill in what you are launching, the price, delivery terms and your promise to the customer, then confirm them.",
+      "kind": "computed"
+     },
+     {
+      "code": "C2.B",
+      "label": "Cost and margin inputs are validated and their implications reviewed",
+      "missing": "Enter price and costs, then confirm you have reviewed what the margin means.",
+      "kind": "attested"
+     }
+    ],
+    "tool": {
+     "label": "Pricing and economics",
+     "section": "economics"
+    },
+    "section": "economics"
+   },
+   {
+    "code": "C3",
+    "title": "Cash preparation",
+    "weight": 20,
+    "checks": [
+     {
+      "code": "C3.A",
+      "label": "The required cash projection is complete and reconciled",
+      "missing": "Complete the cash projection for every month it must cover.",
+      "kind": "computed"
+     },
+     {
+      "code": "C3.B",
+      "label": "Setup and operating commitments are included with evidence or labelled as assumptions",
+      "missing": "List your setup and operating commitments, each marked as evidenced or an assumption.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Cash",
+     "section": "cash"
+    },
+    "section": "cash"
+   },
+   {
+    "code": "C4",
+    "title": "Delivery capability",
+    "weight": 15,
+    "checks": [
+     {
+      "code": "C4.A",
+      "label": "Planned demand fits evidenced available capacity",
+      "missing": "Enter your available capacity, what is already committed and what the launch needs.",
+      "kind": "computed"
+     },
+     {
+      "code": "C4.B",
+      "label": "Critical suppliers, people and systems are available, with contingency where needed",
+      "missing": "List the suppliers, people and systems you depend on, and whether each is available.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Delivery",
+     "section": "delivery"
+    },
+    "section": "delivery"
+   },
+   {
+    "code": "C5",
+    "title": "Operational process",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C5.A",
+      "label": "The enquiry or order to delivery and payment process is documented",
+      "missing": "Describe how an enquiry or order becomes a delivery and a payment.",
+      "kind": "computed"
+     },
+     {
+      "code": "C5.B",
+      "label": "A representative end-to-end dry run has recorded results and resolved critical failures",
+      "missing": "Record an end-to-end test run and what happened.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Operational prerequisites",
+     "section": "operations"
+    },
+    "section": "operations"
+   },
+   {
+    "code": "C6",
+    "title": "Applicable prerequisites",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C6.A",
+      "label": "Applicable launch obligations and prerequisites are identified and reviewed",
+      "missing": "List what you must have in place to launch, then confirm you have reviewed which apply.",
+      "kind": "attested"
+     },
+     {
+      "code": "C6.B",
+      "label": "Required permissions or prerequisites are evidenced as completed by launch",
+      "missing": "Mark each prerequisite completed, with its evidence, before launch.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Operational prerequisites",
+     "section": "operations"
+    },
+    "section": "operations"
+   },
+   {
+    "code": "C7",
+    "title": "Route to market",
+    "weight": 10,
+    "checks": [
+     {
+      "code": "C7.A",
+      "label": "Initial acquisition channel, audience and launch message are defined",
+      "missing": "Name your first channel, its audience and your launch message.",
+      "kind": "computed"
+     },
+     {
+      "code": "C7.B",
+      "label": "Channel execution has an owner, budget and measurable target",
+      "missing": "Give the channel an owner, a budget and a target.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Sales and launch plan",
+     "section": "sales"
+    },
+    "section": "sales"
+   },
+   {
+    "code": "C8",
+    "title": "Launch control",
+    "weight": 5,
+    "checks": [
+     {
+      "code": "C8.A",
+      "label": "Launch milestones, date and owners are agreed",
+      "missing": "Set the launch date and give every milestone a date and an owner.",
+      "kind": "computed"
+     },
+     {
+      "code": "C8.B",
+      "label": "Success measures, incident response and post-launch review date are recorded",
+      "missing": "Record how you will measure success, what you do if something goes wrong and when you will review.",
+      "kind": "computed"
+     }
+    ],
+    "tool": {
+     "label": "Sales and launch plan",
+     "section": "sales"
+    },
+    "section": "sales"
+   }
+  ],
+  "gates": [
+   {
+    "code": "B1",
+    "label": "No cash shortfall in the months the projection must cover",
+    "criterion": "C3",
+    "severity": "critical",
+    "remedy": "Change the plan so cash stays above zero in every month, or add committed, evidenced financing. Expected funding is not enough.",
+    "covers": null
+   },
+   {
+    "code": "B2",
+    "label": "Planned demand fits confirmed delivery capacity",
+    "criterion": "C4",
+    "severity": "critical",
+    "remedy": "Reduce the launch volume, or add capacity that is confirmed available by the launch date.",
+    "covers": "C4.A"
+   },
+   {
+    "code": "B3",
+    "label": "Every required permission or prerequisite is completed and valid at launch",
+    "criterion": "C6",
+    "severity": "critical",
+    "remedy": "Complete the prerequisite and attach its evidence. A permission must still be valid on the launch date.",
+    "covers": "C6.B"
+   },
+   {
+    "code": "B4",
+    "label": "The end-to-end delivery and payment test has no unresolved critical failure",
+    "criterion": "C5",
+    "severity": "critical",
+    "remedy": "Resolve the failure, run the test again and record the result.",
+    "covers": "C5.B"
+   },
+   {
+    "code": "B5",
+    "label": "Each sale contributes more than it costs to deliver",
+    "criterion": "C2",
+    "severity": "critical",
+    "remedy": "Raise the price or lower the cost of delivery until the contribution is above zero.",
+    "covers": null
+   }
+  ],
+  "sections": [
+   {
+    "key": "customers",
+    "title": "Customers and offer",
+    "fields": [
+     {
+      "key": "customers.target_segment",
+      "label": "Who is this launch for?",
+      "type": "textarea"
+     },
+     {
+      "key": "customers.problem",
+      "label": "What problem does it solve for them?",
+      "type": "textarea"
+     },
+     {
+      "key": "audience",
+      "label": "Launch audience",
+      "type": "text"
+     },
+     {
+      "key": "geography",
+      "label": "Where are you launching?",
+      "type": "text"
+     }
+    ],
+    "evidence": [
+     "C1.A"
+    ],
+    "attest": [
+     "C1.B"
+    ]
+   },
+   {
+    "key": "economics",
+    "title": "Pricing and economics",
+    "fields": [
+     {
+      "key": "offer.launch_scope",
+      "label": "What exactly are you launching?",
+      "type": "textarea"
+     },
+     {
+      "key": "offer.price",
+      "label": "Price",
+      "type": "money"
+     },
+     {
+      "key": "offer.delivery_terms",
+      "label": "Delivery terms",
+      "type": "textarea"
+     },
+     {
+      "key": "offer.customer_promise",
+      "label": "Your promise to the customer",
+      "type": "textarea"
+     },
+     {
+      "key": "offer.confirmed",
+      "label": "I confirm the scope, price, terms and promise",
+      "type": "boolean"
+     },
+     {
+      "key": "economics.price_per_unit",
+      "label": "Price per unit sold",
+      "type": "money"
+     },
+     {
+      "key": "economics.variable_cost_per_unit",
+      "label": "Cost to deliver one unit",
+      "type": "money"
+     },
+     {
+      "key": "economics.fixed_costs_monthly",
+      "label": "Fixed costs each month",
+      "type": "money",
+      "help": "For a new service in an existing business, enter only the costs the launch adds."
+     },
+     {
+      "key": "economics.shared_cost_method",
+      "label": "How shared costs are split",
+      "type": "text",
+      "help": "Only for a new service that shares costs with the rest of the business.",
+      "when": {
+       "launch_type": "new_offering"
+      }
+     }
+    ],
+    "attest": [
+     "C2.B"
+    ]
+   },
+   {
+    "key": "cash",
+    "title": "Cash",
+    "fields": [],
+    "forecast": true,
+    "commitments": true
+   },
+   {
+    "key": "delivery",
+    "title": "Delivery",
+    "fields": [
+     {
+      "key": "planned_volume.amount",
+      "label": "Planned launch volume each month",
+      "type": "number"
+     },
+     {
+      "key": "planned_volume.unit",
+      "label": "Measured in",
+      "type": "text",
+      "help": "For example hours, customers or projects."
+     },
+     {
+      "key": "delivery.capacity_available",
+      "label": "Capacity available each month",
+      "type": "number"
+     },
+     {
+      "key": "delivery.capacity_committed",
+      "label": "Already committed to existing work",
+      "type": "number"
+     },
+     {
+      "key": "delivery.capacity_unit",
+      "label": "Capacity is measured in",
+      "type": "text",
+      "help": "For example hours."
+     },
+     {
+      "key": "delivery.capacity_per_unit",
+      "label": "Capacity used by one unit of volume",
+      "type": "number",
+      "help": "Only needed when volume and capacity use different units, for example hours per customer."
+     },
+     {
+      "key": "delivery.dependencies",
+      "label": "Critical suppliers, people and systems",
+      "type": "list",
+      "item": "dependency",
+      "fields": [
+       {
+        "key": "name",
+        "label": "Name",
+        "type": "text"
+       },
+       {
+        "key": "kind",
+        "label": "Type",
+        "type": "select",
+        "options": [
+         "supplier",
+         "person",
+         "system"
+        ]
+       },
+       {
+        "key": "available",
+        "label": "Available by launch",
+        "type": "select",
+        "options": [
+         "yes",
+         "no"
+        ],
+        "labels": {
+         "yes": "Yes",
+         "no": "No"
+        }
+       },
+       {
+        "key": "needs_contingency",
+        "label": "Needs a backup",
+        "type": "boolean"
+       },
+       {
+        "key": "contingency",
+        "label": "Backup arrangement",
+        "type": "text",
+        "when": {
+         "needs_contingency": true
+        }
+       }
+      ]
+     },
+     {
+      "key": "delivery.no_dependencies",
+      "label": "The launch does not depend on any critical supplier, person or system",
+      "type": "boolean"
+     }
+    ]
+   },
+   {
+    "key": "operations",
+    "title": "Operational prerequisites",
+    "fields": [
+     {
+      "key": "operations.process",
+      "label": "How does an enquiry or order become a delivery and a payment?",
+      "type": "textarea"
+     },
+     {
+      "key": "operations.process_version",
+      "label": "Process version",
+      "type": "text",
+      "help": "Change this when the process changes. A test run only counts for the version it tested."
+     },
+     {
+      "key": "operations.dry_run.date",
+      "label": "Test run date",
+      "type": "date"
+     },
+     {
+      "key": "operations.dry_run.outcome",
+      "label": "Test run result",
+      "type": "select",
+      "options": [
+       "passed",
+       "failed"
+      ],
+      "labels": {
+       "passed": "Worked end to end",
+       "failed": "A critical step failed"
+      }
+     },
+     {
+      "key": "operations.dry_run.failures_resolved",
+      "label": "Every critical failure has been resolved",
+      "type": "boolean",
+      "when": {
+       "operations.dry_run.outcome": "failed"
+      }
+     },
+     {
+      "key": "operations.dry_run.notes",
+      "label": "What happened",
+      "type": "textarea"
+     },
+     {
+      "key": "prerequisites",
+      "label": "What must be in place to launch",
+      "type": "list",
+      "item": "prerequisite",
+      "fields": [
+       {
+        "key": "name",
+        "label": "Prerequisite",
+        "type": "text"
+       },
+       {
+        "key": "applicable",
+        "label": "Applies to this launch",
+        "type": "select",
+        "options": [
+         "yes",
+         "no"
+        ],
+        "labels": {
+         "yes": "Applies",
+         "no": "Does not apply"
+        }
+       },
+       {
+        "key": "rationale",
+        "label": "Why it does not apply",
+        "type": "text",
+        "when": {
+         "applicable": "no"
+        }
+       },
+       {
+        "key": "critical",
+        "label": "Required before launch",
+        "type": "boolean"
+       },
+       {
+        "key": "status",
+        "label": "Status",
+        "type": "select",
+        "options": [
+         "completed",
+         "not_completed"
+        ],
+        "labels": {
+         "completed": "Completed",
+         "not_completed": "Not completed"
+        }
+       },
+       {
+        "key": "required_by",
+        "label": "Required by",
+        "type": "date"
+       },
+       {
+        "key": "valid_until",
+        "label": "Valid until",
+        "type": "date"
+       },
+       {
+        "key": "source_reference",
+        "label": "Where the requirement comes from",
+        "type": "text"
+       },
+       {
+        "key": "evidence_id",
+        "label": "Evidence",
+        "type": "evidence"
+       }
+      ]
+     },
+     {
+      "key": "no_prerequisites",
+      "label": "Nothing has to be in place before this launch",
+      "type": "boolean"
+     },
+     {
+      "key": "no_prerequisites_rationale",
+      "label": "Why nothing is required",
+      "type": "text",
+      "when": {
+       "no_prerequisites": true
+      }
+     }
+    ],
+    "attest": [
+     "C6.A"
+    ]
+   },
+   {
+    "key": "sales",
+    "title": "Sales and launch plan",
+    "fields": [
+     {
+      "key": "market.channel",
+      "label": "First acquisition channel",
+      "type": "text"
+     },
+     {
+      "key": "market.audience",
+      "label": "Who it reaches",
+      "type": "text"
+     },
+     {
+      "key": "market.message",
+      "label": "Launch message",
+      "type": "textarea"
+     },
+     {
+      "key": "market.owner",
+      "label": "Channel owner",
+      "type": "text"
+     },
+     {
+      "key": "market.budget",
+      "label": "Channel budget",
+      "type": "money"
+     },
+     {
+      "key": "market.target",
+      "label": "Channel target",
+      "type": "text",
+      "help": "For example 20 enquiries in the first month."
+     },
+     {
+      "key": "control.milestones",
+      "label": "Launch milestones",
+      "type": "list",
+      "item": "milestone",
+      "fields": [
+       {
+        "key": "outcome",
+        "label": "Outcome",
+        "type": "text"
+       },
+       {
+        "key": "due_date",
+        "label": "Due",
+        "type": "date"
+       },
+       {
+        "key": "owner",
+        "label": "Owner",
+        "type": "text"
+       },
+       {
+        "key": "depends_on",
+        "label": "Depends on",
+        "type": "refs",
+        "of": "control.milestones",
+        "show": "outcome"
+       },
+       {
+        "key": "status",
+        "label": "Status",
+        "type": "select",
+        "options": [
+         "open",
+         "done"
+        ],
+        "labels": {
+         "open": "Open",
+         "done": "Done"
+        }
+       }
+      ]
+     },
+     {
+      "key": "control.success_measures",
+      "label": "How you will measure success",
+      "type": "textarea"
+     },
+     {
+      "key": "control.incident_response",
+      "label": "What you will do if something goes wrong",
+      "type": "textarea"
+     },
+     {
+      "key": "control.review_date",
+      "label": "Post-launch review date",
+      "type": "date"
+     }
+    ]
+   }
+  ]
+ },
+ "sections": [
+  {
+   "key": "customers",
+   "title": "Customers and offer",
+   "answered": 3,
+   "total": 4
+  },
+  {
+   "key": "economics",
+   "title": "Pricing and economics",
+   "answered": 3,
+   "total": 8
+  },
+  {
+   "key": "cash",
+   "title": "Cash",
+   "answered": 0,
+   "total": 1
+  },
+  {
+   "key": "delivery",
+   "title": "Delivery",
+   "answered": 0,
+   "total": 8
+  },
+  {
+   "key": "operations",
+   "title": "Operational prerequisites",
+   "answered": 0,
+   "total": 7
+  },
+  {
+   "key": "sales",
+   "title": "Sales and launch plan",
+   "answered": 0,
+   "total": 10
+  }
+ ],
+ "forecast": null,
+ "forecast_draft": null,
+ "evidence": [],
+ "assessment": {
+  "id": "a2386656-3e2e-475c-b972-87bc40991940",
+  "subject_id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+  "subject_type": "launch_initiative",
+  "execution_status": "succeeded",
+  "profile": "launch.commercial_service.uk@0.2",
+  "as_of": "2026-10-01",
+  "created_at": "2026-10-01T09:00:00+00:00",
+  "completed_at": "2026-10-01T09:00:00+00:00",
+  "subject_revision": 1,
+  "requested_by": "owner@a.test",
+  "failure": null,
+  "result": {
+   "subject_type": "launch_initiative",
+   "profile": "launch.commercial_service.uk@0.2",
+   "profile_title": "Commercial service launch",
+   "ruleset_version": "0.2",
+   "engine_versions": {
+    "readiness": "readiness-engine-0.1",
+    "forecast": "cash-forecast-0.1"
+   },
+   "score": null,
+   "score_display": null,
+   "known_points": 0.0,
+   "coverage": 0,
+   "gate_completeness": 20,
+   "classification": "insufficient_evidence",
+   "headline": "Not enough evidence to assess yet.",
+   "blocker_count": 0,
+   "criteria": [
+    {
+     "code": "C1",
+     "title": "Customer and demand",
+     "weight": 15,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "customers",
+     "tool": {
+      "label": "Customers and offer",
+      "section": "customers"
+     },
+     "checks": [
+      {
+       "code": "C1.A",
+       "label": "Target segment, problem and dated demand evidence are documented",
+       "kind": "computed",
+       "how_to": "Describe your target customer and their problem, and attach dated demand evidence.",
+       "state": "unknown",
+       "reason": "No dated demand evidence is attached yet."
+      },
+      {
+       "code": "C1.B",
+       "label": "Evidence relevance and limitations are explicitly reviewed",
+       "kind": "attested",
+       "how_to": "Confirm you have reviewed how relevant the evidence is and what it does not show.",
+       "state": "unknown",
+       "reason": "There is no evidence to review yet."
+      }
+     ]
+    },
+    {
+     "code": "C2",
+     "title": "Offer and pricing",
+     "weight": 15,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "economics",
+     "tool": {
+      "label": "Pricing and economics",
+      "section": "economics"
+     },
+     "checks": [
+      {
+       "code": "C2.A",
+       "label": "Launch scope, price, delivery terms and customer promise are confirmed",
+       "kind": "computed",
+       "how_to": "Fill in what you are launching, the price, delivery terms and your promise to the customer, then confirm them.",
+       "state": "failed",
+       "reason": "Still missing: what you are launching, delivery terms, customer promise.",
+       "missing": [
+        "what you are launching",
+        "delivery terms",
+        "customer promise"
+       ]
+      },
+      {
+       "code": "C2.B",
+       "label": "Cost and margin inputs are validated and their implications reviewed",
+       "kind": "attested",
+       "how_to": "Enter price and costs, then confirm you have reviewed what the margin means.",
+       "state": "unknown",
+       "reason": "Enter the price per unit, the cost to deliver one unit and monthly fixed costs."
+      }
+     ]
+    },
+    {
+     "code": "C3",
+     "title": "Cash preparation",
+     "weight": 20,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "cash",
+     "tool": {
+      "label": "Cash",
+      "section": "cash"
+     },
+     "checks": [
+      {
+       "code": "C3.A",
+       "label": "The required cash projection is complete and reconciled",
+       "kind": "computed",
+       "how_to": "Complete the cash projection for every month it must cover.",
+       "state": "unknown",
+       "reason": "There is no monthly cash forecast yet."
+      },
+      {
+       "code": "C3.B",
+       "label": "Setup and operating commitments are included with evidence or labelled as assumptions",
+       "kind": "computed",
+       "how_to": "List your setup and operating commitments, each marked as evidenced or an assumption.",
+       "state": "unknown",
+       "reason": "There is no cash projection yet."
+      }
+     ]
+    },
+    {
+     "code": "C4",
+     "title": "Delivery capability",
+     "weight": 15,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "delivery",
+     "tool": {
+      "label": "Delivery",
+      "section": "delivery"
+     },
+     "checks": [
+      {
+       "code": "C4.A",
+       "label": "Planned demand fits evidenced available capacity",
+       "kind": "computed",
+       "how_to": "Enter your available capacity, what is already committed and what the launch needs.",
+       "state": "unknown",
+       "reason": "Enter how many you plan to deliver each month."
+      },
+      {
+       "code": "C4.B",
+       "label": "Critical suppliers, people and systems are available, with contingency where needed",
+       "kind": "computed",
+       "how_to": "List the suppliers, people and systems you depend on, and whether each is available.",
+       "state": "unknown",
+       "reason": "List what the launch depends on, or confirm it depends on nothing critical."
+      }
+     ]
+    },
+    {
+     "code": "C5",
+     "title": "Operational process",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "checks": [
+      {
+       "code": "C5.A",
+       "label": "The enquiry or order to delivery and payment process is documented",
+       "kind": "computed",
+       "how_to": "Describe how an enquiry or order becomes a delivery and a payment.",
+       "state": "unknown",
+       "reason": "The process isn't described yet."
+      },
+      {
+       "code": "C5.B",
+       "label": "A representative end-to-end dry run has recorded results and resolved critical failures",
+       "kind": "computed",
+       "how_to": "Record an end-to-end test run and what happened.",
+       "state": "unknown",
+       "reason": "No end-to-end test run is recorded yet."
+      }
+     ]
+    },
+    {
+     "code": "C6",
+     "title": "Applicable prerequisites",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "checks": [
+      {
+       "code": "C6.A",
+       "label": "Applicable launch obligations and prerequisites are identified and reviewed",
+       "kind": "attested",
+       "how_to": "List what you must have in place to launch, then confirm you have reviewed which apply.",
+       "state": "unknown",
+       "reason": "List what must be in place before launch, or record why nothing is required."
+      },
+      {
+       "code": "C6.B",
+       "label": "Required permissions or prerequisites are evidenced as completed by launch",
+       "kind": "computed",
+       "how_to": "Mark each prerequisite completed, with its evidence, before launch.",
+       "state": "unknown",
+       "reason": "No prerequisites are recorded yet."
+      }
+     ]
+    },
+    {
+     "code": "C7",
+     "title": "Route to market",
+     "weight": 10,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "checks": [
+      {
+       "code": "C7.A",
+       "label": "Initial acquisition channel, audience and launch message are defined",
+       "kind": "computed",
+       "how_to": "Name your first channel, its audience and your launch message.",
+       "state": "unknown",
+       "reason": "Not filled in yet: channel, audience, launch message.",
+       "missing": [
+        "channel",
+        "audience",
+        "launch message"
+       ]
+      },
+      {
+       "code": "C7.B",
+       "label": "Channel execution has an owner, budget and measurable target",
+       "kind": "computed",
+       "how_to": "Give the channel an owner, a budget and a target.",
+       "state": "unknown",
+       "reason": "Not filled in yet: owner, budget, target.",
+       "missing": [
+        "owner",
+        "budget",
+        "target"
+       ]
+      }
+     ]
+    },
+    {
+     "code": "C8",
+     "title": "Launch control",
+     "weight": 5,
+     "state": "unknown",
+     "score": null,
+     "applicable": true,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "checks": [
+      {
+       "code": "C8.A",
+       "label": "Launch milestones, date and owners are agreed",
+       "kind": "computed",
+       "how_to": "Set the launch date and give every milestone a date and an owner.",
+       "state": "unknown",
+       "reason": "Set the launch date and add at least one milestone."
+      },
+      {
+       "code": "C8.B",
+       "label": "Success measures, incident response and post-launch review date are recorded",
+       "kind": "computed",
+       "how_to": "Record how you will measure success, what you do if something goes wrong and when you will review.",
+       "state": "unknown",
+       "reason": "Not filled in yet: success measures, incident response, post-launch review date.",
+       "missing": [
+        "success measures",
+        "incident response",
+        "post-launch review date"
+       ]
+      }
+     ]
+    }
+   ],
+   "gates": [
+    {
+     "code": "B1",
+     "label": "No cash shortfall in the months the projection must cover",
+     "criterion": "C3",
+     "severity": "critical",
+     "remedy": "Change the plan so cash stays above zero in every month, or add committed, evidenced financing. Expected funding is not enough.",
+     "state": "unknown",
+     "reason": "The cash projection is not complete, so a shortfall can't be ruled in or out.",
+     "stale": false
+    },
+    {
+     "code": "B2",
+     "label": "Planned demand fits confirmed delivery capacity",
+     "criterion": "C4",
+     "severity": "critical",
+     "remedy": "Reduce the launch volume, or add capacity that is confirmed available by the launch date.",
+     "state": "unknown",
+     "reason": "Enter how many you plan to deliver each month."
+    },
+    {
+     "code": "B3",
+     "label": "Every required permission or prerequisite is completed and valid at launch",
+     "criterion": "C6",
+     "severity": "critical",
+     "remedy": "Complete the prerequisite and attach its evidence. A permission must still be valid on the launch date.",
+     "state": "unknown",
+     "reason": "No prerequisites are recorded yet."
+    },
+    {
+     "code": "B4",
+     "label": "The end-to-end delivery and payment test has no unresolved critical failure",
+     "criterion": "C5",
+     "severity": "critical",
+     "remedy": "Resolve the failure, run the test again and record the result.",
+     "state": "unknown",
+     "reason": "No end-to-end test run is recorded yet."
+    },
+    {
+     "code": "B5",
+     "label": "Each sale contributes more than it costs to deliver",
+     "criterion": "C2",
+     "severity": "critical",
+     "remedy": "Raise the price or lower the cost of delivery until the contribution is above zero.",
+     "state": "passed",
+     "reason": "Each unit contributes 9,000.00 after delivery cost."
+    }
+   ],
+   "gaps": [
+    {
+     "code": "C1.A",
+     "group": 2,
+     "criterion": "C1",
+     "title": "Describe your target customer and their problem, and attach dated demand evidence.",
+     "why": "No dated demand evidence is attached yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Target segment, problem and dated demand evidence are documented",
+     "weight": 15,
+     "order": 0,
+     "section": "customers",
+     "tool": {
+      "label": "Customers and offer",
+      "section": "customers"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C1.B",
+     "group": 2,
+     "criterion": "C1",
+     "title": "Confirm you have reviewed how relevant the evidence is and what it does not show.",
+     "why": "There is no evidence to review yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Evidence relevance and limitations are explicitly reviewed",
+     "weight": 15,
+     "order": 0,
+     "section": "customers",
+     "tool": {
+      "label": "Customers and offer",
+      "section": "customers"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C2.B",
+     "group": 2,
+     "criterion": "C2",
+     "title": "Enter price and costs, then confirm you have reviewed what the margin means.",
+     "why": "Enter the price per unit, the cost to deliver one unit and monthly fixed costs.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Cost and margin inputs are validated and their implications reviewed",
+     "weight": 15,
+     "order": 1,
+     "section": "economics",
+     "tool": {
+      "label": "Pricing and economics",
+      "section": "economics"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C3.A",
+     "group": 2,
+     "criterion": "C3",
+     "title": "Complete the cash projection for every month it must cover.",
+     "why": "There is no monthly cash forecast yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "The required cash projection is complete and reconciled",
+     "weight": 20,
+     "order": 2,
+     "section": "cash",
+     "tool": {
+      "label": "Cash",
+      "section": "cash"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C3.B",
+     "group": 2,
+     "criterion": "C3",
+     "title": "List your setup and operating commitments, each marked as evidenced or an assumption.",
+     "why": "There is no cash projection yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Setup and operating commitments are included with evidence or labelled as assumptions",
+     "weight": 20,
+     "order": 2,
+     "section": "cash",
+     "tool": {
+      "label": "Cash",
+      "section": "cash"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C4.A",
+     "group": 2,
+     "criterion": "C4",
+     "title": "Enter your available capacity, what is already committed and what the launch needs.",
+     "why": "Enter how many you plan to deliver each month.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Planned demand fits evidenced available capacity",
+     "weight": 15,
+     "order": 3,
+     "section": "delivery",
+     "tool": {
+      "label": "Delivery",
+      "section": "delivery"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C4.B",
+     "group": 2,
+     "criterion": "C4",
+     "title": "List the suppliers, people and systems you depend on, and whether each is available.",
+     "why": "List what the launch depends on, or confirm it depends on nothing critical.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Critical suppliers, people and systems are available, with contingency where needed",
+     "weight": 15,
+     "order": 3,
+     "section": "delivery",
+     "tool": {
+      "label": "Delivery",
+      "section": "delivery"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C5.A",
+     "group": 2,
+     "criterion": "C5",
+     "title": "Describe how an enquiry or order becomes a delivery and a payment.",
+     "why": "The process isn't described yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "The enquiry or order to delivery and payment process is documented",
+     "weight": 10,
+     "order": 4,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C5.B",
+     "group": 2,
+     "criterion": "C5",
+     "title": "Record an end-to-end test run and what happened.",
+     "why": "No end-to-end test run is recorded yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "A representative end-to-end dry run has recorded results and resolved critical failures",
+     "weight": 10,
+     "order": 4,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C6.A",
+     "group": 2,
+     "criterion": "C6",
+     "title": "List what you must have in place to launch, then confirm you have reviewed which apply.",
+     "why": "List what must be in place before launch, or record why nothing is required.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Applicable launch obligations and prerequisites are identified and reviewed",
+     "weight": 10,
+     "order": 5,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C6.B",
+     "group": 2,
+     "criterion": "C6",
+     "title": "Mark each prerequisite completed, with its evidence, before launch.",
+     "why": "No prerequisites are recorded yet.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Required permissions or prerequisites are evidenced as completed by launch",
+     "weight": 10,
+     "order": 5,
+     "section": "operations",
+     "tool": {
+      "label": "Operational prerequisites",
+      "section": "operations"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C7.A",
+     "group": 2,
+     "criterion": "C7",
+     "title": "Name your first channel, its audience and your launch message.",
+     "why": "Not filled in yet: channel, audience, launch message.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Initial acquisition channel, audience and launch message are defined",
+     "weight": 10,
+     "order": 6,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C7.B",
+     "group": 2,
+     "criterion": "C7",
+     "title": "Give the channel an owner, a budget and a target.",
+     "why": "Not filled in yet: owner, budget, target.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Channel execution has an owner, budget and measurable target",
+     "weight": 10,
+     "order": 6,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C8.A",
+     "group": 2,
+     "criterion": "C8",
+     "title": "Set the launch date and give every milestone a date and an owner.",
+     "why": "Set the launch date and add at least one milestone.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Launch milestones, date and owners are agreed",
+     "weight": 5,
+     "order": 7,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C8.B",
+     "group": 2,
+     "criterion": "C8",
+     "title": "Record how you will measure success, what you do if something goes wrong and when you will review.",
+     "why": "Not filled in yet: success measures, incident response, post-launch review date.",
+     "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+     "evidence_required": "Success measures, incident response and post-launch review date are recorded",
+     "weight": 5,
+     "order": 7,
+     "section": "sales",
+     "tool": {
+      "label": "Sales and launch plan",
+      "section": "sales"
+     },
+     "also": [],
+     "due_date": null
+    },
+    {
+     "code": "C2.A",
+     "group": 3,
+     "criterion": "C2",
+     "title": "Fill in what you are launching, the price, delivery terms and your promise to the customer, then confirm them.",
+     "why": "Still missing: what you are launching, delivery terms, customer promise.",
+     "priority_reason": "A preparation gap.",
+     "evidence_required": "Launch scope, price, delivery terms and customer promise are confirmed",
+     "weight": 15,
+     "order": 1,
+     "section": "economics",
+     "tool": {
+      "label": "Pricing and economics",
+      "section": "economics"
+     },
+     "also": [],
+     "due_date": null
+    }
+   ],
+   "confidence": {
+    "level": "low",
+    "reasons": [
+     "Some required evidence is missing."
+    ],
+    "note": "Forecasts remain assumptions at every confidence level."
+   },
+   "stale_checks": [],
+   "missing": [
+    {
+     "code": "C1.A",
+     "label": "Target segment, problem and dated demand evidence are documented",
+     "reason": "No dated demand evidence is attached yet."
+    },
+    {
+     "code": "C1.B",
+     "label": "Evidence relevance and limitations are explicitly reviewed",
+     "reason": "There is no evidence to review yet."
+    },
+    {
+     "code": "C2.B",
+     "label": "Cost and margin inputs are validated and their implications reviewed",
+     "reason": "Enter the price per unit, the cost to deliver one unit and monthly fixed costs."
+    },
+    {
+     "code": "C3.A",
+     "label": "The required cash projection is complete and reconciled",
+     "reason": "There is no monthly cash forecast yet."
+    },
+    {
+     "code": "C3.B",
+     "label": "Setup and operating commitments are included with evidence or labelled as assumptions",
+     "reason": "There is no cash projection yet."
+    },
+    {
+     "code": "C4.A",
+     "label": "Planned demand fits evidenced available capacity",
+     "reason": "Enter how many you plan to deliver each month."
+    },
+    {
+     "code": "C4.B",
+     "label": "Critical suppliers, people and systems are available, with contingency where needed",
+     "reason": "List what the launch depends on, or confirm it depends on nothing critical."
+    },
+    {
+     "code": "C5.A",
+     "label": "The enquiry or order to delivery and payment process is documented",
+     "reason": "The process isn't described yet."
+    },
+    {
+     "code": "C5.B",
+     "label": "A representative end-to-end dry run has recorded results and resolved critical failures",
+     "reason": "No end-to-end test run is recorded yet."
+    },
+    {
+     "code": "C6.A",
+     "label": "Applicable launch obligations and prerequisites are identified and reviewed",
+     "reason": "List what must be in place before launch, or record why nothing is required."
+    },
+    {
+     "code": "C6.B",
+     "label": "Required permissions or prerequisites are evidenced as completed by launch",
+     "reason": "No prerequisites are recorded yet."
+    },
+    {
+     "code": "C7.A",
+     "label": "Initial acquisition channel, audience and launch message are defined",
+     "reason": "Not filled in yet: channel, audience, launch message."
+    },
+    {
+     "code": "C7.B",
+     "label": "Channel execution has an owner, budget and measurable target",
+     "reason": "Not filled in yet: owner, budget, target."
+    },
+    {
+     "code": "C8.A",
+     "label": "Launch milestones, date and owners are agreed",
+     "reason": "Set the launch date and add at least one milestone."
+    },
+    {
+     "code": "C8.B",
+     "label": "Success measures, incident response and post-launch review date are recorded",
+     "reason": "Not filled in yet: success measures, incident response, post-launch review date."
+    }
+   ],
+   "disclaimer": "This measures preparation for the launch you defined. It does not guarantee demand, profit, regulatory compliance or survival.",
+   "status_note": "Pilot checklist. It is self-reviewed and is not a compliance certificate: it does not claim to list every requirement that applies to you.",
+   "metrics": {
+    "forecast": {
+     "state": "missing",
+     "issues": [],
+     "missing": [
+      "A monthly cash forecast"
+     ],
+     "required": [
+      "2026-10",
+      "2026-11",
+      "2026-12",
+      "2027-01",
+      "2027-02",
+      "2027-03"
+     ],
+     "months": [],
+     "min_cash": null,
+     "first_negative_month": null,
+     "excluded_financing": [],
+     "basis": {},
+     "formula_version": "cash-forecast-0.1",
+     "label": "This is a monthly projection. It cannot show whether every payment within a month can be made on its day.",
+     "currency": null,
+     "opening_cash": null
+    },
+    "required_months": [
+     "2026-10",
+     "2026-11",
+     "2026-12",
+     "2027-01",
+     "2027-02",
+     "2027-03"
+    ],
+    "launch_month": null,
+    "baseline_min_cash": null,
+    "first_negative_month": null,
+    "cash_at_launch": null,
+    "capacity": {
+     "state": "unknown",
+     "unit": null,
+     "reason": "Enter how many you plan to deliver each month."
+    },
+    "economics": {
+     "state": "available",
+     "contribution_per_unit": "9000.00",
+     "break_even_units_per_month": null,
+     "break_even_state": "unavailable",
+     "basis": "whole business",
+     "note": "Monthly break-even units: how many units a month cover fixed costs. It is not a number of months."
+    }
+   },
+   "data_basis": {
+    "months": {},
+    "label": null,
+    "note": null
+   },
+   "risks": [
+    {
+     "code": "pre_revenue",
+     "severity": "info",
+     "text": "A first launch: there is no trading history, so no stability figure is calculated from past revenue."
+    }
+   ],
+   "evidence_used": [],
+   "limitations": [
+    "This is a monthly projection. It cannot show whether every payment within a month can be made on its day.",
+    "Forecast figures are assumptions, however well evidenced.",
+    "The prerequisites are the ones you recorded. This check does not claim the list is complete and does not certify compliance."
+   ]
+  },
+  "freshness": {
+   "status": "current",
+   "reason": null,
+   "as_of": "2026-10-01"
+  },
+  "can_retry": false
+ },
+ "actions": [
+  {
+   "id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+   "code": "C1.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Describe your target customer and their problem, and attach dated demand evidence.",
+   "why": "No dated demand evidence is attached yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Target segment, problem and dated demand evidence are documented",
+   "group": 2,
+   "criterion": "C1",
+   "section": "customers",
+   "tool": {
+    "label": "Customers and offer",
+    "section": "customers"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "4e953344-7c5c-4b9a-951e-5e8c1f24cdb4",
+   "code": "C1.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Confirm you have reviewed how relevant the evidence is and what it does not show.",
+   "why": "There is no evidence to review yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Evidence relevance and limitations are explicitly reviewed",
+   "group": 2,
+   "criterion": "C1",
+   "section": "customers",
+   "tool": {
+    "label": "Customers and offer",
+    "section": "customers"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "e41962c6-d7bf-4bff-b66e-4022385ad73d",
+   "code": "C2.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Enter price and costs, then confirm you have reviewed what the margin means.",
+   "why": "Enter the price per unit, the cost to deliver one unit and monthly fixed costs.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Cost and margin inputs are validated and their implications reviewed",
+   "group": 2,
+   "criterion": "C2",
+   "section": "economics",
+   "tool": {
+    "label": "Pricing and economics",
+    "section": "economics"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "dc21901a-6941-43f5-93ee-7f8626d72ca5",
+   "code": "C3.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Complete the cash projection for every month it must cover.",
+   "why": "There is no monthly cash forecast yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "The required cash projection is complete and reconciled",
+   "group": 2,
+   "criterion": "C3",
+   "section": "cash",
+   "tool": {
+    "label": "Cash",
+    "section": "cash"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "6837d506-5186-411a-bd2d-03215e120ca3",
+   "code": "C3.B",
+   "status": "open",
+   "revision": 1,
+   "title": "List your setup and operating commitments, each marked as evidenced or an assumption.",
+   "why": "There is no cash projection yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Setup and operating commitments are included with evidence or labelled as assumptions",
+   "group": 2,
+   "criterion": "C3",
+   "section": "cash",
+   "tool": {
+    "label": "Cash",
+    "section": "cash"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "83e37f64-8f55-4dcc-9961-a66d88f6c1d5",
+   "code": "C4.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Enter your available capacity, what is already committed and what the launch needs.",
+   "why": "Enter how many you plan to deliver each month.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Planned demand fits evidenced available capacity",
+   "group": 2,
+   "criterion": "C4",
+   "section": "delivery",
+   "tool": {
+    "label": "Delivery",
+    "section": "delivery"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "268e093c-afaf-4d0d-86c2-c6c2039ea1ce",
+   "code": "C4.B",
+   "status": "open",
+   "revision": 1,
+   "title": "List the suppliers, people and systems you depend on, and whether each is available.",
+   "why": "List what the launch depends on, or confirm it depends on nothing critical.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Critical suppliers, people and systems are available, with contingency where needed",
+   "group": 2,
+   "criterion": "C4",
+   "section": "delivery",
+   "tool": {
+    "label": "Delivery",
+    "section": "delivery"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "744d1d64-6a85-4a63-a38e-03e061dccc51",
+   "code": "C5.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Describe how an enquiry or order becomes a delivery and a payment.",
+   "why": "The process isn't described yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "The enquiry or order to delivery and payment process is documented",
+   "group": 2,
+   "criterion": "C5",
+   "section": "operations",
+   "tool": {
+    "label": "Operational prerequisites",
+    "section": "operations"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "d71cf3f8-15f8-4b5f-8b6c-61f1d79963a2",
+   "code": "C5.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Record an end-to-end test run and what happened.",
+   "why": "No end-to-end test run is recorded yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "A representative end-to-end dry run has recorded results and resolved critical failures",
+   "group": 2,
+   "criterion": "C5",
+   "section": "operations",
+   "tool": {
+    "label": "Operational prerequisites",
+    "section": "operations"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "963f9d61-d708-4d17-9b4f-fb44c532ad61",
+   "code": "C6.A",
+   "status": "open",
+   "revision": 1,
+   "title": "List what you must have in place to launch, then confirm you have reviewed which apply.",
+   "why": "List what must be in place before launch, or record why nothing is required.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Applicable launch obligations and prerequisites are identified and reviewed",
+   "group": 2,
+   "criterion": "C6",
+   "section": "operations",
+   "tool": {
+    "label": "Operational prerequisites",
+    "section": "operations"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "d646d757-7da7-4dd0-8a7f-d7ab77acc643",
+   "code": "C6.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Mark each prerequisite completed, with its evidence, before launch.",
+   "why": "No prerequisites are recorded yet.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Required permissions or prerequisites are evidenced as completed by launch",
+   "group": 2,
+   "criterion": "C6",
+   "section": "operations",
+   "tool": {
+    "label": "Operational prerequisites",
+    "section": "operations"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "752e6b2b-9649-41a1-be8e-514bf4ce4c98",
+   "code": "C7.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Name your first channel, its audience and your launch message.",
+   "why": "Not filled in yet: channel, audience, launch message.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Initial acquisition channel, audience and launch message are defined",
+   "group": 2,
+   "criterion": "C7",
+   "section": "sales",
+   "tool": {
+    "label": "Sales and launch plan",
+    "section": "sales"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "68506bc0-4838-48a1-bac9-f675bfb910d8",
+   "code": "C7.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Give the channel an owner, a budget and a target.",
+   "why": "Not filled in yet: owner, budget, target.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Channel execution has an owner, budget and measurable target",
+   "group": 2,
+   "criterion": "C7",
+   "section": "sales",
+   "tool": {
+    "label": "Sales and launch plan",
+    "section": "sales"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "ca05f08d-ca40-4139-a34b-859064614d75",
+   "code": "C8.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Set the launch date and give every milestone a date and an owner.",
+   "why": "Set the launch date and add at least one milestone.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Launch milestones, date and owners are agreed",
+   "group": 2,
+   "criterion": "C8",
+   "section": "sales",
+   "tool": {
+    "label": "Sales and launch plan",
+    "section": "sales"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "18d97c36-de6b-4e84-9986-3e25c9837789",
+   "code": "C8.B",
+   "status": "open",
+   "revision": 1,
+   "title": "Record how you will measure success, what you do if something goes wrong and when you will review.",
+   "why": "Not filled in yet: success measures, incident response, post-launch review date.",
+   "priority_reason": "Required evidence is missing, so this can't be assessed yet.",
+   "evidence_required": "Success measures, incident response and post-launch review date are recorded",
+   "group": 2,
+   "criterion": "C8",
+   "section": "sales",
+   "tool": {
+    "label": "Sales and launch plan",
+    "section": "sales"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  },
+  {
+   "id": "f1e853f3-1a25-4326-9895-fb82b1007aa2",
+   "code": "C2.A",
+   "status": "open",
+   "revision": 1,
+   "title": "Fill in what you are launching, the price, delivery terms and your promise to the customer, then confirm them.",
+   "why": "Still missing: what you are launching, delivery terms, customer promise.",
+   "priority_reason": "A preparation gap.",
+   "evidence_required": "Launch scope, price, delivery terms and customer promise are confirmed",
+   "group": 3,
+   "criterion": "C2",
+   "section": "economics",
+   "tool": {
+    "label": "Pricing and economics",
+    "section": "economics"
+   },
+   "owner": null,
+   "due_date": null,
+   "due_date_source": null,
+   "proposed_due_date": null,
+   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "completion": null,
+   "dismissal": null,
+   "resolved_by_assessment_id": null,
+   "reopened_at": null,
+   "kind": "gap",
+   "also": [],
+   "updated_at": "2026-10-01T09:00:00+00:00"
+  }
+ ],
+ "summary": {
+  "business_id": "A",
+  "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+  "profile_version": "launch.commercial_service.uk@0.2",
+  "classification": "insufficient_evidence",
+  "score": 0,
+  "known_score": 0,
+  "confidence": "low",
+  "freshness": "current",
+  "freshness_reason": null,
+  "blocker_count": 0,
+  "next_action_id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+  "title": "Mobile car detailing",
+  "headline": "Not enough evidence to assess yet.",
+  "as_of": "2026-10-01",
+  "next_action": {
+   "id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+   "title": "Describe your target customer and their problem, and attach dated demand evidence.",
+   "section": "customers"
+  },
+  "open_actions": 16,
+  "missing_count": 15,
+  "blockers": [],
+  "execution_status": "succeeded",
+  "score_partial": true,
+  "not_ready_why": "15 things still to add, starting with: target segment, problem and dated demand evidence are documented.",
+  "initiative_id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+  "launch_type": "initial_business",
+  "scope": "commercial",
+  "target_date": null,
+  "lifecycle_status": "preparing",
+  "evidence_coverage": 0,
+  "gate_completeness": 20
+ },
+ "decisions": [],
+ "scenarios_available": true
+}

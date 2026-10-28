@@ -1,17 +1,18 @@
 import UkDateInput from "../components/UkDateInput";
-import AgentRows from "../components/agent/AgentRows";
-import AgentBar from "../components/agent/AgentBar";
+import AgentRows, { TYPE_OF, TYPES } from "../components/agent/AgentRows";
+import AgentChat from "../components/BusinessAssistant";
 import { DraftDrawer } from "../components/agent/DraftEditor";
 import ResultsList, { useResultsCount } from "../components/agent/ResultsList";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import PageHeader from "../components/PageHeader";
 import { LoadError, SettingsSkeleton, SkeletonRegion, SkeletonTable } from "../components/Skeleton";
 import AgentPanel from "../components/agent/AgentPanel";
+import { ActivitySheet, ProfileSheet } from "../components/agent/Sheets";
+import TaskList, { openInChat } from "../components/agent/TaskList";
 import { Icon, Modal, Pill, QuestionForm } from "../components/agent/AgentBits";
 import { agentErrorMessage, answerRun, forgetAgentFact, getAgentMemory, getAgentPolicy, getAgentSummary, listDocuments, listRuns, queryOf, runStateLabel, runTone, saveAgentFact, saveAgentPolicy } from "../lib/agent";
 import { useWorkspaceStore } from "../store/workspace";
-import { apiRequestCached } from "../api/client";
+import { apiRequest, apiRequestCached } from "../api/client";
 import Pagination, { PAGE_SIZE, pageSlice } from "../components/Pagination";
 
 const TABS = [
@@ -390,6 +391,8 @@ export default function AgentCentrePage() {
   const asked = { approval: "needs_approval", approvals: "needs_approval", "needs-approval": "needs_approval", "needs-you": "needs_attention", "needs_you": "needs_attention" }[params.get("tab")] || params.get("tab");
   const tab = TABS.some((t) => t.key === asked) ? asked : "active";
   const [answering, setAnswering] = useState(null);            // the task whose question is being answered
+  const [viewing, setViewing] = useState(null);      // "View profile" or Recent activity's "View all", opened beside the chat
+  const closeView = useCallback(() => setViewing(null), []);
   const [answerProblem, setAnswerProblem] = useState(null);
   const [runs, setRuns] = useState([]);
   const [runTotal, setRunTotal] = useState(0);
@@ -401,7 +404,9 @@ export default function AgentCentrePage() {
   const get = (k) => params.get(k) || "";
   const filters = { capability: get("capability"), status: get("status"), from: get("from"), to: get("to") };
   const docKind = get("type"), docSearch = get("q"), docOrder = get("sort") || "newest";
-  const at = pageSlice(Infinity, params.get("page"), params.get("more"));      // the total isn't known until the page arrives
+  // "Show more" instead of numbered pages (the owner, 27 Oct): the first ten, then ten more each time
+  const [shownN, setShownN] = useState(10);
+  useEffect(() => { setShownN(10); }, [params.get("tab")]);      // eslint-disable-line react-hooks/exhaustive-deps
   /** Change what is being looked at. Anything but the page itself starts again from page 1. */
   const look = useCallback((patch, keepPage = false) => {
     setParams((prev) => {
@@ -419,9 +424,8 @@ export default function AgentCentrePage() {
   const setDocKind = (v) => look({ type: v });
 
   // The one page being looked at is asked for, with its filters; the other list is asked only for its total (the number on its tab).
-  const runQuery = tab === "documents" || tab === "results" ? queryOf({ limit: 1 })
-    : queryOf({ bucket: tab, ...(tab === "history" ? { capability: filters.capability, status: filters.status, date_from: filters.from, date_to: filters.to } : {}), limit: at.limit, offset: at.offset });
-  const docQuery = tab === "documents" ? { kind: docKind, q: docSearch, order: docOrder === "newest" ? "" : docOrder, limit: at.limit, offset: at.offset } : { limit: 1 };
+  const runQuery = tab === "documents" || tab === "results" ? queryOf({ limit: 1 }) : queryOf({ bucket: tab, limit: shownN, offset: 0 });
+  const docQuery = tab === "documents" ? { kind: docKind, q: docSearch, order: docOrder === "newest" ? "" : docOrder, limit: shownN, offset: 0 } : { limit: 1 };
   const docKey = JSON.stringify(docQuery);
   const load = useCallback(async () => {
     if (!workspaceId) { setLoading(false); return; }
@@ -445,76 +449,183 @@ export default function AgentCentrePage() {
 
   const visible = tab === "documents" ? [] : runs;
   const total = tab === "documents" ? documents?.total || 0 : runTotal;
-  // A page past the end (rows were approved or filtered away since): step back to the last page there is.
+
+  // The task tabs beside the chat, as the owner's mockup (27 Oct): the tabs and their counts, the list of the one picked;
+  // on a phone the chat alone, the tasks in a sheet from "Tasks"
+  const [kind, setKind] = useState("");
+  const [sheet, setSheet] = useState(false);
+  const [listOpen, setListOpen] = useState(params.has("tab"));
+  const pick = (key) => { setParams({ tab: key }); setListOpen(true); };
+  // The business, its risk and activity, and where each case and check stands: for the chat and the column beside it
+  const [ctx, setCtx] = useState(null);
+  const [work, setWork] = useState([]);
   useEffect(() => {
-    if (!loading && total > 0 && at.offset >= total) look({ page: Math.ceil(total / PAGE_SIZE), more: "" }, true);
-  }, [loading, total, at.offset, look]);
-
-  return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Agent Centre"
-        description="Everything the EnterprateAI Agent is doing for your business, what needs you, and what it has completed."
-        actions={
-          <button type="button" onClick={() => setSettings(true)}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-            Agent settings
-          </button>
-        }
-      />
-
-      {workspaceId && <AgentBar businessId={workspaceId} onChanged={load} onOpenRun={(id, to) => navigate(to || `/agent/runs/${id}`)} />}
-      {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700">{error}</p>}
-
-      <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900" role="tablist" data-agent-tabs>
-        {TABS.map((t) => {
-          // Totals, whatever page or filter is showing.
-          const n = t.key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : t.key === "results" ? resultsCount : counts[t.key] || 0;
+    if (!workspaceId) return;
+    let live = true;
+    const read = (path) => apiRequest(path, "GET").catch(() => null);
+    Promise.all([read(`/businesses/${workspaceId}/agent/assistant-context?kind=funding`), read(`/businesses/${workspaceId}/funding-cases`),
+      read(`/businesses/${workspaceId}/launch-initiatives`), read(`/businesses/${workspaceId}/agent/assistant-context?kind=idea&case_id=idea`)]).then(([c, f, l, i]) => {
+      if (!live) return;
+      setCtx(c || {});      // read, even when it couldn't be: never a skeleton for ever
+      const open = (list) => (list?.items || []).filter((x) => !["archived", "cancelled"].includes(x.status));
+      const things = (n) => (n ? ` ${n} thing${n === 1 ? "" : "s"} to do.` : "");
+      const out = [];
+      const fc = open(f)[0];
+      if (fc) out.push({ key: "funding", kind: "funding", title: "Funding readiness", score: fc.summary?.score ?? null, detail: `${fc.title || "Your funding case"}.${things(fc.summary?.open_actions)}`, to: `/funding/${fc.id}?tab=assistant` });
+      const idea = i?.idea;
+      if (idea && Object.keys(idea.answers || {}).length) {
+        const sc = typeof idea.score_out_of_100 === "number" ? idea.score_out_of_100 : idea.partial_score;
+        out.push({ key: "idea", kind: "idea", title: "Idea validation", score: sc ?? null, detail: `${idea.answers.description || "Your idea"}.${idea.weaknesses?.[0] ? ` ${idea.weaknesses[0]}.` : ""}`, to: "/check/idea?tab=assistant" });
+      }
+      const lp = open(l)[0];
+      if (lp) out.push({ key: "launch", kind: "launch", title: "Launch readiness", score: lp.summary?.score ?? null, detail: `${lp.title || "Your launch"}.${lp.summary?.next_action?.title ? ` ${lp.summary.next_action.title}` : things(lp.summary?.open_actions)}`, to: `/launch/${lp.id}?tab=assistant` });
+      setWork(out.map((w) => ({ ...w, score: typeof w.score === "number" ? Math.round(w.score) : null })));
+    });
+    return () => { live = false; };
+  }, [workspaceId]);
+  // One number for what is waiting (the owner, 27 Oct: "Five things", "5 waiting" and a tab saying 6): the summary's, as the
+  // dashboard's Needs Approval reads it, for the greeting, the card and the tab
+  const waiting = summary ? { count: summary.needs_approval_count || 0, items: summary.needs_approval || [] } : null;
+  const waitingCount = waiting ? waiting.count : counts.needs_approval || 0;
+  const ORDER = ["needs_approval", "needs_attention", "active", "completed", "documents", "results", "history"];
+  const COUNT_TONE = { needs_approval: "bg-blue-600 text-white", needs_attention: "bg-amber-100 text-amber-800", completed: "bg-emerald-100 text-emerald-700" };
+  const shownTab = listOpen ? tab : (TABS.some((t) => t.key === asked) ? asked : "needs_approval");
+  // Each tab's number, the one its list shows (the owner's QA, 27 Oct: "Needs Approval says 5 but the list shows 1-10 of 48")
+  const countOf = (key) => (key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : key === "results" ? resultsCount
+    : key === "needs_approval" ? waitingCount : counts[key] || 0);
+  const CARD = "rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
+  const LINK = "text-[13.5px] font-medium text-blue-600 hover:underline";
+  const TITLE = "text-[18px] font-bold text-slate-900 dark:text-slate-50";
+  const panel = (
+    <div className={`${CARD} flex min-h-0 flex-col ${listOpen ? "h-full" : ""}`} data-task-panel>
+      <div className="flex items-center justify-between"><p className={TITLE}>Tasks</p>
+        {!listOpen && <button type="button" onClick={() => pick(shownTab)} className={LINK}>View all →</button>}</div>
+      {/* One line (the owner, 28 Oct): smaller chips, never wrapped; when they don't fit, the row scrolls sideways with no
+          scrollbar shown and a soft fade at the right edge saying there is more */}
+      {/* All six fit on one line, so none is cut (the owner, 28 Oct: "Launc"): short words, small chips */}
+      <div className="mt-3 flex shrink-0 flex-nowrap justify-between gap-1" data-task-chips>
+        {["", ...TYPES.filter((t) => t !== "Other")].map((t) => (
+          <button key={t || "all"} type="button" aria-pressed={kind === t} onClick={() => setKind(t)} aria-label={t || "All"}
+            className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11.5px] ${kind === t ? "bg-blue-600 font-medium text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"}`}>{t === "Quotations" ? "Quotes" : t || "All"}</button>
+        ))}
+      </div>
+      {listOpen ? (
+        <TaskList tab={tab} label={TABS.find((t) => t.key === tab)?.label} count={countOf(tab)} onBack={() => { setListOpen(false); look({ tab: "" }); }}
+          loading={loading} empty={TABS.find((t) => t.key === tab)?.empty} total={total} onMore={() => setShownN((n) => n + 10)}
+          waiting={(waiting?.items || []).filter((a) => !kind || TYPE_OF(a.kind) === kind)} runs={visible.filter((r) => !kind || TYPE_OF(r.workflow_key || r.capability) === kind)}
+          documents={documents} docKind={docKind} onDocKind={setDocKind} docSearch={docSearch} onDocSearch={(v) => look({ q: v })} docOrder={docOrder}
+          onDocOrder={(v) => look({ sort: v === "newest" ? "" : v })}
+          onOpenRun={(r) => (r.bucket === "needs_approval" || r.display_status === "awaiting_approval" ? setDraft({ runId: r.id, edit: false }) : navigate(r.to || `/agent/runs/${r.id}`))}
+          onOpenDoc={(d) => { setSheet(false); if (d.draft_id || d.approval_id) openInChat({ title: d.reference || d.kind_label, draft_id: d.draft_id, approval_id: d.approval_id, run_id: d.run_id, to: d.to }); else navigate(d.to || `/agent/runs/${d.run_id}`); }}
+          results={<ResultsList businessId={workspaceId} empty={TABS.find((t) => t.key === "results").empty} />} />
+      ) : (
+      <ul role="tablist" aria-orientation="vertical" aria-label="Your tasks" className="mt-3 divide-y divide-slate-100 dark:divide-slate-800" data-agent-tabs>
+        {ORDER.map((key) => TABS.find((t) => t.key === key)).map((t) => {
+          const n = countOf(t.key);
+          const on = shownTab === t.key;
           return (
-            <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setParams({ tab: t.key })}
-              className={`whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-semibold transition ${tab === t.key ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-              {t.label}
-              <span className={`ml-1.5 rounded-full px-1.5 text-[11px] ${tab === t.key ? "bg-white/20" : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}>{n}</span>
-            </button>
+            <li key={t.key} className={on ? "border-0" : ""}>
+              <button type="button" role="tab" aria-selected={on} onClick={() => pick(t.key)}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[14px] transition ${on ? "bg-blue-50 text-blue-700 dark:bg-brand-950/40 dark:text-blue-200" : "text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}>
+                {t.label}
+                {loading ? <span className="h-5 w-7 animate-pulse rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true" />
+                  : <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-[12px] ${COUNT_TONE[t.key] || "border border-slate-200 text-slate-600 dark:border-slate-700"}`}>{n}</span>}
+              </button>
+            </li>
           );
         })}
+      </ul>
+      )}
+    </div>
+  );
+  const money = (v, c) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: c || "GBP", currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(Number(v) || 0); } catch { return String(v); } };
+  const since = (at) => { const h = (Date.now() - new Date(at).getTime()) / 3600000; return !Number.isFinite(h) ? "" : h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
+  const DOT = { invoice_paid: "bg-emerald-500", customer_added: "bg-blue-500", research: "bg-violet-500" };
+  const b = ctx?.business;
+  const Bone = ({ className }) => <span className={`block animate-pulse rounded bg-slate-100 dark:bg-slate-800 ${className}`} aria-hidden="true" />;
+  const side = (
+    <>
+      <div className={CARD} data-side="workspace">
+        <div className="flex items-center justify-between gap-2"><p className={`${TITLE} whitespace-nowrap`}>Business Workspace</p><button type="button" onClick={() => setViewing("profile")} className={`${LINK} whitespace-nowrap`}>View profile →</button></div>
+        {!ctx ? (
+          <div className="mt-3 space-y-3" aria-busy="true" aria-label="Loading your business">
+            <div className="flex items-center gap-3"><Bone className="h-12 w-12 rounded-xl" /><span className="flex-1 space-y-2"><Bone className="h-4 w-40" /><Bone className="h-3 w-24" /></span></div>
+            <div className="grid grid-cols-2 gap-3"><Bone className="h-9" /><Bone className="h-9" /></div>
+          </div>
+        ) : <>
+        <div className="mt-3 flex items-center gap-3">
+          {b?.logo ? <img src={b.logo} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-[18px] font-semibold text-blue-700">{(b?.name || "?").slice(0, 1)}</span>}
+          <span className="min-w-0"><span className="flex flex-wrap items-center gap-2 text-[15px] font-semibold text-slate-900 dark:text-slate-50">{b?.name || "Your business"}<span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700">Active</span></span>
+            {b?.stage && <span className="text-[13.5px] text-slate-500">{b.stage} stage</span>}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div><p className="text-[13px] text-slate-500">Location</p><p className="text-[14px] font-medium text-slate-900 dark:text-slate-100">{b?.location || "Not set"}</p></div>
+          {/* What the figure is, said with it (the owner's QA, 27 Oct: ₦994,276 was labelled "a month") */}
+          <div><p className="text-[13px] text-slate-500">Revenue, all time</p><p className="text-[14px] font-medium text-slate-900 dark:text-slate-100" data-revenue-all-time>{ctx?.revenue ? money(ctx.revenue.all_time ?? ctx.revenue.total, ctx.revenue.currency) : "Not known"}</p></div>
+        </div>
+        </>}
       </div>
+      <div className={CARD} data-side="activity">
+        <div className="flex items-center justify-between"><p className={TITLE}>Recent activity</p><button type="button" onClick={() => setViewing("activity")} className={LINK}>View all →</button></div>
+        {!ctx ? (
+          <div className="mt-3 space-y-3" aria-busy="true" aria-label="Loading recent activity">{[0, 1, 2].map((k) => <span key={k} className="flex gap-3"><Bone className="mt-1 h-2 w-2 rounded-full" /><span className="flex-1 space-y-1.5"><Bone className="h-3.5 w-3/4" /><Bone className="h-3 w-1/2" /></span></span>)}</div>
+        ) : (ctx?.activity || []).length ? (
+          <ul className="mt-3 space-y-3">{ctx.activity.slice(0, 4).map((a, i) => (
+            <li key={`${a.kind}${i}`} className="flex items-start gap-3">
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[a.kind] || "bg-violet-500"}`} aria-hidden="true" />
+              <span className="min-w-0 flex-1"><span className="block text-[15px] font-semibold text-slate-900 dark:text-slate-100">{a.title}</span>{a.detail && <span className="block truncate text-[13.5px] text-slate-500">{a.detail}</span>}</span>
+              <span className="shrink-0 text-[12px] text-slate-500">{since(a.at)}</span>
+            </li>
+          ))}</ul>
+        ) : <p className="mt-2 text-[13.5px] text-slate-500">Nothing yet. Invoices, customers and research show here as they happen.</p>}
+      </div>
+      <div className={CARD} data-side="quick">
+        <p className={TITLE}>Quick actions</p>
+        <div className="mt-3 flex flex-wrap gap-2.5">
+          <button type="button" onClick={() => pick("documents")} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Upload documents</button>
+          <button type="button" onClick={() => navigate("/integrations")} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Connect data</button>
+        </div>
+      </div>
+    </>
+  );
 
-      {tab === "history" && (
-        <div className="flex flex-wrap items-end gap-3">
-          <select aria-label="Capability" className={selectCls} value={filters.capability} onChange={(e) => setFilters((f) => ({ ...f, capability: e.target.value }))}>
-            <option value="">All capabilities</option>
-            {capabilityOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-          <select aria-label="Status" className={selectCls} value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-            <option value="">All statuses</option>
-            {STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-          <label className="text-[12px] text-slate-500">From<UkDateInput className={`${selectCls} ml-1.5`} value={filters.from} onChange={(v) => setFilters((f) => ({ ...f, from: v }))} /></label>
-          <label className="text-[12px] text-slate-500">To<UkDateInput className={`${selectCls} ml-1.5`} value={filters.to} onChange={(v) => setFilters((f) => ({ ...f, to: v }))} /></label>
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4" data-agent-page>
+      <header className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-3" data-agent-header>
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">Agent Centre</p>
+          <h1 className="mt-1 text-[28px] font-extrabold leading-tight text-slate-950 dark:text-slate-50 sm:text-[34px]">Your EnterprateAI Agent</h1>
+          <p className="mt-1 text-[16px] text-slate-600 dark:text-slate-400 max-sm:hidden">Tell it the job. It works on your business data and asks before anything is sent or saved.</p>
+        </div>
+        {/* On a phone Tasks and Agent settings share the row (the owner, 28 Oct) */}
+        <div className="flex shrink-0 gap-2 max-sm:w-full">
+          <button type="button" onClick={() => setSheet(true)} data-tasks-button
+            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[14px] font-medium text-slate-800 hover:bg-slate-50 max-sm:flex-1 xl:hidden dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            Tasks{waitingCount ? ` · ${waitingCount}` : ""}</button>
+          <button type="button" onClick={() => setSettings(true)} data-agent-settings
+            className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-medium text-slate-900 hover:bg-slate-50 max-sm:px-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Agent settings</button>
+        </div>
+      </header>
+      {error && <p role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13.5px] text-rose-700">{error}</p>}
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]" data-agent-centre>
+        {workspaceId && <AgentChat ctx={ctx} work={work} waiting={waiting} onWaitingChanged={load} />}
+        {/* one tab open: its list takes the column's height and scrolls inside it */}
+        <aside className={`hidden min-h-0 min-w-0 xl:block ${listOpen ? "xl:flex xl:flex-col" : "space-y-4 overflow-y-auto pr-0.5"}`} aria-label="Tasks">{panel}{listOpen ? null : side}</aside>
+        {viewing === "profile" && <ProfileSheet business={ctx?.business} businessId={workspaceId} onClose={closeView} />}
+        {viewing === "activity" && <ActivitySheet businessId={workspaceId} first={ctx?.activity || []} onClose={closeView} />}
+      </div>
+      {sheet && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/40 xl:hidden" role="dialog" aria-modal="true" aria-label="Tasks" onClick={(e) => { if (e.target === e.currentTarget) setSheet(false); }} data-tasks-sheet>
+          <div className="flex max-h-[85dvh] flex-col rounded-t-2xl bg-white p-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] dark:bg-slate-900">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">Your tasks</p>
+              <button type="button" onClick={() => setSheet(false)} aria-label="Close tasks" className="rounded-lg p-2 text-slate-500 hover:bg-slate-50">✕</button>
+            </div>
+            <div className={`min-h-0 flex-1 ${listOpen ? "flex flex-col" : "space-y-4 overflow-y-auto"}`}>{panel}{listOpen ? null : side}</div>
+          </div>
         </div>
       )}
-
-      <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        {tab === "results" ? (
-          <ResultsList businessId={workspaceId} empty={TABS.find((t) => t.key === "results").empty} />
-        ) : loading ? (
-          <SkeletonRegion label="your Agent tasks"><SkeletonTable rows={5} widths={["minmax(0,1fr)", "7rem", "1rem"]} header={false} className="border-0" /></SkeletonRegion>
-        ) : tab === "documents" ? (
-          <DocumentList documents={documents} kind={docKind} onKind={setDocKind} search={docSearch} order={docOrder}
-            onSearch={(v) => look({ q: v })} onOrder={(v) => look({ sort: v === "newest" ? "" : v })}
-            onEdit={(d) => setDraft({ runId: d.run_id, edit: true })}
-            onOpen={(d) => (d.to ? navigate(d.to) : d.status === "awaiting_approval" ? setDraft({ runId: d.run_id, edit: false }) : navigate(`/agent/runs/${d.run_id}`))} />
-        ) : (
-          // One compact row for every list (QA, 15 Oct): no forms in the list; a row opens its question or approval in the side panel.
-          <AgentRows runs={visible} empty={TABS.find((t) => t.key === tab).empty} onChanged={load}
-            onOpen={(r) => navigate(r.to || `/agent/runs/${r.id}`)} onReview={(r) => setDraft({ runId: r.id, edit: false })} />
-        )}
-        {!loading && tab !== "results" && (      // Results pages by its own count, inside its list
-          <Pagination total={total} page={at.page} more={at.more} noun={tab === "documents" ? "documents" : "tasks"} className="border-t border-slate-100 dark:border-slate-800"
-            onPage={(n) => look({ page: n, more: "" }, true)} onMore={(n) => look({ more: n }, true)} />
-        )}
-      </div>
 
       {draft && <DraftDrawer key={`${draft.runId}:${draft.edit}`} runId={draft.runId} startEditing={draft.edit} onClose={() => setDraft(null)} onSaved={load} onOpenTask={(id) => { setDraft(null); navigate(`/agent/runs/${id}`); }} />}
       {settings && <Settings businessId={workspaceId} onClose={(saved) => { setSettings(false); if (saved) load(); }} />}

@@ -22,7 +22,9 @@ export function itemConfidence(item, now = new Date()) {
   const stale = ages.length > 0 && ages.every((a) => a > YEARS_CURRENT);
   if (!sources.length) return { label: "Low", reason: "No source to check it against." };
   if (stale) return { label: "Low", reason: `Out of date: the newest source is over ${YEARS_CURRENT} years old.` };
-  const scored = typeof item.confidence === "number" ? item.confidence : null;
-  if (publishers.size >= 2 || (scored !== null && scored >= 0.7)) return { label: "High", reason: publishers.size >= 2 ? `${publishers.size} independent sources agree.` : "A strong, current source." };
+  // From the sources only, never the research's own score (the owner, 28 Oct: one undated listing marked High)
+  if (publishers.size >= 2 && ages.length) return { label: "High", reason: `${publishers.size} independent sources agree.` };
+  if (publishers.size >= 2) return { label: "Medium", reason: `${publishers.size} sources, none of them dated.` };
+  if (!ages.length) return { label: "Low", reason: "Only one source, and it has no date." };
   return { label: "Medium", reason: "Only one source." };
 }

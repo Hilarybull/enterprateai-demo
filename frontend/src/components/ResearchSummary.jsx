@@ -6,6 +6,19 @@ import { getCurrencySymbol } from "../lib/currencies";
 import { MoneyInput } from "./readiness/Fields";
 import { useApplyResearch } from "./ResultSummary";
 
+/** Your price against what the research found, said plainly (the owner, 26 Oct: "worth flagging and it isn't"). */
+export function PriceWarning({ run, currency }) {
+  const w = run?.price_warning;
+  if (!w) return null;
+  const cur = currency || run?.context?.currency;
+  return (
+    <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-900" role="note" data-price-warning>
+      Check your price: you charge {whole(w.yours, cur)}, and similar ones sell for {whole(w.low, cur)} to {whole(w.high, cur)}.
+      {w.side === "below" ? " You may be charging too little." : " You may be charging more than most."}
+    </p>
+  );
+}
+
 // After a paid run, ONE result view (the owner's brief, 20 Oct): what was prepared, in plain words, each block with one
 // clear action. Drafts as rows (details on request), at most three funding options with "Fits", the questions inline,
 // and one free "Check my score again". Everything else (every input, the sources in full, older runs) is on Advanced.
@@ -184,6 +197,7 @@ export default function ResearchSummary({ businessId, run, score = null, onAdopt
           : run.updated_free && !(run.charged_now > 0)
           ? `Updated your drafts · free. ${counted} for your ${what}.`
           : findings ? `${counted.charAt(0).toUpperCase()}${counted.slice(1)} for your ${what}.` : `Nothing new found for your ${what}, so nothing was charged.`}</p>}
+      <PriceWarning run={run} currency={currency} />
       {score && <p className="mt-2 text-[13px] text-slate-600 dark:text-slate-300" data-summary-score>Your score now <span className="ml-1 align-middle text-[24px] font-bold tabular-nums text-slate-900 dark:text-slate-100">{score}</span></p>}
       {!caseId && run.drafts?.adopted > 0 && run.drafts.open > 0 && <p className="mt-0.5 text-[12.5px] text-slate-600" data-summary-adopted>You adopted {run.drafts.adopted} of {run.drafts.total} drafts.</p>}
 

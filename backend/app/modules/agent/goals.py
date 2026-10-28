@@ -186,7 +186,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose",
            chips=[{"value": v, "label": v} for v in ("Equipment", "Stock", "Hiring staff", "Marketing", "Working capital")]),
         _choice("stage", "What stage is the business at?", [("idea", "Just an idea"), ("pre_revenue", "Not trading yet"), ("trading", "Trading"), ("growing", "Trading and growing")], required=True, q=3, noun="stage"),
-        _choice("route", "What funding route are you considering?", [("equity", "Equity"), ("loan", "Loan"), ("grant", "Grant"), (UNSURE, _NOT_SURE)], required=True, q=4, noun="route"),
+        _choice("route", "Are you thinking of a loan, a grant or investors?", [("equity", "Investors"), ("loan", "A loan"), ("grant", "A grant"), (UNSURE, _NOT_SURE)], required=True, q=4, noun="kind of funding"),
         _f("timing", "When do you need the funding?", "text", required=True, q=5, noun="timing", unsure=_NOT_SURE,
            chips=[{"value": v, "label": v} for v in ("Within 3 months", "In 3 to 6 months", "In 6 to 12 months")]),
         _f("traction", "What traction do you have so far? Customers, revenue, pilots, contracts or other evidence.", "textarea", required=True, q=6, noun="traction",
@@ -1596,7 +1596,7 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
         if picked:
             slot, value, label = picked
             r = {**r, "values": {slot: value}, "corrected": [slot], "intent": "answer", "next": None,
-                 "ack": f"{'an' if label[:1].lower() in 'aeiou' else 'a'} {label.lower()}" if slot == "route" else label}
+                 "ack": (label[:1].lower() + label[1:] if re.match(r"(?i)^(?:a|an|investors)\b", label) else f"{'an' if label[:1].lower() in 'aeiou' else 'a'} {label.lower()}") if slot == "route" else label}
     out = {k: v for k, v in answers.items() if k != asked}
     if r["intent"] == "answer" and intake_turn.rule_intent(message) == "answer" and asked and asked in answers and asked not in r["values"]             and not r["confirm"] and not r["values"]:
         out[asked] = answers[asked]      # an answer nothing else read: as given (the form's own readers check it); never a question or an aside
@@ -2061,6 +2061,12 @@ def launch_title(a: dict, today: date | None = None) -> str:
     import calendar
     from app.modules.readiness.service import _vague
     what = str(a.get("sell") or "").strip()
+    if len(what.split()) > 6:
+        # A whole description is never the title (the owner, 26 Oct): "We produce and sell bottled organic red palm oil to
+        # shops..." is "Bottled organic red palm oil"
+        what = re.sub(r"^(?:we|i)\s+(?:\w+\s+and\s+)?(?:produce|sell|make|offer|provide|run|deliver|supply|bake|cook|grow)\s+", "", what, flags=re.I)
+        what = re.split(r"\s+(?:to|for|in|across|at|around)\s+", what, maxsplit=1)[0].strip(" .,;")
+        what = " ".join(what.split()[:6])
     what = "My launch" if not what or _vague(what) else what[:1].upper() + what[1:]
     where = str(a.get("where") or "").strip()
     where = "" if _vague(where) else where
@@ -2188,7 +2194,9 @@ def short_money(v: Any, currency: str | None) -> str:
 
 def need_title(fields: dict) -> str:
     """The case named in plain words (the owner's brief, 20 Oct): "₦5m loan for 2 more washing bays" (editable)."""
-    use = re.sub(r"^(?:to|for)\s+", "", str(fields.get("purpose") or "").strip(), flags=re.I).rstrip(".")
+    # What it is for, never how it was said (the owner's test, 27 Oct: "₦25m funding for the funding is to hire staff...")
+    use = re.sub(r"^(?:(?:the |this |our |my )?(?:funding|money|loan|grant|investment|cash)\s+(?:is|will be|would be)\s+|it(?:'s| is| will be)\s+|"
+                 r"(?:i|we)\s+(?:need|want)\s+(?:it|the money|the funding|funding|money)\s+)?(?:to|for)\s+", "", str(fields.get("purpose") or "").strip(), flags=re.I).rstrip(".")
     use = use if len(use) <= 48 else use[:45].rsplit(" ", 1)[0] + "…"
     money = short_money(fields.get("target_amount"), fields.get("currency")) if fields.get("target_amount") else ""
     route = {"loan": "loan", "grant": "grant", "equity": "equity investment"}.get(str(fields.get("route_preference") or ""), "funding")
@@ -2198,6 +2206,23 @@ def need_title(fields: dict) -> str:
         return head[:120] if money else "Funding"
     from app.modules.agent.intake_turn import purpose_phrase
     return f"{head} {purpose_phrase(use)}"[:120]
+
+
+def is_made_title(title: Any, fields: dict) -> bool:
+    """Whether a case's title is one made for it, not one the owner wrote: empty, what need_title makes now, or what it made
+    before purposes were cleaned (the owner, 27 Oct: "₦25m funding for the funding is to hire staff…" was never refreshed,
+    since it no longer matched): the amount and route first, then the purpose as it was said."""
+    t = str(title or "").strip()
+    if not t or t == need_title(fields).strip():
+        return True
+    # The shape every made title has: an amount, then the kind of funding, then what it is for ("₦25m funding for …",
+    # "£50k loan to …"), even when what it is for has changed since (the owner, 28 Oct)
+    if re.match(r"^[₦£$€]?\s?\d[\d.,]*\s?(?:k|m|bn)?\s+(?:funding|loan|grant|equity investment)\s+(?:for|to)\b", t, re.I):
+        return True
+    raw = re.sub(r"\s+", " ", str(fields.get("purpose") or "")).strip().rstrip(".").lower()
+    head = need_title({**fields, "purpose": ""}).strip().lower()
+    body = t.lower()
+    return bool(raw) and body.startswith(head) and raw[:24] in body.replace("…", "")
 
 
 # What makes it a different funding need (not just new details): the amount, its currency, what it is for, the route, where.

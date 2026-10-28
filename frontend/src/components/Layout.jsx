@@ -7,7 +7,7 @@ import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache }
 import logoUrl from "../enterprate-logo.png";
 import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { getAgentSummary } from "../lib/agent";
-import BusinessAssistant from "./BusinessAssistant";
+import { AgentLauncher } from "./BusinessAssistant";
 import WorkspaceCompletion from "./WorkspaceCompletion";
 import { workspaceCompletion } from "../lib/workspaceCompletion";
 import InviteModal from "./InviteModal";
@@ -1619,7 +1619,8 @@ export default function Layout() {
               the Agent Centre). It is the same Agent either way.
           <BusinessAssistant />
           */}
-          {!["/dashboard", "/agent"].some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) && <BusinessAssistant />}
+          {/* The floating button opens the Agent Centre, the one general chat (the owner, 27 Oct) */}
+          <AgentLauncher />
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}

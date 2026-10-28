@@ -45,7 +45,9 @@ def test_automatic_work_that_costs_credits_pauses_at_the_cap_and_says_so():
         inv["id"] += "-new"
     assert run(autostart.sweep(env.orch, "A")) == []                      # paused: nothing more is started
     tile = {s["key"]: s for s in run(build_summary(env.orch, OWNER, "A"))["suggestions"]}["budget"]
-    assert tile["text"] == "Paused: this month's automatic budget is used up. Raise it in Agent settings." and tile["action"] == {"to": "/agent?settings=1"}
+    # Said as what it is, never as a problem with the credits (the owner's QA, 27 Oct)
+    assert tile["text"].startswith("The Agent has used the") and "Your credits are still there" in tile["text"] and tile["action"] == {"to": "/agent?settings=1"}
+    assert tile["mood"] == "fyi" and "Paused" not in tile["text"]
     # Raised by the owner: it carries on. A new month starts the count again.
     run(env.store.set_policy("A", {"automation": {**run(env.store.get_policy("A"))["automation"], "monthly_credit_cap": 20}}, OWNER))
     assert len(run(autostart.sweep(env.orch, "A"))) == 4                  # the two that waited and the two new ones

@@ -79,3 +79,9 @@ it("after accepting, a customer plan says what was kept, with no score or criter
   expect(document.querySelector("[data-criteria-changes]")).toBeNull();
   expect(screen.queryByText(/Score/)).toBeNull();
 });
+
+it("says when your price is far from what the research found (the owner, 26 Oct)", () => {
+  vi.spyOn(client, "apiRequest").mockResolvedValue({});
+  render(<ResearchSummary businessId="b1" run={{ ...RUN, price_warning: { yours: 25000, low: 55000, high: 75000, side: "below" } }} />);
+  expect(document.querySelector("[data-price-warning]").textContent).toBe("Check your price: you charge ₦25,000, and similar ones sell for ₦55,000 to ₦75,000. You may be charging too little.");
+});

@@ -518,6 +518,12 @@ async def _first_value_reply(session: dict, user: dict) -> dict:
 async def first_results(business_id: str, user=Depends(get_current_user)):
     """Agent Centre > Results: the latest first result of each check on this business (the dashboard's, a quick check's, or
     one updated by adopted research), newest first. Kept after it is dismissed or saved for later on the dashboard."""
+    from app.core.supabase import read_cache
+    with read_cache():      # every read once (the owner, 28 Oct: "Loading your results…" after 6 seconds)
+        return await _first_results(user, business_id)
+
+
+async def _first_results(user: dict, business_id: str) -> dict:
     data = await _business_for(user, business_id)
     found: dict[str, dict] = {}
     for goal, rec in (data.get("quick_check_answers") or {}).items():
@@ -532,13 +538,20 @@ async def first_results(business_id: str, user=Depends(get_current_user)):
                                "adopted": latest.get("version")}
     items = []
     from app.modules.agent import assessment_summary
-    for row in found.values():
-        result = {**row["result"], **first_value.at_a_glance(row["result"])}
+
+    async def case_of(row: dict):
         # One score everywhere (the owner, 26 Oct: 30/100 here, 0/100 on the case): a funding or launch result shows its case's
+        if row["goal_key"] not in ("need_funding", "launch"):
+            return None
         plan_id = ((row["result"].get("assessment") or {}).get("initiative_id") or (row["result"].get("assessment") or {}).get("subject_id")) if row["goal_key"] == "launch" else None
-        if row["goal_key"] == "need_funding" or plan_id:
-            case = await assessment_summary.current(get_orchestrator(), user["id"], business_id, "funding" if row["goal_key"] == "need_funding" else "launch",
-                                                    user.get("email"), subject_id=plan_id)
+        return await assessment_summary.current(get_orchestrator(), user["id"], business_id, "funding" if row["goal_key"] == "need_funding" else "launch",
+                                                user.get("email"), subject_id=plan_id)      # a launch without its plan's id: the latest plan
+    rows = list(found.values())
+    cases = await asyncio.gather(*(case_of(r) for r in rows), return_exceptions=True)      # the funding case and the launch plan at once
+    for row, case in zip(rows, cases):
+        result = {**row["result"], **first_value.at_a_glance(row["result"])}
+        case = None if isinstance(case, BaseException) else case
+        if case is not None:
             if isinstance((case or {}).get("score"), (int, float)):
                 result.update({"chat_score": result.get("score"), "score": case["score"], "score_partial": bool(case.get("score_partial")), "assessment": case})
         from app.modules.agent import research as _research
@@ -895,7 +908,7 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
     topics, items, waiting = plan_["topics"], plan_["items"], plan_["waiting"]
     # QA R7-1: said before it starts: what will be researched, worked out and asked, and whether research is connected.
     base = {"capability": capability, "label": result["premium_next_action"]["label"], "blockers": len(result["blockers"]),
-            "action": research.ACTION_NAME.get(goal_key, result["premium_next_action"]["label"]), "variable": True,
+            "action": research.ACTION_NAME.get(goal_key, result["premium_next_action"]["label"]), "variable": not research.flat_price(goal_key, only),
             "topics": [t["label"] for t in topics], "connected": link["connected"],
             # What the research is looking at, said while it works ("grants for a small transport business in the UK").
             "looking_at": research.looking_at(topics, research.context_of(data, i)),
@@ -931,7 +944,7 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
 async def quick_check_premium_quote(business_id: str, goal_key: str, body: QuickCheckIn, user=Depends(get_current_user)):
     """What the premium step would do and cost, before it starts (PRD 4.1, 12.3)."""
     data, answers, result = await _premium_context(user, business_id, goal_key, body.answers)
-    return await _premium_quote(user, goal_key, result, answers, data)
+    return await _premium_quote(user, goal_key, result, answers, data, only=body.only, fresh=body.fresh)
 
 
 @router.post("/businesses/{business_id}/quick-check/{goal_key}/premium")
@@ -941,15 +954,37 @@ async def quick_check_premium(business_id: str, goal_key: str, body: QuickCheckI
     "Find my best price" is research too, never a Price Test (that needs three months of revenue)."""
     from app.modules.agent import research
     data, answers, result = await _premium_context(user, business_id, goal_key, body.answers)
-    quote = await _premium_quote(user, goal_key, result, answers, data)
+    quote = await _premium_quote(user, goal_key, result, answers, data, only=body.only, fresh=body.fresh)
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
-    run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data,
-                               progress_key=body.progress_key)
+    # In Agent Centre's Active while it runs (the owner, 28 Oct: "segment research ran with Active at 0")
+    key = "idea" if goal_key == "test_idea" else goal_key
+    await _working(business_id, key, goal_key, True)
+    try:
+        run = await research.start(get_orchestrator(), user=user, business_id=business_id, goal=goal_key, answers=answers, data=data,
+                                   progress_key=body.progress_key, only=body.only, fresh=body.fresh)
+    finally:
+        await _working(business_id, key, goal_key, False)
     _fill_case_later(user, business_id, goal_key, run, None)
     run = {**run, "balance": await get_orchestrator().rt.meter.balance(user["id"])}
     await goals.track(get_store(), "premium_started", {"id": run["id"], "goal_key": goal_key, "events": []})
     return {"started": True, "research": run, "quote": quote, "run_id": run["id"], "capability": quote["capability"]}
+
+
+async def _working(business_id: str, key: str, topic: str, on: bool) -> None:
+    """Research running from a page, kept where Active reads it ({at, topic}) and taken off when it ends."""
+    from datetime import datetime, timezone
+
+    def _m(d: dict) -> None:
+        w = d.setdefault("agent_working", {})
+        if on:
+            w[key] = {"at": datetime.now(timezone.utc).isoformat(), "topic": topic}
+        else:
+            w.pop(key, None)
+    try:
+        await get_orchestrator().rt.business.mutate(business_id, _m)
+    except Exception:      # noqa: BLE001 - only the Active row
+        logger.info("research marker not kept for %s", business_id, exc_info=True)
 
 
 async def _session_premium_context(session_id: str, user: dict) -> tuple:

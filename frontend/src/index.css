@@ -439,3 +439,34 @@
 @media (max-width: 767px) {
   body[data-form-open] button[aria-label="Ask about your business"] { display: none; }
 }
+
+/* The Agent's side panel, docked on a wide screen: the page makes room for it instead of being covered (27 Oct) */
+@media (min-width: 1024px) {
+  body.ea-panel-open main { padding-right: 440px; }
+}
+/* Room under the last card for the floating Agent button (the owner's test, 27 Oct: on a phone it sat on "Open Essentials"):
+   its height (3rem), its offset from the bottom (1rem) and a gap */
+@media (max-width: 1023.98px) {
+  [data-tour="content-area"] { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem); }
+}
+/* The Agent Centre fits the window exactly (the owner, 27 Oct): no page scroll; only its chat, and its side panel when taller,
+   scroll inside. The content area's wrapper becomes the area's own height, with an even margin all round. */
+[data-tour="content-area"]:has([data-agent-page], [data-fit-page]) { overflow: hidden; padding-bottom: 0; }
+[data-tour="content-area"]:has([data-agent-page], [data-fit-page]) > div { height: 100%; padding-bottom: 1rem; box-sizing: border-box; }
+@media (min-width: 768px) {
+  [data-tour="content-area"]:has([data-agent-page], [data-fit-page]) > div { padding-bottom: 1.25rem; }
+}
+
+/* A row that scrolls sideways without showing a scrollbar (the Agent Centre's chips on a phone) */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* A card's two columns sit side by side only while both fit in full (the owner, 28 Oct: "Business and mark…", "Documents an…") */
+[data-card="result"], [data-card="idea_inputs"], [data-card="records"] { container-type: inline-size; }
+@container (min-width: 620px) {
+  .ea-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+/* A result card inside the Checklist starts at its first visible line, never under an empty gap (the owner, 28 Oct) */
+.ea-embedded > [data-fv-head] + * { margin-top: 0 !important; }
+.ea-embedded > [data-fv-head] + * > :first-child { margin-top: 0 !important; }

@@ -30,7 +30,7 @@ const ukDay = (iso) => { const [y, m, d] = String(iso).split("-"); return d && m
 const fieldCls = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 const chipCls = (on) => `rounded-full border px-3 py-1.5 text-[13px] font-semibold transition ${on ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-700 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`;
 
-export default function QuickCheck({ businessId, goalKey, open: startOpen = false, said = "" }) {
+export default function QuickCheck({ businessId, goalKey, open: startOpen = false, said = "", doAll = true }) {
   const [open, setOpen] = useState(startOpen);
   const [questions, setQuestions] = useState(null);
   const [values, setValues] = useState({});
@@ -125,7 +125,7 @@ export default function QuickCheck({ businessId, goalKey, open: startOpen = fals
             Add these answers to your launch plan</button>}
       </div>) : null;
     // On the risk check's own page the result is the page: no Dismiss; an answer given on it is checked again here
-    return <FirstValueCard result={result} onPremium={premium} extra={extra} onReload={reload} onDismiss={FREE_PAGES.has(goalKey) ? null : () => { setResult(null); setAt(0); setOpen(false); }}
+    return <FirstValueCard result={result} onPremium={premium} extra={extra} onReload={reload} doAll={doAll} onDismiss={FREE_PAGES.has(goalKey) ? null : () => { setResult(null); setAt(0); setOpen(false); }}
       onAnswer={(key, value) => finish({ ...values, [key]: value })}
       onContinue={() => { setResult(null); setAt(0); setOpen(true); }} continueLabel="Start again" />;
   }
