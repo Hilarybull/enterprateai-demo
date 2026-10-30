@@ -1122,6 +1122,10 @@ class ReadinessService:
         # What this plan says it launches comes first (the owner's QA, 23 Oct: a drone cleaning plan's process spoke of the
         # profile's car wash subscription); then its catalogue item; then the profile's own single service
         own = str(engine.get(case, "offer.launch_scope") or "").strip()
+        # Else the plan's own name, never the profile's other service (the owner, 30 Oct: "Car wash subscription launched" as a
+        # Soap Making milestone)
+        title = str(case.get("name") or "").split(",")[0].strip()
+        own = own if ours(own) else (title if ours(title) and title.lower() not in ("my launch", "launch plan") else "")
         scope = own if ours(own) else str((pick or {}).get("name") or "").strip()
         if not scope and not named:
             scope = services[0] if len(services) == 1 else (wp.get("key_offering_focus") if ours(wp.get("key_offering_focus")) else "") or ""
@@ -1352,6 +1356,9 @@ class ReadinessService:
                 out[path] = d
                 continue
             src = str(d.get("source") or "")
+            if re.search(r"\bestimate", src, re.I):
+                out[path] = {**d, "value": _money_words(d["value"], currency or research.task_currency(workspace))}
+                continue
             if re.search(r"\bchat\b", src, re.I) or not research._grounded_draft(d["value"], known):
                 continue
             if _MONEY_PATH.search(path) and not isinstance(d["value"], (list, dict)):

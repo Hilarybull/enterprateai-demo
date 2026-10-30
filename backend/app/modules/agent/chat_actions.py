@@ -165,7 +165,8 @@ async def preview(user: dict, business_id: str, *, run_id: str | None = None, dr
     p = (a or {}).get("payload") or {}
     lines = [{"name": str(i.get("name") or i.get("description") or "Item"), "quantity": i.get("quantity"), "unit_price": i.get("unit_price")}
              for i in p.get("items") or [] if isinstance(i, dict)]
-    return {"found": True, "kind": (a or {}).get("tool_id"), "title": (a or {}).get("title") or run.get("title"), "customer": p.get("customer_name"), "to_email": p.get("to_email"),
+    return {"found": True, "kind": (a or {}).get("tool_id"), "approval_id": (a or {}).get("id") or (a or {}).get("approval_id"),
+            "title": (a or {}).get("title") or run.get("title"), "customer": p.get("customer_name"), "to_email": p.get("to_email"),
             "lines": lines, "total": p.get("total") or p.get("amount") or p.get("total_amount"), "currency": p.get("currency"), "message": p.get("message") or p.get("body"),
             "due_date": p.get("due_date"), "valid_until": p.get("valid_until"), "notes": p.get("notes"), "editable": True}
 
@@ -255,7 +256,16 @@ async def attach(user: dict, business_id: str, name: str, content_type: str, con
     from app.modules.readiness import rules
     from app.modules.readiness.service import service_for
     from app.modules.agent.router import get_orchestrator
+    from app.modules.readiness.service import FILE_TYPES, MAX_FILE_BYTES
     svc = service_for(get_orchestrator())
+    if content_type not in FILE_TYPES:
+        # Named by its extension when the browser labels it oddly (Windows sends a CSV as Excel, or no type at all)
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        content_type = next((t for t, e in FILE_TYPES.items() if e == ext or (ext == "jpeg" and e == "jpg")), content_type)
+    if content_type not in FILE_TYPES:
+        raise ValueError("Attach a PDF, image, Word, Excel, CSV or text file.")
+    if not content or len(content) > MAX_FILE_BYTES:
+        raise ValueError("The file is empty or larger than 10 MB.")      # checked first: nothing is saved for a file that can't be kept
     today = get_orchestrator().rt.clock().date().isoformat()
     item = await svc.add_evidence(user["id"], business_id, {"title": name[:200], "type": "document", "claim": "", "effective_date": today,
                                                             "source": {"kind": "file", "reference": name[:200]}, "links": []}, user.get("email"), rules.FUNDING)

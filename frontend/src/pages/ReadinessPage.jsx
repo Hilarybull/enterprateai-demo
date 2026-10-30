@@ -708,6 +708,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const [checking, setChecking] = useState(false);
   const [checkProblem, setCheckProblem] = useState(null);
   const [dateReview, setDateReview] = useState(null);
+  const [staleHidden, setStaleHidden] = useState(null);      // the out-of-date notice closed, until it changes (the owner, 29 Oct)
   const dirty = useRef(new Set());
   const latest = useRef({});
   const timer = useRef(null);
@@ -1046,8 +1047,8 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const editable = can[`${feature}.edit`] && !archived;
   const currency = data.currency || subject.forecast?.data?.currency || "GBP";
   const a = subject.assessment;
-  // Three tabs (the owner, 27 Oct, as the mockups have them); Inputs and Advanced open from the ⋯ menu
-  const tabs = [["assistant", "Assistant"], ["overview", "Checklist"], ["documents", "Documents"]];
+  // The form has its own tab, before Documents (the owner, 29 Oct); Advanced opens from the ⋯ menu
+  const tabs = [["assistant", "Assistant"], ["overview", "Checklist"], ["answers", "Inputs"], ["documents", "Documents"]];
   // (the tabs are kept in view on a phone by the hook above the early returns)
   // From the Assistant's cards: a section of the inputs, the evidence upload, the launch decision, or a tab
   const goTab = (key, section) => {
@@ -1162,8 +1163,14 @@ function SubjectDetail({ businessId, feature, subjectId }) {
           <Btn kind="link" className="mt-1" onClick={() => setDateReview(null)}>I've reviewed these</Btn>
         </Notice>
       )}
-      {a?.freshness?.status === "stale" && tab !== "overview" && (
-        <Notice tone="amber">{checking ? "The details changed, so the check is being run again for you." : `The last result is out of date. ${staleReason(a.freshness.reason)}`}</Notice>
+      {a?.freshness?.status === "stale" && tab !== "overview" && staleHidden !== `${a.id || a.assessment_id || ""}:${a.freshness.reason || ""}` && (
+        <Notice tone="amber">
+          <div className="flex items-start justify-between gap-3">
+            <span>{checking ? "The details changed, so the check is being run again for you." : `The last result is out of date. ${staleReason(a.freshness.reason)}`}</span>
+            <button type="button" aria-label="Dismiss" onClick={() => setStaleHidden(`${a.id || a.assessment_id || ""}:${a.freshness.reason || ""}`)}
+              className="shrink-0 rounded px-1 text-[16px] leading-none text-amber-800 hover:bg-amber-100">×</button>
+          </div>
+        </Notice>
       )}
 
       <PremiumConfirm result={overview} confirm={againAsk?.confirm} working={againBusy} onStart={startAgain} onClose={() => setAgainAsk(null)} title="Research again for your funding case" />
@@ -1176,7 +1183,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
         ))}
       </div>
 
-      {(tab === "answers" || tab === "advanced") && (
+      {tab === "advanced" && (      // Inputs is a tab of its own now: no heading for it here
         <p className="flex items-center gap-2 text-[13px] text-slate-500" data-menu-tab>
           <span className="font-semibold text-slate-800 dark:text-slate-100">{tab === "answers" ? "Inputs" : "Advanced"}</span>
           <button type="button" onClick={() => setTab("assistant")} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">Back to the Assistant</button>

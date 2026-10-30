@@ -3,12 +3,14 @@ business, its revenue over the last 12 months, what the Agent already knows from
 waiting, and whether "Do all for me" is still working. Read only, from the business's own records; nothing is invented."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.modules.agent import business as bz
 
 WORKING_MINUTES = 10      # "Do all for me" still working: shown as in progress for at most this long
+STARTED = datetime.now(timezone.utc)      # a run marked before this server started was stopped by the restart
+INTERRUPTED = "The research stopped because the server restarted. Please try again."
 
 
 def _words(v: Any) -> str:
@@ -117,13 +119,17 @@ def activity(data: dict, now: datetime, limit: int = 5) -> list[dict]:
 
 def failed(data: dict, case_id: str) -> str | None:
     """Why the last research for this case didn't start or finish, while it is the latest thing that happened to it."""
-    return ((data.get("agent_working") or {}).get(str(case_id)) or {}).get("failed") or None
+    w = (data.get("agent_working") or {}).get(str(case_id)) or {}
+    m = bz._moment(w.get("at"))
+    if not w.get("failed") and m and m < STARTED:
+        return INTERRUPTED      # never a card spinning for a run that no longer exists (the owner, 29 Oct)
+    return w.get("failed") or None
 
 
 def working(data: dict, case_id: str, now: datetime) -> bool:
     at = ((data.get("agent_working") or {}).get(str(case_id)) or {}).get("at")
     m = bz._moment(at)
-    return bool(m and now - m <= timedelta(minutes=WORKING_MINUTES))
+    return bool(m and m >= STARTED and now - m <= timedelta(minutes=WORKING_MINUTES))
 
 
 async def context(orch, user: dict, business_id: str, kind: str, case_id: str | None = None, name: str | None = None) -> dict:
@@ -146,7 +152,9 @@ async def context(orch, user: dict, business_id: str, kind: str, case_id: str | 
     return {**extra, "business": business_card(name, data, now), "revenue": revenue(data, now), "records": records_check(data, kind),
             "activity": activity(data, now), "approvals": {"count": len(approvals), "items": [
                 {k: a.get(k) for k in ("approval_id", "run_id", "kind", "title", "subtitle", "age")} for a in approvals[:3]]},
-            "research": research.research_state(data, goal) if case_id else None, "working": working(data, case_id, now) if case_id else False,
+            "research": research.research_state(data, goal, case_id=case_id,
+                                                  # a launch's last answers may be another plan's: never read as this plan's change
+                                                  **({"answers": {}} if kind == "launch" else {})) if case_id else None, "working": working(data, case_id, now) if case_id else False,
             "failed": failed(data, case_id) if case_id else None}
 
 

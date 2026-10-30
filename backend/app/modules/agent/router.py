@@ -588,6 +588,100 @@ async def readiness_question(body: ReadinessAskIn, user=Depends(get_current_user
     return {"kind": kind if subjects else None}
 
 
+# "Fill the form", "enrich the validation", "populate it", "run the validation": the Idea Validation module itself
+_START_VALIDATION = re.compile(r"^\s*start the idea validation\b", re.I)
+_NOT_NOW = re.compile(r"^\s*not now, no validation\b", re.I)
+_FILL_FORM = re.compile(r"^\s*(?:start the idea validation|not now, no validation)\b|\b(?:fill|enrich|populate|complete|update)\b.{0,30}\b(?:form|validation|module)\b|\b(?:run|do|start|get|give)\b.{0,15}\bvalidation\b|\bvalidate (?:it|this|my idea)\b|\bthe (?:idea )?validation\b", re.I)
+
+
+async def _validate_idea(user: dict, body, known: dict) -> dict | None:
+    """The Idea Validation for the idea being talked about (the owner, 29 Oct: "use your data, run the validation, populate the
+    idea validation form... a CTA on the chat to see the result on the module, to accept, modify or reject"): its form filled
+    from the idea's answers and the records, its draft waiting in Validation history. None when there is no idea to validate
+    yet (the conversation asks for it)."""
+    answers = dict(((known.get("quick_check_answers") or {}).get("test_idea") or {}).get("answers") or {})
+    idea = str(answers.get("description") or "").strip()
+    if not idea:
+        return None
+    if _NOT_NOW.match(str(body.text or "")):
+        return {"kind": "answer", "message": "No problem, nothing was started or charged.", "actions": [], "conversational": True}
+    go = bool(_START_VALIDATION.match(str(body.text or "")))      # Start, pressed after its price was said
+    try:
+        out = await get_orchestrator().submit(AgentRequest(
+            requesting_actor_id=user["id"], business_id=body.business_id, source_channel="ui_action", raw_input=f"Validate my idea: {idea}"[:500],
+            requested_capability="idea_validation", params={"idea_for": "new", "idea": idea, "answers": {k: v for k, v in answers.items() if v not in (None, "")}},
+            locale=body.locale, confirmed=go), email=user.get("email"))
+    except Exception:      # noqa: BLE001 - said plainly
+        logger.warning("idea validation from the chat did not run for %s", body.business_id, exc_info=True)
+        return {"kind": "answer", "message": "I couldn't run the Idea Validation just now. Nothing was changed; please try again.", "actions": [], "conversational": True}
+    if (out or {}).get("kind") == "needs_confirmation":
+        # Its price first, then Start or Not now here in the chat (the owner, 29 Oct: "how is this the appropriate next step")
+        return {"kind": "answer", "conversational": True, "message": str(out.get("message") or "This validation has a price. Shall I start?"),
+                "actions": [{"label": "Start", "kind": "explain", "prompt": "Start the idea validation"},
+                            {"label": "Not now", "kind": "explain", "prompt": "Not now, no validation"}]}
+    run = (out or {}).get("run") or {}
+    # The validation finishes behind the reply: waited for (half a minute at most) so the button opens its results, never the
+    # empty form (the owner, 29 Oct: "how's this the result?")
+    for _ in range(30):
+        if run.get("status") in ("succeeded", "failed", "cancelled", "waiting_approval") or (run.get("outcome") or {}).get("links") or not run.get("id"):
+            break
+        await asyncio.sleep(1)
+        run = await get_orchestrator().rt.store.get_run(run["id"]) or run
+    links = [x for x in ((run.get("outcome") or {}).get("links") or []) if isinstance(x, dict) and x.get("to")]
+    results = next((x["to"] for x in links if "view=results" in str(x["to"])), None)
+    if not results:
+        # Its draft is named for the idea the same way the validation names it: the results are there as soon as it is done
+        import hashlib
+        results = f"/validation?history_id=agent-{hashlib.sha1(idea.strip().lower().encode()).hexdigest()[:12]}&history_type=v4_validation&view=results"
+    form = next((x["to"] for x in links if str(x["to"]).startswith("/validation") and "view=results" not in str(x["to"])), "/validation")
+    if form == "/validation":
+        form = results.replace("&view=results", "")      # this idea's own filled form, never an empty start
+    if run.get("status") not in ("succeeded", "waiting_approval") and not (run.get("outcome") or {}).get("links"):
+        return {"kind": "answer", "conversational": True,
+                "message": "Your idea validation is still working. Its form is filled from your idea and records; the results open here in a moment.",
+                "actions": [{"label": "See your validation results", "to": results}, {"label": "Open the Idea Validation form", "to": form}]}
+    said = str(run.get("summary") or "Your idea is validated.").strip()
+    est = {k: v for k, v in ((run.get("outcome") or {}).get("estimates") or {}).items() if v is not None}
+    if est:
+        # Held until the owner says: the idea's own figures from the validation's estimates, never written unasked
+        await get_orchestrator().rt.business.mutate(body.business_id, lambda d: d.__setitem__("idea_estimates", {"idea": idea, "figures": est}))
+    from app.modules.agent import business as _bz
+    from app.modules.agent.research import money as _m
+    cur = _bz.currency_of(known)
+    words = {"price": lambda v: f"price {_m(float(v), cur)}", "cost": lambda v: f"cost {_m(float(v), cur)} a sale", "monthly_sales": lambda v: f"{int(float(v))} sales a month"}
+    offer = ", ".join(words[k](v) for k, v in est.items() if k in words)
+    return {"kind": "answer", "conversational": True,
+            "message": f"{said} I filled in the Idea Validation form from your idea and records; its draft is waiting in Validation history for you to accept, modify or reject.",
+            "actions": [{"label": "See your validation results", "to": results}, {"label": "Open the Idea Validation form", "to": form},
+                        *([{"label": "Use these figures", "kind": "explain", "prompt": "Use the estimated figures for my idea"}] if est else [])],
+            **({"message": f"{said} I filled in the Idea Validation form from your idea and records; its draft is waiting in Validation history for you to accept, "
+                           f"modify or reject. It estimated {offer} for your idea: use these figures on your idea too?"} if est else {})}
+
+
+async def _use_estimates(user: dict, body, known: dict) -> dict | None:
+    """"Use these figures": the validation's estimates saved as the idea's answers, marked as estimates, and its check worked
+    out again, so the Viability Snapshot fills (the owner, 29 Oct)."""
+    held = known.get("idea_estimates") or {}
+    figures = held.get("figures") or {}
+    if not figures:
+        return {"kind": "answer", "message": "There are no estimated figures waiting just now. Run the idea validation first.", "actions": [], "conversational": True}
+    from app.modules.agent import answer_memory, business as _bz, first_value
+    goal = "test_idea"
+    answers = dict(((known.get("quick_check_answers") or {}).get(goal) or {}).get("answers") or {})
+    merged = {**answers, **{k: v for k, v in figures.items() if answers.get(k) in (None, "")}, "_estimated": ",".join(sorted(figures))}
+    result = first_value.assess(goal, merged, known)
+
+    def _keep(d: dict) -> None:
+        answer_memory.remember(d, goal, merged, result=result, currency=_bz.currency_of(d))
+        d.pop("idea_estimates", None)
+    await get_orchestrator().rt.business.mutate(body.business_id, _keep)
+    score = result.get("score")
+    return {"kind": "answer", "conversational": True, "changed": ["updated"],
+            "message": "Done. Your idea now uses the estimated figures, marked as estimates; change any of them with Add idea details."
+                       + (f" Your idea is at {round(score)}/100." if isinstance(score, (int, float)) else ""),
+            "actions": [{"label": "Add idea details", "kind": "explain", "prompt": "Add idea details"}]}
+
+
 def _reads_once(fn):
     """The workspace record read once for the whole request, not at every step (the owner, 28 Oct: "That's taking longer
     than expected" in the Agent Centre; the record is read several times a message). Any save forgets what was read, and
@@ -603,7 +697,6 @@ def _reads_once(fn):
 
 
 @router.post("/agent/requests")
-@_reads_once
 async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
     """One entry point for the Assistant, dashboard actions, events and future voice (s4, s8)."""
     if body.source_channel not in USER_CHANNELS:
@@ -635,6 +728,12 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         from app.modules.agent import converse_idea, converse_launch
         # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
         other = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key") not in (None, "need_funding", "launch", "test_idea")
+        # A receipt, an invoice, a quotation or another document is its own task, never the open funding or launch chat's (the
+        # owner, 29 Oct: "receipt" became "I'll attach it to your pot selling launch plan")
+        from app.modules.agent.intent import _GOAL_RULES as _task_rules
+        _TASKS = {"receipt_send", "new_invoice", "enquiry_to_quote", "quote_to_cash", "payment_followup", "new_contract", "new_proposal", "new_purchase_order"}
+        if any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules) and not converse.wants_funding(body.text):
+            other = True
         # An earlier conversation opened from History carries on as it was (the owner, 27 Oct: "can't continue previous convo")
         earlier = [{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]]
         was = next((k for t in reversed(earlier) if t["role"] == "user"
@@ -673,6 +772,14 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         validating = next((rx for cap, rx in _intent_rules if cap == "idea_validation"), None)
         if topic == "idea" and body.page != "idea" and validating is not None and validating.search(body.text):
             topic = None
+        # Only for the idea being talked about ("validate my idea", "run the validation", "fill the form"); "validate an idea"
+        # asks which first (the owner, 29 Oct)
+        if topic == "idea" and re.search(r"\buse the estimated figures\b", body.text, re.I):
+            return _result(await _use_estimates(user, body, known))
+        if topic == "idea" and _FILL_FORM.search(body.text):
+            validated = await _validate_idea(user, body, known)
+            if validated:
+                return _result(validated)
         if topic:
             talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn}[topic]
             talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
@@ -1399,7 +1506,10 @@ async def _plans_turn(user: dict, body) -> dict | None:
     text = str(body.text or "").strip()
     said = [t.content or "" for t in reversed(body.history or []) if t.role == "assistant"][:3]
     after_list = any(_PLANS_ASKED in x for x in said)
-    asked = ((_goals.resolve(text=text) or {}).get("goal_key")) == "create_business_plan"
+    goal = (_goals.resolve(text=text) or {}).get("goal_key")
+    if goal not in (None, "create_business_plan"):
+        return None      # about something else ("Validate a new idea"): never an answer to the plans' question (the owner, 29 Oct)
+    asked = goal == "create_business_plan"
     if asked and _MAKE_NEW.search(text):
         after_list = True      # "create a new business plan": a new one, whatever was said before (the owner, 28 Oct)
     if not asked and not after_list:

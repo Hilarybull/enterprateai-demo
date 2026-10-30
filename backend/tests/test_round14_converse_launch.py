@@ -76,7 +76,9 @@ def test_which_plan_is_asked_when_there_are_several(talk):
     _make_plan(env, name="Mobile detailing")
     model.replies.append({"say": "Done.", "plan": None, "change": {"geography": "Lagos"}})
     out = ask("Let's launch in Lagos")
-    assert out["message"].startswith("Which launch is this for?") and all(not p["data"].get("geography") for p in _plans(env))
+    # Each plan as a button, never "which?" in words alone (the owner, 29 Oct); nothing changed until one is picked
+    assert out["message"].startswith("You have 2 launch plans") and all(not p["data"].get("geography") for p in _plans(env))
+    assert {a["label"] for a in out["actions"]} == {"Car wash subscription", "Mobile detailing"}
 
 
 def test_the_landing_page_hands_launch_to_the_chat_panel(world):
@@ -141,3 +143,44 @@ def test_a_plan_made_in_the_chat_is_offered_research_on_get_all_for_me(talk):
     model.replies.append({"say": "I'll gather demand evidence for you. Let me do that for you now."})
     again = ask("what do you need from me?", page="launch", case_id=str(yam["id"]))
     assert "Let me do that for you now" not in again["message"]      # a claim of starting becomes the real offer
+
+
+def test_a_claim_of_getting_started_becomes_the_real_offer(talk):
+    """The owner, 29 Oct: "Great, you have 714 credits, so I can do the full research and drafting... I'll get started on that"
+    with no next step and no progress."""
+    env, ask, model = talk
+    pot = _make_plan(env, name="Pot selling", audience="households")
+    model.replies.append({"say": "Great, you have 714 credits, so I can do the full research and drafting for your pot selling launch now. I'll get started on that."})
+    out = ask("what next for my launch?", page="launch", case_id=str(pot["id"]))
+    assert "I'll get started" not in out["message"] and "714" not in out["message"]
+    assert any(c.get("type") == "choose" for c in out.get("cards") or [])      # its price and Start
+
+
+def test_fill_them_drafts_every_blank_field_with_estimates_for_review(talk, monkeypatch):
+    """The owner, 29 Oct: "fill them and bring for review!!!"."""
+    import json as _json
+    env, ask, model = talk
+    pot = _make_plan(env, name="Pot selling", audience="households", geography="Abuja")
+
+    class _Writer:
+        async def generate_text(self, **_k):
+            return type("R", (), {"text": _json.dumps({"fields": {"economics.price_per_unit": "8000", "market.budget": "50000",
+                                                                 "offer.launch_scope": "Cooking pots sold at local markets in Abuja"}})})()
+    monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: _Writer())
+    out = ask("fill them", page="launch", case_id=str(pot["id"]))
+    assert out["message"].startswith("I've drafted") and "review=1" in out["actions"][0]["to"]
+    from app.modules.readiness.service import service_for
+    drafts = run(service_for(env.orch).store.get("subjects", pot["id"]))["data"]["agent_drafts"]
+    assert drafts["economics.price_per_unit"]["value"] == "8000" and "estimate" in drafts["economics.price_per_unit"]["source"]
+    from app.modules.readiness.service import ReadinessService
+    assert "economics.price_per_unit" in ReadinessService.drafts_now(run(service_for(env.orch).store.get("subjects", pot["id"]))["data"], {})      # kept, as an estimate
+
+
+def test_a_receipt_is_its_own_task_never_the_launch_chat(talk):
+    """The owner, 29 Oct: "receipt" in the Agent Centre became "I'll attach it to your pot selling launch plan"."""
+    env, ask, model = talk
+    _make_plan(env, name="Pot selling")
+    model.replies.append({"say": "Got it, a pot selling launch."})
+    ask("I want to launch pot selling")      # the launch chat is open
+    out = ask("i need a new receipt")
+    assert "launch plan" not in str(out.get("message")).lower() and "attach" not in str(out.get("message")).lower()

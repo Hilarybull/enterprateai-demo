@@ -112,7 +112,7 @@ describe("readiness detail", () => {
     expect(screen.getByRole("progressbar", { name: "Evidence coverage" }).getAttribute("aria-valuenow")).toBe("80");
     expect(screen.getAllByText(/A first launch: there is no trading history/).length).toBeGreaterThan(0);
     // Assistant first (the owner's mockups, 27 Oct); the decision is on Advanced.
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Documents"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Inputs", "Documents"]);
     expect(document.getElementById("adv-decision")).toBeTruthy();
   });
 
@@ -291,7 +291,7 @@ describe("the case page (the owner's brief, 20 Oct)", () => {
     mount("/launch/s1");
     await screen.findByRole("tab", { name: "Assistant" });
     expect(screen.getByRole("tab", { name: "Assistant" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Documents"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Assistant", "Checklist", "Inputs", "Documents"]);
     expect(document.querySelector("[data-assistant-header] h1").textContent).toBe("Launch Readiness: Bookkeeping launch");      // the service named
     expect(await screen.findByText("Readiness Snapshot")).toBeTruthy();
     for (const side of ["launch-snapshot", "launch-why-not", "quick"]) expect(document.querySelector(`[data-side="${side}"]`)).toBeTruthy();      // idea-06's side column
@@ -318,7 +318,7 @@ describe("the case page (the owner's brief, 20 Oct)", () => {
     routes = [{ method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) }];
     mount("/launch/s1?tab=setup");
     expect(await screen.findByLabelText("Who is this launch for?")).toBeTruthy();
-    expect(document.querySelector("[data-menu-tab]").textContent).toContain("Inputs");      // from the ⋯ menu now, not a tab
+    expect(screen.getByRole("tab", { name: "Inputs" }).getAttribute("aria-selected")).toBe("true");      // its own tab, before Documents (29 Oct)
     cleanup();
     mount("/launch/s1?tab=results");
     await screen.findByRole("tab", { name: "Checklist" });

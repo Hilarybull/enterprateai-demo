@@ -188,7 +188,24 @@ describe("a draft made by a task", () => {
     await ask("business plan for yam farming");
     expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reject" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Open full document/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Open full page/ })).toBeTruthy();
     expect(screen.queryByRole("link", { name: /See details/ })).toBeNull();
+  });
+});
+
+describe("a task's questions in the chat", () => {
+  it("never says Working on it while asking, and a typed new customer's name is not asked again", async () => {
+    const q = { question: "Which customer is it for?", fields: [
+      { key: "customer_id", label: "Customer", type: "customer", required: true, new_label: "+ New customer", options: [{ value: "c1", label: "Malachy" }] },
+      { key: "customer_name", label: "Customer name", type: "text", required: true, default: "", show_if: { customer_id: "new" } },
+      { key: "customer_email", label: "Customer email", type: "email", required: false, default: "", show_if: { customer_id: "new" } }] };
+    replies = [{ kind: "needs_input", capability: "new_invoice", params: {}, message: "Which customer is it for?", fields: q.fields }];
+    await open();
+    await ask("I need an invoice");
+    await ask("carl");
+    expect(await screen.findByText(/customer's email address/i)).toBeTruthy();
+    expect(screen.queryByText(/customer's name/i)).toBeNull();      // "carl" is the name already
+    expect(screen.queryByText("Working on it…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeTruthy();      // optional: a chip to skip it
   });
 });

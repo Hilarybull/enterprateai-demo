@@ -205,7 +205,10 @@ function CaseDifferences({ businessId, assessment, currency, onUpdated }) {
   async function use(d) {
     setBusy(true);
     try {
-      const out = await apiRequest(`/businesses/${businessId}/assessment/${kind}/use-figures`, "POST", { figures: { [d.field]: Number(d.review_value) } });
+      // A figure as a number, a drafted field as written; on this plan or case, never the first one (the owner, 29 Oct)
+      const value = String(d.field).includes(".") ? d.review_value : Number(d.review_value);
+      const out = await apiRequest(`/businesses/${businessId}/assessment/${kind}/use-figures`, "POST",
+        { figures: { [d.field]: value }, subject_id: assessment?.initiative_id || assessment?.case_id || null });
       setLeft((l) => l.filter((x) => x.field !== d.field));
       setNote(`Your ${kind === "funding" ? "funding case" : "launch plan"} now uses ${shown(d, d.review_value)} for its ${d.label}, and has been checked again.`);
       onUpdated?.(out?.assessment);
@@ -404,8 +407,10 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
     try {
       const out = await apiRequest(`/businesses/${businessId}/research/${run.id}/review`, "POST", { decisions: sendable(chosen) });
       try { sessionStorage.removeItem(draftKey); } catch { /* fine */ }
-      setDone(out.research);
-      setDoneScore(out?.result?.score ?? null);
+      // A launch plan's or funding case's one score, never the quick check's own beside it (the owner, 29 Oct: "32 and 5?")
+      const plan = out?.research?.goal === "launch" || out?.research?.goal === "need_funding";
+      setDone(plan ? { ...out.research, assessment: out.assessment || null, checking: Boolean(out.checking) } : out.research);
+      setDoneScore(plan ? (out?.assessment?.score ?? null) : (out?.result?.score ?? null));
       setReviewing(!draftOf(out.research));      // adopted: back to the draft, now checked again
       onAdopted?.(out);
     } catch (e) {
@@ -436,15 +441,16 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
     const a = done.after || {};
     return (
       <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-[13px] text-emerald-950" data-research-adopted>
-        <p className="font-semibold" data-applied-line>{typeof doneScore === "number" ? `Saved. Your score is now ${Math.round(doneScore)}/100.` : "Saved. Score paused: a few figures are still missing."}</p>
-        {done.assessment ? (
+        <p className="font-semibold" data-applied-line>{typeof doneScore === "number" ? `Saved. Your score is now ${Math.round(doneScore)}/100.`
+          : done.checking ? "Saved. Your score is being updated." : "Saved. Score paused: a few figures are still missing."}</p>
+        {done.goal === "launch" || done.goal === "need_funding" ? (done.assessment && (
           // §2 (R3): a launch or funding review feeds the one assessment; its summary is what is shown, never a second score.
           <dl className="mt-2 grid gap-1 sm:grid-cols-3" data-assessment-summary>
             <div><dt className="text-emerald-800">Readiness</dt><dd className="font-semibold">{CLASS_WORDS[done.assessment.classification] || "Not checked yet"}</dd></div>
             <div><dt className="text-emerald-800">Score</dt><dd className="font-semibold">{done.assessment.score ?? "No score yet"}</dd></div>
             <div><dt className="text-emerald-800">Evidence coverage</dt><dd className="font-semibold">{done.assessment.evidence_coverage ?? 0}%</dd></div>
           </dl>
-        ) : (
+        )) : (
         <dl className="mt-2 grid gap-1 sm:grid-cols-2" data-before-after>
           <div><dt className="text-emerald-800">Score</dt><dd className="font-semibold" data-score-change>{b.score} → {a.score}{a.score_label ? ` ${a.score_label}` : ""}</dd></div>
           <div><dt className="text-emerald-800">Evidence coverage</dt><dd className="font-semibold" data-coverage-change>{b.evidence_coverage}% → {a.evidence_coverage}%</dd></div>
@@ -454,7 +460,7 @@ function ReviewBody({ businessId, run: given, onAdopted = null, onRetry = null, 
         {draftOf(done) && <div className="mt-3">{toggle("Check or review inputs")}</div>}
         {(reviewing || !draftOf(done)) && <>
         {done.deliverables && <Figures list={done.figures} />}
-        {done.changes?.length > 0 && (
+        {done.changes?.length > 0 && done.goal !== "launch" && done.goal !== "need_funding" && (      // the quick check's own table: a plan's is its Checklist
           <table className="mt-3 w-full text-left text-[12.5px]" data-criteria-changes>
             <thead><tr className="text-emerald-800"><th className="font-medium">Criterion</th><th className="font-medium">Before</th><th className="font-medium">After</th><th className="font-medium">Based on</th></tr></thead>
             <tbody>{done.changes.map((c) => (

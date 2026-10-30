@@ -448,7 +448,10 @@ def test_the_launch_drafts_are_its_own_numbers_and_instructions():
             return R()
     only = {k: research.CASE_DRAFT_FIELDS["launch"][k] for k in ("market.budget", "planned_volume.amount", "offer.delivery_terms", "delivery.dependencies")}
     out = asyncio.run(research.draft_case_fields(LLM(), "launch", {"currency": "NGN"}, only=only))
-    assert "market.budget" not in out and out["planned_volume.amount"] == "15"      # a budget not on record is asked, never drafted (28 Oct)
+    # A budget not on record is estimated in a second pass, as a draft to approve (29 Oct: "you can't charge me credits and
+    # still expect me to fill manually"); the first, strict pass never invents it
+    assert out["market.budget"] == "20000" and out["planned_volume.amount"] == "15"
+    assert "ESTIMATE" in LLM.seen["system"]
     assert out["offer.delivery_terms"].startswith("Washed at the office") and out["delivery.dependencies"][0]["name"] == "Water supply"
     assert "launch one offering" in LLM.seen["system"] and "funding case" not in LLM.seen["system"]
 

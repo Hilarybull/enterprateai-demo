@@ -78,7 +78,7 @@ export function askFor(field) {
   return `What is the ${thing}?`;
 }
 
-function questionDefault(field) {
+export function questionDefault(field) {
   if (field.type === "checkbox") return field.default ?? false;
   if (field.type === "line_items") {
     // The catalogue's only priced offering is chosen already: one tap to confirm, not a blank row.
@@ -91,7 +91,7 @@ function questionDefault(field) {
   return field.default ?? "";
 }
 
-function questionSummary(field, value) {
+export function questionSummary(field, value) {
   if (field.type === "date") return ukDate(value) || String(value ?? "");      // "10/11/2026", never "2026-11-10" (QA R7)
   if (field.type === "line_items") {
     const catalogue = field.catalogue || [];
@@ -119,13 +119,13 @@ function questionSummary(field, value) {
   return String(value ?? "");
 }
 
-function questionIsEmpty(field, value) {
+export function questionIsEmpty(field, value) {
   if (field.type === "checkbox") return value !== true;
   if (field.type === "discount") return !value || value.value === "" || value.value == null;
   return value === "" || value == null || (Array.isArray(value) && !value.length);
 }
 
-function questionNormalize(field, value) {
+export function questionNormalize(field, value) {
   if (field.type === "checkbox") return true;
   if (field.type === "line_items") return checkLines(field, value).lines;
   if (field.type === "discount") {
@@ -139,7 +139,7 @@ function questionNormalize(field, value) {
 const isCompanion = (field) => Boolean(field?.companion_of);
 /** Filled from the owner's own message (QA P5-1): shown once in "From what you said", not asked, unless they choose Edit. */
 const isSaid = (field) => Boolean(field?.said) && field.default !== undefined && field.default !== "" && field.default !== null;
-const shows = (field, values) => !field.show_if || Object.entries(field.show_if).every(([key, value]) => values[key] === value);
+export const shows = (field, values) => !field.show_if || Object.entries(field.show_if).every(([key, value]) => values[key] === value);
 
 /**
  * How many questions a dialog will ask (E4): only those it actually shows. A field read from the message, a companion
@@ -155,7 +155,7 @@ export function emailIn(text) {
   return m ? m[0].replace(/[.]+$/, "") : "";
 }
 
-export function ChatQuestionThread({ title, question, fields = [], said = null, step = null, submitLabel = "Send", submitting, onSubmit, onCancel, onDiscard = null, error = "", clearError = null, aside = null, askedBefore = 0, planned = null, onTotal = null }) {
+export function ChatQuestionThread({ title, question, fields = [], said = null, step = null, submitLabel = "Send", submitting, onSubmit, onCancel, onDiscard = null, error = "", clearError = null, aside = null, askedBefore = 0, planned = null, onTotal = null, plain = false }) {
   const [discarding, setDiscarding] = useState(false);      // "Discard this request" asked: confirm before the task is cancelled
   const [values, setValues] = useState(() => Object.fromEntries((fields || []).map((field) => [field.key, questionDefault(field)])));
   const [stage, setStage] = useState(0);
@@ -273,7 +273,8 @@ export function ChatQuestionThread({ title, question, fields = [], said = null, 
       {stepLabel && <p className="-mt-2 text-[12px] font-semibold uppercase tracking-wide text-slate-400" data-step>{stepLabel}</p>}
       <div className="space-y-3">
         {saidItems.length > 0 && <SaidLine items={saidItems} onEdit={(fields || []).some(isSaid) || (said || []).length ? editSaid : null} editing={changingSaid} />}
-        {!single && (currentPrompt || !current) && (
+        {!single && (currentPrompt || !current) && plain && <p className="text-[14px] text-slate-700 dark:text-slate-200" data-opening>{currentPrompt || "A few details and I'll prepare it."}</p>}
+        {!single && (currentPrompt || !current) && !plain && (
           <div className="flex gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">EA</div>
             <div className="max-w-[calc(100%-3rem)] rounded-2xl rounded-tl-md bg-slate-50 px-3 py-2 text-[14px] leading-6 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100" data-opening>
@@ -285,6 +286,7 @@ export function ChatQuestionThread({ title, question, fields = [], said = null, 
           const value = values[field.key];
           const summary = questionSummary(field, value);
           if (!summary) return null;
+          if (plain) return <p key={field.key} className="text-[13px] text-slate-600 dark:text-slate-300" data-answer={field.key}><span className="font-semibold">{field.label}:</span> {summary}</p>;
           return (
             <div key={field.key} className="flex justify-end" data-answer={field.key}>
               <div className="max-w-[calc(100%-3rem)] rounded-2xl rounded-tr-md bg-brand-50 px-3 py-2 text-[13px] leading-6 text-brand-900 dark:bg-brand-900/20 dark:text-brand-100">
@@ -296,12 +298,16 @@ export function ChatQuestionThread({ title, question, fields = [], said = null, 
         })}
         {current && (
           <div className="space-y-2" data-current-step>
+            {plain ? (
+              <p className="text-[14px] font-semibold text-slate-900 dark:text-slate-100" data-asks>{single ? question : askFor(current)}{!current.required && current.type !== "checkbox" && <span className="ml-1 font-normal text-slate-400" data-optional>(optional)</span>}</p>
+            ) : (
             <div className="flex gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">EA</div>
               <div className="max-w-[calc(100%-3rem)] rounded-2xl rounded-tl-md bg-slate-50 px-3 py-2 text-[13px] leading-6 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100">
                 <span className="block" data-asks>{single ? question : askFor(current)}{!current.required && current.type !== "checkbox" && <span className="ml-1 text-slate-400" data-optional>(optional)</span>}</span>
               </div>
             </div>
+            )}
             {current.type === "choice" ? (
               <div className="flex flex-wrap gap-2" role="group" aria-label={current.label}>
                 {(current.options || []).map((option) => (
@@ -420,7 +426,25 @@ export function ChatQuestionThread({ title, question, fields = [], said = null, 
   );
 }
 
-export function useTaskFlow({ say, onChanged, onDetails }) {
+// A task's question in the conversation itself, never a dialog over it (the owner, 29 Oct: "why is the chat giving me popups"):
+// the same contents, in a card under the last message, with its own close and full page
+function InChat({ title, onClose, children, fullPage = null }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:ml-[3.25rem] dark:border-slate-800 dark:bg-slate-900" role="group" aria-label={title} data-task-in-chat>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <p className="text-[15px] font-bold text-slate-900 dark:text-slate-100">{title}</p>
+        <span className="flex shrink-0 items-center gap-3">
+          {fullPage && <a href={fullPage} className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>}
+          <button type="button" onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600">×</button>
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function useTaskFlow({ say, onChanged, onDetails, inline = false, onQuestion = null }) {
+  const Box = inline ? InChat : Modal;
   const [open, setOpen] = useState(null);        // { kind: "question" | "problem" | "ask", run, ... }
   const answeredIn = useRef({});      // run id → questions asked in it so far (the counter runs across the task, QA E5)
   const plannedIn = useRef({});       // run id → its question total, fixed at the first question and only ever lowered (QA U3)
@@ -433,8 +457,8 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
   const asked = useRef(0);
   const timer = useRef(null);
   const alive = useRef(true);
-  const out = useRef({ say, onChanged, onDetails });
-  out.current = { say, onChanged, onDetails };
+  const out = useRef({ say, onChanged, onDetails, onQuestion });
+  out.current = { say, onChanged, onDetails, onQuestion };
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; clearTimeout(timer.current); };
@@ -461,6 +485,11 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
       asked.current += 1;
       setWorking(false);
       setError("");
+      if (out.current.onQuestion) {
+        setOpen(null);
+        out.current.onQuestion({ run, question: q, answer: (values) => answer(values, {}, run), discard: () => discardRun(run) });
+        return changed();
+      }
       setOpen({ kind: "question", run, n: asked.current, fromBox: true });
       tell(null);
       return changed();
@@ -471,7 +500,9 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
         approval = ((await getRun(run.id))?.approvals || []).find((a) => a.status === "pending") || null;
       } catch { /* the confirmation is still given, without the figures */ }
       if (!alive.current) return undefined;
-      return settle({ tone: "emerald", text: readyText(run, approval), runId: run.id });
+      // The finished document, to review in the chat as one card (the owner, 29 Oct)
+      return settle({ tone: "emerald", text: readyText(run, approval), runId: run.id, review: { run_id: run.id, approval_id: approval?.approval_id || approval?.id || null,
+        title: approval?.title || run.title, to: `/agent/runs/${run.id}` } });
     }
     if (status === "succeeded") {
       return settle({ tone: "emerald", text: run.summary || "Done.", next: run.next_action || "",
@@ -508,6 +539,11 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
   function openQuestion(question) {
     asked.current += 1;
     setError("");
+    if (out.current.onQuestion) {
+      const run = { id: question.run_id, pending_question: question, step: question.step };
+      out.current.onQuestion({ run, question, answer: (values) => answer(values, {}, run), discard: () => discardRun(run) });
+      return;
+    }
     setOpen({ kind: "question", n: asked.current, run: { id: question.run_id, pending_question: question, step: question.step } });
   }
 
@@ -518,8 +554,8 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     setOpen({ kind: "ask", n: asked.current, title, message, fields, onSubmit });
   }
 
-  async function answer(values, meta = {}) {
-    const run = open?.run;
+  async function answer(values, meta = {}, given = null) {
+    const run = given || open?.run;
     if (!run) return;
     const before = answeredIn.current[run.id] || 0;
     answeredIn.current[run.id] = before + (meta.asked ?? Object.keys(values || {}).length);
@@ -568,6 +604,10 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
 
   const details = async (runId) => { close(); out.current.onDetails?.(runId, await detailsOf(runId)); };      // (runId, where it goes)
 
+  async function discardRun(run) {
+    try { await cancelRun(run.id); changed(); } catch { /* it stays waiting */ }
+  }
+
   /** "Discard this request": the task is cancelled, so it leaves Needs You for History. */
   async function discard() {
     const run = open?.run;
@@ -599,27 +639,27 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
     const confirm = fields.some((f) => f.confirm);
     const step = open.run.step;
     element = (
-      <Modal compact title={confirm ? "Is this right?" : "A few details"} onClose={close} fullPage={`/agent/runs/${open.run.id}`}>
-        <ChatQuestionThread key={open.run.id + ":" + open.n} title={q.question || "A few details"} question={q.question} fields={fields} said={q.said} step={step}
+      <Box compact title={confirm ? "Is this right?" : "A few details"} onClose={close} fullPage={`/agent/runs/${open.run.id}`}>
+        <ChatQuestionThread plain={inline} key={open.run.id + ":" + open.n} title={q.question || "A few details"} question={q.question} fields={fields} said={q.said} step={step}
           askedBefore={answeredIn.current[open.run.id] || 0} planned={plannedIn.current[open.run.id] ?? null}
           onTotal={(n) => { const was = plannedIn.current[open.run.id]; if (was == null || n < was) plannedIn.current[open.run.id] = n; }}
           submitLabel={confirm ? "Confirm" : "Send"} submitting={sending || working} onSubmit={answer} onCancel={close} onDiscard={discard} clearError={() => setError("")}
           error={error} aside={open.fromBox ? seeDetails(open.run.id) : null} />
-      </Modal>
+      </Box>
     );
   } else if (open?.kind === "ask") {
     element = (
-      <Modal title={open.title || "A little more detail"} onClose={close} compact>
-        <ChatQuestionThread key={"ask:" + open.n} title={open.title || "A little more detail"} question={open.message} fields={open.fields} submitting={sending}
+      <Box title={open.title || "A little more detail"} onClose={close} compact>
+        <ChatQuestionThread plain={inline} key={"ask:" + open.n} title={open.title || "A little more detail"} question={open.message} fields={open.fields} submitting={sending}
           onSubmit={(values) => { const go = open.onSubmit; setOpen(null); go?.(values); }} onCancel={close} clearError={() => setError("")}
           error={error} submitLabel="Send" />
-      </Modal>
+      </Box>
     );
   } else if (open?.kind === "problem") {
     const run = open.run;
     const need = run.email_needed;
     element = (
-      <Modal compact title={need ? `${need.customer} has no email on record${need.reference ? ` for ${need.reference}` : ""}` : "This needs you"} onClose={close}
+      <Box compact title={need ? `${need.customer} has no email on record${need.reference ? ` for ${need.reference}` : ""}` : "This needs you"} onClose={close}
         fullPage={`/agent/runs/${run.id}`}>
         <p className="text-sm text-slate-700 dark:text-slate-200">{run.error || run.summary || run.next_action || "This task stopped and needs a look."}</p>
         {need ? (
@@ -644,7 +684,7 @@ export function useTaskFlow({ say, onChanged, onDetails }) {
             <button type="button" onClick={close} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Close</button>
           </div>
         )}
-      </Modal>
+      </Box>
     );
   }
   /** A task named only by its id (a button elsewhere on the page): load it, then handle it here. */

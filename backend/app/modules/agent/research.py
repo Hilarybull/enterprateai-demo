@@ -1441,11 +1441,22 @@ CASE_DRAFT_FIELDS["launch"] = {
     "delivery.capacity_per_unit": "The hours one unit or customer takes to deliver, a number only; null when FACTS give no basis",
     "control.success_measures": "Two or three measures of a successful launch, with numbers, in one or two sentences",
     "control.incident_response": "What the business does if a delivery goes wrong or a customer complains, in one or two sentences",
-    "delivery.dependencies": "A list of {name, kind, contingency}: the critical suppliers, people or systems this launch depends on (kind is supplier, person or system) and a backup for each",
+    "delivery.dependencies": "A list of {name, kind, contingency, available}: the critical suppliers, people or systems this launch depends on (kind is supplier, person or system), a backup for each, and available \"yes\" or \"no\" by the launch date, your best judgement",
+    # Everything the checklist asks for that can be written, drafted for the owner to approve (the owner, 29 Oct: "agent
+    # should fill all these... the user gets to review, edit and approve"; "you can't charge me credits and still expect me
+    # to fill manually")
+    "target_date": "A realistic launch date, YYYY-MM-DD, about eight weeks after FACTS.today, unless FACTS.plan already has one",
+    "operations.process": "How an enquiry or order becomes a delivery and a payment, step by step, in two or three sentences",
+    "delivery.capacity_available": "The working hours a month the team has for this launch, a whole number (people × hours each)",
+    "delivery.capacity_committed": "The hours a month already taken by the business's other work, a whole number",
+    "market.owner": "Who runs the first channel: the owner's name or role from FACTS (the profile or the team), else \"The owner\"",
+    "control.review_date": "The post-launch review date, YYYY-MM-DD, about four weeks after the launch date (FACTS.plan.target_date, or the launch date you draft)",
+    "control.milestones": "A list of {outcome, due_date, owner}: two or three launch milestones up to and on the launch date (FACTS.plan.target_date, or the launch date you draft), each due_date YYYY-MM-DD and owned by a person from FACTS or \"The owner\"",
 }
 CASE_LIST_FIELDS = {"team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
-                    "milestones": ("outcome", "measure", "target"), "delivery.dependencies": ("name", "kind", "contingency")}
-NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit",
+                    "milestones": ("outcome", "measure", "target"), "delivery.dependencies": ("name", "kind", "contingency", "available"),
+                    "control.milestones": ("outcome", "due_date", "owner")}
+NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit", "delivery.capacity_available", "delivery.capacity_committed",
                  "economics.price_per_unit", "economics.variable_cost_per_unit", "economics.fixed_costs_monthly")
 _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, specific sentences a funder can read. "
                  "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
@@ -1465,7 +1476,8 @@ _DRAFT_SYSTEM_LAUNCH = ("You fill in a small business's plan to launch one offer
                         "something goes wrong, and the suppliers, people and systems it depends on. Never write an amount of money, a cost or a "
                         "price that FACTS don't give: return null for it, so the owner is asked. Never mention FACTS. Numbers are whole numbers "
                         "in the plan's currency. Write only about this offering, never about another one or about funding. Fill every "
-                        "field you can; return null only when nothing sensible can be said. Reply with JSON only: "
+                        "field you can; return null only when nothing sensible can be said. The offering is FACTS.plan.name when "
+                        "given: every draft is about it, never the profile's other services. Reply with JSON only: "
                         "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
 
@@ -1522,10 +1534,18 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
     """The case's fields drafted from the facts; {} when there is no model or it fails (never a guess). `only`: just these
     fields (those still blank). The proposals still empty after the first answer are asked once more, on their own."""
     fields = only if only else (CASE_DRAFT_FIELDS.get(goal) or {})
+    if goal == "launch":
+        facts = {**facts, "today": _now().date().isoformat()}      # the launch date and milestones are drafted from it
     out = await _draft_once(llm, goal, facts, fields)
     missing = {k: v for k, v in fields.items() if k in PROPOSALS and k not in out}
     if missing and llm is not None and goal == "need_funding":
         out.update(await _draft_once(llm, goal, facts, missing, extra=_PROPOSE_AGAIN))
+    if goal == "launch" and llm is not None:
+        # Do all is paid for: what the records can't give is estimated, never left for the owner to type (the owner, 29 Oct).
+        # Each waits as a draft to review, edit or reject; nothing counts until approved.
+        rest = {k: v for k, v in fields.items() if k not in out}
+        if rest:
+            out.update(await draft_estimates(llm, goal, {**facts, "plan": {**(facts.get("plan") or {}), **out}}, rest))
     return out
 
 
@@ -1568,7 +1588,18 @@ def _grounded_draft(value, known: set[float]) -> bool:
     return all(n in known for n in money_figures(text))
 
 
-async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = "") -> dict[str, str]:
+_ESTIMATE = (" The owner asked you to fill every field. Where FACTS give no figure, give a realistic ESTIMATE for this kind of "
+             "business in its place and currency (typical local prices, costs and budgets), as a whole number; never leave a money field "
+             "null. Everything else stays factual and specific.")
+
+
+async def draft_estimates(llm, goal: str, facts: dict, only: dict) -> dict[str, str]:
+    """The fields still blank, drafted with estimates where the records give no figure (the owner, 29 Oct: "fill them and bring
+    for review"): every one waits as a draft, said to be an estimate."""
+    return await _draft_once(llm, goal, facts, only, extra=_ESTIMATE, estimate=True)
+
+
+async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = "", estimate: bool = False) -> dict[str, str]:
     if llm is None or not fields:
         return {}
     prompt = ("FIELDS (key: what to write):\n" + "\n".join(f"- {k}: {v}" for k, v in fields.items())
@@ -1586,7 +1617,7 @@ async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = ""
     for k, v in raw.items():
         if k not in fields:
             continue
-        if not _grounded_draft(v, known):
+        if not (estimate and not _LEAK.search(json.dumps(v, default=str, ensure_ascii=False))) and not _grounded_draft(v, known):
             continue      # a figure not on record, or the writer's own words leaking: asked instead (the owner, 28 Oct)
         if k in CASE_LIST_FIELDS:
             keys = CASE_LIST_FIELDS[k]
@@ -1599,7 +1630,7 @@ async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = ""
         if k in NUMBER_DRAFTS:
             m = re.search(r"\d[\d,]*(?:\.\d+)?", text)      # a number only, or nothing
             money_field = k in ("market.budget", "economics.price_per_unit", "economics.variable_cost_per_unit", "economics.fixed_costs_monthly")
-            if m and float(m.group().replace(",", "")) > 0 and (not money_field or round(float(m.group().replace(",", "")), 2) in known):
+            if m and float(m.group().replace(",", "")) > 0 and (estimate or not money_field or round(float(m.group().replace(",", "")), 2) in known):
                 out[k] = str(round(float(m.group().replace(",", ""))))      # an amount only when it is on record; else asked
             continue
         if text and text.lower() not in ("null", "none", "unknown", "n/a") and not NOT_SAID.search(text) and not _NOTHING_FOUND.search(text):
@@ -2078,11 +2109,21 @@ def _only_suffix(only) -> str:
     return (":" + ",".join(sorted(only))) if only else ""
 
 
+def own_runs(data: dict | None, goal: str, case_id: str | None) -> dict | None:
+    """The business data with only this launch plan's research runs: every launch plan is its own case, never sharing or
+    replacing another's research (the owner, 30 Oct: "every launch readiness is new and different from the existing one,
+    like the business plan"). Funding has one case, so it is left as it is."""
+    if goal != "launch" or not case_id:
+        return data
+    return {**(data or {}), "research_runs": {k: r for k, r in _runs(data or {}).items() if str(r.get("case_id") or "") == str(case_id) or r.get("goal") != goal}}
+
+
 def reuse_for(data: dict | None, goal: str, fingerprint: str, answers: dict | None = None, now: datetime | None = None,
-              only: list[str] | None = None) -> dict | None:
+              only: list[str] | None = None, case_id: str | None = None) -> dict | None:
     """The one rule for opening research again, free: the price check and the start both use it, so a quote that says free
     can never be followed by a charge (the owner's QA, 17 Oct). The same research by its key, else the run the result's own
-    button shows as waiting for review or adopted."""
+    button shows as waiting for review or adopted. A launch plan only ever reuses its own."""
+    data = own_runs(data, goal, case_id)
     again = reusable(data, goal, fingerprint, now)
     if again:
         return again
@@ -2095,13 +2136,17 @@ def reuse_for(data: dict | None, goal: str, fingerprint: str, answers: dict | No
     return None
 
 
-def research_state(data: dict | None, goal: str, now: datetime | None = None, answers: dict | None = None) -> dict:
+def research_state(data: dict | None, goal: str, now: datetime | None = None, answers: dict | None = None, case_id: str | None = None) -> dict:
     """What the result's button is (the owner's QA, 15 Oct): no run yet; findings to review ("Review findings (5)"); adopted
     (the pack is the next step); or stale (adopted, but the answers changed or it is over 30 days old: "Refresh research")."""
     from app.modules.agent import config as agent_config
     now = now or _now()
     runs = sorted((r for r in _runs(data or {}).values() if r.get("goal") == goal and r.get("status") in ("review", "adopted") and not r.get("error")),
                   key=lambda r: r["created_at"], reverse=True)
+    if case_id and any(r.get("case_id") for r in runs):
+        # This plan's or case's own research, never another's (the owner, 29 Oct: several launch plans, and the Sneaker shop's
+        # finished research read as "didn't finish")
+        runs = [r for r in runs if str(r.get("case_id") or "") == str(case_id)]
     price = agent_config.price_credits(feature_of(goal))
     if not runs:
         return {"state": "none", "max": price}
@@ -2204,20 +2249,26 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
     fingerprint = fingerprint_of(answers, run["inputs"], run["topics"], ctx.get("country")) + (":" + ",".join(sorted(only)) if only else "")
     run["fingerprint"] = fingerprint
 
+    from app.modules.agent.assistant_context import STARTED
+
     def _put(d: dict) -> dict:
-        busy = next((r for r in _runs(d).values() if r.get("goal") == goal and r.get("status") == "researching"
-                     and (now - datetime.fromisoformat(r["created_at"])).total_seconds() < 180), None)
+        # One running now, in this server: a run a restart stopped is never waited on (the owner, 29 Oct: Retry spun on)
+        # Each launch plan's own runs only: another plan's research is never waited on, reused or replaced (30 Oct)
+        mine = lambda r: goal != "launch" or not case_id or str(r.get("case_id") or "") == str(case_id)      # noqa: E731
+        busy = next((r for r in _runs(d).values() if r.get("goal") == goal and r.get("status") == "researching" and mine(r)
+                     and (now - datetime.fromisoformat(r["created_at"])).total_seconds() < 180
+                     and datetime.fromisoformat(r["created_at"]) >= STARTED), None)
         if busy:
             return busy
         # The same check with the same answers and figures, researched within the week: that run is shown again (to review
         # or as adopted), free. Research is consistent: one question, one answer, until something it depends on changes.
         # Only a run that found sources is reused: an empty or failed one is never shown again in place of a new search.
-        again = None if fresh else reuse_for(d, goal, fingerprint, answers, now, only=only)
+        again = None if fresh else reuse_for(d, goal, fingerprint, answers, now, only=only, case_id=case_id)
         if again:
             return {**again, "repeat": True}
         # At most one run waiting for review (the owner's brief, 20 Oct): an older one never reviewed is replaced by this one.
         for r in _runs(d).values():
-            if r.get("goal") == goal and r.get("status") == "review" and not r.get("only") and not only:
+            if r.get("goal") == goal and r.get("status") == "review" and not r.get("only") and not only and mine(r):
                 r["status"], r["replaced_by"] = "replaced", run_id
         _runs(d)[run_id] = run
         compact_runs(_runs(d))
@@ -2315,7 +2366,17 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
     if goal in CASE_DRAFT_FIELDS and not only:
         writer = drafter if drafter is not None else (_default_llm(user["id"]) if llm is None and search is None else None)
         try:
-            case_drafts = await draft_case_fields(writer, goal, workspace_facts(data, answers, i, found))
+            facts = workspace_facts(data, answers, i, found)
+            if goal == "launch" and case_id:
+                # The plan being drafted, so every draft is about its offering, never the profile's other service (the owner,
+                # 30 Oct: "Car wash subscription launched" as a Soap Making milestone)
+                try:
+                    from app.modules.readiness.service import service_for
+                    pd = ((await service_for(orch).store.get("subjects", str(case_id))) or {}).get("data") or {}
+                    facts["plan"] = {k: pd.get(k) for k in ("name", "audience", "geography", "target_date", "offer", "economics") if pd.get(k) not in (None, "", {})}
+                except Exception:      # noqa: BLE001 - drafted from the workspace alone
+                    logger.info("launch plan not read for drafts", exc_info=True)
+            case_drafts = await draft_case_fields(writer, goal, facts)
         except Exception:      # noqa: BLE001
             case_drafts = {}
     # Why each topic ended as it did, for the diagnostics: never a silent "nothing found".

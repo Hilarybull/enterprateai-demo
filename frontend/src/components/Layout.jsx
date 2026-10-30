@@ -1,4 +1,5 @@
 import { ContentSkeleton } from "./Skeleton";
+import BackToChat from "./BackToChat";
 import { welcomeWords } from "../lib/creditCopy";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
@@ -1609,7 +1610,7 @@ export default function Layout() {
                   )}
                 </div>
               ) : workspaceChecked ? (
-                <><Outlet /><TipsPrompt /></>
+                <><BackToChat /><Outlet /><TipsPrompt /></>
               ) : (
                 <ContentSkeleton />
               )}

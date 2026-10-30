@@ -5,6 +5,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../../api/client";
+import { noteCameFrom } from "../../lib/cameFrom";
 import { agentErrorMessage, approveAction, getChat, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
 import { sectionCounts } from "../../lib/caseSteps";
 import { getPath } from "../../lib/readiness";
@@ -12,6 +13,7 @@ import { useAuthStore } from "../../store/auth";
 import { PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "../agent/ChatActions";
 import { ActivitySheet, BreakdownSheet, ProfileSheet, StepsSheet } from "../agent/Sheets";
 import { SavedResearch } from "../../pages/ReadinessPage";
+import { ActionsPanel } from "./Panels";
 
 const BOX = "rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900";
 const LINK = "inline-flex items-center gap-1 text-[13px] font-semibold text-brand-700 hover:underline dark:text-brand-300";
@@ -265,12 +267,12 @@ function ChooseCard({ subject, steps, price, onHelp, onSelf, busy, reuse = false
   );
 }
 
-function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStarted = false, drafts = 0, options = false, onDecideAll = null, onResults = null }) {
+function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStarted = false, drafts = 0, options = false, onDecideAll = null, onResults = null, onNext = null }) {
   const [deciding, setDeciding] = useState("");
   const gaps = gapsOf(subject, steps).filter((g) => g.state !== "Completed");
   // Drafts waiting are the research done (the owner, 28 Oct: "9 drafts waiting" beside "Processing…")
   const review = (ctx?.research?.state === "review" || drafts > 0) && !ctx?.working;
-  const done = !ctx?.failed && (review || (ctx?.research?.state === "adopted" && !ctx?.working));
+  const done = review || (ctx?.research?.state === "adopted" && !ctx?.working);      // drafts back win over an older failure (29 Oct)
   // Not running and nothing to show for it: said, with Retry, never a spinner for ever (the owner, 28 Oct)
   if (ctx && !ctx.working && !done && (ctx.failed || !justStarted)) {
     return (
@@ -290,7 +292,7 @@ function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStart
             <div>
               <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">{options ? (done ? "Funding options found" : "Searching for funding options") : done ? "Research complete" : words.progress}</p>
               {/* What came back, said as it is (the owner, 28 Oct: three areas "Drafted", one finding) */}
-              <p className="text-[13px] text-slate-500" data-research-found>{done ? drafts > 0 ? `${drafts} draft${drafts === 1 ? "" : "s"} to review before I use ${drafts === 1 ? "it" : "them"}.` : (ctx?.research?.findings ? `${ctx.research.findings} finding${ctx.research.findings === 1 ? "" : "s"} to review before I use ${ctx.research.findings === 1 ? "it" : "them"}.` : "Nothing found this time. Nothing was charged for it.") : options ? "Programmes, lenders and investors that fit your case's country, kind of funding, amount and sector, each with its source." : "I'm completing your information from your records and trusted sources."}</p>
+              <p className="text-[13px] text-slate-500" data-research-found>{done ? drafts > 0 ? `${drafts} draft${drafts === 1 ? "" : "s"} to review before I use ${drafts === 1 ? "it" : "them"}.` : (!review && ctx?.research?.state === "adopted" ? "Your findings are reviewed and in use." : ctx?.research?.findings ? `${ctx.research.findings} finding${ctx.research.findings === 1 ? "" : "s"} to review before I use ${ctx.research.findings === 1 ? "it" : "them"}.` : "Nothing found this time. Nothing was charged for it.") : options ? "Programmes, lenders and investors that fit your case's country, kind of funding, amount and sector, each with its source." : "I'm completing your information from your records and trusted sources."}</p>
             </div>
           </div>
           {!done && <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full w-1/3 animate-pulse rounded-full bg-brand-600" /></div>}
@@ -303,20 +305,25 @@ function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStart
           ))}</ul>
           {/* The price against what others charge, said in the chat (the owner, 28 Oct) */}
           {done && ctx?.idea?.price_check?.text && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13.5px] text-amber-900" data-price-check>{ctx.idea.price_check.text}</p>}
-          {review && (
+          {/* The next step once the research is done, reviewed or not: the Idea Validation (the owner, 29 Oct) */}
+          {/* Done never ends without a step (the owner, 30 Oct: "you have marked everything checked, yet no CTA"): the drafts
+              still waiting first, then what is left on the plan */}
+          {(review || (done && (onResults || onNext || drafts > 0))) && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button type="button" onClick={onReview} className="rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700" data-review-findings>
+              {(review || drafts > 0) && <button type="button" onClick={onReview} className="rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700" data-review-findings>
                 {drafts > 0 ? `Review drafts (${drafts})` : `Review findings${ctx.research?.findings ? ` (${ctx.research.findings})` : ""}`}
-              </button>
+              </button>}
               {/* Decided here too, and the result it changes one press away (the owner, 28 Oct: "option to see the validation result
                   dashboard, accept or reject") */}
-              {!drafts && onDecideAll && ctx?.research?.run_id && <>
+              {review && !drafts && onDecideAll && ctx?.research?.run_id && <>
                 <button type="button" disabled={Boolean(deciding)} onClick={async () => { setDeciding("accept"); try { await onDecideAll("accept"); } finally { setDeciding(""); } }}
                   className="rounded-lg border border-brand-600 px-4 py-2 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-60" data-accept-all>{deciding === "accept" ? "Accepting…" : "Accept all"}</button>
                 <button type="button" disabled={Boolean(deciding)} onClick={async () => { setDeciding("reject"); try { await onDecideAll("reject"); } finally { setDeciding(""); } }}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-[13.5px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200" data-reject-all>{deciding === "reject" ? "Rejecting…" : "Reject all"}</button>
               </>}
-              {onResults && <button type="button" onClick={onResults} className="ml-auto text-[13.5px] font-semibold text-brand-700 hover:underline dark:text-brand-300" data-see-results>See validation results →</button>}
+              {onResults && <button type="button" onClick={onResults} className={review ? "ml-auto text-[13.5px] font-semibold text-brand-700 hover:underline dark:text-brand-300" : "rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700"} data-see-results>Run the Idea Validation →</button>}
+              {!onResults && onNext && done && <button type="button" onClick={onNext}
+                className={review || drafts > 0 ? "rounded-lg border border-brand-600 px-4 py-2 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50" : "rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700"} data-see-next>See your next steps →</button>}
             </div>
           )}
         </div>
@@ -414,8 +421,12 @@ function NextCard({ feature, ctx, onTab, send, score = null, name = "" }) {
       // it is thin, testing it once it holds together, the launch decision only when it is close to ready
       : [...(!(Number(score) >= 60) ? [{ key: "complete", icon: "pen", tone: "bg-amber-50 text-amber-600", title: "Complete your launch plan",
             text: "What you're launching, its price, who it's for and when. Your score rises as you fill them in.", cta: "Fill in the gaps", go: () => onTab?.("answers"), primary: true }] : []),
-         ...(!(Number(score) >= 40) ? [{ key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me prepare it for you",
-            text: "I'll research and draft what's missing, for you to approve.", cta: "Help me complete it", go: () => send("Help me complete it") }] : []),
+         // Research already done: what is still blank is drafted next, never the research offered again (the owner, 29 Oct)
+         ...(!(Number(score) >= 40) ? [["review", "adopted"].includes(ctx?.research?.state)
+           ? { key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me draft what's left",
+               text: "I'll draft every field still blank, with estimates where your records have none, for you to approve.", cta: "Draft the rest", go: () => send("Fill the rest for me") }
+           : { key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me prepare it for you",
+               text: "I'll research and draft what's missing, for you to approve.", cta: "Help me complete it", go: () => send("Help me complete it") }] : []),
          ...(Number(score) >= 40 ? [{ key: "market", icon: "layers", tone: "bg-blue-50 text-blue-600", title: "Test it on the Marketplace", text: "List the service so customers can request quotations.", cta: "List on the Marketplace", go: () => send("Help me list this service on the Marketplace"), primary: Number(score) >= 60 }] : []),
          ...(Number(score) >= 60 ? [{ key: "decide", icon: "pen", tone: "bg-violet-50 text-violet-600", title: "Decide how to launch", text: "Launch now, test first or wait, from where your plan stands.", cta: "Help me decide",
             go: () => send(`Should I launch ${name || "this"} now, test it first or wait?`) }] : [])]),
@@ -534,7 +545,9 @@ export function waitingDrafts(subject) {
     .map(([path, d]) => ({ path, draft: d, label: where[path]?.label || words(path), section: where[path]?.section || "other", sectionTitle: where[path]?.sectionTitle || "Other",
       money: where[path]?.type === "money" || (!where[path] && /price|cost|budget|revenue|amount/i.test(path) && isAmount(d.value)) }));
 }
-const rowText = (r) => (r && typeof r === "object" ? [...new Set(Object.entries(r).filter(([k, v]) => k !== "id" && v !== null && v !== "" && typeof v !== "object").map(([, v]) => String(v)))].join(": ") : String(r ?? ""));
+// A row in words: never its ids, links or yes/no flags shown as "true" (the test run and the permit from the records, 29 Oct)
+const rowText = (r) => (r && typeof r === "object" ? [...new Set(Object.entries(r).filter(([k, v]) => k !== "id" && !/_id$|^source_reference$|^process_version$/.test(k)
+  && v !== null && v !== "" && typeof v !== "object" && typeof v !== "boolean").map(([, v]) => String(v).replace(/_/g, " ")))].join(": ") : String(r ?? ""));
 
 /** Spending lines as a table, in the workspace's currency, with their total against the amount asked (the owner's test,
  *  27 Oct: raw "9880000", a label named twice, lines adding up to ₦10,000,000 of a ₦25,000,000 ask). */
@@ -595,8 +608,35 @@ function LinesTable({ rows, currency, target }) {
   );
 }
 
-function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, firstField, currency, target, decided = [], onDecide, onUndo, onEditList }) {
+// A list draft (milestones, dependencies) or one record (the test run) edited in place, row by row: never another tab
+// (the owner, 30 Oct: "why is edit taking me away from here?")
+const ROW_SKIP = /^id$|_id$|^source_reference$|^process_version$|^status$|^critical$|^applicable$/;
+function RowsEdit({ value, onChange, label }) {
+  const single = !Array.isArray(value);
+  const rows = single ? [value] : value;
+  const put = (j, k, v) => {
+    const next = rows.map((r, i) => (i === j ? { ...r, [k]: v } : r));
+    onChange(single ? next[0] : next);
+  };
+  return (
+    <div className="mt-3 space-y-3" data-rows-edit>
+      {rows.map((r, j) => (
+        <div key={r?.id || j} className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-2 dark:border-slate-700">
+          {Object.entries(r || {}).filter(([k, v]) => !ROW_SKIP.test(k) && typeof v !== "object" && typeof v !== "boolean").map(([k, v]) => (
+            <label key={k} className="block text-[12px] font-semibold text-slate-500">{words(k)}
+              <input aria-label={`${label} ${j + 1} ${words(k)}`} value={String(v ?? "")} onChange={(e) => put(j, k, e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13.5px] font-normal text-slate-800 focus:border-brand-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+            </label>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, firstField, currency, target, decided = [], onDecide, onUndo }) {
   const [more, setMore] = useState(false);      // the phone's ⋯ menu
+  const [rowsOpen, setRowsOpen] = useState({});      // list drafts being edited in place
   const boxes = useRef({});
   // In the conversation, every draft at once under its area's name: no tabs, no second chat (the owner, 27 Oct); each with
   // its own Approve, Edit and Reject, a decided one folded to its label with Undo (the owner, 28 Oct)
@@ -622,17 +662,19 @@ function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, 
               <button type="button" onClick={() => onUndo?.(d.path)} className="ml-auto shrink-0 text-[13px] font-semibold text-brand-700 hover:underline dark:text-brand-300" data-draft-undo>Undo</button>
             </div>
           );
-          const list = Array.isArray(v);
+          const list = Array.isArray(v) || (v !== null && typeof v === "object");      // a list, or one record (the test run): edited on Inputs
           return (
             <div key={d.path} className={`${BOX} p-5 max-sm:rounded-none max-sm:border-0 max-sm:border-b max-sm:px-0 max-sm:pb-4 max-sm:pt-0`} data-draft-review={d.path}>
               <p className="text-[11.5px] font-semibold uppercase tracking-wide text-slate-500">{d.sectionTitle}</p>
               <p className="text-[15px] font-bold text-slate-900 dark:text-slate-50">{d.label}</p>
               <p className="text-[12.5px] text-slate-500">{fromLine(d.draft.source)}</p>
-              {Array.isArray(v) && v.some((r) => r && typeof r === "object" && "amount" in r) ? (
+              {list && rowsOpen[d.path] ? (
+                <RowsEdit value={v} label={d.label} onChange={(next) => setEdits((x) => ({ ...x, [d.path]: next }))} />
+              ) : Array.isArray(v) && v.some((r) => r && typeof r === "object" && "amount" in r) ? (
                 <LinesTable rows={v} currency={currency} target={d.path === "use_of_funds" ? target : null} />
-              ) : Array.isArray(v) ? (
+              ) : list ? (
                 <ul className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200 text-[13.5px] dark:divide-slate-800 dark:border-slate-700">
-                  {v.map((r, j) => <li key={j} className="px-3 py-2 text-slate-800 dark:text-slate-100">{rowText(r)}</li>)}
+                  {(Array.isArray(v) ? v : [v]).map((r, j) => <li key={j} className="px-3 py-2 text-slate-800 dark:text-slate-100">{rowText(r)}</li>)}
                 </ul>
               ) : (
                 <textarea ref={(el) => { boxes.current[d.path] = el; if (i === 0 && firstField) firstField.current = el; }} aria-label={d.label}
@@ -647,7 +689,8 @@ function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, 
               {onDecide && (
                 <div className="mt-3 flex flex-wrap gap-2" data-draft-actions>
                   <button type="button" disabled={busy} onClick={() => onDecide(d, "approved")} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60" data-draft-approve>Approve</button>
-                  <button type="button" disabled={busy} onClick={() => (list ? onEditList?.(d) : boxes.current[d.path]?.focus())} className={BTN} data-draft-edit>Edit</button>
+                  <button type="button" disabled={busy} onClick={() => (list ? setRowsOpen((x) => ({ ...x, [d.path]: !x[d.path] })) : boxes.current[d.path]?.focus())} className={BTN} data-draft-edit>
+                    {list && rowsOpen[d.path] ? "Done editing" : "Edit"}</button>
                   <button type="button" disabled={busy} onClick={() => onDecide(d, "rejected")} className={BTN} data-draft-reject>Reject</button>
                 </div>
               )}
@@ -799,9 +842,16 @@ function IdeaChooseCard({ price, onStart, onSelf, busy, reuse = false }) {
         <li key={w} className="flex items-center justify-between py-2 text-[13.5px] text-slate-700 dark:text-slate-200"><span className="flex items-center gap-2"><span className="h-4 w-4 rounded-full border-2 border-slate-300" />{w}</span><span className="text-[12.5px] text-slate-400">Pending</span></li>
       ))}</ul>
       <Info>All research findings are shown to you for approval before they change anything.</Info>
-      <button type="button" disabled={busy} onClick={() => (pick === "help" ? onStart() : onSelf())} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
-        {pick === "help" ? `Start${reuse ? " · free" : price ? ` · up to ${price} credits` : ""}` : "Enter it myself"}
-      </button>
+      {/* Both ways as buttons of their own: one press, nothing to pick first (the owner, 29 Oct: "the enter by yourself on the idea
+          validation is still not working fine") */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={onStart} className={`rounded-lg px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${pick === "help" ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-600 text-brand-700 hover:bg-brand-50"}`} data-idea-start>
+          {`Start${reuse ? " · free" : price ? ` · up to ${price} credits` : ""}`}
+        </button>
+        <button type="button" disabled={busy} onClick={onSelf} className={`rounded-lg px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${pick === "self" ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"}`} data-idea-self>
+          Enter it myself
+        </button>
+      </div>
     </div>
   );
 }
@@ -870,7 +920,7 @@ function IdeaFormCard({ businessId, idea, currency, onSaved, say }) {
   );
 }
 
-const ONCE = new Set(["findings", "choose", "next", "research_again"]);
+const ONCE = new Set(["findings", "choose", "next", "research_again", "progress"]);
 
 // A new search instead of the reused one, its own price said first (the owner, 28 Oct)
 function ResearchAgainCard({ businessId, answers, busy, onStart }) {
@@ -1059,6 +1109,35 @@ function LaunchSnapshotSide({ subject, score, onSheet, currency }) {
 
 // One full stop where an older check wrote two ("is required.."); an ellipsis stays
 const tidy = (t) => String(t || "").replace(/(?<!\.)\.\.(?!\.)/g, ".");
+
+// What is left on a launch plan, said by who does it (the owner, 29 Oct: "the agent ask me the ones it needs from me and let
+// me know it can do it"): what the Agent drafts, what only the owner has, and the one question it can save from the chat.
+const AGENT_DRAFTS = { "C2.A": "the price, delivery terms and customer promise", "C2.B": "the price and costs", "C4.A": "your capacity and how long one order takes",
+  "C4.B": "what the launch depends on", "C5.A": "how an order becomes a delivery and a payment", "C7.A": "the channel and launch message",
+  "C7.B": "the channel's owner, budget and target", "C8.A": "the launch date and milestones", "C8.B": "the success measures, incident plan and review date",
+  // fetched from Business Operations and the profile when they hold it (the owner, 29 Oct: "it can fetch these")
+  "C1.A": "demand evidence from your sales and quotations", "C5.B": "a test run from a paid sale", "C6.B": "your registration as the permit to operate" };
+// Only the owner's own word: never a field the Agent can draft or fetch (the owner, 29 Oct)
+const OWNER_DOES = { "C1.B": "confirm you've reviewed the evidence", "C3.A": "confirm the cash forecast", "C3.B": "list your setup and running costs in the forecast",
+  "C6.A": "confirm which permits apply" };
+export function launchLeft(subject) {
+  const open = (subject?.actions || []).filter((a) => a.status === "open");
+  if (!open.length) return null;
+  const losing = open.find((a) => /contribution of -/i.test(a.why || ""));
+  const codes = new Set(open.flatMap((a) => [a.code, ...(a.also || [])]));
+  if (losing) codes.add("C2.B");
+  if (open.some((a) => a.criterion === "C6")) codes.add("C6.B");      // the permit's blocker counts as its check
+  const mine = [...new Set(Object.entries(AGENT_DRAFTS).filter(([c]) => codes.has(c)).map(([, w]) => w))];
+  const yours = [...new Set(Object.entries(OWNER_DOES).filter(([c]) => codes.has(c)).map(([, w]) => w))];
+  const ask = losing ? `Right now each sale loses money: ${tidy(losing.why).replace(/\.$/, "")}. I'll draft a price and cost that work, or tell me your real cost.` : "";
+  const list = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+  // Always ends on the one next step (the owner, 30 Oct: "we are assuming the user is clueless about the next steps")
+  const next = mine.length ? "Next step: press Draft the rest and I'll prepare them for you to approve."
+    : yours.length ? `Next step: ${yours[0]}.` : "";
+  const text = [mine.length ? `I can draft ${list(mine)} for you.` : "",
+    yours.length ? `Only you can ${list(yours)}.` : "", ask, next].filter(Boolean).join(" ");
+  return { text, prompts: mine.length ? [{ label: "Draft the rest", prompt: "Fill the rest for me" }] : [] };
+}
 
 /** What stands between the plan and a full launch (idea-06's "Why not fully launch yet?"): its open actions, most urgent first. */
 function LaunchWhyNotSide({ subject, onSheet }) {
@@ -1270,6 +1349,17 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const [editing, setEditing] = useState(null);
   const fileRef = useRef(null);
   const push = (...said) => setMessages((prev) => { const next = [...(prev || []), ...said]; saveChat(businessId, chatId, next).catch(() => {}); return next; });
+  // What is left, said in the chat with its steps and buttons (the owner, 30 Oct: "for next action or clear the pendings"):
+  // the drafts still waiting first, then the plan's own next steps
+  const showNext = () => {
+    const left = feature === "launch" ? launchLeft(subject) : null;
+    const waitingNow = waitingDrafts(subject).length;
+    const first = waitingNow ? `First, review the ${waitingNow} draft${waitingNow === 1 ? "" : "s"} still waiting: approving them clears them from your list and raises your score.` : "";
+    push({ role: "assistant", at: new Date().toISOString(), cards: [{ type: "steps", case_id: subject.id }],
+      prompts: [...(waitingNow ? [] : left?.prompts || [])],
+      content: [first || "Here's what's left on your plan, most important first.", waitingNow ? "" : left?.text || ""].filter(Boolean).join(" ") });
+    if (waitingNow) setReviewing(true);
+  };
   const mine = (content) => ({ role: "user", content, at: new Date().toISOString() });
   const startEdit = (item) => {
     const it = { ...item, draft_id: item.draft_id || (() => { try { return new URLSearchParams(String(item.to || "").split("?")[1] || "").get("review"); } catch { return null; } })() };
@@ -1319,12 +1409,15 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const drawn = !loading && messages !== null && ctx !== null;
   useEffect(() => {
     if (!drawn) return undefined;
-    const down = () => end.current?.scrollIntoView?.({ block: "nearest" });
+    // The review, from its top (its first draft); otherwise the newest message
+    const down = () => (reviewing && document.querySelector("[data-review-screen]")
+      ? document.querySelector("[data-review-screen]").scrollIntoView?.({ block: "start" }) : end.current?.scrollIntoView?.({ block: "nearest" }));
     down();
     const later = [setTimeout(down, 250), setTimeout(down, 900)];
     return () => later.forEach(clearTimeout);
-  }, [messages?.length, busy, drawn]);
+  }, [messages?.length, busy, drawn, reviewing]);      // the review opened: in view at once (the owner, 29 Oct)
   const handed = useRef(false);
+  const startFresh = useRef(false);      // the next message begins a new conversation (a handed-over request)
   useEffect(() => {
     const said = params.get("message");      // its own handover, so the side panel never answers it too
     if (!said || messages === null || handed.current) return;
@@ -1332,6 +1425,12 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     const p = new URLSearchParams(params);
     p.delete("message");
     setParams(p, { replace: true });
+    // A new request handed over (from the landing page) starts a new conversation here; the one before is kept, never shown
+    // under it (the owner, 29 Oct: "I just came from the landing page and landed on previous chats")
+    if ((messages || []).length) {
+      saveChat(businessId, `${chatId}-${Date.now().toString(36)}`, messages).catch(() => {});
+      startFresh.current = true;
+    }
     send(said);
   }, [messages]);      // eslint-disable-line react-hooks/exhaustive-deps
   // After Approve all: the check runs again by itself once the case is saved; its result is said in the conversation
@@ -1344,10 +1443,13 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       adopted.current = null;
       const after = score === null || score === undefined ? null : Math.round(score);
       const cards = [...(after !== null && a.before !== null && after !== a.before ? [{ type: "score_change", case_id: subject.id, before: a.before, after }] : []),
-        { type: "next", case_id: subject.id }, ...((ctx?.approvals?.count || 0) ? [{ type: "approvals", case_id: subject.id }] : [])];
+        { type: "next", case_id: subject.id }];      // approvals waiting only when asked for (the owner, 29 Oct)
       cards.forEach((c, i) => fresh.current.add(`${(messages || []).length}:${i}`));
-      keep([...(messages || []), { role: "assistant", at: new Date().toISOString(), cards,
-        content: after === null ? "I've saved everything to your case. Run the check when you're ready to see your score." : `I've run your ${words.area} check again. You're at ${after}/100.` }]);
+      const left = feature === "launch" ? launchLeft(subject) : null;      // what's left, by who does it, and the next question
+      keep([...(messages || []), { role: "assistant", at: new Date().toISOString(), cards: left ? [...cards.filter((c) => c.type !== "next"), { type: "steps", case_id: subject.id }] : cards,
+        ...(left?.prompts?.length ? { prompts: left.prompts } : {}),
+        content: (after === null ? "I've saved everything to your case. Run the check when you're ready to see your score." : `I've run your ${words.area} check again. You're at ${after}/100.`)
+          + (left?.text ? ` ${left.text}` : "") }]);
     };
     if (a.saw) { finish(); return undefined; }
     const t = setTimeout(finish, 45000);      // never waiting for ever: said once the save is done
@@ -1444,7 +1546,12 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
 
   const keep = (next) => { setMessages(next); saveChat(businessId, chatId, next).catch(() => {}); };
   // A link to the case already open is no link (the owner, 27 Oct: "Open your funding case" inside the funding case)
-  const isHere = (to) => String(to || "").split("?")[0] === `/${feature === "launch" ? "launch" : "funding"}/${subject.id}`;
+  // Another tab of this case ("See the Launch Readiness form": its Checklist) is a tab switch, never hidden (the owner, 29 Oct:
+  // "where's the launch readiness form that it's populating")
+  const tabOf = (to) => { try { const t = new URLSearchParams(String(to || "").split("?")[1] || "").get("tab"); return t && t !== "assistant" ? t : null; } catch { return null; } };
+  // A link to review the drafts is a step here, never hidden as "this page" (the owner, 30 Oct: no button after "Fill the rest")
+  const opensReview = (to) => /[?&]review=1\b/.test(String(to || ""));
+  const isHere = (to) => String(to || "").split("?")[0] === `/${feature === "launch" ? "launch" : "funding"}/${subject.id}` && !tabOf(to) && !opensReview(to);
   // Never a link to the case from inside it, saved replies included (the owner, 27 Oct: "remove 'Open your funding case' when already in the case")
   const stay = (links) => (links || []).filter((l) => !isHere(l.to) && !/^Open your (funding case|launch plan)$/i.test(l.label || ""));
   const send = async (said) => {
@@ -1468,7 +1575,8 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       return;
     }
     const mine = { role: "user", content: t, at: new Date().toISOString() };
-    const before = [...(messages || []), mine];
+    const before = [...(startFresh.current ? [] : messages || []), mine];
+    startFresh.current = false;
     setMessages(before);
     setText("");
     setBusy(true);
@@ -1527,16 +1635,28 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (c.type === "preview") return <PreviewCard key={key} businessId={businessId} item={c.item} preview={c.preview} go={navigate} onEdit={startEdit}
       onDone={(m) => { sayDone(m); loadCtx(); }} />;
     if (c.type === "segments") return <SegmentsCard key={key} businessId={businessId} onDone={(m) => push({ role: "assistant", at: new Date().toISOString(), content: m })} onChanges={() => setText("For the customer segments, please change ")} />;
-    if (c.type === "choose" && feature === "idea") return <IdeaChooseCard key={key} reuse={Boolean(c.reuse)} price={c.price || ctx?.research?.max} busy={busy || researching || ownResearch} onStart={startResearch} onSelf={() => onTab("assessment")} />;
+    if (c.type === "choose" && feature === "idea") return <IdeaChooseCard key={key} reuse={Boolean(c.reuse)} price={c.price || ctx?.research?.max} busy={busy || researching || ownResearch} onStart={startResearch} onSelf={() => openIdeaForm("I'll enter it myself")} />;      // in the chat, never another tab (the owner, 29 Oct)
     if (c.type === "next" && feature === "idea") return <IdeaNextCard key={key} businessId={businessId} idea={idea} send={send} onTab={onTab} />;
     if (c.type === "records") return records.length ? <RecordsCard key={key} records={records} live={live} words={words} /> : null;
     if (c.type === "result") return <ResultCard key={key} subject={subject} steps={steps} records={records} words={words} score={typeof c.score === "number" ? c.score : score} onOpen={(k) => send(`What's needed for ${(subject.sections || []).find((x) => x.key === k)?.title || "this"}?`)} />;
     if (c.type === "choose") return <ChooseCard key={key} subject={subject} steps={steps} price={c.price} reuse={Boolean(c.reuse)} options={Boolean(c.options)} topics={c.topics || []} fixed={Boolean(c.fixed)} busy={busy} onHelp={() => send("Yes, start")} onSelf={() => onTab("answers")} />;
     if (c.type === "progress") return <ProgressCard key={key} options={Boolean(c.options)} onDecideAll={feature === "idea" ? decideAll : null}
-      onResults={feature === "idea" ? () => onTab?.("assessment") : null} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={() => (drafts.length ? setReviewing(true)
+      onResults={feature === "idea" ? () => send("Run the idea validation and fill the form") : null}
+      onNext={feature === "idea" ? null : showNext} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={() => (drafts.length ? setReviewing(true)
         // The findings in the chat, for review, never another tab (the owner, 28 Oct: "Review findings" opened the Assessment tab)
         : push({ role: "assistant", at: new Date().toISOString(), content: "Here's what the research found. Accept, edit or reject each finding.", cards: [{ type: "findings" }] }))}
       onRetry={() => send("Help me complete it")} justStarted={live} drafts={drafts.length} />;
+    // What is left on the plan, as the Checklist lists it, each with its own button, in the chat (the owner, 30 Oct:
+    // "recommend these on the chat, lay users don't even know")
+    if (c.type === "steps") return (
+      <div key={key} className={`${BOX} p-5`} data-card="steps">
+        <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">Your next steps</p>
+        <div className="mt-3"><ActionsPanel businessId={businessId} feature={feature} subject={subject} onChanged={() => { loadCtx(); onChanged?.(); }}
+          onOpenSection={(section) => onTab?.("answers", section)} limit={3} /></div>
+        {(subject.actions || []).filter((a) => a.status === "open").length > 3 && (
+          <button type="button" onClick={() => onTab?.("overview")} className={`mt-3 ${LINK}`}>See all on the Checklist →</button>)}
+      </div>
+    );
     if (c.type === "findings") return <div key={key} className={`${BOX} p-4`} data-card="findings"><SavedResearch businessId={businessId} goal={feature === "idea" ? "test_idea" : feature === "launch" ? "launch" : "need_funding"} /></div>;
     if (c.type === "approvals") return <ApprovalsCard key={key} ctx={ctx} onDone={loadCtx} onReview={reviewItem} onEdit={startEdit} />;
     if (c.type === "score_change") return <ScoreChangeCard key={key} subject={subject} steps={steps} before={c.before} after={c.after} words={words} />;
@@ -1555,13 +1675,13 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   // The drafts block sits above the newest offer or progress, never hiding it below (the owner, 28 Oct); else at the foot
   const lastAt = list.length - 1;
   const offered = lastAt >= 0 && list[lastAt].role !== "user" && (list[lastAt].cards || []).some((c) => c.type === "choose" || c.type === "progress");
-  const cut = offered ? (lastAt > 0 && list[lastAt - 1].role === "user" ? lastAt - 1 : lastAt) : -1;
+  const cut = offered && !reviewing ? (lastAt > 0 && list[lastAt - 1].role === "user" ? lastAt - 1 : lastAt) : -1;
   const reviewBlock = (
     <>
       {reviewing && (drafts.length > 0 || decided.length > 0) && onField && (
         <ReviewScreen drafts={drafts} edits={edits} setEdits={setEdits} onApproveAll={approveAll} onRequest={requestChanges} busy={busy} firstField={firstField}
           currency={subject.data?.currency || ctx?.revenue?.currency} target={subject.data?.target_amount}
-          decided={decided} onDecide={decideOne} onUndo={undoOne} onEditList={(d) => onTab?.("answers", d.section)} />
+          decided={decided} onDecide={decideOne} onUndo={undoOne} />
       )}
       {!reviewing && drafts.length > 0 && onField && hiddenFor !== draftsKey && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-[13.5px] text-brand-900 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-100" data-drafts-waiting>
@@ -1630,7 +1750,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
                 <div className="min-w-0">
                   <p className="whitespace-pre-line rounded-2xl bg-slate-100 px-4 py-3 text-[15px] text-slate-800 dark:bg-slate-800 dark:text-slate-100">{m.content}</p>
                   {m.at && <span className="mt-1 block text-[11.5px] text-slate-500">{clock(m.at)}</span>}
-                  {stay(m.links).length > 0 && <div className="mt-2 flex flex-wrap gap-2">{stay(m.links).map((l) => <button key={l.label + l.to} type="button" onClick={() => navigate(l.to)} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</button>)}</div>}
+                  {stay(m.links).length > 0 && <div className="mt-2 flex flex-wrap gap-2">{stay(m.links).map((l) => <button key={l.label + l.to} type="button" onClick={() => { const sameCase = String(l.to || "").split("?")[0] === `/${feature === "launch" ? "launch" : "funding"}/${subject.id}`; if (sameCase && opensReview(l.to)) setReviewing(true); else if (sameCase && tabOf(l.to) && onTab) onTab(tabOf(l.to)); else { noteCameFrom(null, l.to); navigate(l.to); } }} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</button>)}</div>}
                 </div>
               </div>
               {(m.cards || []).map((c, j) => (ONCE.has(c.type) && newest[c.type] !== i ? null
@@ -1664,7 +1784,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       </section>
   );
 
-  const openIdeaForm = () => { push(mine("Add idea details"), { role: "assistant", at: new Date().toISOString(), content: "Here's what I have for your idea. Change what's wrong or missing, then save.", cards: [{ type: "idea_form", case_id: "idea" }] }); };
+  const openIdeaForm = (said = "Add idea details") => { push(mine(said), { role: "assistant", at: new Date().toISOString(), content: "Here's what I have for your idea. Change what's wrong or missing, then save.", cards: [{ type: "idea_form", case_id: "idea" }] }); };
   const side = <SideCards businessId={businessId} feature={feature} subject={subject} score={score} ctx={ctx} words={words} onTab={onTab} send={send} lastChange={lastChange} working={working}
     onIdeaForm={feature === "idea" ? openIdeaForm : null} />;
   return (

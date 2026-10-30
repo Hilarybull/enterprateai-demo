@@ -122,6 +122,8 @@ export async function detailsOf(runId, { wait = 0 } = {}) {
   }
 }
 export const listRuns = (businessId, query = "") => apiRequest(`/businesses/${businessId}/workflow-runs${query}`, "GET");
+// Approved and kept as ready, nothing sent to the customer yet (the owner, 29 Oct: sending is its own step)
+export const approveWithoutSending = (runId, approvalId) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/approve-without-sending`, "POST", {}, { timeoutMs: 60000 }));
 export const approveAction = (runId, approvalId) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/approve`, "POST", {}, { timeoutMs: 120000 }));
 export const rejectAction = (runId, approvalId, note) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/reject`, "POST", { note: note || null }));
 export const answerRun = (runId, answers, background = false) =>

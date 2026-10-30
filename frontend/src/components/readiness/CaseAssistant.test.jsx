@@ -92,6 +92,20 @@ it("reviews the drafts like the mockups: areas, sources, edit, Approve all, then
   expect(document.querySelector('[data-card="next"]')).toBeTruthy();
 });
 
+it("edits a list draft in place, never on another tab, and approves the edited rows", async () => {
+  const onField = vi.fn();
+  const onTab = vi.fn();
+  const rows = [{ id: "m1", outcome: "First batch made", due_date: "2026-12-10", owner: "Hilary", status: "open" }];
+  const s = { ...withDrafts, data: { ...withDrafts.data, agent_drafts: { "control.milestones": { value: rows, source: "suggested by the Agent", at: "2026-10-30" } } } };
+  render(<MemoryRouter initialEntries={["/launch/c1?tab=assistant&review=1"]}><CaseAssistant businessId="b1" feature="funding" subject={s} steps={[]} score={10} onTab={onTab} onField={onField} /></MemoryRouter>);
+  await screen.findByText("Review enriched information");
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(onTab).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText(/1 Outcome$/), { target: { value: "Soap launched" } });
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  expect(onField).toHaveBeenCalledWith("control.milestones", [{ ...rows[0], outcome: "Soap launched" }]);
+});
+
 it("lists approvals waiting and sends one only on Approve send", async () => {
   apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "none" }, working: false,
     approvals: { count: 1, items: [{ approval_id: "a1", run_id: "r1", kind: "payment", title: "Payment follow-up draft", subtitle: "For Northbridge Solutions", age: "2h" }] } }));
@@ -324,6 +338,22 @@ it("hides the drafts-waiting bar until the drafts change", async () => {
   expect(await screen.findByText(/3 drafts are waiting for your review/)).toBeTruthy();      // a new draft brings it back
 });
 
+it("never ends finished launch research without a step: See your next steps lists them in the chat", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], approvals: { count: 0, items: [] }, working: false,
+    research: { state: "adopted", run_id: "r1", findings: 2 } }));
+  replies.push({ kind: "answer", message: "Here's where it stands.", actions: [], cards: [{ type: "progress", case_id: "p1" }] });
+  const plan = { ...subject, id: "p1", kind: "launch_initiative", assessment: { id: "a1" },
+    actions: [{ id: "x1", code: "C1.B", criterion: "C1", status: "open", title: "Confirm you have reviewed the evidence", why: "No reviewer has confirmed this yet." }] };
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="launch" subject={plan} steps={[]} score={38} onTab={() => {}} /></MemoryRouter>);
+  await screen.findByText("Readiness Snapshot");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "how did the research go?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const next = await waitFor(() => { const b = document.querySelector("[data-see-next]"); if (!b) throw new Error("no button"); return b; });
+  fireEvent.click(next);
+  expect(await screen.findByText(/Here's what's left on your plan/)).toBeTruthy();
+  expect(document.querySelector('[data-card="steps"]').textContent).toContain("Confirm you have reviewed the evidence");
+});
+
 it("lets idea findings be accepted all at once and opens the validation results", async () => {
   const onTab = vi.fn();
   apiRequest.mockImplementation(async (url, method) => {
@@ -340,6 +370,21 @@ it("lets idea findings be accepted all at once and opens the validation results"
   const accept = await waitFor(() => { const b = document.querySelector("[data-accept-all]"); if (!b) throw new Error("no button"); return b; });
   fireEvent.click(accept);
   await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/businesses/b1/research/r1/review", "POST", { decisions: { a: { decision: "accept" }, b: { decision: "accept" } } }));
-  fireEvent.click(document.querySelector("[data-see-results]"));
-  expect(onTab).toHaveBeenCalledWith("assessment");
+  fireEvent.click(document.querySelector("[data-see-results]"));      // the real Idea Validation, never the quick check tab (29 Oct)
+  await waitFor(() => expect(submitAgentRequest).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Run the idea validation and fill the form", page: "idea" })));
+  expect(onTab).not.toHaveBeenCalledWith("assessment");
+});
+
+it("Enter information myself opens the idea's details in the chat, never another tab", async () => {
+  const onTab = vi.fn();
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], approvals: { count: 0, items: [] }, working: false,
+    research: { state: "none", max: 25 }, idea: { answers: { description: "Mat washing", price: 3000 } } }));
+  replies.push({ kind: "answer", message: "Here's how to continue.", actions: [], cards: [{ type: "choose", case_id: "idea", price: 25 }] });
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="idea" subject={{ ...subject, id: "idea", kind: "idea" }} steps={[]} score={50} onTab={onTab} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "research it" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Enter it myself" }));
+  await waitFor(() => expect(document.querySelector('[data-card="idea_form"]')).toBeTruthy());
+  expect(onTab).not.toHaveBeenCalledWith("assessment");
 });

@@ -17,7 +17,7 @@ def talk(world, monkeypatch):
     client.post("/businesses/A/quick-check/test_idea", json={"answers": ANSWERS})
     model = _Model()
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: model)
-    ask = lambda text: client.post("/agent/requests", json={"business_id": "A", "text": text, "source_channel": "text"}).json()      # noqa: E731
+    ask = lambda text, **kw: client.post("/agent/requests", json={"business_id": "A", "text": text, "source_channel": "text", **kw}).json()      # noqa: E731
     return env, ask, model, client
 
 
@@ -27,14 +27,12 @@ def _answers(env):
 
 def test_worth_launching_is_the_ideas_conversation_with_what_was_checked_and_the_result(talk):
     env, ask, model, client = talk
+    # "a new service idea" said outright: what it is, never "carry on with the last one?" (the owner, 29 Oct)
     model.replies += [{"say": "Which idea?"}, {"say": "Let me check what I already know about your business first."}]
-    which = ask("I have a new service idea. How do I know if it's worth launching?")
-    assert which["message"].startswith("Do you want to carry on with") and [a["label"] for a in which["actions"]][-1] == "A new idea"      # one on record: asked (28 Oct)
-    out = ask(which["actions"][0]["prompt"])
-    assert out.get("conversational") and [c["type"] for c in out["cards"]] == ["idea_inputs", "viability"]
-    seen = model.prompts[0]["IDEA"]
-    assert seen["answers"]["price"] == 120 and isinstance(seen["score_out_of_100"], (int, float))      # the engine's score, not the model's
-
+    asked = ask("I have a new service idea. How do I know if it's worth launching?")
+    assert asked["message"].startswith("What's the new idea?")
+    out = ask("Mobile phone repair for students on campus")
+    assert out.get("conversational") and [c["type"] for c in out["cards"]][:2] == ["idea_inputs", "viability"]      # the new idea's first look
 
 def test_reduce_slightly_changes_the_answer_and_the_score_is_worked_out_again(talk):
     env, ask, model, client = talk
@@ -234,3 +232,24 @@ def test_validate_my_idea_is_the_idea_validation_with_its_question(talk):
     out = ask("I want to validate a new idea")
     assert out["kind"] == "needs_input" and out.get("capability") == "idea_validation" and not model.prompts      # the validation's own question
     assert any(f["key"] == "idea_for" for f in out["fields"])
+
+
+def test_the_idea_chat_runs_the_idea_validation_and_links_its_results(talk):
+    """The owner, 29 Oct: "use your data, run the validation, populate the idea validation form... a CTA on the chat to see
+    the validation result on the module, to accept, modify or reject"."""
+    env, ask, model, client = talk
+    out = ask("Run the idea validation and fill the form", page="idea")
+    assert not model.prompts      # the validation itself, not the quick chat
+    if [a["label"] for a in out.get("actions") or []] == ["Start", "Not now"]:      # its price first, then Start (29 Oct)
+        out = ask(out["actions"][0]["prompt"], page="idea")
+    labels = [a["label"] for a in out.get("actions") or []]
+    assert "Open the Idea Validation form" in labels and all(a["to"].startswith("/validation") for a in out["actions"] if a.get("to"))
+
+
+def test_validate_a_product_without_naming_it_asks_which(talk):
+    """The owner, 29 Oct: "i need to validate a product" carried on with the last idea."""
+    env, ask, model, client = talk
+    model.replies.append({"say": "Let's fill in the details for your idea."})
+    out = ask("i need to validate a product", page="idea")
+    assert out["message"].startswith("Do you want to carry on with")
+    assert out["actions"][0]["prompt"] == "Validate my idea" and out["actions"][-1]["label"] == "A new idea"

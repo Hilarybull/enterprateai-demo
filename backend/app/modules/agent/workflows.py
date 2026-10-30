@@ -701,6 +701,20 @@ async def rs_payment(ctx):
     from app.modules.agent import newdocs
     data = await ctx.rt.business.load(ctx.run["business_id"])
     today = bz.local_now(data, ctx.now()).date().isoformat()
+    # A paid invoice whose payment has no receipt yet: offered first, everything else filled from it (the owner, 29 Oct:
+    # "Receipts: offer the paid invoices to choose from and fill everything from the invoice")
+    paid = [i for i in (data.get("financials") or {}).get("invoices") or [] if isinstance(i, dict) and not i.get("archived")
+            and any(not (pm.get("receipt") or {}).get("sent_at") for pm in i.get("payments") or [] if isinstance(pm, dict))]
+    chosen = str(ctx.answers.get("paid_invoice_id") or "")
+    if chosen and chosen != "new" and any(str(i.get("id")) == chosen for i in paid):
+        ctx.state["invoice_id"] = chosen
+        return Next()
+    if paid and not chosen and not ctx.answers.get("invoice_id"):
+        return WaitForInput("Which paid invoice is the receipt for?", [
+            {"key": "paid_invoice_id", "label": "Paid invoice", "question": "Which paid invoice is the receipt for?", "type": "choice", "required": True,
+             "default": str(paid[0]["id"]) if len(paid) == 1 else "",
+             "options": [*({"value": str(i["id"]), "label": newdocs._invoice_label(i, data)} for i in paid[:25]),
+                         {"value": "new", "label": "Record a new payment"}]}])
     if not ctx.answers.get("invoice_id"):
         return WaitForInput("No payment is on record yet. Record the payment and I'll prepare the receipt.",
                             newdocs.payment_fields(data, newdocs._said(ctx), today))
@@ -1629,7 +1643,10 @@ async def idea_validation_step(ctx):
             summary += " As you asked, I ran the quick Basic check (free). Ask me to validate it fully when you want the market research."
     return Done(plain(summary),
                 next_action="I'll score it again when what you've told me about the business changes.",
-                outcome={"score": r["score"], "risks": risks, "next_steps": steps, "form_filled": True, "depth": depth, "links": links})
+                outcome={"score": r["score"], "risks": risks, "next_steps": steps, "form_filled": True, "depth": depth, "links": links,
+                         # its estimated figures, offered back to the idea for the owner to approve (the owner, 29 Oct)
+                         "estimates": {k: (idea.get("known") or {}).get(k) for k in (idea.get("estimated") or []) if (idea.get("known") or {}).get(k) is not None},
+                         "estimate_basis": idea.get("estimate_basis")})
 
 
 async def _as_draft(ctx, kind: str, title: str, tab: str, document_id: str | None, inputs: dict | None = None) -> str:

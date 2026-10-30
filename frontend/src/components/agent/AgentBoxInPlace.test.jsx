@@ -232,20 +232,24 @@ describe("the Agent box keeps the owner on the dashboard", () => {
 });
 
 describe("the chat bubble does the same", () => {
-  it("opens a task's question in a dialog and puts the result in the conversation, without leaving the page", async () => {
+  it("asks a task's questions as chat messages with quick replies, then shows the finished document as one card", async () => {
     const assign = vi.fn();
     const before = window.location.href;
     await act(async () => { render(<BusinessAssistant />); });
     fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "need a quotation" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    const dialog = screen.getByRole("dialog", { name: "A few details" });
-    fireEvent.click(within(dialog).getByText("Frank"));
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });      // one question at a time
-    fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
-    expect(await screen.findByText(new RegExp(READY_TEXT.replace(/[.£]/g, "\\$&")))).toBeTruthy();
+    // No box with its own Send, Close or Discard: the question is a message, its answers are chips (the owner, 29 Oct)
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("See details").getAttribute("href")).toBe("/agent/runs/run-q");      // only on a click
+    expect(screen.queryByRole("group", { name: "A few details" })).toBeNull();
+    expect(await screen.findByText(/Which customer is it for\?/)).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Frank" })); });
+    expect(await screen.findByText(/What should it include\?/)).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Bookkeeping" })); });
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    expect(sent.body.answers || sent.body).toMatchObject({ customer_id: "c2" });
+    expect(await screen.findByText(new RegExp(READY_TEXT.replace(/[.£]/g, "\$&")))).toBeTruthy();
+    expect(document.querySelector('[data-card="preview"]')).toBeTruthy();      // the document, to review here
     expect(window.location.href).toBe(before);
     expect(assign).not.toHaveBeenCalled();
   });

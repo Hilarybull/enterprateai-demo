@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useInRouterContext, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useWorkspaceStore } from "../store/workspace";
+import { cameFrom, noteCameFrom } from "../lib/cameFrom";
 import { agentErrorMessage, approveAction, caseChatPath, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
 import { apiRequest } from "../api/client";
 import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
-import { useTaskFlow } from "./agent/TaskFlow";
+import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
+import { checkLines, linesFromText } from "./agent/AgentBits";
 import { AgentGoalChat } from "./GoalLauncher";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
@@ -168,17 +170,22 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const bizId = useWorkspaceStore((st) => st.workspaceId);
   const sent = useRef(false);      // a message was sent here: the last conversation is never brought back over it
   const [restored, setRestored] = useState(false);      // the last conversation was brought back on load
+  const gone = useRef(false);      // the Agent Centre was left: a reply still coming is saved, not shown
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);
   useEffect(() => {
     if (!bizId) return undefined;
     let live = true;
+    const backTo = cameFrom()?.chat;      // back from a page its link opened: that same conversation (the owner, 29 Oct)
     listChats(bizId).then(async (r) => {
       // The panel's own conversations only: a funding case's, a launch plan's or the idea's thread belongs to its page
-      const last = (r?.items || []).filter((c) => !isModuleThread(c.id))[0];
+      const own = (r?.items || []).filter((c) => !isModuleThread(c.id));
+      const back = backTo && own.find((c) => c.id === backTo);
+      const last = back || own[0];
       // The last conversation, whenever it was (the owner's QA, 27 Oct: "the chat is lost after a page reload"); "+" starts a new one,
       // and it stays new on the next visit until something is said in it (the owner, 28 Oct: "except I click new session")
       let fresh = null;
       try { fresh = localStorage.getItem(`ea_chat_fresh:${bizId}`); } catch { fresh = null; }
-      if (!live || sent.current || !last || (fresh && String(last.at || "") < fresh)) return;
+      if (!live || sent.current || !last || (!back && fresh && String(last.at || "") < fresh)) return;
       const chat = await getChat(bizId, last.id);
       if (live && !sent.current && chat?.messages?.length) { setChatId(chat.id); continueConversation(bizId, chat.messages); setRestored(chat.messages.length); setMessages([{ role: "assistant", content: intro }, ...chat.messages]); }
     }).catch(() => {});
@@ -215,13 +222,113 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       setWorking(Boolean(reply?.working));
       if (!reply || reply.working) return;
       const links = (reply.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
-      const cards = draftCards(links, reply.title);
+      // The finished document as one card here: Review, Edit, Approve (and send) (the owner, 29 Oct)
+      const cards = reply.review ? [{ type: "preview", item: { ...reply.review, open: true } }] : draftCards(links, reply.title);
       setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: [reply.text, reply.next].filter(Boolean).join(" "),
         ...(cards.length ? { cards, link: null, links: [] } : { link: reply.runId ? `/agent/runs/${reply.runId}` : null, links }) }]);
     },
     onChanged: () => window.dispatchEvent(new CustomEvent("ea:credits:refresh")),
     onDetails: (runId, to) => { window.location.assign(to || `/agent/runs/${runId}`); },
+    inline: true,      // its questions in the conversation, never a popup over it (the owner, 29 Oct)
+    onQuestion: (q) => startTaskQuestions(q),
   });
+
+  // A task's questions as ordinary messages with quick replies, answered from the box below, one at a time; what the
+  // records already give is filled in and never asked (the owner, 29 Oct: "no separate box with its own Send button")
+  const taskAsk = useRef(null);
+  const known = (f) => {
+    if (f.confirm) return false;
+    if (f.type === "checkbox") return true;      // its default stands
+    if (f.type === "line_items") return !checkLines(f, f.default || []).error && (f.default || []).length > 0;
+    return !questionIsEmpty(f, f.default);
+  };
+  function startTaskQuestions({ question, answer, discard }) {
+    const fields = question.fields || [];
+    const values = Object.fromEntries(fields.map((f) => [f.key, f.type === "line_items" ? (known(f) ? f.default : []) : questionDefault(f)]));
+    taskAsk.current = { fields, values, answer, discard, at: 0, lead: question.question || "", filled: new Set() };
+    setWorking(false);      // waiting for the owner now, never "Working on it…" (the owner, 29 Oct)
+    askTaskNext(true);
+  }
+  const chipsFor = (f, values) => {
+    const ask = (label, prompt = label) => ({ label: String(label).slice(0, 40), prompt });
+    if (f.type === "customer") return [...(f.options || []).slice(0, 8).map((o) => ask(o.label)), ask(f.new_label?.replace(/^\+\s*/, "+ ") || "+ New customer")];
+    if (f.type === "choice") return (f.options || []).slice(0, 8).map((o) => ask(o.label));
+    if (f.type === "checkbox") return [ask("Yes"), ask("No")];
+    if (f.type === "date") return [ask("In 7 days"), ask("In 14 days"), ask("In 30 days")];
+    if (f.type === "line_items") {
+      const have = (values[f.key] || []).length;
+      return [...(f.catalogue || []).slice(0, 6).map((c) => ask(c.name, `1 x ${c.name}`)), ...(have ? [ask("That's all")] : [])];
+    }
+    return f.required ? [] : [ask("Skip")];
+  };
+  function askTaskNext(first = false) {
+    const a = taskAsk.current;
+    if (!a) return;
+    // Skipped: what does not apply, what the records already give, and what an earlier answer here already said ("carl" as
+    // the customer is the new customer's name too)
+    while (a.at < a.fields.length && (!shows(a.fields[a.at], a.values) || a.filled.has(a.fields[a.at].key)
+      || (known(a.fields[a.at]) && !a.fields[a.at].asked))) a.at += 1;
+    if (a.at >= a.fields.length) return finishTask();
+    const f = a.fields[a.at];
+    const head = first && a.lead && a.lead !== askFor(f) ? `${a.lead} ` : "";
+    const ask = f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}` : askFor(f);
+    const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
+    setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`,
+      prompts: f.confirm ? [{ label: "Yes", prompt: "Yes" }, { label: "Change it", prompt: "Change it" }] : chipsFor(f, a.values) }]);
+  }
+  async function finishTask() {
+    const a = taskAsk.current;
+    taskAsk.current = null;
+    if (!a) return;
+    const given = Object.fromEntries(a.fields.filter((f) => shows(f, a.values) && !questionIsEmpty(f, a.values[f.key])).map((f) => [f.key, questionNormalize(f, a.values[f.key])]));
+    setLoading(true);
+    try { await a.answer(given); } finally { setLoading(false); }
+  }
+  function answerTask(text) {
+    const a = taskAsk.current;
+    const f = a.fields[a.at];
+    const t = String(text).trim();
+    const low = t.toLowerCase();
+    const say = (content, prompts = []) => setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content, prompts }]);
+    setMessages((prev) => [...prev, mine(t)]);
+    if (/^(discard|cancel|stop)( it| this| the request)?$/i.test(t)) { taskAsk.current = null; a.discard?.(); say("Discarded. Nothing was created or sent."); return; }
+    let value;
+    if (f.confirm) {
+      if (/^(yes|yep|right|correct|ok)/i.test(t)) value = a.values[f.key];
+      else { a.fields[a.at] = { ...f, confirm: false, asked: true }; askTaskNext(); return; }
+    } else if (f.type === "customer" || f.type === "choice") {
+      const opts = f.options || [];
+      const hit = opts.find((o) => String(o.label).toLowerCase() === low) || opts.find((o) => String(o.label).toLowerCase().startsWith(low) || low.includes(String(o.label).toLowerCase()));
+      if (hit) value = hit.value;
+      else if (f.type === "customer") {
+        value = "new";
+        if (!/^\+?\s*new (customer|supplier)$/i.test(t) && !a.values.customer_name) { a.values.customer_name = t; a.filled.add("customer_name"); }      // a name typed: the new customer's
+      } else { say(`Pick one: ${opts.map((o) => o.label).join(", ")}.`, chipsFor(f, a.values)); return; }
+    } else if (f.type === "checkbox") value = /^(yes|y|ok|sure|save)/i.test(t);
+    else if (f.type === "date") {
+      const m = /in (\d+) days?/i.exec(t);
+      const d = m ? new Date(Date.now() + Number(m[1]) * 86400000) : new Date(t.replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, "$3-$2-$1"));
+      if (Number.isNaN(d.getTime())) { say("Which date? For example 30/11/2026, or pick one.", chipsFor(f, a.values)); return; }
+      value = d.toISOString().slice(0, 10);
+    } else if (f.type === "line_items") {
+      if (/^that'?s all$|^done$|^no(thing)? (more|else)$/i.test(t)) {
+        const checked = checkLines(f, a.values[f.key] || []);
+        if (checked.error) { say(checked.error, chipsFor(f, a.values)); return; }
+        a.at += 1; askTaskNext(); return;
+      }
+      const rows = linesFromText(t, f.catalogue || []);
+      if (!rows.length) { say("I couldn't read an item there. Try: 3 x office deep clean at 150.", chipsFor(f, a.values)); return; }
+      a.values[f.key] = [...(a.values[f.key] || []).filter((r) => r.product_id || r.name), ...rows];
+      say(`Added: ${questionSummary(f, rows)}. Anything else?`, chipsFor(f, a.values));
+      return;
+    } else if (/^skip$/i.test(t) && !f.required) value = "";
+    else value = t;
+    if (f.required && questionIsEmpty(f, value)) { say(`${f.label} is needed. ${askFor(f)}`, chipsFor(f, a.values)); return; }
+    a.values[f.key] = value;
+    a.filled.add(f.key);
+    a.at += 1;
+    askTaskNext();
+  }
 
   // A task's questions, asked here in the chat one at a time (never a dialog); its answers sent together once all are given
   const asking = useRef(null);
@@ -246,7 +353,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const shownField = (f, answers) => !f.show_if || Object.entries(f.show_if).every(([k, v]) => answers[k] === v);
   function askNext(lead = "") {
     const a = asking.current;
-    while (a && a.at < a.fields.length && !shownField(a.fields[a.at], a.answers)) a.at += 1;
+    while (a && a.at < a.fields.length && (!shownField(a.fields[a.at], a.answers) || a.fields[a.at].key in a.answers)) a.at += 1;
     if (!a || a.at >= a.fields.length) return finishAsking();
     const f = a.fields[a.at];
     const options = (f.options || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
@@ -298,8 +405,15 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       return undefined;
     }
     if (single?.kind === "needs_input") {
-      asking.current = { single, businessId, fields: single.fields || [], at: 0, answers: {} };
-      return askNext(single.message);
+      // Its details asked here, one at a time, as every task's questions are: what is known filled in, never a box (29 Oct)
+      return startTaskQuestions({ question: { fields: single.fields || [], question: single.message }, discard: null,
+        answer: async (answers) => {
+          try {
+            deliver(await submitAgentRequest({ businessId, capability: single.capability, params: { ...(single.params || {}), ...answers }, sourceChannel: "ui_action", background: true }), businessId);
+          } catch (error) {
+            setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
+          }
+        } });
     }
     // Its price said, then Start or Not now, here in the chat (the owner, 28 Oct: "go ahead" asked the question again)
     if (single?.kind === "needs_confirmation" && single.price) {
@@ -394,7 +508,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       // Typed at the last reply's buttons ("yes, go ahead", "open it"): that button, as a click (the owner, 27 Oct)
       const last = [...messages].reverse().find((m) => m.role === "assistant");
       const chosen = offerFor(question, [...(last?.prompts || []).map((p) => ({ label: p.label, prompt: p.prompt })), ...(last?.links || []).map((l) => ({ label: l.label, to: l.to }))]);
-      if (chosen?.to) { setInput(""); window.location.assign(chosen.to); return; }
+      if (chosen?.to) { setInput(""); noteCameFrom(chatId, chosen.to); window.location.assign(chosen.to); return; }
       if (chosen?.prompt) question = chosen.prompt;
     }
 
@@ -406,6 +520,24 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       push(mine(question));
       setLoading(true);
       try { push(await act.revise(item, question)); } finally { setLoading(false); }
+      return;
+    }
+    // Asked for: the approvals waiting, or the customer risk with its scenarios, as their cards
+    if (!taskAsk.current && /\b(?:what'?s waiting|needs? (?:my )?approval|pending approvals?|show (?:me )?(?:the )?approvals?)\b/i.test(question)) {
+      setInput("");
+      setMessages((prev) => [...prev, mine(question), { role: "assistant", at: new Date().toISOString(),
+        content: n ? "Here's what's waiting for your approval." : "Nothing is waiting for your approval right now.", cards: n ? [{ type: "approvals" }] : [] }]);
+      return;
+    }
+    if (!taskAsk.current && risk && /\b(?:customer |concentration )?risk\b/i.test(question) && /\b(?:show|see|what|my|the)\b/i.test(question)) {
+      setInput("");
+      setMessages((prev) => [...prev, mine(question), { role: "assistant", at: new Date().toISOString(),
+        content: `${risk.customer} makes up ${risk.share}% of your customer revenue. That's a concentration risk.`, cards: [{ type: "risk" }] }]);
+      return;
+    }
+    if (taskAsk.current) {      // the answer to the task's question just asked
+      setInput("");
+      answerTask(question);
       return;
     }
     if (confirming.current) {      // Start or Not now, for the price just said
@@ -430,7 +562,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       setInput("");
       return;
     }
-    const there = await caseChatPath(useWorkspaceStore.getState().workspaceId, question);
+    // A message handed over (from the landing page, after sign-in) stays here in the Agent Centre (the owner, 28 Oct: "I should
+    // be updating and populating here, not outside"); one typed here goes to its case's own thread, as before (27 Oct)
+    const there = fresh ? null : await caseChatPath(useWorkspaceStore.getState().workspaceId, question);
     if (there) { setInput(""); go(there); return; }      // its own thread, never this one (the owner, 27 Oct)
     const nextMessages = [...(fresh ? [{ role: "assistant", content: intro }] : messages), { role: "user", content: question, at: new Date().toISOString() }];
     const trimmedMessages = nextMessages.slice(-20);
@@ -447,6 +581,13 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       // One Agent: every message goes to the same place. It answers from the records, runs the
       // task, or writes the answer itself. There is no second chat behind this one.
       const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true });
+      if (gone.current) {
+        // Left before the reply came (a validation takes a while): saved into the conversation, so it is there on return (the owner, 29 Oct)
+        const parts = (routed?.kind === "multi" ? routed.results || [] : [routed]).filter((r) => r && r.kind !== "workflow");
+        const late = parts.map((r) => ({ ...toMessage(r, agentBusinessId), at: new Date().toISOString() })).filter((m) => m.content);
+        if (late.length && !isModuleThread(chatId)) saveChat(agentBusinessId, chatId, [...trimmedMessages.slice(1).filter((m) => m.content), ...late]).catch(() => {});
+        return;
+      }
       deliver(routed, agentBusinessId);
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // tasks and written answers use credits
       requestAnimationFrame(() => {
@@ -477,10 +618,13 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     if (same) openedAt.current = seen.at;
     try { localStorage.setItem(`ea_greeted:${bizId}`, JSON.stringify({ sig, at: openedAt.current })); } catch { /* not kept */ }
   }
-  const opening = [{ role: "assistant", at: openedAt.current, cards: n ? [{ type: "approvals" }] : [],
-    content: `${intro.split(". ")[0]}. I've checked ${biz}. ${n ? `${n === 1 ? "One thing needs" : `${(NUMBER[n] || String(n)).replace(/^./, (c) => c.toUpperCase())} things need`} you today.` : "Nothing is waiting for you right now. Tell me the job and I'll get on with it."}` },
-    ...(risk ? [{ role: "assistant", at: openedAt.current, cards: [{ type: "risk" }],
-      content: `I also noticed that ${risk.customer} makes up ${risk.share}% of your customer revenue. That's a concentration risk.` }] : [])];
+  // Words only: the approvals and the risk are cards when asked for, never posted with every greeting (the owner, 29 Oct:
+  // "stop showing the pending approval, risk cards on the conversation except when asked or needed")
+  const opening = [{ role: "assistant", at: openedAt.current, cards: [],
+    content: `${intro.split(". ")[0]}. I've checked ${biz}. ${n ? `${n === 1 ? "One thing needs" : `${(NUMBER[n] || String(n)).replace(/^./, (c) => c.toUpperCase())} things need`} you today.` : "Nothing is waiting for you right now. Tell me the job and I'll get on with it."}`
+      + (risk ? ` ${risk.customer} makes up ${risk.share}% of your customer revenue, a concentration risk.` : ""),
+    prompts: [...(n ? [{ label: "Show what's waiting", prompt: "Show what's waiting for my approval" }] : []),
+      ...(risk ? [{ label: "Show the customer risk", prompt: "Show the customer risk" }] : [])] }];
   // Each shown message knows its place in the conversation (`_i`), whatever comes before it on screen
   const said = messages.map((m, i) => ({ ...m, _i: i })).slice(1);
   // The greeting and its cards (approvals, the risk and its Simulate buttons) always, after a conversation brought back
@@ -496,7 +640,8 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
     if (c.type === "risk" && risk) return <RiskCard key={key} risk={risk} onScenario={runScenario} onSegments={() => push(mine("Find new customer segments"), { role: "assistant", at: new Date().toISOString(), content: "I can research new customer segments for you.", cards: [{ type: "segments" }] })} />;
     if (c.type === "scenario") return <ScenarioCard key={key} card={c} />;
-    if (c.type === "preview") return <PreviewCard key={key} businessId={bizId} item={c.item} preview={c.preview} go={go} onEdit={startEdit} onDone={(m) => { sayDone(m); loadWaiting(); }} />;
+    if (c.type === "preview") return <PreviewCard key={key} businessId={bizId} item={c.item} preview={c.preview} go={go} onEdit={startEdit} onDone={(m) => { sayDone(m); loadWaiting(); }}
+      onConvert={(name) => send(`Convert the accepted quotation ${name || ""} to an invoice`.replace(/\s+/g, " ").trim())} />;
     if (c.type === "segments") return <SegmentsCard key={key} businessId={bizId} onDone={(m) => push({ role: "assistant", at: new Date().toISOString(), content: m })} onChanges={() => { setInput("For the customer segments, please change "); }} />;
     if (c.type === "work" && work.length) return <WorkCard key={key} work={work} go={go} />;
     return null;
@@ -580,7 +725,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                   </div>
                 )}
                 {(message.links || []).length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">{message.links.map((l) => <a key={l.to} href={l.to} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</a>)}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">{message.links.map((l) => <a key={l.to} href={l.to} onClick={() => noteCameFrom(chatId, l.to)} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</a>)}</div>
                 )}
               </div>
             </div>
@@ -591,6 +736,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
           <div className="flex items-center gap-4"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
             <span className="text-[14px] text-slate-500">{working && !loading ? "Working on it…" : "Thinking…"}</span></div>
         ) : null}
+        {flow.element}
       </div>
       <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-2.5 dark:border-slate-800 sm:px-5">
         <div className="flex items-center gap-2 pb-2.5">
@@ -615,7 +761,6 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
           </button>
         </form>
       </div>
-      {flow.element}
     </section>
   );
 }

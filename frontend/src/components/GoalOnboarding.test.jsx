@@ -639,8 +639,11 @@ describe("carrying on after sign-in", () => {
       : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
       : /readiness-question$/.test(path) ? { kind: "funding", converse: true, to: "/funding/f1?tab=assistant" } : {});
     mount();
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/funding/f1?tab=assistant&message=${encodeURIComponent("I need funding. 50000, trading")}`));
-    expect(posts(/readiness-question$/)[0].body).toEqual({ business_id: "biz-1", text: "I need funding. 50000, trading" });
+    // In the Agent Centre, straight after sign-in, before any currency or details question here (the owner, 28 Oct)
+    // Each answer with its question, a choice by its words (the owner, 28 Oct)
+    const words = "I need funding: £50,000. The business is trading.";
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
+    expect(posts(/readiness-question$/)[0].body).toEqual({ business_id: "biz-1", text: words });
     expect(posts(/\/prepare$/).length).toBe(0);
   });
 

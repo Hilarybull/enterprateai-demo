@@ -784,7 +784,8 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
     r["C1.B"] = attested(rules.LAUNCH, "C1.B", snapshot, today, days["attestation"]) if demand else _res(UNKNOWN, "There is no evidence to review yet.")
 
     # C2 / B5: offer, pricing and contribution
-    offer = documented([("what you are launching", get(s, "offer.launch_scope")), ("price", get(s, "offer.price")),
+    # One price: the offer's, or the one the money check uses (the owner, 29 Oct: "Still missing: price" beside a ₦1,000 price)
+    offer = documented([("what you are launching", get(s, "offer.launch_scope")), ("price", get(s, "offer.price") or get(s, "economics.price_per_unit")),
                         ("delivery terms", get(s, "offer.delivery_terms")), ("customer promise", get(s, "offer.customer_promise"))])
     r["C2.A"] = _res(UNKNOWN, "The offer is filled in but not confirmed yet.") if offer["state"] == PASSED and not get(s, "offer.confirmed") else offer
     econ = {k: _amount(get(s, f"economics.{k}")) for k in ("price_per_unit", "variable_cost_per_unit", "fixed_costs_monthly")}

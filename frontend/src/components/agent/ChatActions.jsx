@@ -4,7 +4,7 @@
 // saves or shares still waits for the owner's approval.
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../api/client";
-import { agentErrorMessage, approveAction, rejectAction } from "../../lib/agent";
+import { agentErrorMessage, approveAction, approveWithoutSending, rejectAction } from "../../lib/agent";
 import { markdownToHtml } from "../DocumentEditor";
 import { premiumFlow } from "../ResearchReview";
 import { toast } from "../../lib/toast";
@@ -76,7 +76,7 @@ export function ScenarioCard({ card }) {
 }
 
 /** A waiting item, read in the chat: Approve, Edit (typed in the chat) and Reject; only "Open full document" leaves. */
-export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, go }) {
+export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, go, onConvert = null }) {
   const [state, setState] = useState("");
   const [problem, setProblem] = useState("");
   // A preview reopened from a saved conversation keeps only which draft it was: shown again when asked
@@ -99,15 +99,16 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
   const p = preview || {};
   const money = (n) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: p.currency || "GBP", currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(Number(n) || 0); } catch { return String(n); } };
   const draftId = item.draft_id;
-  const decide = async (yes) => {
+  const decide = async (yes, keepOnly = false) => {
     setProblem("");
-    setState(yes ? "approving" : "rejecting");
+    setState(yes ? (keepOnly ? "keeping" : "approving") : "rejecting");
     try {
-      if (item.approval_id) await (yes ? approveAction(item.run_id, item.approval_id) : rejectAction(item.run_id, item.approval_id));
+      const approvalId = item.approval_id || p.approval_id;
+      if (approvalId) await (yes ? (keepOnly ? approveWithoutSending(item.run_id, approvalId) : approveAction(item.run_id, approvalId)) : rejectAction(item.run_id, approvalId));
       else await apiRequest(`/businesses/${businessId}/agent-drafts/${draftId}/decide`, "POST", { decision: yes ? "accept" : "reject" });
       setState(yes ? "approved" : "rejected");
       const name = item.title || p.title || "It";
-      onDone?.(yes ? `${name} ${item.approval_id ? "approved and sent" : "approved"}` : `${name} rejected. Nothing was sent`);
+      onDone?.(yes ? `${name} ${keepOnly ? "approved. Nothing was sent yet" : approvalId ? "approved and sent" : "approved"}` : `${name} rejected. Nothing was sent`);
     } catch (e) { setState(""); setProblem(agentErrorMessage(e, "That couldn't be done just now. Nothing was sent or changed.")); }
   };
   return (
@@ -120,7 +121,14 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
         ))}</tbody></table>
       )}
       {p.total != null && <p className="mt-2 text-right text-[15px] font-semibold text-slate-900 dark:text-slate-50">Total {money(p.total)}</p>}
-      {p.message && <p className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-[13.5px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">{p.message}</p>}
+      {(p.due_date || p.valid_until) && <p className="mt-1 text-right text-[13px] text-slate-500">{p.due_date ? `Due ${p.due_date}` : `Valid until ${p.valid_until}`}</p>}
+      {/* What the customer will get, read before anything is sent (the owner, 29 Oct: "Approve & send shows the email preview first") */}
+      {p.message && (
+        <div className="mt-3" data-email-preview>
+          <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-400">Email preview{p.to_email ? ` · to ${p.to_email}` : ""}</p>
+          <p className="mt-1 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-[13.5px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">{p.message}</p>
+        </div>
+      )}
       {p.text && (
         // The document as it reads on its own page (the owner, 27 Oct: "shows raw HTML and markdown"): the same converter
         <div className="ea-doc ea-doc-inline mt-3 max-h-80 overflow-y-auto rounded-xl bg-slate-50 p-4 text-slate-700 dark:bg-slate-800 dark:text-slate-200" data-preview-text
@@ -128,13 +136,21 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
       )}
       {!p.found && preview && <p className="mt-2 text-[13.5px] text-slate-500">This isn't waiting any more.</p>}
       {state === "approved" || state === "rejected" ? (
-        <p className="mt-3 text-[13.5px] font-semibold text-emerald-700">{state === "approved" ? "Done." : "Rejected."}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="text-[13.5px] font-semibold text-emerald-700">{state === "approved" ? "Done." : "Rejected."}</p>
+          {state === "approved" && onConvert && /quot/i.test(`${p.kind || ""} ${p.title || item.title || ""}`) && (
+            <button type="button" className={BTN} onClick={() => onConvert(p.title || item.title)} data-convert>Convert to invoice</button>
+          )}
+        </div>
       ) : p.found !== false && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className={PRIMARY} disabled={Boolean(state)} onClick={() => decide(true)}>{state === "approving" ? "Working…" : "Approve"}</button>
+          {(p.message || p.to_email) && (item.approval_id || p.approval_id) && (
+            <button type="button" className={BTN} disabled={Boolean(state)} onClick={() => decide(true, true)} data-approve-only>{state === "keeping" ? "Working…" : "Approve"}</button>
+          )}
+          <button type="button" className={PRIMARY} disabled={Boolean(state)} onClick={() => decide(true)} data-approve>{state === "approving" ? "Working…" : p.message || p.to_email ? "Approve & send" : "Approve"}</button>
           {p.editable !== false && <button type="button" className={BTN} onClick={() => onEdit?.(item)}>Edit</button>}
           <button type="button" className={BTN} disabled={Boolean(state)} onClick={() => decide(false)}>{state === "rejecting" ? "Working…" : "Reject"}</button>
-          {(item.to || p.to) && <button type="button" onClick={() => go(item.to || p.to)} className="ml-auto text-[13.5px] font-medium text-blue-600 hover:underline">Open full document →</button>}
+          {(item.to || p.to) && <button type="button" onClick={() => go(item.to || p.to)} className="ml-auto text-[13.5px] font-medium text-blue-600 hover:underline">Open full page →</button>}
         </div>
       )}
       {problem && <p role="alert" className="mt-2 text-[13px] font-semibold text-rose-600">{problem}</p>}

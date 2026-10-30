@@ -893,7 +893,7 @@ async def _case_of(user: dict, business_id: str, case_id: str | None = None) -> 
 
 
 async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict | None = None, data: dict | None = None,
-                         only: list[str] | None = None, fresh: bool = False) -> dict:
+                         only: list[str] | None = None, fresh: bool = False, case_id: str | None = None) -> dict:
     """QA PF1/PF3: entitlement first (the registry's plan for what the research stands for, admin grants included),
     then the cost, then what will be researched. Nothing has started; nothing is charged."""
     from app.modules.agent import config as agent_config, research
@@ -920,7 +920,7 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
     # The same research within 30 days is opened again, free: no quote, no hold, no charge (the owner's QA, 15 Oct).
     fp = research.fingerprint_of(answers or {}, {k: v for k, v in i.items() if not k.startswith("_")}, [t["topic"] for t in topics],
                                  research.context_of(data, i).get("country")) + (":" + ",".join(sorted(only)) if only else "")
-    again = None if fresh else research.reuse_for(data, goal_key, fp, answers, only=only)      # the same rule the start uses: free here means free there
+    again = None if fresh else research.reuse_for(data, goal_key, fp, answers, only=only, case_id=case_id)      # the same rule the start uses: free here means free there
     if again:
         return {**base, "allowed": True, "reuse": again["id"], "cost": 0, "max": 0, "balance": None,
                 "existing": {"at": again["created_at"][:10], "findings": (again.get("counts") or {}).get("researched", 0)}}
@@ -1086,10 +1086,10 @@ async def session_premium(session_id: str, body: QuickCheckIn | None = None, use
     session, goal, data, answers, result = await _session_premium_context(session_id, user)
     only = body.only if body else None
     fresh = bool(body and body.fresh)
-    quote = await _premium_quote(user, goal, result, answers, data, only=only, fresh=fresh)
+    case_id = (session.get("handoff") or {}).get("subject_id") or next((cid for cid, sid in (data.get("chat_sessions") or {}).items() if sid == session_id), None)
+    quote = await _premium_quote(user, goal, result, answers, data, only=only, fresh=fresh, case_id=case_id)      # this plan's own reuse only
     if not quote["allowed"]:
         return {"started": False, "gate": quote["gate"], "quote": quote}
-    case_id = (session.get("handoff") or {}).get("subject_id") or next((cid for cid, sid in (data.get("chat_sessions") or {}).items() if sid == session_id), None)
     run = await research.start(get_orchestrator(), user=user, business_id=session["business_id"], goal=goal, answers=answers, data=data,
                                progress_key=body.progress_key if body else None, only=only, fresh=fresh, case_id=case_id)
     _fill_case_later(user, session["business_id"], goal, run, case_id)
@@ -1447,7 +1447,8 @@ _BACKGROUND: set = set()      # checks still running after their reply, kept so 
 
 
 class UseFigures(BaseModel):
-    figures: dict[str, float] = Field(default_factory=dict)      # {"price": 65}: the review's figures the owner chose
+    figures: dict[str, Any] = Field(default_factory=dict)      # {"price": 65}: the review's figures the owner chose
+    subject_id: str | None = Field(default=None, max_length=64)      # the plan or case the review belongs to
 
 
 @router.post("/businesses/{business_id}/assessment/{kind}/use-figures")
@@ -1459,7 +1460,7 @@ async def use_review_figures(business_id: str, kind: str, body: UseFigures, user
         raise HTTPException(status_code=404, detail="Not found.")
     try:
         summary = await assessment_summary.use_figures(get_orchestrator(), user, business_id, kind, body.figures,
-                                                       f"use-figures:{uuid.uuid4().hex[:12]}")
+                                                       f"use-figures:{uuid.uuid4().hex[:12]}", subject_id=body.subject_id)
     except Exception as e:      # noqa: BLE001 - no access or no case: said plainly
         raise HTTPException(status_code=409, detail="That couldn't be updated just now. Nothing was changed.") from e
     if summary is None:

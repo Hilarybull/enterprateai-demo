@@ -110,6 +110,7 @@ _ADD = (("price", "Add my price"), ("cost", "Add my cost per sale"), ("monthly_s
         ("capacity", "Add my capacity"), ("demand", "Add my demand evidence"), ("customer", "Add my target customer"))
 
 
+_VALIDATE = re.compile(r"\b(?:validat\w*|test|check|assess)\b.{0,20}\b(?:a|an|another|new)\s+(?:new\s+)?(?:product|service|offer|idea)\b|\bvalidat(?:e|ion)\b", re.I)      # any validation not naming the idea
 _NEW_IDEA = re.compile(r"\b(?:new|another|different|second|other)\b.{0,25}\b(?:idea|service|product)\b", re.I)
 
 
@@ -194,7 +195,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     new_idea = bool(change.get("description")) and bool(answers.get("description")) and not _same_idea(answers.get("description"), change["description"])
     # "I need new idea validation" without the idea: asked for it, and what comes next is that idea, from nothing (the owner, 28 Oct:
     # "it still went and continued from the last one")
-    asked_new, opening = bool(_NEW_IDEA.search(str(text))), False
+    # "I need to validate a product" without saying which: asked, never the last idea carried on unasked (the owner, 29 Oct)
+    to_validate = bool(_VALIDATE.search(str(text)))
+    asked_new, opening = bool(_NEW_IDEA.search(str(text))) or to_validate, False
     if mine.get("which_idea"):      # the answer to "carry on, or a new idea?"
         if re.search(r"\bcarry on\b|\bcontinue\b|\bsame\b|\bthis one\b", str(text), re.I):
             asked_new, opening = False, True      # its check shown as at the start: what was checked and the result
@@ -206,13 +209,19 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         said_idea = change.get("description") or (str(text).strip()[:300] if not asks_help(text) and len(str(text).split()) <= 12 else "")
         if said_idea:
             change = {**{k: v for k, v in change.items()}, "description": said_idea}
-            new_idea, dropped = True, []
+            new_idea, dropped, opening = True, [], True      # its check shown as a first look: inputs and the result
+    if asked_new and not change.get("description") and not mine.get("which_idea") and re.search(r"\b(?:new|another|different)\b", str(text), re.I) \
+            and not to_validate:
+        # "new idea" said outright: what it is, never "carry on with the last one?" (the owner, 29 Oct)
+        out = await _said(orch, user, business_id, text, "What's the new idea? Tell me the product or service, and who it's for.", [], now,
+                          topic=TOPIC, keep={"new_idea": True})
+        return {**out, "changed": []}
     if asked_new and not change.get("description") and not mine.get("which_idea"):
         held_idea = str(answers.get("description") or "").strip()
         if held_idea:      # one on record: carry on with it, or a new one, each a button
             short = held_idea if len(held_idea) <= 40 else held_idea[:38].rstrip() + "…"
             out = await _said(orch, user, business_id, text, f"Do you want to carry on with “{held_idea}”, or check a new idea?",
-                              [{"label": f"Carry on with {short}", "kind": "explain", "prompt": f"Carry on with {held_idea}"},
+                              [{"label": f"Carry on with {short}", "kind": "explain", "prompt": "Validate my idea" if to_validate else f"Carry on with {held_idea}"},
                                {"label": "A new idea", "kind": "explain", "prompt": "A new idea"}], now, topic=TOPIC, keep={"which_idea": True})
             return {**out, "changed": []}
         asked_new = False      # nothing on record: this is the first idea, checked as it is said
@@ -275,5 +284,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if not actions and (got.get("buttons") or []):
         held = {**answers, **change}
         actions = [{"label": w, "kind": "explain", "prompt": w} for k, w in _ADD if held.get(k) in (None, "")][:3]
+    if not actions and not any(c["type"] == "choose" for c in cards):
+        from app.modules.agent.converse import suggested
+        actions = suggested("idea", True)
     out = await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, cards=cards)
     return {**out, "changed": done}

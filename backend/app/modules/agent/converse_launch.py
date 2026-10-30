@@ -41,6 +41,70 @@ _SYSTEM = (
     "found. Offer a button only when a choice helps; most replies need none." " Drafts waiting (DRAFTS) are what an earlier run prepared; nothing counts until the owner accepts. When they approve, change or reject drafts in their words, say which in drafts (an edit is the draft as they asked it changed, then accepted); otherwise leave drafts out. WAITING lists approvals waiting for them (an invoice reminder, a quotation): mention them only when it helps, and show \"approvals\" to list them.")
 
 
+_DO_ALL = re.compile(r"\bdo\s+(?:it\s+)?al+\b|\bdo\s+everything\b", re.I)      # "do alll for me" too
+_FILL_REST = re.compile(r"\b(?:fill|populate|complete|draft)\b.{0,20}\b(?:them|the rest|the gaps|everything|it all|all|pending|missing)\b", re.I)
+
+
+async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict, text: str, now, keep: dict) -> dict:
+    """Every field of the plan still blank drafted, estimates where the records give no figure, each waiting for review (the
+    owner, 29 Oct: "fill them and bring for review"). Nothing is written on the plan until approved."""
+    from app.modules.agent import research
+    from app.modules.agent.converse import _said
+    from app.modules.readiness import engine, rules
+    from app.modules.readiness.service import service_for
+    svc = service_for(orch)
+    row = await svc.store.get("subjects", plan["id"])
+    d = (row or {}).get("data") or {}
+    waiting = d.get("agent_drafts") or {}
+    fields = research.CASE_DRAFT_FIELDS.get("launch") or {}
+    blank = {k: v for k, v in fields.items() if engine.blank(engine.get(d, k)) and k not in waiting}
+    from app.modules.agent.converse import launch_ask
+    if "loses money" in launch_ask(d):
+        # A price at or below cost: a price and cost that work are drafted beside the plan's own (the owner, 29 Oct)
+        blank.update({k: fields[k] + "; the price must be above the cost per unit" for k in ("economics.price_per_unit", "economics.variable_cost_per_unit")})
+    # First what Business Operations and the profile already prove (the owner, 29 Oct: "it can fetch these from the business
+    # operations"): demand evidence attached, the test run and the permit as drafts
+    from app.modules.agent import operations_evidence
+    try:
+        ops = await operations_evidence.gather(svc, user, business_id, str(plan["id"]), d, data, now.date())
+    except Exception:      # noqa: BLE001 - the drafts below come either way
+        logger.info("records not gathered for launch %s", plan["id"], exc_info=True)
+        ops = {"drafts": {}, "found": [], "none": []}
+    rejected = set(d.get("rejected_drafts") or [])
+    blank = {k: v for k, v in blank.items() if k not in rejected}
+    from_records = {k: v for k, v in ops["drafts"].items() if k not in waiting and k not in rejected}
+    records_line = operations_evidence.said(ops)
+    review = f"/launch/{plan['id']}?tab=assistant&review=1"
+    if not blank and not from_records:
+        # Always the next step, never only what was done (the owner, 30 Oct: "we are assuming the user is clueless about the
+        # next steps")
+        nxt = (f"Next step: review the {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting and approve what's right. Your score goes up as you approve."
+               if waiting else f"Next step: {str(((plan.get('summary') or {}).get('next_action') or {}).get('title') or 'check the Checklist for what is left').rstrip('.')}.")
+        return await _said(orch, user, business_id, text, " ".join(x for x in ("Everything I can draft is already filled in.", records_line, nxt) if x),
+                           [{"label": f"Review drafts ({len(waiting)})", "to": review}] if waiting else [], now, topic=TOPIC, keep=keep)
+    drafted = {}
+    if blank:
+        facts = research.workspace_facts(data, {}, {"offering": d.get("name"), "customer": d.get("audience"), "where": d.get("geography")}, [])
+        facts["plan"] = {k: v for k, v in d.items() if k not in ("agent_drafts", "provenance") and not str(k).startswith("_")}
+        facts["today"] = now.date().isoformat()      # the launch date and milestones are drafted from it
+        drafted = await research.draft_estimates(research._default_llm(user["id"]), "launch", facts, blank)
+    if not drafted and not from_records:
+        return await _said(orch, user, business_id, text, "I couldn't draft those just now. Nothing was changed; please try again.", [], now, topic=TOPIC, keep=keep)
+    at = now.date().isoformat()
+    place = d.get("geography") or "your area"
+    new = {k: {"value": v, "source": f"an estimate by the Agent, typical for {place}; check it before you approve", "at": at,
+               **({"replaces": engine.get(d, k)} if not engine.blank(engine.get(d, k)) else {})} for k, v in drafted.items()}
+    new.update(from_records)
+    row = await svc.store.get("subjects", plan["id"])      # evidence was just attached: its latest revision
+    await svc.update_subject(user["id"], business_id, rules.LAUNCH, plan["id"], row["revision"], {"agent_drafts": {**waiting, **new}}, user.get("email"))
+    n = len(new)
+    total = len(waiting) + n
+    return await _said(orch, user, business_id, text, " ".join(x for x in (
+        f"I've drafted {n} more field{'s' if n != 1 else ''}, with estimates where your records have no figure.", records_line,
+        f"Next step: review the {total} draft{'s' if total != 1 else ''}, edit anything that's off and approve. Nothing is on your plan until you do, and your score goes up as you approve.") if x),
+                       [{"label": f"Review drafts ({total})", "to": review}], now, topic=TOPIC, keep=keep)
+
+
 def wants_launch(text: str) -> bool:
     """A message about launching: the launch goal, or a readiness question about a launch."""
     from app.modules.agent import goals, readiness_answer
@@ -158,9 +222,16 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         return await _start_do_all(orch, user, business_id, by_id[on], asked, text, now, topic=TOPIC, keep=keep)
     if asked and _no(text):
         return await _said(orch, user, business_id, text, "No problem, nothing was started or charged.", [], now, topic=TOPIC, keep=keep)
-    if on and asks_help(text):
-        return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep)
+    if on and _FILL_REST.search(str(text)):
+        return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
     from app.modules.agent import research as _research
+    researched = bool(on) and (_research.research_state(data, "launch", case_id=on, answers={}) or {}).get("state") in ("review", "adopted")
+    if on and (asks_help(text) or _DO_ALL.search(str(text))):
+        # Research already done for this plan: the rest is drafted at once, free, never its price asked again (the owner,
+        # 30 Oct: "do all for me" after the research)
+        if researched:
+            return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
+        return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep)
     view = [_plan_view(p) for p in plans]
     from app.modules.agent import draft_review
     waiting = await approvals_waiting(orch, business_id)
@@ -236,6 +307,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             pass
 
     from app.modules.agent.converse import _RESEARCH_CLAIM, _PRICE_SAID
+    if not done and re.search(r"\bi(?:'ll| will)\s+(?:attach|add|update|save|upload|record)\b|\bi(?:'ve| have)\s+(?:attached|added|updated|saved|uploaded|recorded)\b", say, re.I):
+        say = "Nothing has been attached or changed yet. Attach a file with the paperclip below, or tell me what to change, and I'll show you the change."
     if plan and not done and (got.get("do_all") or _RESEARCH_CLAIM.search(say) or _PRICE_SAID.search(say)):
         # Research only starts with its price said and Start pressed (the owner, 28 Oct: "Let me do that for you now", nothing started)
         return await _ask_do_all(orch, user, business_id, plan, data, text, now, topic=TOPIC, keep=keep)
@@ -252,6 +325,26 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             actions.append({"label": str(b["label"]).strip()[:40], "kind": "explain", "prompt": str(b["text"]).strip()[:300]})
     if plan and not actions and done:
         actions.append({"label": "Open your launch plan", "to": to})
+    if not plan and len(plans) > 1 and not new:
+        named = [(p.get("data") or {}).get("name") or p.get("title") or "Launch plan" for p in plans]
+        scores = [((p.get("summary") or {}).get("score")) for p in plans]
+        listed = "; ".join(f"{n} ({round(sc)}/100)" if isinstance(sc, (int, float)) else n for n, sc in zip(named, scores))
+        say = f"You have {len(plans)} launch plans: {listed}. Which one shall I look at? Or tell me what you want to launch next."
+        actions = [{"label": n[:40], "kind": "explain", "prompt": f"How ready is my {n} launch?"} for n in named[:4]]
+    from app.modules.agent.converse import _ASKS_READY, launch_ask, offer_things_left, suggested, with_do_all
+    if not (not plan and len(plans) > 1 and not new):
+        actions = with_do_all(actions, bool(plan) and not done)
+        if plan:
+            pid = str(plan["id"])
+            researched = (_research.research_state(data, "launch", case_id=pid, answers={}) or {}).get("state") in ("review", "adopted")
+            if researched:
+                actions = [a for a in actions if str(a.get("label") or "").strip().lower() != "do all for me"]
+            row = await svc.store.get("subjects", pid) if researched else None
+            say, actions = offer_things_left(say, got, actions, researched, launch_ask((row or {}).get("data") or {}) if researched else "")
+    if plan and _ASKS_READY.search(str(text)):
+        got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result", "next"]      # the result, never only words
+    if not actions:
+        actions = suggested("launch", bool(plan))
     out = await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, keep=keep,
                       cards=cards_for(got, not turns, bool(plan), str(plan["id"]) if plan else None, before, after, bool(waiting)))
     return {**out, "changed": done, **({"case_id": str(plan["id"])} if plan else {})}

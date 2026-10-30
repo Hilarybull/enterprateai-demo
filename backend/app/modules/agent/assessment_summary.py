@@ -199,6 +199,10 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 held = _get(data, path)
                 if held in (None, ""):
                     _put(changes, path, str(figures[f]))
+                elif _differs(held, figures[f]) and as_drafts and kind == "funding":
+                    # One funding case, following the current request (the owner, 30 Oct): the newer figure is drafted to replace
+                    # the case's, approved or not; it changes the case only once approved
+                    _put(changes, path, str(figures[f]))
                 elif _differs(held, figures[f]) and f in (owner_set or set()):
                     # The owner's own edit or answer in the review, adopted: their latest word, so the case takes it at once
                     # (the owner's QA, 17 Oct). Only a figure the research found is asked about before it replaces theirs.
@@ -215,7 +219,8 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 # Reject; a field that already holds something else gets the draft as a suggestion under its value. Nothing
                 # the owner rejected is offered again, and the owner's values are never touched.
                 pending = dict(data.get("agent_drafts") or {})
-                rejected = set(data.get("rejected_drafts") or [])
+                # A funding case's drafts follow the current request: one rejected before is offered again for it (30 Oct)
+                rejected = set() if kind == "funding" else set(data.get("rejected_drafts") or [])
                 biz = await orch.rt.business.load(business_id) or {}
                 for path, value in adopted_fields(adopted or [], case_drafts or {}, today, data).items():
                     held = _get(data, path)
@@ -223,6 +228,17 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                         continue
                     pending[path] = {"value": value, "source": source_of(path, value, biz, adopted or []), "at": today,
                                      **({"replaces": held} if held not in (None, "", [], {}) else {})}
+                if kind == "launch":
+                    # What Business Operations and the profile already prove (the owner, 29 Oct): demand evidence attached, the
+                    # test run and the permit as drafts beside the rest
+                    try:
+                        from app.modules.agent import operations_evidence
+                        ops = await operations_evidence.gather(svc, user, business_id, str(live[0]["id"]), data, biz, orch.rt.clock().date())
+                        for path, draft in ops["drafts"].items():
+                            if path not in rejected:
+                                pending.setdefault(path, draft)
+                    except Exception:      # noqa: BLE001 - the drafts land either way
+                        logger.info("records not gathered for launch %s", live[0]["id"], exc_info=True)
                 if pending != (data.get("agent_drafts") or {}):
                     changes["agent_drafts"] = pending
                 adopted, case_drafts = [], {}
@@ -256,14 +272,24 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 # Research never writes into the case (the owner, 28 Oct: "everything it fills goes in as a draft waiting for
                 # approval, and the score only changes after approval"): the rest it would fill waits beside its field too
                 pending = dict(changes.get("agent_drafts") or data.get("agent_drafts") or {})
-                rejected = set(data.get("rejected_drafts") or [])
+                rejected = set() if kind == "funding" else set(data.get("rejected_drafts") or [])
                 for top, v in list(changes.items()):
                     if top in ("agent_drafts", "purpose_milestone_id", "funding_options"):
                         continue
                     for path, value in ([(f"{top}.{k}", x) for k, x in v.items()] if isinstance(v, dict) else [(top, v)]):
                         if path == "market.acquisition_milestone_id" or path in rejected or value in (None, "", [], {}):
                             continue
-                        pending.setdefault(path, {"value": value, "source": "suggested by the Agent", "at": today})
+                        held = _get(data, path)
+                        if held not in (None, "", [], {}) and not _differs(held, value):
+                            continue      # already what the case holds
+                        draft = {"value": value, "source": "suggested by the Agent", "at": today,
+                                 **({"replaces": held} if held not in (None, "", [], {}) else {})}
+                        if kind == "funding":
+                            # One funding case: the current request's draft replaces older drafts and, once approved, the case's
+                            # own value, approved before or not (the owner, 30 Oct)
+                            pending[path] = draft
+                        else:
+                            pending.setdefault(path, draft)
                     changes.pop(top)
                 changes["agent_drafts"] = pending
                 said_from = {}
@@ -312,13 +338,13 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
         await orch.rt.business.mutate(business_id, _remember)
     except Exception:      # noqa: BLE001 - the review is adopted either way; its case is updated from its own page
         logger.warning("review not fed into the %s assessment for %s", kind, business_id, exc_info=True)
-    out = await current(orch, user["id"], business_id, kind, email)
+    out = await feed_summary(orch, user, business_id, kind, subject_id) if subject_id else await current(orch, user["id"], business_id, kind, email)
     if out is not None:
         out.update({"differences": differences, "reactivated": reactivated})
     return out
 
 
-async def use_figures(orch, user: dict, business_id: str, kind: str, figures: dict[str, float], reference: str) -> dict | None:
+async def use_figures(orch, user: dict, business_id: str, kind: str, figures: dict[str, Any], reference: str, subject_id: str | None = None) -> dict | None:
     """The owner chose the review's figures over the case's own: those fields are updated (their choice, seen), the case is
     assessed again, and its summary returned."""
     from app.modules.readiness import rules as rr
@@ -328,20 +354,44 @@ async def use_figures(orch, user: dict, business_id: str, kind: str, figures: di
     email = user.get("email")
     listed = await svc.list_subjects(user["id"], business_id, subject_type, email, include_archived=False)
     live = [x for x in listed.get("items") or [] if x.get("status") not in ("cancelled", "archived")]
+    # The plan or case the review belongs to, never simply the first one (the owner, 29 Oct: several launch plans)
+    live.sort(key=lambda x: 0 if subject_id and str(x.get("id")) == str(subject_id) else 1)
     if not live:
         return None
-    subject = await svc.get_subject(user["id"], business_id, subject_type, live[0]["id"], email)
+    sid = live[0]["id"]
+    subject = await svc.get_subject(user["id"], business_id, subject_type, sid, email)
     data = subject.get("data") or subject
     changes: dict = {}
     for f, value in figures.items():
-        if f in FEEDS[kind] and value is not None:
+        if value is None or value == "":
+            continue
+        if f in FEEDS[kind]:
             _put(changes, FEEDS[kind][f], str(value))
+        elif "." in f or f in ("purpose", "risks", "milestones"):
+            _put(changes, f, value)      # a drafted field the plan already held otherwise, by its path
     if not changes:
-        return await current(orch, user["id"], business_id, kind, email)
+        return await feed_summary(orch, user, business_id, kind, sid)
     for part in ("economics", "traction"):
-        if changes.get(part):
+        if changes.get(part) and part in {FEEDS[kind][f].split(".")[0] for f in figures if f in FEEDS[kind]}:
             changes[part]["confirmed_at"] = orch.rt.clock().date().isoformat()      # chosen by the owner: never asked again
     merged = {k: {**(data.get(k) or {}), **v} if isinstance(v, dict) else v for k, v in changes.items()}
-    await svc.update_subject(user["id"], business_id, subject_type, live[0]["id"], subject.get("revision"), merged, email)
-    await svc.request_assessment(user["id"], business_id, subject_type, live[0]["id"], idempotency_key=reference, email=email)
-    return await current(orch, user["id"], business_id, kind, email)
+    await svc.update_subject(user["id"], business_id, subject_type, sid, subject.get("revision"), merged, email)
+    await svc.request_assessment(user["id"], business_id, subject_type, sid, idempotency_key=reference, email=email)
+    return await feed_summary(orch, user, business_id, kind, sid)
+
+
+async def feed_summary(orch, user: dict, business_id: str, kind: str, subject_id: str) -> dict | None:
+    """This plan's or case's own summary, never the business's other current one (the owner, 29 Oct: "32 and 5?")."""
+    from app.modules.readiness import rules as rr
+    from app.modules.readiness.service import service_for
+    email = user.get("email")
+    out = await current(orch, user["id"], business_id, kind, email)
+    if out is not None and str(out.get("case_id") or out.get("initiative_id") or "") == str(subject_id):
+        return out
+    try:
+        listed = await service_for(orch).list_subjects(user["id"], business_id, rr.LAUNCH if kind == "launch" else rr.FUNDING, email, include_archived=False)
+        own = next((x.get("summary") for x in listed.get("items") or [] if str(x.get("id")) == str(subject_id)), None)
+    except Exception:      # noqa: BLE001 - the page reads the plan's score itself
+        logger.info("own summary not read for %s", subject_id, exc_info=True)
+        return None
+    return {**contract_of(own, kind), ("initiative_id" if kind == "launch" else "case_id"): str(subject_id)} if own else None

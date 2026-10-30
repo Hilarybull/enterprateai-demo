@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { confirmDialog } from "../lib/dialog";
+import { forgetCameFrom } from "../lib/cameFrom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -392,6 +393,8 @@ export default function ValidationWizardPage() {
   const isCreateWorkspace = fromOtherModule;
   const returnTo = searchParams.get("return");
   const requestedHistoryId = searchParams.get("history_id");
+  // Opened on its own (not from a chat link): its results go back here, not to an earlier chat
+  useEffect(() => { if (!requestedHistoryId) forgetCameFrom(); }, []);      // eslint-disable-line react-hooks/exhaustive-deps
   const requestedHistoryType = searchParams.get("history_type");
   const requestedEditMode = searchParams.get("edit") === "1";
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);

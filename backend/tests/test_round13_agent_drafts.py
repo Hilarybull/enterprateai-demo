@@ -32,12 +32,15 @@ def test_drafts_wait_beside_their_fields_and_are_accepted_or_rejected(world):
     data = run(svc.store.get("subjects", cid))["data"]
     assert data["market"]["differentiation"] == "Same-day service with eco products" and "market.differentiation" not in data["agent_drafts"]
     assert "accepted by you" in data["provenance"]["market.differentiation"]["source"]
-    # Reject: gone, and never drafted again
+    # Reject: gone, and the case kept as it is. The one funding case follows the current request (the owner, 30 Oct: "newer
+    # drafts replace older ones even if approved... drafts are based on the current request"): a newer request drafts it
+    # again, as a suggestion, never written until approved
     row = run(svc.store.get("subjects", cid))
     run(svc.update_subject(OWNER, "A", rules.FUNDING, cid, row["revision"], {"agent_drafts": {}, "rejected_drafts": ["purpose"]}, OWNER))
     _feed(env, cid, {"purpose": "A second van for more jobs"})
     data = run(svc.store.get("subjects", cid))["data"]
-    assert data["purpose"] == "a second van" and "purpose" not in (data.get("agent_drafts") or {})
+    assert data["purpose"] == "a second van"
+    assert data["agent_drafts"]["purpose"] == {**data["agent_drafts"]["purpose"], "value": "A second van for more jobs", "replaces": "a second van"}
 
 
 def test_a_draft_that_matches_its_field_is_cleared_on_save(world):

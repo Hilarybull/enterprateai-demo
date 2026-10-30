@@ -88,14 +88,44 @@ function CurrencyChoice({ q, sessionId, onSettled }) {
   );
 }
 
+// The landing page's conversations: carried on in the Agent Centre once signed in, never worked on here
+const TALKED = new Set(["need_funding", "launch", "test_idea"]);
+
 // What a visitor said on the landing page, with what they answered there, carried into the Agent's conversation once they are
 // signed in, as a signed-in owner's words are (the owner, 28 Oct: "after signing, it should continue in the agent center")
 function carriedText(session) {
-  const said = String(session?.resolution?.original_goal || session?.original_goal || "").trim();
+  const said = String(session?.resolution?.original_goal || session?.original_goal || "").trim().replace(/[.!?]+$/, "");
   const answers = { ...(session?.proposed || {}), ...(session?.inputs || {}) };
-  const told = Object.entries(answers).filter(([k, v]) => !k.startsWith("_") && ["string", "number"].includes(typeof v) && String(v).trim() && !String(said).includes(String(v)))
-    .map(([, v]) => String(v).trim());
-  return [said, told.join(", ")].filter(Boolean).join(". ").slice(0, 500);
+  const asked = Object.fromEntries((session?.questions || []).map((q) => [q.key, q]));
+  const currency = String(session?.currency || "").toUpperCase();
+  // Each answer in plain words: a choice by its own words, an amount with its currency (the owner, 28 Oct: "this is not smart")
+  const word = (k) => {
+    const v = answers[k];
+    if (v === undefined || v === null || !String(v).trim() || String(k).startsWith("_")) return "";
+    const q = asked[k] || {};
+    const option = (q.options || q.chips || []).find((o) => String(o?.value) === String(v));
+    if (option?.label) return String(option.label);
+    if (typeof v === "number" && (q.type === "number" || q.prefix) && v >= 1000) return `${currency ? `${currency} ` : ""}${v.toLocaleString("en-GB")}`;
+    return String(v).trim();
+  };
+  const low = (t) => (t ? t[0].toLowerCase() + t.slice(1) : t);
+  const join = (...parts) => parts.filter(Boolean).join(", ");
+  let sentence = "";
+  if (session?.goal_key === "need_funding") {
+    // "I need funding: ₦5m for stock, a grant, in 3 to 6 months. The business is trading, no traction yet."
+    const need = join([word("amount"), word("use") && `for ${low(word("use"))}`].filter(Boolean).join(" "), low(word("route")), low(word("timing")));
+    const now = join(word("stage") && `The business is ${low(word("stage"))}`, low(word("traction")), word("where") && `based in ${word("where")}`);
+    sentence = [need && `${said}: ${need}`, now].filter(Boolean).join(". ");
+  } else if (session?.goal_key === "launch") {
+    // "I want to launch a mobile car wash, for office workers, in Abuja, at ₦15,000, by March."
+    const what = join(word("sell"), word("customer") && `for ${low(word("customer"))}`, word("where") && `in ${word("where")}`,
+      word("price") && `at ${word("price")}`, word("cost") && `costing ${word("cost")} to deliver`, word("target_date") && `by ${word("target_date")}`);
+    sentence = [`${said}${what ? `: ${what}` : ""}`, word("stage") && `The business is ${low(word("stage"))}`].filter(Boolean).join(". ");
+  } else {
+    const rest = Object.keys(answers).map(word).filter(Boolean).map(low);
+    sentence = rest.length ? `${said}: ${rest.join(", ")}` : said;
+  }
+  return `${(sentence || said).replace(/\.\./g, ".").trim()}${/[.!?]$/.test(sentence || said) ? "" : "."}`.slice(0, 600);
 }
 
 export default function StartPage({ framed = false }) {
@@ -124,25 +154,25 @@ export default function StartPage({ framed = false }) {
     const to = resultHome(result);
     if (to) navigate(to, { replace: true });
   }, [stage, result, settled, navigate]);
+  // Funding, launch and an idea are conversations: carried on in the Agent Centre with what was said and answered here, the
+  // moment they are signed in, before any question of this page (the owner, 28 Oct: "agent center... I should be updating and
+  // populating here, not outside"); a case question goes to the dashboard Agent; a task (an invoice, a quotation, a plan) is
+  // prepared here as before. True when it was handed over.
+  const handOver = useCallback(async (known) => {
+    const words = known ? carriedText(known) : "";
+    if (!words || !known?.business_id) return false;
+    const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
+    const to = asked?.converse ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
+    if (!to) return false;
+    try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
+    useWorkspaceStore.getState().setWorkspaceId(known.business_id);
+    trackGoal("dashboard_handoff_completed", { session_id: sessionId });
+    navigate(to, { replace: true });
+    return true;
+  }, [navigate, sessionId]);
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
-    // Funding, launch and an idea are conversations: carried on there with what was said and answered here, never prepared on
-    // this page (the same as a signed-in owner's message from the landing page)
-    const words = known && !confirmed ? carriedText(known) : "";
-    if (words && known.business_id) {
-      const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
-      // Exactly as a signed-in owner's message from the landing page goes (GoalLauncher): a conversation where it lives, a case
-      // question to the dashboard Agent; a task (an invoice, a quotation, a plan) is prepared here as before, from its answers
-      const to = asked?.converse && asked.to ? `${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(words)}`
-        : asked?.converse ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
-      if (to) {
-        try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
-        useWorkspaceStore.getState().setWorkspaceId(known.business_id);
-        trackGoal("dashboard_handoff_completed", { session_id: sessionId });
-        navigate(to, { replace: true });
-        return;
-      }
-    }
+    if (known && !confirmed && await handOver(known)) return;
     setSettled(false);
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
     // the moment it is ready. The task carries on behind it; nothing waits for it.
@@ -231,7 +261,7 @@ export default function StartPage({ framed = false }) {
       setProblem(e?.status === 409 ? "A few details are still needed." : "That couldn't be prepared just now. Nothing was lost.");
       setStage("problem");
     }
-  }, [navigate, sessionId]);
+  }, [handOver, navigate, sessionId]);
 
   const resume = useCallback(async (businessName) => {
     setBusy(true);
@@ -239,6 +269,7 @@ export default function StartPage({ framed = false }) {
       const resumed = await apiRequest(`/task-sessions/${sessionId}/resume`, "POST", businessName ? { business_name: businessName } : wanted ? { business_id: wanted } : {});
       setSession(resumed);
       setWorkspace(true);
+      if (!resumed.handoff && await handOver(resumed)) return;      // a conversation: in the Agent Centre, never the currency or details step here
       // A workspace that was already theirs: carry on inside the real app, with its own sidebar.
       if (!framed && !businessName && resumed.business_id && !resumed.handoff) {
         useWorkspaceStore.getState().setWorkspaceId(resumed.business_id);
@@ -254,7 +285,7 @@ export default function StartPage({ framed = false }) {
     } finally {
       setBusy(false);
     }
-  }, [framed, navigate, prepare, sessionId, wanted]);
+  }, [framed, handOver, navigate, prepare, sessionId, wanted]);
 
   const begin = useCallback(async () => {
     setStage("loading");
@@ -263,6 +294,7 @@ export default function StartPage({ framed = false }) {
       // Never a step that waits on forever: 15 seconds, then "Try again".
       const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", {}, { timeoutMs: 15000 });
       setSession(attached);
+      if (TALKED.has(attached.goal_key) && attached.business_id && await handOver(attached)) return undefined;
       // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.
       if (attached.handoff?.to && !notStarted(attached.handoff)) {
         // A refresh while the result (and its review) is on screen: the same result again, never thrown to the case page
@@ -289,7 +321,7 @@ export default function StartPage({ framed = false }) {
       setStage("problem");
     }
     return undefined;
-  }, [navigate, resume, sessionId]);
+  }, [handOver, navigate, resume, sessionId]);
 
   useEffect(() => {
     if (began.current) return;
@@ -329,7 +361,12 @@ export default function StartPage({ framed = false }) {
           <FirstValueCard result={result} onUpdated={setResult}
             onPremium={premiumFlow({ base: `/task-sessions/${sessionId}/premium` })} />
         )}
-        {stage !== "gone" && stage !== "result" && (
+        {stage !== "gone" && stage !== "result" && TALKED.has(session?.goal_key) && stage === "loading" && (
+          <p className="flex items-center gap-2 text-[14px] font-semibold text-slate-700 dark:text-slate-200" role="status" data-opening-agent>
+            <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />Opening the Agent Centre…
+          </p>
+        )}
+        {stage !== "gone" && stage !== "result" && !(TALKED.has(session?.goal_key) && stage === "loading") && (
           <>
             <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600" data-working-on>{WORKING_ON[session?.goal_key] || "Working on your task"}</p>
             {goal && <p className="mt-0.5 text-lg font-bold text-slate-900 dark:text-slate-100" data-goal-kept>{goal}</p>}

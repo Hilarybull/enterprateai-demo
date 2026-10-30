@@ -101,3 +101,12 @@ def test_what_was_said_comes_back_with_the_answer(talk):
     said = [{"role": "user", "content": "I need a business plan"}, {"role": "assistant", "content": first["message"]}]
     asked = ask("new one....palm oil selling", said)
     assert asked["kind"] == "needs_input" and asked["params"].get("idea") == "palm oil selling" and asked["params"].get("plan_for") == "new"
+
+
+def test_another_task_after_the_plans_list_is_never_a_new_plan(talk):
+    """The owner, 29 Oct: "Validate a new idea" after the plans list drafted a business plan."""
+    env, ask = talk
+    first = ask("I need a business plan")
+    said = [{"role": "user", "content": "I need a business plan"}, {"role": "assistant", "content": first["message"]}]
+    out = ask("Validate a new idea", said)
+    assert "business plan" not in str(out.get("message")).lower()

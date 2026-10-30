@@ -278,7 +278,7 @@ def test_whats_missing_shows_the_gaps_card_beside_the_words(talk):
     model.replies += [{"say": "You're at 40/100."}, {"say": "The forecast and the use of funds are the main gaps."}]
     ask("How ready am I for funding?")
     out = ask("Only 40? What's missing?")
-    assert [c["type"] for c in out.get("cards") or []] == ["result"]
+    assert [c["type"] for c in out.get("cards") or []] == ["result", "next"]      # the gaps, then what to do next (29 Oct)
 
 
 # The owner's recheck, 28 Oct
@@ -419,3 +419,21 @@ def test_a_price_the_model_says_is_never_shown_the_real_one_is(talk, monkeypatch
     model.replies.append({"say": "I can complete all the remaining tasks. The price for this research and drafting is ₦50,000. Would you like me to proceed?"})
     out = ask("what's left to do?", page="funding")
     assert "₦50,000" not in out["message"]
+
+
+@pytest.mark.parametrize("research,said", [({"status": "nothing_to_do"}, "Nothing new was found"),
+                                           ({"status": "review", "error": "timeout"}, "took too long")])
+def test_options_search_that_ends_with_nothing_says_why_and_stops_spinning(talk, monkeypatch, research, said):
+    """The owner, 29 Oct: "research funding options in the funding readiness is not working too... just kept processing"."""
+    env, ask, model, cid = talk
+    from app.modules.agent import goal_router
+
+    async def premium(session_id, body=None, user=None):
+        return {"started": True, "research": research}
+    monkeypatch.setattr(goal_router, "session_premium", premium)
+    ask("Research funding options for my case", page="funding")
+    ask("yes, start", page="funding")
+    for _ in range(5):
+        run(__import__("asyncio").sleep(0))
+    held = (run(env.orch.rt.business.load("A")).get("agent_working") or {}).get(str(cid)) or {}
+    assert said in str(held.get("failed") or "") and "at" not in held      # the card says why, with Retry; nothing still "working"
