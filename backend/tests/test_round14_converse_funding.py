@@ -81,13 +81,21 @@ def test_do_all_for_me_is_priced_and_asked_then_started_on_yes(talk, monkeypatch
     assert out["message"].startswith("Started.") and len(started) == 1
 
 
-def test_without_a_model_the_scripted_chat_answers(world, monkeypatch):
+def test_without_a_model_typed_funding_details_still_update_the_case(world, monkeypatch):
     env, store, client, who = world
     who["user"] = OWNER
-    _funding(client)
+    _sid, made = _funding(client, amount=50000, use="a second van")
+    from app.modules.readiness import rules
+    from app.modules.readiness.service import service_for
+    svc = service_for(env.orch)
+    row = run(svc.store.get("subjects", made["handoff"]["subject_id"]))
+    run(svc.update_subject(OWNER, "A", rules.FUNDING, row["id"], row["revision"], {"route_preference": "loan"}, OWNER))
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: None)
-    out = client.post("/agent/requests", json={"business_id": "A", "text": "How ready am I for funding?", "source_channel": "text"}).json()
-    assert not out.get("conversational")
+    out = client.post("/agent/requests", json={"business_id": "A", "text": "I need a £30k loan in 3 months to buy a second van", "source_channel": "text"}).json()
+    assert out.get("conversational") and "Updated" in out["message"]
+    case = run(service_for(env.orch).store.get("subjects", made["handoff"]["subject_id"]))
+    assert case["data"]["target_amount"] == 30000 and case["data"]["currency"] == "GBP"
+    assert case["data"]["purpose"] == "second van" and case["data"]["route_preference"] == "loan"
 
 
 def test_only_the_cases_own_fields_are_kept():
@@ -388,7 +396,9 @@ def test_a_value_already_set_is_said_so_not_updated(talk):
     assert again["message"] == "Who owns customer acquisition is already set to Hilary." and not again["actions"]
     model.replies.append({"say": "Sure.", "change": {"target_amount": 50000}})
     same = ask("I need £50,000 for funding")
-    assert same["message"] == "Amount is already set to £50,000."
+    # Said in one line, with where the case stands and its next step (QA, 30 Oct: a list of fields alone)
+    assert same["message"].startswith("Your funding case already has that: amount £50,000.") and "Next step:" in same["message"]
+    assert [c["type"] for c in same["cards"]] == ["result", "steps"]
 
 
 def test_a_new_need_is_held_while_asking_and_new_one_replaces_it(talk):

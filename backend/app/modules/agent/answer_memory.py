@@ -29,7 +29,17 @@ def same_offering(a: Any, b: Any) -> bool:
     x, y = norm(a), norm(b)
     if not x or not y:
         return False
-    return x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x))
+    if x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x)):
+        return True
+    # Common service noun forms should still match ("end of tenancy cleans" and
+    # "end of tenancy cleaning") when an invoice is offered for the catalogue.
+    def base(word: str) -> str:
+        if len(word) > 5 and word.endswith("ing"):
+            return word[:-3]
+        if len(word) > 4 and word.endswith("s"):
+            return word[:-1]
+        return word
+    return [base(w) for w in x.split()] == [base(w) for w in y.split()]
 
 
 MONEY = ("price", "cost", "fixed_costs", "amount", "cash_in_bank")
@@ -41,6 +51,13 @@ def remember(data: dict, goal: str, answers: dict, now: datetime | None = None, 
     now = now or datetime.now(timezone.utc)
     offering = answers.get("sell") or answers.get("description")
     clean = {k: v for k, v in (answers or {}).items() if isinstance(v, (str, int, float)) and str(v).strip() and str(v).strip().lower() != "unknown"}
+    # Who buys it and their problem belong to one offering: one carried over from another offering (a dog-grooming idea's
+    # customers kept on a cleaning business's customer check, QA F1 30 Oct) is dropped, never saved again under this one
+    for key in ("customer", "problem"):
+        was = (data.get("shared_answers") or {}).get(ALIAS.get(key, key))
+        if key in clean and offering and isinstance(was, dict) and str(was.get("value") or "").strip() == str(clean[key]).strip() \
+                and was.get("offering") and not same_offering(was["offering"], offering):
+            clean.pop(key)
     data.setdefault("quick_check_answers", {})[goal] = {"answers": clean, "offering": str(offering or "")[:200], "at": now.isoformat(),
                                                         **({"currency": currency} if currency else {}), **({"result": result} if result else {})}
     shared = data.setdefault("shared_answers", {})
@@ -57,7 +74,9 @@ def current_offering(goal: str, data: dict | None, known: dict | None = None) ->
     said = known.get("sell") or known.get("description")
     if said:
         return str(said)
-    last = max(((v.get("at") or "", v.get("offering") or "") for v in ((data or {}).get("quick_check_answers") or {}).values()), default=("", ""))
+    # An idea being tested is not the business's offering: never what another check is assumed to be about (QA F1, 30 Oct)
+    last = max(((v.get("at") or "", v.get("offering") or "") for g, v in ((data or {}).get("quick_check_answers") or {}).items()
+                if g != "test_idea" or goal == "test_idea"), default=("", ""))
     return last[1]
 
 

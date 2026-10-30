@@ -242,6 +242,17 @@ def test_the_idea_chat_runs_the_idea_validation_and_links_its_results(talk):
     assert not model.prompts      # the validation itself, not the quick chat
     if [a["label"] for a in out.get("actions") or []] == ["Start", "Not now"]:      # its price first, then Start (29 Oct)
         out = ask(out["actions"][0]["prompt"], page="idea")
+    if out.get("wait"):
+        # Still running: no result buttons yet (the owner, 30 Oct); the chat checks until its draft is in Validation history
+        assert not out.get("actions")
+        status = lambda: client.get(f"/businesses/A/agent/idea-validation/{out['wait']['history_id']}", params={"since": out["wait"]["since"]}).json()      # noqa: E731
+        assert status()["state"] == "running"
+        hid = out["wait"]["history_id"]
+        run(env.orch.rt.business.mutate("A", lambda d: d.setdefault("validation_history", []).insert(0, {"id": hid, "type": "v4_validation", "score": 62,
+                                                                                                       "created_at": env.orch.rt.clock().isoformat()})))
+        got = status()
+        assert got["state"] == "done" and got["message"].startswith("Your idea validation is done: 62/100")
+        out = {"actions": got["links"]}
     labels = [a["label"] for a in out.get("actions") or []]
     assert "Open the Idea Validation form" in labels and all(a["to"].startswith("/validation") for a in out["actions"] if a.get("to"))
 

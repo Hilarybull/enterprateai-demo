@@ -6,6 +6,12 @@ import { useState } from "react";
 import { formatCurrency } from "../../lib/format";
 import { ButtonSpinner } from "../Skeleton";
 
+const dayWord = (value) => {
+  const raw = String(value || "").slice(0, 10);
+  const date = new Date(`${raw}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+
 const S = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
 
 export function Icon({ name, className = "h-5 w-5" }) {
@@ -515,8 +521,9 @@ export function ApprovalReview({ approval, lastEdit = null, editedByYou = false 
         <Row label="Start date" value={p.start_date} />
         <Row label="Deliver by" value={p.delivery_date} />
         {p.quote_reference && !p.differs_from_quote && p.quote_total != null && <Row label="From quotation" value={`${p.quote_reference} · matches`} />}
-        <Row label="Valid until" value={p.valid_until} />
-        <Row label="Due date" value={p.due_date ? `${p.due_date}${p.days_overdue ? ` · ${p.days_overdue} days overdue` : ""}` : null} />
+        {/* "13 Nov 2026", never "2026-11-13" (QA F7, F8, 30 Oct) */}
+        <Row label="Valid until" value={p.valid_until ? dayWord(p.valid_until) : null} />
+        <Row label="Due date" value={p.due_date ? `${dayWord(p.due_date)}${p.days_overdue ? ` · ${p.days_overdue} days overdue` : ""}` : null} />
         <Row label="Payment terms" value={p.payment_terms && p.payment_terms_source ? `${p.payment_terms} (${p.payment_terms_source})` : p.payment_terms} />
         <Row label="Payment date" value={p.paid_at} />
         {p.stage && <Row label="Reminder" value={`Reminder ${p.stage}`} />}

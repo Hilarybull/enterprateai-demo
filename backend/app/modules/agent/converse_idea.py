@@ -21,6 +21,7 @@ GOAL = "test_idea"
 DEMAND = ("assumption", "research", "enquiries", "lois", "pilot", "paying", "repeat")
 NUMBERS = ("price", "monthly_sales", "cost", "fixed_costs", "capacity")
 _SHOW = {"idea_inputs", "viability", "launch_fit", "next", "approvals", "risk"}
+VALIDATE = {"label": "Run the idea validation", "kind": "explain", "prompt": "Run the idea validation"}
 
 _SYSTEM = (
     _MANNER +
@@ -112,6 +113,33 @@ _ADD = (("price", "Add my price"), ("cost", "Add my cost per sale"), ("monthly_s
 
 _VALIDATE = re.compile(r"\b(?:validat\w*|test|check|assess)\b.{0,20}\b(?:a|an|another|new)\s+(?:new\s+)?(?:product|service|offer|idea)\b|\bvalidat(?:e|ion)\b", re.I)      # any validation not naming the idea
 _NEW_IDEA = re.compile(r"\b(?:new|another|different|second|other)\b.{0,25}\b(?:idea|service|product)\b", re.I)
+
+
+_NAMED = re.compile(r"^\s*(?:please\s+)?(?:test|validate|check|score|assess)\s+(?:my|this|an?|the)?\s*(?:new\s+|business\s+)?idea\s*[:\-,]\s*(?P<idea>\S.{5,299})$", re.I)
+
+
+def named_idea(text: str) -> str:
+    """ "Test my idea: a mobile phone repair kiosk in Manchester…" gives the idea; "" when none is named."""
+    m = _NAMED.match(str(text or "").strip())
+    return m.group("idea").strip().rstrip(".") if m else ""
+
+
+async def keep_named_idea(orch, business_id: str, text: str) -> bool:
+    """The idea named in the message is the one checked from now on (the owner, 30 Oct: a phone repair kiosk was validated as
+    the earlier bike repair idea). A different idea starts from its own words only, never the last idea's figures."""
+    from app.modules.agent import answer_memory, business as bz, first_value
+    said = named_idea(text)
+    if not said:
+        return False
+    data = await orch.rt.business.load(business_id) or {}
+    held = dict((((data.get("quick_check_answers") or {}).get(GOAL) or {}).get("answers")) or {})
+    if str(held.get("description") or "").strip().lower() == said.lower():
+        return False      # the same idea, said again word for word: kept as it is
+    # Named outright: checked from these words alone ("bike repair" and "phone repair" share a word, never their figures)
+    answers = {"description": said[:300]}
+    fresh = first_value.assess(GOAL, answers, data)
+    await orch.rt.business.mutate(business_id, lambda d: answer_memory.remember(d, GOAL, answers, result=fresh, currency=bz.currency_of(d)))
+    return True
 
 
 def _same_idea(a, b) -> bool:
@@ -250,7 +278,15 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     first = not turns or opening
     want = (["idea_inputs", "viability"] if first and not shown else []) + shown
     quote = {}
-    if got.get("do_all"):
+    # What the validation needs and the idea doesn't have yet: offered to fill first, as before, then the validation (the
+    # owner, 30 Oct: "it should offer to fill these first as usual, then run the idea validation")
+    missing = [w for k, w in (("customer", "who it's for"), ("price", "the price"), ("cost", "the cost per sale"), ("monthly_sales", "expected sales"),
+                              ("capacity", "capacity"), ("demand", "demand evidence")) if answers.get(k) in (None, "")]
+    fill = first and not shown and bool(missing) and bool(str(answers.get("description") or "").strip())
+    if fill and not got.get("do_all"):
+        say = (f"{say} Some details are still missing ({', '.join(missing)}). I can fill them in for you first, or you can enter them yourself; "
+               "then run the idea validation for its full result.")
+    if got.get("do_all") or fill:
         want.append("choose")
         # From what the idea already holds, never asking for it again; "free" said before Start when the earlier research is
         # reused (the owner, 28 Oct)
@@ -270,8 +306,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             known = ", ".join(f(float(str(answers[k]).replace(",", ""))) for k, f in held)
         except (TypeError, ValueError):
             known = ""
-        say = (f"I'll research it from what your idea already has ({known})." if known else "I'll research comparable services, pricing and demand for your idea.") \
-            + (" This one is free: nothing has changed since your last research, so it reuses it." if quote.get("reuse") else "")
+        if got.get("do_all"):
+            say = (f"I'll research it from what your idea already has ({known})." if known else "I'll research comparable services, pricing and demand for your idea.") \
+                + (" This one is free: nothing has changed since your last research, so it reuses it." if quote.get("reuse") else "")
     if waiting and "next" in want:
         want.append("approvals")
     cards = [{"type": k, "case_id": "idea", **({"price": quote.get("max"), "reuse": bool(quote.get("reuse"))} if k == "choose" and quote else {})}
@@ -287,5 +324,11 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if not actions and not any(c["type"] == "choose" for c in cards):
         from app.modules.agent.converse import suggested
         actions = suggested("idea", True)
+    # The Idea Validation, the main flow, always a button beside the free result: never left for the owner to know to type
+    # it (the owner, 30 Oct: "most of them don't even know"). Its price is said, with Start or Not now, when it is pressed.
+    if str(answers.get("description") or "").strip() and not any(c["type"] == "choose" for c in cards):
+        actions = [VALIDATE, *[a for a in actions if not re.search(r"\bvalidat", f"{a['label']} {a['prompt']}", re.I)]][:3]
+        if first and not shown:
+            say = f"{say} When you're ready, Run the idea validation fills in its form from your idea and records and gives you a full result to accept, modify or reject."
     out = await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, cards=cards)
     return {**out, "changed": done}

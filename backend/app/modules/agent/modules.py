@@ -25,10 +25,11 @@ def _first(data: dict, *paths: str) -> str:
 
 
 def _live(rows: list[dict]) -> list[dict]:
-    """Not archived; a pinned one first, then the most recently changed."""
+    """Not archived; pinned ones first, the newest of them first, then the rest newest first (QA, 30 Oct: the oldest pinned
+    plan, the carpet one, was shown before the new one: pinned plans were in oldest-first order)."""
     rows = [r for r in rows if r.get("status") != "archived"]
-    return sorted(rows, key=lambda r: (not (r.get("data") or {}).get("pinned"), str(r.get("updated_at") or "")), reverse=False) \
-        if any((r.get("data") or {}).get("pinned") for r in rows) else sorted(rows, key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    newest = sorted(rows, key=lambda r: str(r.get("created_at") or r.get("updated_at") or ""), reverse=True)
+    return sorted(newest, key=lambda r: not (r.get("data") or {}).get("pinned"))      # stable: newest kept first in each group
 
 
 async def launch_facts(orch, business_id: str, subject_id: str | None = None) -> dict:

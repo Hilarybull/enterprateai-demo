@@ -312,7 +312,19 @@ export function offerFor(text, offers) {
 // conversations too"): the list, one, and saving the current one.
 export const listChats = (businessId) => apiRequest(`/businesses/${businessId}/agent/chats`, "GET");
 export const getChat = (businessId, id) => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "GET");
-export const saveChat = (businessId, id, messages) => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "PUT", { messages });
+// One save at a time per conversation, in the order made, each dated so an older one never lands over a newer one (the owner,
+// 30 Oct: the validation result posted, then gone after a visit to its page: a slow, retried older save had overwritten it)
+const saving = new Map();
+export function saveChat(businessId, id, messages) {
+  const key = `${businessId}:${id}`;
+  const body = { messages, client_at: Date.now() };
+  const put = () => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "PUT", body);
+  const next = (saving.get(key) || Promise.resolve()).catch(() => {}).then(() => put().catch(() => put()));      // tried once more if it fails
+  saving.set(key, next);
+  const clear = () => { if (saving.get(key) === next) saving.delete(key); };
+  next.then(clear, clear);
+  return next;
+}
 /** A typed message carried on in the side panel when it is on the page (the owner, 27 Oct: "it should be by the side");
  *  false when it isn't, and the caller answers in place as before. */
 export function toSidePanel(text) {

@@ -231,15 +231,14 @@ def _catalogue_offer(run: dict, approval: dict | None, record: dict) -> list[dic
         return []
     from app.modules.agent import answer_memory
     from app.modules.agent import business as bz
-    listed = {answer_memory.norm(p.get("name")) for p in (record.get("catalogue") or {}).get("products") or [] if isinstance(p, dict) and not p.get("archived")}
+    listed = [str(p.get("name") or "") for p in (record.get("catalogue") or {}).get("products") or [] if isinstance(p, dict) and not p.get("archived")]
     payload = approval.get("payload") or {}
     out, seen = [], set()
     for i in payload.get("items") or []:
         name = " ".join(str(i.get("description") or i.get("product_name") or i.get("name") or "").split())
-        key = answer_memory.norm(name)
-        if not name or key in listed or key in seen:
+        if not name or any(answer_memory.same_offering(name, existing) for existing in [*listed, *seen]):
             continue
-        seen.add(key)
+        seen.add(name)
         out.append({"name": name, "unit_price": bz.money(i.get("unit_price")), "currency": payload.get("currency") or bz.currency_of(record)})
     return out
 
@@ -307,7 +306,7 @@ class AgentRequestIn(BaseModel):
     locale: str = "en-GB"
     background: bool = False      # return as soon as the task exists; the caller watches it
     # Sent from a module's own Assistant (a funding case, a launch plan, the idea): its conversation answers, never another's
-    page: str | None = Field(default=None, pattern="^(funding|launch|idea)$")
+    page: str | None = Field(default=None, pattern="^(funding|launch|idea|customers|risks|pricing)$")
     case_id: str | None = Field(default=None, max_length=80)      # the plan's page it was sent from: the plan it is about (28 Oct)
 
 
@@ -323,6 +322,7 @@ CHATS_KEPT, MESSAGES_KEPT = 30, 60
 class ChatIn(BaseModel):
     title: str = Field(default="", max_length=120)
     messages: list[dict] = Field(default_factory=list)
+    client_at: float | None = None      # when the page made this save: an older one never overwrites a newer one
 
 
 def _chat_message(m: dict) -> dict | None:
@@ -336,12 +336,15 @@ def _chat_message(m: dict) -> dict | None:
     # The Assistant tab's cards, by type only: drawn again from the live case and records when the conversation is opened
     cards = [_card_kept(x) for x in m.get("cards") or [] if isinstance(x, dict) and x.get("type") in _CARD_TYPES][:4]
     at = str(m.get("at") or "")[:32]
+    # An idea validation still running: kept, so the chat goes on checking after a reload or a visit elsewhere (30 Oct)
+    w = m.get("wait") if isinstance(m.get("wait"), dict) else None
+    wait = {k: (bool(w[k]) if k == "done" else str(w[k])[:64]) for k in ("kind", "history_id", "since", "done") if w.get(k) is not None} if w else None
     return {"role": role, "content": text, **({"links": links} if links else {}), **({"prompts": prompts} if prompts else {}),
-            **({"cards": cards} if cards else {}), **({"at": at} if at else {})}
+            **({"cards": cards} if cards else {}), **({"at": at} if at else {}), **({"wait": wait} if wait and wait.get("history_id") else {})}
 
 
 _CARD_TYPES = {"records", "result", "next", "score_change", "choose", "progress", "approvals", "idea_inputs", "viability", "launch_fit", "risk",
-               "scenario", "preview", "segments", "findings"}
+               "scenario", "preview", "segments", "findings", "steps", "options", "research_again"}
 
 
 def _card_kept(x: dict) -> dict:
@@ -518,8 +521,11 @@ async def save_chat(business_id: str, chat_id: str, body: ChatIn, user=Depends(g
     title = (body.title or first or "Conversation").strip()[:80]
 
     def _apply(d: dict) -> None:
+        held = next((c for c in (d.setdefault("agent_chats", {}).get(str(user["id"])) or []) if c.get("id") == chat_id), None)
+        if held and body.client_at is not None and float(held.get("client_at") or 0) > body.client_at:
+            return      # a newer save is already kept (an older one arrived late, after a retry): never written over it
         mine = [c for c in (d.setdefault("agent_chats", {}).get(str(user["id"])) or []) if c.get("id") != chat_id]
-        mine.append({"id": chat_id, "title": title, "at": now, "messages": messages})
+        mine.append({"id": chat_id, "title": title, "at": now, "messages": messages, **({"client_at": body.client_at} if body.client_at is not None else {})})
         d["agent_chats"][str(user["id"])] = sorted(mine, key=lambda c: str(c.get("at") or ""))[-CHATS_KEPT:]
     await get_orchestrator().rt.business.mutate(business_id, _apply)
     return {"id": chat_id, "title": title, "at": now, "count": len(messages)}
@@ -589,9 +595,49 @@ async def readiness_question(body: ReadinessAskIn, user=Depends(get_current_user
 
 
 # "Fill the form", "enrich the validation", "populate it", "run the validation": the Idea Validation module itself
-_START_VALIDATION = re.compile(r"^\s*start the idea validation\b", re.I)
-_NOT_NOW = re.compile(r"^\s*not now, no validation\b", re.I)
+_START_VALIDATION = re.compile(r"^\s*(?:(?:yes|okay|ok)[, ]+)?(?:start|go ahead)(?:\s+the idea validation)?\b", re.I)
+_START_REPLY = re.compile(r"^\s*(?:yes[, ]+)?(?:start|go ahead)\s*[.!]?\s*$", re.I)
+_NOT_NOW = re.compile(r"^\s*not now(?:, no validation)?\b", re.I)
 _FILL_FORM = re.compile(r"^\s*(?:start the idea validation|not now, no validation)\b|\b(?:fill|enrich|populate|complete|update)\b.{0,30}\b(?:form|validation|module)\b|\b(?:run|do|start|get|give)\b.{0,15}\bvalidation\b|\bvalidate (?:it|this|my idea)\b|\bthe (?:idea )?validation\b", re.I)
+_IDEA_VALIDATION_TASKS: set[asyncio.Task] = set()
+
+
+def _idea_validation_done(task: asyncio.Task) -> None:
+    _IDEA_VALIDATION_TASKS.discard(task)
+    if not task.cancelled():
+        task.exception()      # a timed-out request still runs; consume a later error instead of logging it as unhandled
+
+
+def _validation_id(idea: str) -> str:
+    """This idea's validation draft, named the same way the validation names it."""
+    import hashlib
+    return f"agent-{hashlib.sha1(idea.strip().lower().encode()).hexdigest()[:12]}"
+
+
+def _validation_results(idea: str) -> str:
+    """This idea's validation results: never Agent tasks (QA, 30 Oct)."""
+    return f"/validation?history_id={_validation_id(idea)}&history_type=v4_validation&view=results"
+
+
+@router.get("/businesses/{business_id}/agent/idea-validation/{history_id}")
+async def idea_validation_status(business_id: str, history_id: str, since: str = Query(default=""), user=Depends(get_current_user)):
+    """Whether the idea validation the chat started is done, for the chat to say its result there (the owner, 30 Oct): its
+    draft in Validation history, newer than when it started; else its task failed; else still running."""
+    from app.modules.agent import goal_router
+    data = await goal_router._business_for(user, business_id)
+    entry = next((e for e in data.get("validation_history") or [] if isinstance(e, dict) and e.get("id") == history_id
+                  and str(e.get("created_at") or "") >= since), None)
+    to = f"/validation?history_id={history_id}&history_type=v4_validation"
+    if entry:
+        score = entry.get("score")
+        said = (f"Your idea validation is done: {round(score)}/100" + (f", {entry['verdict']}." if entry.get("verdict") else ".")) if isinstance(score, (int, float))             else "Your idea validation is done."
+        return {"state": "done", "message": said + " Its draft is waiting for you to accept, modify or reject.",
+                "links": [{"label": "See your validation results", "to": f"{to}&view=results"}, {"label": "Open the Idea Validation form", "to": to}]}
+    runs = await get_orchestrator().rt.store.list_runs(business_id, limit=30)
+    last = next((r for r in runs if r.get("workflow_key") == "idea_validation" and str(r.get("created_at") or "") >= since[:19]), None)
+    if last and last.get("status") in ("failed", "cancelled"):
+        return {"state": "failed", "message": "The idea validation didn't finish this time, so nothing was charged. Try again in a moment."}
+    return {"state": "running"}
 
 
 async def _validate_idea(user: dict, body, known: dict) -> dict | None:
@@ -606,11 +652,39 @@ async def _validate_idea(user: dict, body, known: dict) -> dict | None:
     if _NOT_NOW.match(str(body.text or "")):
         return {"kind": "answer", "message": "No problem, nothing was started or charged.", "actions": [], "conversational": True}
     go = bool(_START_VALIDATION.match(str(body.text or "")))      # Start, pressed after its price was said
+    if not go:
+        # Its price said at once, read from the price list here, never behind the whole task's start (the owner, 30 Oct:
+        # "it didn't tell me about the 25 credits": the start took longer than the chat waits, on a slow database)
+        from app.modules.agent import config as agent_config
+        orch = get_orchestrator()
+        try:
+            price = int(await orch.rt.meter.cost(agent_config.feature_of("idea_validation")) or 0)
+            balance = await orch.rt.meter.balance(user["id"])
+        except Exception:      # noqa: BLE001 - asked by the task itself instead
+            price, balance = None, None
+        if price:
+            text = " ".join(idea.split())
+            about = f"“{text[:60].rstrip()}{'…' if len(text) > 60 else ''}”"
+            return {"kind": "answer", "conversational": True,
+                    "message": agent_config.price_sentence(agent_config.ACTION_NAME["idea_validation"], price, balance, about=about)
+                    + " You're charged only when it finishes; if it fails, nothing is taken.",
+                    "actions": [{"label": "Start", "kind": "explain", "prompt": "Start the idea validation"},
+                                {"label": "Not now", "kind": "explain", "prompt": "Not now, no validation"}]}
+    since = get_orchestrator().rt.clock().isoformat()      # the same clock its task and its draft are dated by
+    waiting = {"message": "Your idea validation has started. It takes 2 to 5 minutes; I'll put its result here as soon as it's ready, "
+                          "so you can keep using the page. You're charged only when it finishes.",
+               "wait": {"kind": "idea_validation", "history_id": _validation_id(idea), "since": since}}
     try:
-        out = await get_orchestrator().submit(AgentRequest(
+        task = asyncio.create_task(get_orchestrator().submit(AgentRequest(
             requesting_actor_id=user["id"], business_id=body.business_id, source_channel="ui_action", raw_input=f"Validate my idea: {idea}"[:500],
             requested_capability="idea_validation", params={"idea_for": "new", "idea": idea, "answers": {k: v for k, v in answers.items() if v not in (None, "")}},
-            locale=body.locale, confirmed=go), email=user.get("email"))
+            locale=body.locale, confirmed=go), email=user.get("email")))
+        _IDEA_VALIDATION_TASKS.add(task)
+        task.add_done_callback(_idea_validation_done)
+        out = await asyncio.wait_for(asyncio.shield(task), timeout=45)
+    except asyncio.TimeoutError:
+        # Still running: no link to a result that isn't there yet (the owner, 30 Oct: the results button opened an empty form)
+        return {"kind": "answer", "conversational": True, "actions": [], **waiting}
     except Exception:      # noqa: BLE001 - said plainly
         logger.warning("idea validation from the chat did not run for %s", body.business_id, exc_info=True)
         return {"kind": "answer", "message": "I couldn't run the Idea Validation just now. Nothing was changed; please try again.", "actions": [], "conversational": True}
@@ -631,15 +705,15 @@ async def _validate_idea(user: dict, body, known: dict) -> dict | None:
     results = next((x["to"] for x in links if "view=results" in str(x["to"])), None)
     if not results:
         # Its draft is named for the idea the same way the validation names it: the results are there as soon as it is done
-        import hashlib
-        results = f"/validation?history_id=agent-{hashlib.sha1(idea.strip().lower().encode()).hexdigest()[:12]}&history_type=v4_validation&view=results"
+        results = _validation_results(idea)
     form = next((x["to"] for x in links if str(x["to"]).startswith("/validation") and "view=results" not in str(x["to"])), "/validation")
     if form == "/validation":
         form = results.replace("&view=results", "")      # this idea's own filled form, never an empty start
+    if run.get("status") in ("failed", "cancelled"):
+        return {"kind": "answer", "conversational": True, "actions": [{"label": "Try again", "kind": "explain", "prompt": "Run the idea validation"}],
+                "message": "The idea validation didn't finish this time, so nothing was charged. Try again in a moment."}
     if run.get("status") not in ("succeeded", "waiting_approval") and not (run.get("outcome") or {}).get("links"):
-        return {"kind": "answer", "conversational": True,
-                "message": "Your idea validation is still working. Its form is filled from your idea and records; the results open here in a moment.",
-                "actions": [{"label": "See your validation results", "to": results}, {"label": "Open the Idea Validation form", "to": form}]}
+        return {"kind": "answer", "conversational": True, "actions": [], **waiting}
     said = str(run.get("summary") or "Your idea is validated.").strip()
     est = {k: v for k, v in ((run.get("outcome") or {}).get("estimates") or {}).items() if v is not None}
     if est:
@@ -727,7 +801,9 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             known = {}
         from app.modules.agent import converse_idea, converse_launch
         # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
-        other = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key") not in (None, "need_funding", "launch", "test_idea")
+        from app.modules.agent import converse_check
+        resolved = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key")
+        other = resolved not in (None, "need_funding", "launch", "test_idea") and resolved != converse_check.GOALS.get(body.page or "")
         # A receipt, an invoice, a quotation or another document is its own task, never the open funding or launch chat's (the
         # owner, 29 Oct: "receipt" became "I'll attach it to your pot selling launch plan")
         from app.modules.agent.intent import _GOAL_RULES as _task_rules
@@ -774,16 +850,31 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             topic = None
         # Only for the idea being talked about ("validate my idea", "run the validation", "fill the form"); "validate an idea"
         # asks which first (the owner, 29 Oct)
+        if topic == "idea":
+            # "Test my idea: …" names the idea: that one is checked and validated, never the earlier one (the owner, 30 Oct)
+            try:
+                if await converse_idea.keep_named_idea(get_orchestrator(), body.business_id, body.text):
+                    known = await get_orchestrator().rt.business.load(body.business_id) or {}
+            except Exception:      # noqa: BLE001 - the conversation reads the idea as it is
+                logger.info("named idea not kept for %s", body.business_id, exc_info=True)
         if topic == "idea" and re.search(r"\buse the estimated figures\b", body.text, re.I):
             return _result(await _use_estimates(user, body, known))
-        if topic == "idea" and _FILL_FORM.search(body.text):
+        offered_validation = any(t.role == "assistant" and re.search(r"\bvalidation\b", t.content, re.I)
+                                 and re.search(r"\b(?:credits?|start|go ahead)\b", t.content, re.I)
+                                 for t in (body.history or [])[-4:])
+        confirm_validation = offered_validation and (_START_REPLY.match(body.text) or _NOT_NOW.match(body.text))
+        if topic == "idea" and (_FILL_FORM.search(body.text) or confirm_validation):
             validated = await _validate_idea(user, body, known)
             if validated:
                 return _result(validated)
         if topic:
-            talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn}[topic]
+            # The free checks talk on their own pages too (the owner, 30 Oct: "they should be in a chat")
+            talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn,
+                    **{k: converse_check.turn for k in converse_check.GOALS}}[topic]
             talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
-                                **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}))
+                                **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}),
+                                **({"on_page": True} if topic == "launch" and body.page == "launch" else {}),
+                                **({"topic": topic} if topic in converse_check.GOALS else {}))
             if talked:
                 return _result(talked)
     if body.text and not body.capability and body.business_id:
@@ -1650,11 +1741,17 @@ async def agent_briefing(business_id: str, user=Depends(get_current_user)):
         pending = await summary_mod.pending_approvals(orch.rt.store, business_id, orch.rt.clock())
         # The drafts waiting too, as the Needs Approval panel beside it counts them (the owner, 26 Oct: "2 approvals waiting"
         # on the card, 4 in the panel)
-        from app.modules.agent import drafts as _drafts
-        waiting = len(_drafts.pending(await orch.rt.business.load(business_id) or {}))
+        from app.modules.agent import chat_actions as _chat, drafts as _drafts
+        data = await orch.rt.business.load(business_id) or {}
+        now = orch.rt.clock()
+        # The very list Needs Approval shows, postponed ones left out as there (QA, 30 Oct: "4 waiting" on the card, 6 in the
+        # panel, 5 in the Agent Centre)
+        later = _chat.postponed(data, user["id"], now)
+        cards = [summary_mod.approval_card(a, now) for a in pending] + [_drafts.card(d) for d in _drafts.pending(data)]
+        shown = sum(1 for c in cards if _chat.card_key(c) not in later)
     except AccessDenied as e:
         raise _denied(e)
-    return await _briefing(user, business_id, len(pending) + waiting if (actor.can_send or actor.can_prepare) else 0)
+    return await _briefing(user, business_id, shown if (actor.can_send or actor.can_prepare) else 0)
 
 
 @router.post("/agent/seen")

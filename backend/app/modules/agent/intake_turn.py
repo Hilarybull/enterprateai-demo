@@ -277,6 +277,11 @@ def acknowledgement(captured: dict, slots: dict, known: dict, currency: str | No
     box, ₦12,000 to make, about 40 a month.", "Got it: £25,000 for a van, trading, by March." """
     if not captured:
         return ""
+    if "customer_email" in captured and captured["customer_email"] in (None, ""):
+        return "No problem, I'll leave the email off the draft for now. You can add it before sending."
+    captured = {k: v for k, v in captured.items() if v not in (None, "")}
+    if not captured:
+        return ""
     order = {k: n for n, k in enumerate(slots)}
     keys = sorted(captured, key=lambda k: order.get(k, 99))
     if "worry" in keys and any((k, captured[k]) in _RISK_SAID for k in keys):

@@ -1577,7 +1577,7 @@ async def idea_validation_step(ctx):
         from app.modules.agent.research import task_currency
         p = data.get("workspace_profile") or {}
         idea["location"] = idea["location"] or ", ".join(x for x in (str(p.get("city") or "").strip(), str(p.get("country") or "").strip()) if x)
-        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or task_currency(data) or "GBP",
+        idea.update({"name": idea_name(idea["description"]), "currency": own.get("currency") or task_currency(data) or "GBP",
                      **({"country": str(p["country"]).strip()} if str(p.get("country") or "").strip() and not ctx.answers.get("location") else {})})
     else:
         idea = idea_of(data, ctx.answers)
@@ -1854,7 +1854,7 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
             return {**idea_of(data, {**ctx.answers, **answers}), "description": product, "name": product[:60], "said": said, "purpose": purpose,
                     "launch_product": True}, False
         idea = {k: str(answers.get(k) or ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
-        idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True, "purpose": purpose})
+        idea.update({"name": idea_name(idea["description"]), "currency": own.get("currency") or "GBP", "said": said, "separate": True, "purpose": purpose})
         return idea, True
     if not separate:
         # Their own words chosen over a profile that speaks of something else (G1): the writer is told so too. So is an
@@ -1868,8 +1868,18 @@ async def _idea_for(ctx, data: dict) -> tuple[dict, bool]:
         return {**mine, "said": said, "purpose": purpose, **({"profile_clash": True} if clash else {})}, False
     own = idea_of(data, {})
     idea = {k: str(ctx.answers.get(k) or "").strip() for k in ("description", "customer", "problem", "industry", "location")}
-    idea.update({"name": idea["description"][:60], "currency": own.get("currency") or "GBP", "said": said, "separate": True})
+    idea.update({"name": idea_name(idea["description"]), "currency": own.get("currency") or "GBP", "said": said, "separate": True})
     return idea, True
+
+
+def idea_name(said: str) -> str:
+    """A new idea's name from the owner's words (the owner, 30 Oct: "Business Plan for a new my corporate wears product"):
+    the opening "a new my" and a closing "product" or "service" left out, its first letter capitalised."""
+    words = " ".join(str(said or "").split())
+    core = re.sub(r"^(?:(?:a|an|the|new|my|our|this|another)\s+)+", "", words, flags=re.I)
+    core = re.sub(r"\s+(?:product|service|idea|business|offering)s?$", "", core, flags=re.I).strip(" .,")
+    core = core or words
+    return (core[:1].upper() + core[1:])[:60]
 
 
 def owner_said(ctx) -> str:

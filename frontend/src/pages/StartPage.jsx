@@ -10,6 +10,7 @@ import { trackGoal } from "../components/GoalLauncher";
 import { ButtonSpinner, LoadError, ShellSkeleton } from "../components/Skeleton";
 import { useWorkspaceStore } from "../store/workspace";
 import { detailsOf } from "../lib/agent";
+import { reviewInChat } from "../components/BusinessAssistant";
 
 // Where a task begun on the homepage carries on after sign-in (PRD-GO-001). It binds the task to
 // the account, connects the business (the one already there, or a new one), prepares the work,
@@ -20,6 +21,13 @@ import { detailsOf } from "../lib/agent";
 // page filling in, not a jump to somewhere new.
 
 /** A hand-off with nothing behind it: the task could not be started (the plan, the month's allowance, no AI Credits), so there is only the dashboard to go to. */
+// A task begun on the landing page (an invoice, a quotation, a plan) carries on in the Agent Centre's chat, never a dashboard
+// pop-up (the owner, 30 Oct: "it should be executing on the Agent Centre chat"); anything else goes where it was handed
+const inChat = (h) => {
+  if (!h?.run_id || !/^\/dashboard\b/.test(String(h.to || ""))) return h?.to || "/dashboard";
+  reviewInChat({ runId: h.run_id, message: h.ready_message || "" });
+  return "/agent";
+};
 const notStarted = (h) => Boolean(h) && (h.blocked === true || (!h.run_id && !h.subject_id && String(h.to || "/dashboard") === "/dashboard"));
 
 const STEP_ICON = {
@@ -247,7 +255,7 @@ export default function StartPage({ framed = false }) {
           if (done.handoff.run_id && !done.first_value) forgetFirstValue();      // the dashboard opens on this task, not an older result
         } catch { /* fine without it */ }
         trackGoal("dashboard_handoff_completed", { session_id: sessionId });
-        navigate(done.handoff.to, { replace: true });
+        navigate(inChat(done.handoff), { replace: true });
         return;
       }
       setProblem(done.problem || "That couldn't be prepared just now. Nothing was lost.");
@@ -309,7 +317,7 @@ export default function StartPage({ framed = false }) {
             return undefined;
           }
         } catch { /* on to the hand-off */ }
-        return navigate(attached.handoff.to, { replace: true });
+        return navigate(inChat(attached.handoff), { replace: true });
       }
       // Someone with a business already carries straight on. A new account is asked one thing: what the business is called (optional).
       const existing = attached.business_id ? { id: attached.business_id } : await apiRequestCached("/validation/me").catch(() => null);

@@ -36,6 +36,8 @@ from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient
 import logging
 
 logger = logging.getLogger(__name__)
+# What the owner reads when no AI provider answered: never provider, model or credential words (QA, 30 Oct)
+AI_UNAVAILABLE = "I couldn't write this just now because the AI service isn't available. Nothing was charged; please try again in a few minutes."
 
 
 def _safe_text(s: str | None) -> str:
@@ -1251,10 +1253,9 @@ async def _generate_section_required(
 ) -> tuple[str, str, str]:
     text, provider, model = await _generate_section(llm, prompt=prompt, label=label, warnings=warnings, feature=feature)
     if not text:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI generation failed for {error_label}. Check provider credentials and try again.",
-        )
+        # The cause for us in the log; for the owner, plain words (QA, 30 Oct: "never show this technical text to users")
+        logger.warning("AI generation failed for %s: no text from any provider", error_label)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=AI_UNAVAILABLE)
     return text, provider, model
 
 
@@ -1901,15 +1902,8 @@ async def generate_blueprint(
                     (w for w in reversed(warnings) if w.startswith(f"AI generation failed for {doc_type}_full:")),
                     None,
                 )
-                if failure_detail:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=f"{failure_detail}. Check provider credentials, model access, and try again.",
-                    )
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"LLM returned empty output for {doc_type}. Check provider credentials and try again.",
-                )
+                logger.warning("document generation for %s returned nothing: %s", doc_type, failure_detail or "empty output from every provider")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=AI_UNAVAILABLE)
             warnings.append(f"Document generation returned empty for {doc_type} — using enriched fallback.")
             for key in set(_TEMPLATE_FIELD_RE.findall(fallback_template)):
                 if not str(enriched.get(key) or "").strip():

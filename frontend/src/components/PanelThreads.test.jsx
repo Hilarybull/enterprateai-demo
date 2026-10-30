@@ -22,6 +22,8 @@ afterEach(() => { cleanup(); window.history.replaceState(null, "", "/"); try { l
 it("never restores or writes over a module's thread (1)", async () => {
   expect(isModuleThread("case-123")).toBe(true);
   expect(isModuleThread("idea-check")).toBe(true);
+  expect(isModuleThread("idea-check-mvuprk5e")).toBe(true);      // an earlier idea thread, kept when a new one began (QA, 30 Oct)
+  expect(isModuleThread("check-customers")).toBe(true);
   expect(isModuleThread("c1abc")).toBe(false);
   store.items = [{ id: "case-f1", title: "I need funding", at: recent }];
   store.chats = { "case-f1": { id: "case-f1", messages: [{ role: "user", content: "I need funding" }, { role: "assistant", content: "You're at 40/100." }] } };

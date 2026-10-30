@@ -159,7 +159,10 @@ GOALS: list[dict[str, Any]] = [
      # What it is about is asked; who buys it and the problem the Agent works out when left blank (the owner's QA, 23 Oct:
      # "agent should fill all these things, draft the business plan"), changeable in the plan's inputs afterwards
      "questions": [_f("description", "What does the business do? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text"),
-                   _f("problem", "What problem does it solve for them?", "textarea")]},
+                   _f("problem", "What problem does it solve for them?", "textarea"),
+                   # Who will read it, so it is written for them (QA F9, 30 Oct: "it doesn't ask who the plan is for")
+                   _f("purpose", "Who is the plan for?", "choice", options=[{"value": "investors", "label": "Investors"}, {"value": "a bank or lender", "label": "A bank or lender"},
+                                                                         {"value": "a grant application", "label": "A grant application"}, {"value": "my own planning", "label": "My own planning"}])]},
     # Not a homepage shortcut (asked for in words, it still prepares a proposal).
     {"key": "prepare_proposal", "mode": "quick_task", "label": "Prepare Proposal", "outcome": "A proposal ready for your approval", "shortcut": False,
      "class": DIRECT, "start": "new_proposal", "path": ["new_proposal"], "say": "I'll prepare the proposal and have it ready for you to approve. Nothing is sent until you say so.", "boundary": "",
@@ -530,8 +533,10 @@ def _extract(text: str, goal_key: str | None) -> dict[str, Any]:
     if goal_key in ("launch", "more_customers", "price_offer"):
         out.update({k: v for k, v in _launch_facts(text).items() if k in wanted or (k.endswith("_per") and k[:-4] in wanted)})
         if goal_key == "more_customers" and "channel" in wanted:
-            # "selling to local offices through Instagram": how new customers find you, as the chips say it (25 Oct)
-            ch = choice_from_words("channel", text)
+            # "selling to local offices through Instagram": how new customers find you, as the chips say it (25 Oct). Only
+            # from words about how they find you, never who they are (QA, 30 Oct: "letting agents" read as "partners")
+            how = re.search(r"\b(?:through|via|find (?:us|me)(?: on| through| via)?|come (?:from|through)|from|using|on)\b(.*)", str(text), re.I | re.S)
+            ch = choice_from_words("channel", how.group(1)) if how else None
             if ch:
                 out["channel"] = ch
         if goal_key == "launch" and ("price" in out or "cost" in out):
@@ -1793,10 +1798,11 @@ def _answers_for_task(session: dict) -> dict:
     if session.get("goal_key") not in ("create_invoice", "create_quotation"):
         return {}
     out: dict[str, Any] = {}
+    matched = session.get("matched_customer") or {}
     if a.get("customer"):
-        out["customer_id"], out["customer_name"] = "new", str(a["customer"])
-    if a.get("customer_email"):
-        out["customer_email"] = a["customer_email"]
+        out["customer_id"], out["customer_name"] = str(matched.get("customer_id") or "new"), str(a["customer"])
+    if a.get("customer_email") or matched.get("customer_email"):
+        out["customer_email"] = a.get("customer_email") or matched["customer_email"]
     elif "customer_email" in a:
         out["email_later"] = True      # "I'll add it later": the draft is made now, the address is asked for when it is sent
     if a.get("item") and isinstance(a.get("amount"), (int, float)):
@@ -2653,7 +2659,9 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
             out = await orch.submit(AgentRequest(requesting_actor_id=user_id, business_id=session["business_id"], source_channel="text",
                                                  raw_input=_request_text(session), requested_capability=capability, background=True,
                                                  params={**({"prefill": _prefill(session)} if _prefill(session) else {}),
-                                                         **({"answers": _answers_for_task(session)} if _answers_for_task(session) else {})},
+                                                         **({"answers": _answers_for_task(session)} if _answers_for_task(session) else {}),
+                                                         # who the business plan is for, as the plan task reads it
+                                                         **({"purpose": str(a["purpose"])} if session.get("goal_key") == "create_business_plan" and a.get("purpose") else {})},
                                                  source_reference=f"goal:{session['id']}", confirmed=confirmed,
                                                  essential_handoff=True), email=email)
             if out.get("kind") == "needs_confirmation":

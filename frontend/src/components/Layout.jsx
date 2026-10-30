@@ -18,6 +18,16 @@ import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
 import { accessLabel, planHasModuleAccess } from "../lib/plans";
+
+// Notifications read "27 Oct 2026" and "£216.00", never "10/27/2026" or "GBP216.00" (QA, 30 Oct)
+const noticeDay = (value) => {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+const noticeMoney = (amount, currency) => {
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(Number(amount) || 0); }
+  catch { return `${currency || ""} ${Number(amount || 0).toFixed(2)}`.trim(); }
+};
 import { TipsPrompt } from "../pages/EmailPreferencesPage";
 import { useDemoTour } from "../context/DemoTourContext";
 
@@ -1409,11 +1419,11 @@ export default function Layout() {
                                     <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">Overdue</span>
                                   </div>
                                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                                    Invoice overdue since {new Date(notif.due_date).toLocaleDateString()}
+                                    Invoice overdue since {noticeDay(notif.due_date)}
                                   </span>
                                   {notif.total_amount != null && (
                                     <span className="text-[10px] text-slate-400">
-                                      {notif.currency || ""}{Number(notif.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {noticeMoney(notif.total_amount, notif.currency)}
                                     </span>
                                   )}
                                 </>
@@ -1427,7 +1437,7 @@ export default function Layout() {
                                   {notif.items?.length > 0 && (
                                     <span className="w-full truncate text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
                                   )}
-                                  <span className="text-[10px] text-slate-400">{notif.created_at ? new Date(notif.created_at).toLocaleDateString() : ""}</span>
+                                  <span className="text-[10px] text-slate-400">{notif.created_at ? noticeDay(notif.created_at) : ""}</span>
                                 </>
                               ) : (
                                 <>
@@ -1436,7 +1446,7 @@ export default function Layout() {
                                     <span className="shrink-0 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">Proposal</span>
                                   </div>
                                   <span className="text-[11px] text-slate-500 dark:text-slate-400">{notif.request_title || notif.title || "General Proposal"}</span>
-                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? new Date(notif.submitted_at).toLocaleDateString() : ""}</span>
+                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? noticeDay(notif.submitted_at) : ""}</span>
                                 </>
                               )}
                             </button>

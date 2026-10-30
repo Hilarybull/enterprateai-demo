@@ -1,5 +1,5 @@
 // The owner's mockups, 27 Oct ("exactly like the mockups"): the Assistant tab's conversation and its cards.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -106,6 +106,37 @@ it("edits a list draft in place, never on another tab, and approves the edited r
   expect(onField).toHaveBeenCalledWith("control.milestones", [{ ...rows[0], outcome: "Soap launched" }]);
 });
 
+it("shows a spinner while approved drafts save and check, and says plainly when the save fails", async () => {
+  const onField = vi.fn();
+  const view = (props) => <MemoryRouter initialEntries={["/funding/c1?tab=assistant&review=1"]}><CaseAssistant businessId="b1" feature="funding" subject={withDrafts} steps={[]} onTab={() => {}} onField={onField} score={40} checking={false} {...props} /></MemoryRouter>;
+  const { rerender } = render(view({ saveState: { state: "saved" } }));
+  await screen.findByText("Review enriched information");
+  fireEvent.click(screen.getByRole("button", { name: "✓ Approve all" }));
+  expect(await screen.findByText("Saving your answers…", {}, { timeout: 100 }).catch(() => screen.findByText("Running your check…"))).toBeTruthy();
+  rerender(view({ saveState: { state: "saving" } }));
+  expect(await screen.findByText("Saving your answers…")).toBeTruthy();
+  rerender(view({ saveState: { state: "error", message: "Some answers need correcting before they can be saved." } }));
+  await waitFor(() => expect(document.body.textContent).toMatch(/I couldn.t save those to your case:\s*Some answers need correcting before they can be saved\. Next step: open Inputs/));
+  expect(document.querySelector('[data-card="rechecking"]')).toBeNull();
+});
+
+it("a price said has Start and Not now, and go ahead starts that task with its price confirmed (the owner, 30 Oct)", async () => {
+  replies.push({ kind: "needs_confirmation", capability: "idea_validation", params: { idea: "phone repair kiosk" }, price: 25,
+    message: "I'll validate your idea. It costs 25 credits, and you have 341." });
+  replies.push({ kind: "answer", message: "Your idea validation is under way.", actions: [] });
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={subject} steps={[]} score={40} onTab={() => {}} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Test my idea: a phone repair kiosk" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText(/It costs 25 credits/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Not now" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "go ahead" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Your idea validation is under way.")).toBeTruthy();
+  expect(submitAgentRequest).toHaveBeenLastCalledWith(expect.objectContaining({ capability: "idea_validation", params: { idea: "phone repair kiosk" }, confirmed: true }));
+});
+
 it("lists approvals waiting and sends one only on Approve send", async () => {
   apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "none" }, working: false,
     approvals: { count: 1, items: [{ approval_id: "a1", run_id: "r1", kind: "payment", title: "Payment follow-up draft", subtitle: "For Northbridge Solutions", age: "2h" }] } }));
@@ -141,7 +172,7 @@ it("tests an idea like the mockups: inputs, viability, launch fit, the risk, and
   replies.push({ kind: "answer", message: "Let me check what I already know about your business first.", actions: [], cards: [{ type: "idea_inputs", case_id: "idea" }, { type: "viability", case_id: "idea" }] },
     { kind: "answer", message: "Your offer is strong, but test it first.", actions: [], cards: [{ type: "launch_fit", case_id: "idea" }, { type: "risk", case_id: "idea" }] },
     { kind: "answer", message: "I can research it for you.", actions: [], cards: [{ type: "choose", case_id: "idea" }] });
-  const onResearch = vi.fn(async () => ({}));
+  const onResearch = vi.fn(async () => ({ completed: true, run: "r1", message: "Done. I found 3 things for your idea (60 credits)." }));
   const subject = ideaSubject(idea);
   render(<MemoryRouter><CaseAssistant businessId="b1" feature="idea" subject={subject} score={62} onTab={() => {}} onResearch={onResearch} /></MemoryRouter>);
   expect(await screen.findByText("Viability Snapshot")).toBeTruthy();
@@ -162,7 +193,11 @@ it("tests an idea like the mockups: inputs, viability, launch fit, the risk, and
   await waitFor(() => expect(document.querySelector('[data-card="choose"]')).toBeTruthy());
   fireEvent.click(screen.getByRole("button", { name: "Start · up to 60 credits" }));
   await waitFor(() => expect(onResearch).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText(/Understood. I'll research comparable services/)).toBeTruthy();
+  // One line and where to go on this page, never Agent tasks (QA, 30 Oct)
+  expect(await screen.findByText("Done. I found 3 things for your idea (60 credits).")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Review findings" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "See your result" })).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/Agent tasks/);
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });
 
@@ -234,7 +269,9 @@ it("a message for another module is taken to its page and never kept in this thr
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(at).toBe("/funding/f9?tab=assistant&message=I%20need%20funding%20for%20this"));
   expect(submitAgentRequest).toHaveBeenLastCalledWith({ businessId: "b1", text: "I need funding for this", page: "idea" });
-  expect(saveChat.mock.calls.slice(saves).filter(([, id]) => id === "idea-check")).toEqual([]);      // nothing kept in the idea's thread
+  // Nothing kept in the idea's thread: what was said is saved at once (QA F4, 30 Oct), then taken out when it goes elsewhere
+  const own = saveChat.mock.calls.slice(saves).filter(([, id]) => id === "idea-check");
+  expect(own.at(-1)?.[2] || []).not.toContainEqual(expect.objectContaining({ content: "I need funding for this" }));
 });
 
 it("keeps each page's chat to its own topic: a launch exchange and a launch score are left out of the idea's", async () => {
@@ -387,4 +424,25 @@ it("Enter information myself opens the idea's details in the chat, never another
   fireEvent.click(await screen.findByRole("button", { name: "Enter it myself" }));
   await waitFor(() => expect(document.querySelector('[data-card="idea_form"]')).toBeTruthy());
   expect(onTab).not.toHaveBeenCalledWith("assessment");
+});
+
+it("no greeting beside a message being answered, and what's typed meanwhile is sent after, never dropped (the owner, 30 Oct)", async () => {
+  const { ideaSubject } = await import("./CaseAssistant");
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme" }, records: [], activity: [], approvals: { count: 0, items: [] }, research: { state: "none" }, working: false,
+    idea: { answers: {}, inputs: [], criteria: [], strengths: [], weaknesses: [], partial_score: 14, viability: null } }));
+  let release;
+  submitAgentRequest.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+  replies.push({ kind: "answer", message: "Reply two", actions: [] });
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="idea" subject={ideaSubject({ partial_score: 14 })} score={14} onTab={() => {}} /></MemoryRouter>);
+  await screen.findByText("Acme");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "i want to validate an idea" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await screen.findByText("Thinking…");
+  expect(screen.queryByText(/Tell me what you need/)).toBeNull();
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "it's for offices" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("Sending after my reply…")).toBeTruthy();
+  await act(async () => { release({ kind: "answer", message: "Reply one", actions: [] }); });
+  expect(await screen.findByText("Reply two")).toBeTruthy();
+  expect(submitAgentRequest).toHaveBeenLastCalledWith(expect.objectContaining({ text: "it's for offices" }));
 });

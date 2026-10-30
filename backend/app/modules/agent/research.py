@@ -836,6 +836,11 @@ def inputs_of(goal: str, answers: dict, data: dict | None, today: date | None = 
     who = str(p.get("contact_name") or p.get("owner_name") or data.get("_owner_name") or "").strip()
     take("launch_owner", who or None, "From your business profile" if p.get("contact_name") or p.get("owner_name") else "You, as the owner")
     team = num(p.get("employee_count"))
+    # The profile's size wins over an older saved answer (QA, 30 Oct: "Team: 22 people" beside a 2-5 profile); only
+    # a size said in this check comes first.
+    if (team or p.get("company_size")) and origin.get("team_size") != "your answer":
+        out.pop("team_size", None)
+        origin.pop("team_size", None)
     if team:
         take("team_size", team, "From your business profile")
     elif p.get("company_size"):
@@ -1477,7 +1482,11 @@ _DRAFT_SYSTEM_LAUNCH = ("You fill in a small business's plan to launch one offer
                         "price that FACTS don't give: return null for it, so the owner is asked. Never mention FACTS. Numbers are whole numbers "
                         "in the plan's currency. Write only about this offering, never about another one or about funding. Fill every "
                         "field you can; return null only when nothing sensible can be said. The offering is FACTS.plan.name when "
-                        "given: every draft is about it, never the profile's other services. Reply with JSON only: "
+                        "given: every draft is about it, never the profile's other services. The profile describes the business's "
+                        "main offering: use its customers, problem and tagline only when FACTS.plan.name is that offering; for a "
+                        "different offering, work out who it is for and what it promises from the plan itself. Never suggest "
+                        "registering as a legal form the business is not (a limited company is never told to register as a sole "
+                        "trader). Team sizes come from FACTS.profile only. Reply with JSON only: "
                         "{\"fields\": {\"<key>\": \"<text or null>\"}}.")
 
 
@@ -1489,7 +1498,8 @@ def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, fou
     keep = ("company_name", "business_name", "about_company", "business_description", "description", "what_we_do", "services", "industry", "primary_industry",
             "city", "country", "location", "target_customer", "target_customer_type", "ideal_customer", "target_market", "problem", "problem_solved",
             "usp", "unique_selling_point", "value_proposition", "differentiation", "competitors", "main_competitors", "marketing_channels",
-            "acquisition_channels", "channels", "employee_count", "company_size", "business_stage", "operating_stage", "founder_name", "owner_name")
+            "acquisition_channels", "channels", "employee_count", "company_size", "business_stage", "operating_stage", "founder_name", "owner_name",
+            "legal_structure", "company_type", "business_type")      # its legal form: never a draft for another one (QA, 30 Oct)
     profile = {k: wp.get(k) for k in keep if wp.get(k) not in (None, "", [], {})}
     products = [{k: p.get(k) for k in ("name", "type", "description", "base_price", "currency") if p.get(k) not in (None, "")}
                 for p in ((data.get("catalogue") or {}).get("products") or []) if isinstance(p, dict) and not p.get("archived")][:10]
@@ -1536,7 +1546,7 @@ async def draft_case_fields(llm, goal: str, facts: dict, only: dict | None = Non
     fields = only if only else (CASE_DRAFT_FIELDS.get(goal) or {})
     if goal == "launch":
         facts = {**facts, "today": _now().date().isoformat()}      # the launch date and milestones are drafted from it
-    out = await _draft_once(llm, goal, facts, fields)
+    out = await (_batched(llm, goal, facts, fields) if goal == "launch" else _draft_once(llm, goal, facts, fields))
     missing = {k: v for k, v in fields.items() if k in PROPOSALS and k not in out}
     if missing and llm is not None and goal == "need_funding":
         out.update(await _draft_once(llm, goal, facts, missing, extra=_PROPOSE_AGAIN))
@@ -1596,7 +1606,22 @@ _ESTIMATE = (" The owner asked you to fill every field. Where FACTS give no figu
 async def draft_estimates(llm, goal: str, facts: dict, only: dict) -> dict[str, str]:
     """The fields still blank, drafted with estimates where the records give no figure (the owner, 29 Oct: "fill them and bring
     for review"): every one waits as a draft, said to be an estimate."""
-    return await _draft_once(llm, goal, facts, only, extra=_ESTIMATE, estimate=True)
+    return await _batched(llm, goal, facts, only, extra=_ESTIMATE, estimate=True)
+
+
+DRAFT_BATCH = 6
+
+
+async def _batched(llm, goal: str, facts: dict, fields: dict, extra: str = "", estimate: bool = False) -> dict:
+    """A few fields per reply, all at once: one long reply was cut off, so each press drafted only one more field (the owner,
+    30 Oct: "why is the agent attending to this one by one when I click Draft the rest")."""
+    items = list((fields or {}).items())
+    parts = [dict(items[i:i + DRAFT_BATCH]) for i in range(0, len(items), DRAFT_BATCH)]
+    out: dict = {}
+    for got in await asyncio.gather(*(_draft_once(llm, goal, facts, p, extra=extra, estimate=estimate) for p in parts), return_exceptions=True):
+        if isinstance(got, dict):
+            out.update(got)
+    return out
 
 
 async def _draft_once(llm, goal: str, facts: dict, fields: dict, extra: str = "", estimate: bool = False) -> dict[str, str]:
@@ -2438,6 +2463,20 @@ async def start(orch, *, user: dict, business_id: str, goal: str, answers: dict,
         items.append(_question(t["criterion"], "found_nothing", t["label"], used_for=t.get("used_for"), tag=COULD_NOT_FIND,
                                question=f"{why} Do you know? ({t['label'][:1].lower() + t['label'][1:]})", field=t["topic"]))
     all_items = found + reused + calculated + input_questions + items
+    # One row per figure already known (QA, 30 Oct: "Cash now" twice, from the forecast and from the financial gap):
+    # the other gap it answers is kept on that one row.
+    seen: dict[str, dict] = {}
+    kept_items = []
+    for x in all_items:
+        first = seen.get(x.get("field")) if x.get("kind") == REUSED and x.get("field") else None
+        if first is not None:
+            if x["criterion"] != first["criterion"]:
+                first.setdefault("also", []).append(x["criterion"])
+            continue
+        if x.get("kind") == REUSED and x.get("field"):
+            seen[x["field"]] = x
+        kept_items.append(x)
+    all_items = kept_items
     # A calculation that couldn't be made (its figures are asked for under another gap): those questions answer this gap too.
     covered_now = {c for x in all_items for c in [x["criterion"], *(x.get("also") or [])]}
     for k in waiting:

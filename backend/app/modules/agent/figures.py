@@ -55,6 +55,7 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
         from app.modules.agent import research
         paid = research.paid_invoices(data, today)
         first = min((d for _i, d, _v in paid), default=None)
+        out["revenue_all_time"] = round(sum(v for _i, _d, v in paid), 2) if paid else None      # said as it is while too few months to average
         recent = [v for _i, d, v in paid if d >= since]
         if recent:
             months = months_on_record(first, today)

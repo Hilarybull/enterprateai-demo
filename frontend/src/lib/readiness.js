@@ -118,6 +118,11 @@ export function readinessError(e, fallback = "Something went wrong. Please try a
   return { message: fallback, errors: {}, status: e?.status };
 }
 
+/** Ready as the owner reads it: the check's own verdict, or a score of 75 or more with no must-have failed (QA, 30 Oct:
+ *  95/100 beside "Not ready yet" while a check was still not known). */
+export const READY_AT = 75;
+export const isReady = (sm) => Boolean(sm) && (sm.classification === "ready"
+  || (typeof sm.score === "number" && sm.score >= READY_AT && !(sm.blocker_count > 0) && !(sm.blockers || []).length));
 export const getPath = (obj, path) => path.split(".").reduce((cur, k) => (cur && typeof cur === "object" ? cur[k] : undefined), obj);
 export function setPath(obj, path, value) {
   const keys = path.split(".");

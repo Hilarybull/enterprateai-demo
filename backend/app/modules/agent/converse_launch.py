@@ -75,13 +75,27 @@ async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict,
     from_records = {k: v for k, v in ops["drafts"].items() if k not in waiting and k not in rejected}
     records_line = operations_evidence.said(ops)
     review = f"/launch/{plan['id']}?tab=assistant&review=1"
+    waiting = {p: x for p, x in waiting.items() if isinstance(x, dict) and str(x.get("value")) != str(engine.get(d, p))}      # as the page counts them
+    summary = plan.get("summary") or {}
+    open_actions = summary.get("open_actions")
+    next_action = (summary.get("next_action") or {}).get("title")
+    if isinstance(open_actions, int) and open_actions > 0:
+        checklist_line = f"After that, {open_actions} checklist item{'s' if open_actions != 1 else ''} still need attention"
+        if next_action:
+            checklist_line += f", starting with {str(next_action).rstrip('.')}"
+        checklist_line += ". I'll show them below so we can work through them."
+    else:
+        checklist_line = "I'll show the remaining checklist steps below so we can work through them."
+    steps = [{"type": "steps", "case_id": str(plan["id"])}]
     if not blank and not from_records:
-        # Always the next step, never only what was done (the owner, 30 Oct: "we are assuming the user is clueless about the
-        # next steps")
-        nxt = (f"Next step: review the {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting and approve what's right. Your score goes up as you approve."
-               if waiting else f"Next step: {str(((plan.get('summary') or {}).get('next_action') or {}).get('title') or 'check the Checklist for what is left').rstrip('.')}.")
-        return await _said(orch, user, business_id, text, " ".join(x for x in ("Everything I can draft is already filled in.", records_line, nxt) if x),
-                           [{"label": f"Review drafts ({len(waiting)})", "to": review}] if waiting else [], now, topic=TOPIC, keep=keep)
+        # Separate "nothing else can be drafted" from "the plan is complete" and put the live checklist actions in the chat.
+        say = " ".join(x for x in (
+            "I can't draft the remaining items from the records I have.", records_line,
+            f"First, review the {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting and approve what's right." if waiting else "",
+            checklist_line,
+        ) if x)
+        actions = [{"label": f"Review drafts ({len(waiting)})", "to": review}] if waiting else []
+        return await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, keep=keep, cards=steps)
     drafted = {}
     if blank:
         facts = research.workspace_facts(data, {}, {"offering": d.get("name"), "customer": d.get("audience"), "where": d.get("geography")}, [])
@@ -89,20 +103,26 @@ async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict,
         facts["today"] = now.date().isoformat()      # the launch date and milestones are drafted from it
         drafted = await research.draft_estimates(research._default_llm(user["id"]), "launch", facts, blank)
     if not drafted and not from_records:
-        return await _said(orch, user, business_id, text, "I couldn't draft those just now. Nothing was changed; please try again.", [], now, topic=TOPIC, keep=keep)
+        return await _said(orch, user, business_id, text,
+                           "I couldn't prepare those drafts just now, so nothing was changed. " + checklist_line,
+                           [], now, topic=TOPIC, keep=keep, cards=steps)
     at = now.date().isoformat()
     place = d.get("geography") or "your area"
     new = {k: {"value": v, "source": f"an estimate by the Agent, typical for {place}; check it before you approve", "at": at,
                **({"replaces": engine.get(d, k)} if not engine.blank(engine.get(d, k)) else {})} for k, v in drafted.items()}
     new.update(from_records)
     row = await svc.store.get("subjects", plan["id"])      # evidence was just attached: its latest revision
-    await svc.update_subject(user["id"], business_id, rules.LAUNCH, plan["id"], row["revision"], {"agent_drafts": {**waiting, **new}}, user.get("email"))
+    saved = await svc.update_subject(user["id"], business_id, rules.LAUNCH, plan["id"], row["revision"], {"agent_drafts": {**waiting, **new}}, user.get("email"))
     n = len(new)
-    total = len(waiting) + n
+    # Count the saved drafts, using the same pending-draft rule as the review UI. Counting the local proposal here can
+    # disagree with the banner after the service normalizes or drops a draft that no longer changes its field.
+    from app.modules.agent import draft_review
+    total = len(draft_review.waiting((saved or {}).get("data") or {}))
     return await _said(orch, user, business_id, text, " ".join(x for x in (
-        f"I've drafted {n} more field{'s' if n != 1 else ''}, with estimates where your records have no figure.", records_line,
-        f"Next step: review the {total} draft{'s' if total != 1 else ''}, edit anything that's off and approve. Nothing is on your plan until you do, and your score goes up as you approve.") if x),
-                       [{"label": f"Review drafts ({total})", "to": review}], now, topic=TOPIC, keep=keep)
+        f"I've added {n} new draft{'s' if n != 1 else ''}, with estimates where your records have no figure.", records_line,
+        f"There {'are' if total != 1 else 'is'} {total} draft{'s' if total != 1 else ''} waiting for your review. Edit anything that's off and approve; nothing goes on your plan until then, and your score goes up as you approve.",
+        checklist_line) if x),
+                       [{"label": f"Review drafts ({total})", "to": review}], now, topic=TOPIC, keep=keep, cards=steps)
 
 
 def wants_launch(text: str) -> bool:
@@ -187,12 +207,70 @@ def _fields(change: dict, before: dict) -> dict:
     return out
 
 
+def _typed_change(text: str, now: datetime) -> dict:
+    """Ground launch fields in a short message when the conversational model is unavailable."""
+    t = str(text or "")
+    out: dict = {}
+    name = re.search(r"\b(?:launch|sell|offer)\s+(?:a|an|the|my)?\s*(.{2,120}?)(?=\s+(?:for|to|in|at|by|on)\b|[,;.?!]|$)", t, re.I)
+    if name:
+        value = re.sub(r"^(?:a|an|the|my)\s+", "", name.group(1).strip(), flags=re.I)
+        if value:
+            out["name"] = value
+    audience = re.search(r"\bfor\s+(?:the\s+)?(offices?|office workers|businesses|families|students|[\w -]{2,60}?)(?=\s+(?:in|at|by|on|for)\b|[,;.?!]|$)", t, re.I)
+    if audience:
+        out["audience"] = audience.group(1).strip()
+    place = re.search(r"\bin\s+([A-Z][\w -]{1,50}?)(?=\s+(?:in|at|by|on|for)\b|[,;.?!]|$)", t)
+    if place and not re.fullmatch(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?", place.group(1).strip(), re.I):
+        out["geography"] = place.group(1).strip()
+    amount = next((m for m in re.finditer(r"(?:[£$€₦]\s*)?(\d[\d,]*(?:\.\d+)?)\s*(k|m)?\b", t, re.I)
+                  if re.search(r"\b(?:at|for)\s+[£$€₦]?\s*" + re.escape(m.group(1)), t, re.I)), None)
+    if amount:
+        n = float(amount.group(1).replace(",", "")) * ({"k": 1000, "m": 1_000_000}.get((amount.group(2) or "").lower(), 1))
+        out["price"] = n
+    month = re.search(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b(?:\s+(20\d\d))?", t, re.I)
+    if month:
+        import calendar
+        months = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+        year = int(month.group(2) or now.year)
+        mi = months[month.group(1).lower()]
+        if not month.group(2) and (year, mi) < (now.year, now.month):
+            year += 1
+        out["target_date"] = f"{year:04d}-{mi:02d}-01"
+    return clean_change(out)
+
+
+_NEW_PLAN = re.compile(r"\b(?:new|another|second|start(?:ing)?)\b.{0,25}\b(?:launch|plan|product|service)\b|\blaunch (?:a |an )?new\b", re.I)
+_NO_NAME = re.compile(r"(?:a\s+|an\s+)?(?:new\s+)?(?:launch\s+)?(?:product|service|product or service|plan|readiness|launch plan)s?", re.I)
+
+
+def _typed_reply(text: str, now: datetime, on: str | None, by_id: dict, typed: dict | None = None) -> dict | None:
+    """No model reply: the launch details typed, as the model's reply would carry them, asking for the next one missing
+    (QA F3, 30 Oct). None when nothing was typed to read: the scripted chat answers that."""
+    from app.modules.readiness.service import _vague
+    typed = dict(typed) if typed is not None else _typed_change(text, now)
+    if typed.get("name") and (_vague(typed["name"]) or re.fullmatch(r"(?:new\s+)?(?:launch\s+)?(?:readiness|plan|check)s?", typed["name"], re.I)):
+        typed.pop("name")      # "new launch readiness" names no offering (the dashboard's "start a launch plan")
+    if not typed:
+        return None
+    known = ((by_id.get(str(on)) if on else None) or {}).get("data") or {}
+    combined = {**known, **_fields(typed, known)}
+    missing = next((ask for ask, present in (
+        ("what you're launching", combined.get("name")),
+        ("who you want to reach", (combined.get("customers") or {}).get("target_segment") or combined.get("audience")),
+        ("where you want to launch", combined.get("geography")),
+        ("when you want to launch", combined.get("target_date")),
+        ("what you'll charge", (combined.get("offer") or {}).get("price")),
+        ("what each sale costs you to deliver", (combined.get("economics") or {}).get("variable_cost_per_unit"))) if not present), None)
+    say = f"Got those details. Before I finish the launch plan, tell me {missing}." if missing else "I've picked up the launch details you gave me."
+    return {"say": say, "change": typed, "plan": "new" if typed.get("name") and not on else (on or ""), "check": True}
+
+
 _PATHS = {"name": "name", "audience": "audience", "geography": "geography", "target_date": "target_date", "price": "offer.price",
           "cost": "economics.variable_cost_per_unit"}
 
 
 async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: datetime | None = None, history: list[dict] | None = None,
-               plan_id: str | None = None) -> dict | None:
+               plan_id: str | None = None, on_page: bool = False) -> dict | None:
     """One message in the launch conversation: {"kind": "answer", "message", "actions"}; None when there is no model or it
     can't answer (the scripted launch chat then carries on, as before)."""
     from app.modules.agent.router import _subjects_with_summary
@@ -202,8 +280,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if llm is None:
         from app.modules.agent import research
         llm = research._default_llm(user["id"])
-    if llm is None:
-        return None
+    no_model = llm is None      # what was typed is still read (QA F3); a question with nothing typed goes to the scripted chat
     try:
         plans = (await _subjects_with_summary(user, business_id, "launch"))[:MAX_PLANS]
     except Exception:      # noqa: BLE001 - no access or no module: the scripted chat answers
@@ -232,17 +309,37 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         if researched:
             return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
         return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep)
+    # A new launch plan asked for without saying what: asked once, and the answer is its name, so the plan is made (QA,
+    # 30 Oct: "a new plan" and Start a launch plan looped on the plan list and never made one)
+    from app.modules.readiness.service import _vague
+    said_name = _typed_change(text, now).get("name")
+    if on_page and _NEW_PLAN.search(str(text)) and (not said_name or _vague(said_name) or _NO_NAME.fullmatch(said_name)):
+        return await _said(orch, user, business_id, text, "What are you launching? A few words is enough, for example \"window cleaning for offices\".",
+                           [], now, topic=TOPIC, keep={"new_plan": True})
+    forced = None
+    if mine.get("new_plan") and not str(text).strip().endswith("?"):
+        typed = _typed_change(text, now)
+        if not typed.get("name"):
+            said = re.sub(r"^(?:it'?s|i'?m launching|launching|a|an|the)\s+", "", str(text).strip(), flags=re.I)
+            typed = clean_change({**typed, "name": re.split(r"\s+(?:for|in|at|by)\s+", said, maxsplit=1)[0]})      # "for offices" is who, not what
+        forced = _typed_reply(text, now, None, by_id, typed=typed)
     view = [_plan_view(p) for p in plans]
     from app.modules.agent import draft_review
     waiting = await approvals_waiting(orch, business_id)
     prompt = json.dumps({"PLANS": view, "ON": on, "DRAFTS": draft_review.view(rules.LAUNCH, (by_id[on].get("data") or {})) if on else [], "WAITING": waiting, "research": _research.research_state(data, "launch") if plans else None, "TURNS": turns,
                          "MESSAGE": str(text)[:2000]}, ensure_ascii=False, default=str)
-    try:
-        res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
-    except Exception:      # noqa: BLE001 - the scripted chat answers instead
-        logger.info("launch conversation: no model reply", exc_info=True)
-        return None
-    got = _parse(getattr(res, "text", "") or "")
+    got = forced
+    if got is None and not no_model:
+        try:
+            res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
+            got = _parse(getattr(res, "text", "") or "")
+        except Exception:      # noqa: BLE001 - what was typed is still read below
+            logger.info("launch conversation: no model reply", exc_info=True)
+    if got is None:
+        got = _typed_reply(text, now, on, by_id)
+        # Only a launch named or a plan open: "starting a dog grooming van in Leeds" is an idea, the scripted chat's to answer
+        if got is None or (not on and not (got.get("change") or {}).get("name")):
+            return None      # nothing typed to read: the scripted launch chat answers, as before
     if asks_gaps(text):
         got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result"]
     say = " ".join(str(got.get("say") or "").split())
@@ -267,7 +364,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     stamp = {_PATHS[k]: f"From you, {now.day} {now.strftime('%b')}" for k in change}
     try:
         if change and (new or not plans) and change.get("name"):
-            payload = {"scope": "commercial", "pinned": not plans, **_fields(change, {})}
+            # The newest plan is the one the dashboard shows (QA, 30 Oct: the old carpet plan stayed pinned): pinned like the
+            # landing chat's, the newest pinned first
+            payload = {"scope": "commercial", "pinned": True, **_fields(change, {})}
             made = await svc.create_subject(user["id"], business_id, rules.LAUNCH, payload, user.get("email"), provenance=stamp)
             plan = {"id": made["id"], "title": payload["name"]}
             done.append("created")

@@ -1032,8 +1032,13 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
       && (question.key === activeQuestion.key || given(question))).map((question) => [question.key, nextValues[question.key]]));
     if (currency && currency !== session.currency) answers.currency = currency;
     if (writtenIn && writtenIn !== (currency || session.currency || "GBP")) answers.currency_said = writtenIn;
-    const chipWords = !asTyped ? [...(activeQuestion.options || []), ...(activeQuestion.chips || [])].find((o) => String(o.value) === String(nextValue))?.label
-      || (nextValue === "unknown" ? activeQuestion.unsure || "Not sure" : "") : "";
+    const chips = [...(activeQuestion.options || []), ...(activeQuestion.chips || [])];
+    const wordOf = (v) => chips.find((o) => String(o.value) === String(v))?.label;
+    // Several picked ("word_of_mouth,search"): each chip's own words, so the answer stays in the conversation (QA, 30 Oct:
+    // the transcript lost a multi-select answer)
+    const picks = activeQuestion.multi ? String(nextValue ?? "").split(",").map(wordOf).filter(Boolean) : [];
+    const chipWords = !asTyped ? (picks.length ? (picks.length > 1 ? `${picks.slice(0, -1).join(", ")} and ${picks[picks.length - 1]}` : picks[0])
+      : wordOf(nextValue) || (nextValue === "unknown" ? activeQuestion.unsure || "Not sure" : "")) : "";
     setDraftValue("");      // cleared on send, whatever was sent (the owner's brief, 20 Oct)
     // Every answer, typed or picked, is read first: the card moves on to the next question only once the server has kept it
     // (the owner's QA, 21 Oct: a picked answer showed the next question while it was still "Working…").
@@ -1452,7 +1457,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
 
         {/* Always in reach, however long the card: the one next step, and the way out. */}
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-b-2xl border-t border-slate-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-task-footer>
-          {askingNow && currentQuestion ? (
+          {askingNow && currentQuestion && !currentQuestion.multi ? (
             <div className="flex w-full items-center gap-2" data-composer>
               {currentQuestion.prefix
                 ? <span className="min-w-0 flex-1"><MoneyInput aria-label={currentQuestion.label} value={draftValue} currency={shownCurrency} onChange={setDraftValue} className={`${inputCls} w-full`} /></span>

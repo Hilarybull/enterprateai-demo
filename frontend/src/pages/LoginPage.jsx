@@ -328,7 +328,7 @@ export default function LoginPage() {
     return (
       <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-50 px-4">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xl">
-          <img src={logoUrl} alt="EnterprateAI" className="mx-auto mb-6 h-7 w-auto object-contain" />
+          <Link to="/" aria-label="EnterprateAI home" className="mx-auto mb-6 block w-fit"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain" /></Link>
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
             <svg className="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -382,7 +382,7 @@ export default function LoginPage() {
       <div className="lg-grid">
         <section className="lg-left">
           <div className="lg-left-head">
-            <img src={authLogoUrl} alt="EnterprateAI" className="lg-left-logo" />
+            <Link to="/" aria-label="EnterprateAI home" style={{ pointerEvents: "auto" }}><img src={authLogoUrl} alt="EnterprateAI" className="lg-left-logo" /></Link>
             <div className="lg-pill">
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="lg-pill-icon">
                 <rect x="2.4" y="10.5" width="3.6" height="7" rx="1.6" fill="currentColor" />
@@ -450,7 +450,7 @@ export default function LoginPage() {
           </div>
 
           <div className="lg-card">
-            <img src={authLogoUrl} alt="EnterprateAI" className="lg-card-logo" />
+            <Link to="/" aria-label="EnterprateAI home" style={{ display: "block" }}><img src={authLogoUrl} alt="EnterprateAI" className="lg-card-logo" /></Link>
             {claiming && (
               <p role="status" className="mb-3 rounded-xl bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800">
                 You are claiming: {claiming.name}

@@ -459,6 +459,7 @@ export default function AgentCentrePage() {
   // The business, its risk and activity, and where each case and check stands: for the chat and the column beside it
   const [ctx, setCtx] = useState(null);
   const [work, setWork] = useState([]);
+  const [workTick, setWorkTick] = useState(0);      // read again after each reply, so the cards show the case as it is now
   useEffect(() => {
     if (!workspaceId) return;
     let live = true;
@@ -467,22 +468,26 @@ export default function AgentCentrePage() {
       read(`/businesses/${workspaceId}/launch-initiatives`), read(`/businesses/${workspaceId}/agent/assistant-context?kind=idea&case_id=idea`)]).then(([c, f, l, i]) => {
       if (!live) return;
       setCtx(c || {});      // read, even when it couldn't be: never a skeleton for ever
-      const open = (list) => (list?.items || []).filter((x) => !["archived", "cancelled"].includes(x.status));
+      // The newest open case first, never an older one the list happens to start with (the owner, 30 Oct: the van case's
+      // 95/100 shown while the equipment case was the one being worked on)
+      const at = (x) => String(x.updated_at || x.created_at || "");
+      const open = (list) => (list?.items || []).filter((x) => !["archived", "cancelled"].includes(x.status)).sort((a, b) => (at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0));
       const things = (n) => (n ? ` ${n} thing${n === 1 ? "" : "s"} to do.` : "");
       const out = [];
       const fc = open(f)[0];
-      if (fc) out.push({ key: "funding", kind: "funding", title: "Funding readiness", score: fc.summary?.score ?? null, detail: `${fc.title || "Your funding case"}.${things(fc.summary?.open_actions)}`, to: `/funding/${fc.id}?tab=assistant` });
+      if (fc) out.push({ key: "funding", id: fc.id, kind: "funding", title: "Funding readiness", score: fc.summary?.score ?? null,
+        detail: `${fc.title || "Your funding case"}.${fc.summary?.next_action?.title ? ` Next: ${fc.summary.next_action.title}.` : things(fc.summary?.open_actions)}`, to: `/funding/${fc.id}?tab=assistant` });
       const idea = i?.idea;
       if (idea && Object.keys(idea.answers || {}).length) {
         const sc = typeof idea.score_out_of_100 === "number" ? idea.score_out_of_100 : idea.partial_score;
         out.push({ key: "idea", kind: "idea", title: "Idea validation", score: sc ?? null, detail: `${idea.answers.description || "Your idea"}.${idea.weaknesses?.[0] ? ` ${idea.weaknesses[0]}.` : ""}`, to: "/check/idea?tab=assistant" });
       }
       const lp = open(l)[0];
-      if (lp) out.push({ key: "launch", kind: "launch", title: "Launch readiness", score: lp.summary?.score ?? null, detail: `${lp.title || "Your launch"}.${lp.summary?.next_action?.title ? ` ${lp.summary.next_action.title}` : things(lp.summary?.open_actions)}`, to: `/launch/${lp.id}?tab=assistant` });
+      if (lp) out.push({ key: "launch", id: lp.id, kind: "launch", title: "Launch readiness", score: lp.summary?.score ?? null, detail: `${lp.title || "Your launch"}.${lp.summary?.next_action?.title ? ` Next: ${lp.summary.next_action.title}.` : things(lp.summary?.open_actions)}`, to: `/launch/${lp.id}?tab=assistant` });
       setWork(out.map((w) => ({ ...w, score: typeof w.score === "number" ? Math.round(w.score) : null })));
     });
     return () => { live = false; };
-  }, [workspaceId]);
+  }, [workspaceId, workTick]);
   // One number for what is waiting (the owner, 27 Oct: "Five things", "5 waiting" and a tab saying 6): the summary's, as the
   // dashboard's Needs Approval reads it, for the greeting, the card and the tab
   const waiting = summary ? { count: summary.needs_approval_count || 0, items: summary.needs_approval || [] } : null;
@@ -609,7 +614,7 @@ export default function AgentCentrePage() {
       {error && <p role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13.5px] text-rose-700">{error}</p>}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]" data-agent-centre>
-        {workspaceId && <AgentChat ctx={ctx} work={work} waiting={waiting} onWaitingChanged={load} />}
+        {workspaceId && <AgentChat ctx={ctx} work={work} waiting={waiting} onWaitingChanged={() => { load(); setWorkTick((t) => t + 1); }} />}
         {/* one tab open: its list takes the column's height and scrolls inside it */}
         <aside className={`hidden min-h-0 min-w-0 xl:block ${listOpen ? "xl:flex xl:flex-col" : "space-y-4 overflow-y-auto pr-0.5"}`} aria-label="Tasks">{panel}{listOpen ? null : side}</aside>
         {viewing === "profile" && <ProfileSheet business={ctx?.business} businessId={workspaceId} onClose={closeView} />}

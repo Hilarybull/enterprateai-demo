@@ -27,7 +27,7 @@ import { confirmDialog } from "../lib/dialog";
 import {
   CLASSIFICATION, FEATURES, LIFECYCLE, createSubject, dateLabel, getPath, getSubject, listSubjects, moneyLabel, newKey, readinessError, runAssessment,
   keepPrevious, setPath, startNewNeed, setSubjectStatus, updateSubject,
-  attest, reviewDocument, saveForecast, staleReason,
+  attest, isReady, reviewDocument, saveForecast, staleReason,
 } from "../lib/readiness";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
@@ -760,7 +760,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   // again, and round it went): a reload never starts a check; the "Out of date" mark and the button are there.
   const autoChecked = useRef("");
   const editedHere = useRef(false);
-  const staleKey = editedHere.current && subject?.assessment?.freshness?.status === "stale" && subject?.can?.[`${feature}.edit`] && subject.status !== "archived"
+  // Also a plan never checked yet, or any result not current: approved drafts always move the score (QA, 30 Oct: a new launch
+  // plan stayed 0/100 with "Done, waiting for recheck" after its drafts were approved)
+  const staleKey = editedHere.current && (!subject?.assessment || subject.assessment.freshness?.status !== "current") && subject?.can?.[`${feature}.edit`] && subject.status !== "archived"
     ? `${subjectId}:${subject.revision}:${subject.assessment?.id || ""}` : "";
   useEffect(() => {
     if (!staleKey || checking || save.state !== "saved" || autoChecked.current === staleKey) return;
@@ -770,12 +772,18 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   }, [staleKey, checking, save.state]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   latest.current = { subject, data };
-  const flush = useCallback(async (overrideRevision) => {
+  const flush = useCallback(async (overrideRevision, merged = false) => {
     clearTimeout(timer.current);
     const { subject: s, data: d } = latest.current;
     if (!s || dirty.current.size === 0) return true;
     const keys = [...dirty.current];
     const changes = Object.fromEntries(keys.map((k) => [k, d[k] === undefined ? null : d[k]]));
+    if (merged?.agent_drafts && "agent_drafts" in changes) {
+      // The Agent's drafts saved meanwhile are kept; only the ones decided here are gone (the owner, 30 Oct)
+      const before = s.data?.agent_drafts || {};
+      const mine = changes.agent_drafts || {};
+      changes.agent_drafts = Object.fromEntries(Object.entries(merged.agent_drafts).filter(([p]) => !(p in before) || p in mine));
+    }
     setSave({ state: "saving" });
     try {
       const detail = await updateSubject(businessId, feature, s.id, overrideRevision ?? s.revision, changes);
@@ -789,11 +797,20 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     } catch (e) {
       const err = readinessError(e, "Your changes couldn't be saved.");
       if (err.code === "invalid") { setErrors(err.errors); setSave({ state: "error", message: "Some answers need correcting before they can be saved.", invalid: true }); }
-      else if (err.code === "stale_revision") setSave({ state: "conflict", message: err.message, current: err.current });
+      else if (err.code === "stale_revision" && !merged) {
+        // The other save is nearly always the Agent's own (its drafts, the check): the owner's changes go on the latest
+        // version by themselves, never "Someone else changed this" to answer (the owner, 30 Oct: "why are you still asking")
+        try {
+          const fresh = await getSubject(businessId, feature, subjectId);
+          return await flush(fresh.revision, fresh.data || {});
+        } catch {
+          setSave({ state: "conflict", message: err.message, current: err.current });
+        }
+      } else if (err.code === "stale_revision") setSave({ state: "conflict", message: err.message, current: err.current });
       else setSave({ state: "error", message: err.message });
       return false;
     }
-  }, [businessId, feature, accept]);
+  }, [businessId, feature, subjectId, accept]);
 
   const onField = useCallback((path, value) => {
     setData((d) => setPath(d, path, value));
@@ -1067,7 +1084,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
   const neverChecked = !sm.classification && (heroScore === null || heroScore === undefined);
   const heroStatus = neverChecked ? (sm.execution_status === "failed" ? "The last check didn't finish. Run it again to see your score." : "Not checked yet. Run the check to see your score.")
     : [checking ? "Checking…" : heroScore !== null && heroScore !== undefined ? `${Math.round(heroScore)}/100${sm.score_partial ? " so far" : ""}` : "Not scored yet",
-    sm.classification === "ready" ? (feature === "launch" ? "Ready to launch" : "Ready to approach funders") : "Not ready yet",
+    isReady({ ...sm, score: heroScore ?? sm.score }) ? (feature === "launch" ? "Ready to launch" : "Ready to approach funders") : "Not ready yet",
     todoCount ? `${todoCount} ${todoCount === 1 ? "thing" : "things"} to do first` : null].filter(Boolean).join(" · ");
   // An area is complete only with nothing open in it, the check's own steps included (the owner's QA, 27 Oct: Pricing 9 of 9
   // while a step asked to confirm the price)
@@ -1163,7 +1180,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
           <Btn kind="link" className="mt-1" onClick={() => setDateReview(null)}>I've reviewed these</Btn>
         </Notice>
       )}
-      {a?.freshness?.status === "stale" && tab !== "overview" && staleHidden !== `${a.id || a.assessment_id || ""}:${a.freshness.reason || ""}` && (
+      {/* Never on a launch plan (the owner, 30 Oct: "stop this The last result is out of date for launch readiness"): its
+          check runs again by itself after each save */}
+      {feature !== "launch" && a?.freshness?.status === "stale" && tab !== "overview" && staleHidden !== `${a.id || a.assessment_id || ""}:${a.freshness.reason || ""}` && (
         <Notice tone="amber">
           <div className="flex items-start justify-between gap-3">
             <span>{checking ? "The details changed, so the check is being run again for you." : `The last result is out of date. ${staleReason(a.freshness.reason)}`}</span>
@@ -1195,7 +1214,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             earlier need stays in History. */}
         {tab === "assistant" && (
           <CaseAssistant businessId={businessId} feature={feature} subject={{ ...subject, data }} steps={ownSteps?.steps || []} score={heroScore}
-            checking={checking} onTab={goTab} onChanged={onChanged} onField={editable ? onField : null} />
+            checking={checking} saveState={save} onTab={goTab} onChanged={onChanged} onField={editable ? onField : null} />
         )}
         {tab === "documents" && (
           <div data-case-documents>
@@ -1307,7 +1326,7 @@ function SubjectDetail({ businessId, feature, subjectId }) {
             )}
             {feature === "funding" && (
               // Once, at the foot of the Overview: what the score is and isn't
-              <p className="text-[12px] text-slate-500 dark:text-slate-400" data-case-note>This is a look at how prepared you are. It is not a view on whether funding will be given.</p>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400" data-case-note>This is a look at how prepared you are. It is not a view on whether {feature === "launch" ? "the launch will succeed" : "funding will be given"}.</p>
             )}
           </div>
         )}

@@ -246,6 +246,9 @@ async def _from_records(session: dict, user: dict, business_id: str, data: dict)
         case = await _case_of(user, business_id)
         on_case = _case_answers((case or {}).get("data") or {})
         found.update({k: v for k, v in on_case.items() if k in ("stage", "traction")})
+        shown = first_value.records_traction(data)
+        if shown:
+            found["traction"] = shown      # the records, never an earlier claim said as "from your records" (QA, 30 Oct)
         if on_case.get("use") and not (said.get("amount") or said.get("use")):
             found["use"] = on_case["use"]      # "I need funding", nothing more: the need on record, to confirm or change
     found = {k: v for k, v in found.items() if k in wanted and said.get(k) in (None, "") and v not in (None, "")}
@@ -267,7 +270,7 @@ async def _from_records(session: dict, user: dict, business_id: str, data: dict)
     session["missing"] = goals._missing(session)
     if not session["missing"] and key != "business_risks":
         # Said once, at the start, only when nothing will be asked: never changed after a question was asked
-        session["value_note"] = "I've read what I need from your records. Here's your result."
+        session["value_note"] = "I've read the details already on record. I'll prepare your result now."
     turns = session.get("turns") or []
     if turns and turns[-1].get("role") == "assistant" and turns[-1].get("next") and turns[-1]["next"] not in session["missing"]:
         nxt = next((q for q in goals._questions(session) if q["key"] in session["missing"]), None)
@@ -295,14 +298,31 @@ async def session_inputs(session_id: str, body: InputsIn, request: Request):
     mid = body.client_message_id
     if mid and mid in (session.get("seen_message_ids") or []):
         return goals.public(session)      # the same message again (a retry): already answered
+    answers = dict(body.answers or {})
+    next_question = goals._asking(session)
+    if session.get("goal_key") == "create_invoice" and (next_question or {}).get("key") == "customer" and "customer_email" not in answers and "@" not in str(body.message or ""):
+        customer_name = answers.get("customer") or body.message
+        business_id = session.get("business_id") or session.get("records_business_id")
+        if customer_name and business_id:
+            try:
+                data = await get_orchestrator().rt.business.load(business_id) or {}
+                match = first_value.customer_match(customer_name, data)
+                if match:
+                    session["matched_customer"] = match
+                    answers["customer_email"] = match["customer_email"]
+                    answers["customer"] = customer_name
+                else:
+                    session.pop("matched_customer", None)
+            except Exception:      # noqa: BLE001 - a record lookup must not stop the invoice flow
+                logger.info("could not reuse customer details for session %s", session_id[:8], exc_info=True)
     try:
-        out = await goals.add_inputs(get_store(), session, body.answers, confirm=body.confirm, message=body.message, asked=body.asked,
+        out = await goals.add_inputs(get_store(), session, answers, confirm=body.confirm, message=body.message, asked=body.asked,
                                      rules_only=rules_only, picked=body.picked)
     except Exception as e:      # noqa: BLE001 - P1.8: the cause logged, then the rules read it (never a lost message)
         logger.warning("intake turn failed for session %s (%s: %s): reading it with the rules instead", session_id[:8], type(e).__name__, e, exc_info=True)
         session = await _session(session_id)      # as stored: nothing half-applied
         try:
-            out = await goals.add_inputs(get_store(), session, body.answers, confirm=body.confirm, message=body.message, asked=body.asked,
+            out = await goals.add_inputs(get_store(), session, answers, confirm=body.confirm, message=body.message, asked=body.asked,
                                          rules_only=True, picked=body.picked)
         except Exception as e2:      # noqa: BLE001
             logger.error("intake turn failed twice for session %s: %s: %s", session_id[:8], type(e2).__name__, e2, exc_info=True)

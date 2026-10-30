@@ -90,12 +90,17 @@ def test_the_landing_page_hands_launch_to_the_chat_panel(world):
     assert said("I need funding") == {"kind": "funding", "converse": True}
 
 
-def test_without_a_model_the_scripted_launch_chat_answers(world, monkeypatch):
+def test_without_a_model_typed_launch_details_create_and_check_a_plan(world, monkeypatch):
     env, store, client, who = world
     who["user"] = OWNER
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: None)
-    out = client.post("/agent/requests", json={"business_id": "A", "text": "I want to launch a car wash", "source_channel": "text"}).json()
-    assert not out.get("conversational")
+    out = client.post("/agent/requests", json={"business_id": "A", "text": "I want to launch window cleaning for offices in Leeds in March at £40 per visit", "source_channel": "text"}).json()
+    assert out.get("conversational") and "created" in out.get("changed", [])
+    assert "tell me what each sale costs you to deliver." in out["message"]
+    plan = _plans(env)[0]["data"]
+    assert plan["name"] == "window cleaning" and plan["geography"] == "Leeds"
+    assert plan["customers"]["target_segment"] == "offices"
+    assert plan["offer"]["price"] == 40 and plan["target_date"].endswith("-03-01")
 
 
 def test_an_invoice_mid_launch_conversation_goes_to_its_own_flow(talk):
@@ -168,7 +173,7 @@ def test_fill_them_drafts_every_blank_field_with_estimates_for_review(talk, monk
                                                                  "offer.launch_scope": "Cooking pots sold at local markets in Abuja"}})})()
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: _Writer())
     out = ask("fill them", page="launch", case_id=str(pot["id"]))
-    assert out["message"].startswith("I've drafted") and "review=1" in out["actions"][0]["to"]
+    assert out["message"].startswith("I've added") and "review=1" in out["actions"][0]["to"]
     from app.modules.readiness.service import service_for
     drafts = run(service_for(env.orch).store.get("subjects", pot["id"]))["data"]["agent_drafts"]
     assert drafts["economics.price_per_unit"]["value"] == "8000" and "estimate" in drafts["economics.price_per_unit"]["source"]

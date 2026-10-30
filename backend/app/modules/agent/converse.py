@@ -224,13 +224,29 @@ def need_in(text: str, data: dict | None = None) -> dict:
         w = sign.group(0).lower()
         out["currency"] = _SIGN.get(sign.group(0)) or {"naira": "NGN", "pound": "GBP", "pounds": "GBP", "dollar": "USD", "dollars": "USD",
                                                        "euro": "EUR", "euros": "EUR"}.get(w) or w.upper()
-    m = re.search(r"\bfor\s+(?:a\s+|an\s+|the\s+|my\s+|our\s+)?(.+?)(?=\s+(?:of|worth|at|about|around)\s+[$£€₦]?\d|\s+[$£€₦]\d|[.?!,]|$)", t, re.I)
+    m = re.search(r"\b(?:for|to)\s+(?:buy\s+|fund\s+|cover\s+)?(?:a\s+|an\s+|the\s+|my\s+|our\s+)?(.+?)(?=\s+(?:in\s+\d|within\s+\d|of|worth|at|about|around)\b|\s+[$£€₦]\d|[.?!,]|$)", t, re.I)
     if m and m.group(1).strip().lower() not in ("funding", "readiness", "funding readiness") and not re.match(r"^[$£€₦]?\d", m.group(1).strip()):
         out["purpose"] = m.group(1).strip()[:300]
     for route, pattern in _ROUTE_WORDS.items():
         if route != "unsure" and re.search(pattern, t, re.I):
             out["route_preference"] = route
             break
+    timing = re.search(r"\bin\s+(\d+)\s+(day|week|month|year)s?\b", t, re.I)
+    if timing:
+        from calendar import monthrange
+        count, unit = int(timing.group(1)), timing.group(2).lower()
+        if unit == "day":
+            due = datetime.now(timezone.utc).date() + timedelta(days=count)
+        elif unit == "week":
+            due = datetime.now(timezone.utc).date() + timedelta(days=7 * count)
+        elif unit == "year":
+            due = datetime.now(timezone.utc).date().replace(year=datetime.now(timezone.utc).year + count)
+        else:
+            today = datetime.now(timezone.utc).date()
+            month_index = today.month - 1 + count
+            year, month = today.year + month_index // 12, month_index % 12 + 1
+            due = today.replace(year=year, month=month, day=min(today.day, monthrange(year, month)[1]))
+        out["receipt_date"] = due.isoformat()
     return clean_change(out)
 
 
@@ -253,8 +269,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if llm is None:
         from app.modules.agent import research
         llm = research._default_llm(user["id"])
-    if llm is None:
-        return None
+    no_model = llm is None      # still reads what was typed; a change to the case is only ever proposed, never applied (F2/F3)
     try:
         cases = await _subjects_with_summary(user, business_id, "funding")
     except Exception:      # noqa: BLE001 - no access or no module: the scripted chat answers
@@ -287,10 +302,19 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         found = None if re.search(r"\bresearch\b", str(text), re.I) else options_found(data)      # "Research …": always a new search
         if not found:      # the loans, grants and investors that fit this case, searched for on their own (the owner, 28 Oct)
             return await _ask_do_all(orch, user, business_id, case, data, text, now, only=OPTIONS_ONLY)
-        lines = " ".join(f"{n}. {o['title']}: {str(o['text']).rstrip('.')}. ({o['fits']['fit']} fit; source: {o['source'].get('url')})"
-                         for n, o in enumerate(found["options"], 1))
-        return await _said(orch, user, business_id, text, f"From your research of {found['at']}, these fit your case: {lines} Ask me about any of them, or to research again.",
-                           [{"label": "Research again", "kind": "explain", "prompt": "Research it for me"}], now)
+        # One card each, never a block of scraped text with raw links (QA, 30 Oct): its name, what it is, how well it fits
+        # and where it was found
+        from app.modules.agent.research import money_figures
+        cards = [{"type": "options", "case_id": str(case["id"]), "options": [
+            {"title": str(o["title"])[:90], "route": o.get("route"), "text": str(o.get("text") or "").strip()[:240],
+             "fit": (o.get("fits") or {}).get("fit"), "why": (o.get("fits") or {}).get("why") or (o.get("fits") or {}).get("reason"),
+             "amount": next(iter(money_figures(str(o.get("text") or ""))), None),
+             "url": (o.get("source") or {}).get("url"), "site": (o.get("source") or {}).get("publisher") or (o.get("source") or {}).get("site")}
+            for o in found["options"]]}]
+        n = len(found["options"])
+        return await _said(orch, user, business_id, text, f"From your research of {found['at']}, {n} option{'s' if n != 1 else ''} fit{'s' if n == 1 else ''} your case. "
+                           "Next step: open the one that fits best and check its terms.",
+                           [{"label": "Research again", "kind": "explain", "prompt": "Research it for me"}], now, cards=cards)
     svc = service_for(orch)
     # A change is shown with Apply and Cancel and made only on Apply (the owner, 27 Oct: "the agent must not say I'll update
     # your case unless it actually updates it"); "replace or update?" is answered with its buttons
@@ -320,6 +344,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         if _yes(text) or _APPLY.match(str(text)):
             return await _said(orch, user, business_id, text, "Should it replace your current need (the old one stays in your history), or update it?",
                                _WHICH_BUTTONS, now, keep={"pending_which": which})
+    if no_model:
+        return await _typed_need(orch, user, business_id, case, text, now, data)
     named = field_change(text, case) if case else None
     if named and _same(named["before"], named["value"]):      # nothing to change: said so, never "Hilary → Hilary"
         return await _said(orch, user, business_id, text, f"{named['label']} is already set to {named['value']}.", [], now)
@@ -333,9 +359,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
                          "WAITING": waiting, "TURNS": turns, "MESSAGE": str(text)[:2000]}, ensure_ascii=False, default=str)
     try:
         res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
-    except Exception:      # noqa: BLE001 - the scripted chat answers instead
+    except Exception:      # noqa: BLE001 - what was typed is still read, and only proposed
         logger.info("funding conversation: no model reply", exc_info=True)
-        return None
+        return await _typed_need(orch, user, business_id, case, text, now, data)
     got = _parse(getattr(res, "text", "") or "")
     if asks_gaps(text):
         got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result"]
@@ -506,6 +532,25 @@ async def _score_now(user: dict, business_id: str, before: Any) -> tuple[Any, st
                    + (f", with {left} thing{'s' if left != 1 else ''} to do." if isinstance(left, int) and left else "."))
 
 
+async def _typed_need(orch, user: dict, business_id: str, case: dict | None, text: str, now: datetime, data: dict) -> dict | None:
+    """No model reply: the funding details typed are still read (QA F3, 30 Oct: "the request was ignored"), applied as the
+    model's reply would be (said with Undo). Nothing typed to read, no case yet, a different need ("replace or update?") or a
+    direct edit of one field: the scripted chat answers, as before."""
+    from app.modules.agent import case_edit
+    if case_edit.read(text):
+        return None      # "change the amount to £60,000": its own edit, asked before it is made
+    change = need_in(text, data)
+    if not change or not case:
+        return None
+    current = case.get("data") or {}
+    words = lambda v: set(re.sub(r"\b(?:a|an|the|my|our|and|to|for|buy)\b", " ", re.sub(r"\W+", " ", str(v or "").lower())).split())      # noqa: E731
+    other_purpose = change.get("purpose") and current.get("purpose") and not (words(change["purpose"]) & words(current["purpose"]))
+    other_route = change.get("route_preference") and current.get("route_preference") and change["route_preference"] != current["route_preference"]
+    if other_purpose or other_route:
+        return None      # a different need: the funding flow asks "replace it, or update its details?" with its own buttons
+    return await _confirm(orch, user, business_id, case, change, False, text, now, data)
+
+
 async def _confirm(orch, user: dict, business_id: str, case: dict, change: dict, replace: bool, text: str, now: datetime, data: dict) -> dict:
     """The change, shown with Apply and Cancel: nothing is written until Apply."""
     if not change:
@@ -604,6 +649,16 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
     from app.modules.readiness import rules
     if not change:
         return await _said(orch, user, business_id, text, "There's nothing to apply now. Tell me what you'd like to change.", [], now)
+    # An update never switches the case to another currency (QA F2, 30 Oct: "₦5m grant for stock" on a UK business): asked
+    # in the case's own currency first, nothing changed. A new need the owner chose to replace it with keeps its own (28 Oct).
+    from app.modules.agent import business as _bz
+    own = str(((case or {}).get("data") or {}).get("currency") or _bz.currency_of(data) or "").upper()
+    said_in = str(change.get("currency") or "").upper()
+    if not replace and own and said_in and said_in != own and change.get("target_amount") is not None:
+        from app.modules.agent.research import money as _money
+        return await _said(orch, user, business_id, text,
+                           f"Your business works in {own}, and you said {_money(change['target_amount'], said_in)}. How much is that in {own}? Nothing has been changed yet.",
+                           [], now)
     if case and not replace:
         held = (case.get("data") or {})
         olds = {**held, **(held.get("economics") or {})}
@@ -612,8 +667,14 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         if not change:      # all of it as it is already: said so, nothing saved (the owner, 28 Oct)
             from app.modules.agent import business as bz
             currency = str(held.get("currency") or bz.currency_of(data) or "GBP")
-            said = "; ".join(f"{_LABEL.get(k, k)} is already set to {_show(k, v, currency)}" for k, v in same.items())
-            return await _said(orch, user, business_id, text, f"{said}.", [], now)
+            # Said in one line, then where the case stands and its next step, never a list of fields alone (QA, 30 Oct)
+            said = "Your funding case already has that: " + ", ".join(f"{_LABEL.get(k, k).lower()} {_show(k, v, currency)}" for k, v in same.items())
+            summ = (case or {}).get("summary") or {}
+            score = f" It's at {round(summ['score'])}/100" + (f", with {summ['open_actions']} thing{'s' if summ['open_actions'] != 1 else ''} to do" if summ.get("open_actions") else "") + "." \
+                if isinstance(summ.get("score"), (int, float)) else ""
+            nxt = str((summ.get("next_action") or {}).get("title") or "").rstrip(".")
+            return await _said(orch, user, business_id, text, f"{said}.{score}" + (f" Next step: {nxt[:1].lower() + nxt[1:]}." if nxt else ""),
+                               [], now, cards=[{"type": "result", "case_id": str(case["id"])}, {"type": "steps", "case_id": str(case["id"])}])
     stamp = {(f"economics.{p}" if p in _ECONOMICS else p): f"From you, {now.day} {now.strftime('%b')}" for p in change}
     done: list[str] = []
     before = ((case or {}).get("summary") or {}).get("score")
@@ -771,7 +832,9 @@ def cards_for(got: dict, first: bool, has_case: bool, case_id: str | None, befor
     if not has_case:
         return []
     asked = [s for s in (got.get("show") or []) if s in _SHOW] if isinstance(got.get("show"), list) else []
-    want = (["records", "result"] if first and not asked else []) + asked
+    # The first useful answer should tell the owner what to do with the result, not only show a score.
+    # The chat UI turns this into a case card with the saved next action and a direct link.
+    want = (["records", "result", "next"] if first and not asked else []) + asked
     if "adopted" in (got.get("_done") or []):
         want.append("next")      # drafts accepted: what to do next, as the mockups end
     # Approvals waiting show only when asked for (the owner, 29 Oct: an invoice to Malachy under the launch plan's next steps)

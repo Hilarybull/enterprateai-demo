@@ -151,10 +151,13 @@ async def preview(user: dict, business_id: str, *, run_id: str | None = None, dr
     from app.modules.agent.router import get_orchestrator
     orch = get_orchestrator()
     data = await orch.rt.business.load(business_id) or {}
-    if draft_id:
-        d = next((x for x in data.get("agent_drafts") or [] if isinstance(x, dict) and x.get("id") == draft_id), None)
-        if not d:
-            return {"found": False}
+    drafts_ = [x for x in data.get("agent_drafts") or [] if isinstance(x, dict) and x.get("status") not in ("accepted", "rejected", "replaced")]
+    # A document the task made is a draft, not an approval (the owner, 30 Oct: a business plan made, its card "This isn't waiting
+    # any more"): found by its id, else by the task that made it
+    d = next((x for x in drafts_ if draft_id and x.get("id") == draft_id), None) or next((x for x in drafts_ if run_id and x.get("run_id") == run_id), None)
+    if draft_id and not d:
+        return {"found": False}
+    if d:
         text = await _document_text(user, d)
         return {"found": True, "kind": d.get("kind"), "title": d.get("title"), "text": text[:12000], "to": d.get("to"), "editable": bool(d.get("ref")) and bool(text)}
     run = await orch.rt.store.get_run(run_id) if run_id else None
@@ -163,12 +166,15 @@ async def preview(user: dict, business_id: str, *, run_id: str | None = None, dr
     approvals = await orch.rt.store.list_approvals(business_id=business_id, status="pending")
     a = next((x for x in approvals if x.get("run_id") == run_id), None)
     p = (a or {}).get("payload") or {}
-    lines = [{"name": str(i.get("name") or i.get("description") or "Item"), "quantity": i.get("quantity"), "unit_price": i.get("unit_price")}
+    # The quantity as either name holds it, and the VAT said, never added silently (QA F8, 30 Oct)
+    lines = [{"name": str(i.get("name") or i.get("description") or "Item"), "quantity": i.get("quantity") if i.get("quantity") is not None else i.get("qty"),
+              "unit_price": i.get("unit_price")}
              for i in p.get("items") or [] if isinstance(i, dict)]
     return {"found": True, "kind": (a or {}).get("tool_id"), "approval_id": (a or {}).get("id") or (a or {}).get("approval_id"),
             "title": (a or {}).get("title") or run.get("title"), "customer": p.get("customer_name"), "to_email": p.get("to_email"),
             "lines": lines, "total": p.get("total") or p.get("amount") or p.get("total_amount"), "currency": p.get("currency"), "message": p.get("message") or p.get("body"),
-            "due_date": p.get("due_date"), "valid_until": p.get("valid_until"), "notes": p.get("notes"), "editable": True}
+            "due_date": p.get("due_date"), "valid_until": p.get("valid_until"), "notes": p.get("notes"), "editable": True,
+            "vat_rate": p.get("vat_rate"), "vat_amount": p.get("vat_amount")}
 
 
 async def _document_text(user: dict, d: dict) -> str:

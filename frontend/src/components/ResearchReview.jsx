@@ -28,7 +28,9 @@ export function withUnit(field, value, currency) {
   const u = unitsOf(field, currency);
   const n = Number(String(value ?? "").replace(/,/g, ""));
   if (!u || String(value ?? "").trim() === "" || !Number.isFinite(n)) return String(value ?? "");
-  return `${u.before}${money(n)}${u.after ? ` ${u.after}` : ""}`;
+  // One of a thing said as one (QA, 30 Oct: "1 sales a month")
+  const after = n === 1 && u.after ? u.after.replace(/^(sale|job|hour|person)s\b/, "$1").replace(/^people\b/, "person") : u.after;
+  return `${u.before}${money(n)}${after ? ` ${after}` : ""}`;
 }
 /** ₦994,276 (and −₦6,600,000): money with its sign and commas, whole above 100. */
 const signed = (v, currency) => { const n = Number(String(v ?? 0).replace(/,/g, "")) || 0; return `${n < 0 ? "\u2212" : ""}${getCurrencySymbol(currency)}${money(Math.abs(n))}`; };
@@ -181,6 +183,12 @@ function Figures({ list }) {
         <li key={f.key} data-figure={f.key}>
           <span className="font-semibold text-slate-800">{f.label}: {f.value}</span>
           {f.met === false && <span className="ml-2 rounded bg-rose-50 px-1.5 text-[11px] font-semibold text-rose-700">Needs attention</span>}
+          {/* A figure below zero said in plain words, never only a tag (QA, 30 Oct: cash at −£15.6k by month 12, "Needs attention") */}
+          {/^\s*[-−]/.test(String(f.value || "")) && (
+            <p className="mt-1 rounded-lg bg-rose-50 px-2 py-1 text-[12.5px] font-semibold text-rose-800" role="alert" data-figure-negative>
+              {/cash/i.test(`${f.key} ${f.label}`) ? `Your cash goes below zero (${String(f.value).trim()}). Unless money comes in sooner or costs come down, you'd run out before then.`
+                : `${f.label} is below zero (${String(f.value).trim()}). Check the figures it's worked out from.`}</p>
+          )}
           <ul className="mt-0.5 list-disc pl-5 text-slate-600">{f.working.map((w) => <li key={w}>{w}</li>)}</ul>
         </li>))}</ul>
     </div>

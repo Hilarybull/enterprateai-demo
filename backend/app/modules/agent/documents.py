@@ -369,7 +369,7 @@ def invoice_email(p: dict) -> dict[str, str]:
     subject = f"Invoice {p['reference']} from {p['company']}"
     text = (
         f"Hi {p['customer_name']},\n\nPlease find invoice {p['reference']}.\n\n"
-        f"{_items_text(p['items'], cur)}\n\nTotal due: {fmt_money(p['total'], cur)}\nDue date: {p['due_date']}\n"
+        f"{_items_text(p['items'], cur)}\n\nTotal due: {fmt_money(p['total'], cur)}\nDue date: {fmt_date(p['due_date'])}\n"
         + (f"Payment terms: {p['payment_terms']}\n" if p.get("payment_terms") else "")
         + f"\nKind regards,\n{p['company']}\n"
     )
@@ -416,7 +416,7 @@ def reminder_email(p: dict) -> dict[str, str]:
         + (f"{p['message']}\n\n" if p.get("message") else "")
         + f"Invoice: {p['reference']}\nOutstanding: {fmt_money(p['outstanding'], cur)}\n"
         + (f"Amount requested now: {fmt_money(p['amount_requested'], cur)}\n" if p.get("amount_requested") else "")
-        + f"Due date: {p['due_date']}{is_due}\n\n"
+        + f"Due date: {fmt_date(p['due_date'])}{is_due}\n\n"
         "If you have already paid, please ignore this message and accept our thanks.\n\n"
         f"Kind regards,\n{p['company']}\n"
     )
@@ -468,7 +468,7 @@ def document_email(kind: str, p: dict) -> dict[str, str]:
                 + (f"What you need\n{p['problem']}\n\n" if p.get("problem") else "")
                 + (f"What we propose\n{p['solution']}\n\n" if p.get("solution") else "")
                 + f"Price: {p.get('price_text') or fmt_money(p['total'], cur)}\n" + (f"Timeline: {p['timeline']}\n" if p.get("timeline") else "")
-                + (f"Valid until: {p['valid_until']}\n" if p.get("valid_until") else "") + (f"\n{p['notes']}\n" if p.get("notes") else "")
+                + (f"Valid until: {fmt_date(p['valid_until'])}\n" if p.get("valid_until") else "") + (f"\n{p['notes']}\n" if p.get("notes") else "")
                 + f"\nReply to this email to go ahead or to ask anything.\n\nKind regards,\n{company}\n")
         blocks = [*(_section("What you need", p["problem"]) if p.get("problem") else []), *(_section("What we propose", p["solution"]) if p.get("solution") else []),
                   _summary([f for f in facts if f[1]], emphasis="Price"), *(_section("Notes", p["notes"]) if p.get("notes") else [])]

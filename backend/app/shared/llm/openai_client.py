@@ -8,6 +8,8 @@ import httpx
 from app.core.config import get_settings
 from app.shared.llm.usage import record_ai_usage
 
+_NO_TEMPERATURE: set[str] = set()      # Claude models that refused a temperature in this process
+
 logger = logging.getLogger(__name__)
 
 
@@ -128,15 +130,26 @@ class AnthropicMessagesClient(LLMClient):
         }
         payload = {
             "model": self._settings.claude_model,
-            "max_tokens": max_tokens or 8000,
-            "temperature": 0.5 if temperature is None else temperature,
+            # Room for the model's own thinking before its answer: a small cap (220, 500) let thinking use it all and the reply
+            # came back empty. Only the tokens used are billed, never the cap.
+            # and room on top of what the caller needs for its answer: a 2,400 cap let thinking leave the research's JSON cut
+            # off ("the model's answer could not be read", 30 Oct)
+            "max_tokens": min(max(max_tokens or 8000, 2048) + 6000, 32000),
             "system": system,
             "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         }
+        # Only when a caller asks for it: newer Claude models reject `temperature` (30 Oct: "`temperature` is deprecated for
+        # this model", every call failing over to an empty OpenAI account)
+        if temperature is not None and self._settings.claude_model not in _NO_TEMPERATURE:
+            payload["temperature"] = temperature
 
         async with httpx.AsyncClient(timeout=900) as client:
             try:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
+                if resp.status_code == 400 and "temperature" in payload and "temperature" in resp.text:
+                    _NO_TEMPERATURE.add(self._settings.claude_model)      # remembered: never sent to this model again
+                    payload.pop("temperature")      # this model takes none: asked again without it
+                    resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
             except httpx.HTTPStatusError as e:
                 body = e.response.text if e.response is not None else ""
@@ -150,6 +163,8 @@ class AnthropicMessagesClient(LLMClient):
                 if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str):
                     chunks.append(c["text"])
             text = "\n".join(chunks).strip()
+        if isinstance(data, dict) and data.get("stop_reason") == "max_tokens":
+            logger.warning("Anthropic reply cut off at max_tokens=%s for %s", payload["max_tokens"], feature)
         usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
@@ -247,6 +262,27 @@ class GeminiGenerateClient(LLMClient):
 # The last failure of each provider in this process (Research diagnostics and /health show it).
 FAILED_PROVIDERS: dict[str, dict] = {}
 
+# A provider that rejected its key or has no credit left is skipped for a while, never retried on every call (QA, 30 Oct:
+# each AI step waited for both providers to fail, 20 to 70 seconds a message). Tried again after the pause, and at once
+# once it answers.
+DOWN_SECONDS = 300
+_DOWN_UNTIL: dict[str, float] = {}
+_LASTING = ("401", "403", "invalid x-api-key", "authentication_error", "insufficient_quota", "credit_balance", "no credits", "billing")
+
+
+def _usable(client: LLMClient) -> bool:
+    import time
+    return _DOWN_UNTIL.get(type(client).__name__, 0.0) <= time.monotonic()
+
+
+def _note(client: LLMClient, error: Exception | None) -> None:
+    import time
+    name = type(client).__name__
+    if error is None:
+        _DOWN_UNTIL.pop(name, None)
+    elif any(w in str(error).lower() for w in _LASTING):
+        _DOWN_UNTIL[name] = time.monotonic() + DOWN_SECONDS
+
 
 class ChainLLMClient(LLMClient):
     """The one AI gateway (the owner's QA, 15 Oct): the providers in order, each tried on an error (an empty balance, 429,
@@ -260,14 +296,19 @@ class ChainLLMClient(LLMClient):
         log = _logging.getLogger(__name__)
         last_err: Exception | None = None
         for c in self._clients:
+            if not _usable(c):
+                last_err = last_err or RuntimeError(f"{type(c).__name__} is paused after a key or credit error")
+                continue
             try:
                 res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens, temperature=temperature)
                 if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
                     raise RuntimeError(f"{res.provider} returned empty text")
                 log.info("LLM served by %s for %s", type(c).__name__, feature)
+                _note(c, None)
                 return res
             except Exception as e:      # noqa: BLE001 - the next provider answers
                 last_err = e
+                _note(c, e)
                 log.warning("LLM provider %s failed for %s, trying the next one: %s", type(c).__name__, feature, str(e)[:300])
                 FAILED_PROVIDERS[type(c).__name__] = {"error": str(e)[:300], "feature": feature}
         if last_err:
@@ -302,15 +343,20 @@ class AutoLLMClient(LLMClient):
     async def generate_text(self, *, system: str, prompt: str, feature: str = "unknown", max_tokens: int | None = None, temperature: float | None = None) -> LLMTextResult:
         last_err: Exception | None = None
         for c in self._clients:
+            if not _usable(c):
+                last_err = last_err or RuntimeError(f"{type(c).__name__} is paused after a key or credit error")
+                continue
             try:
                 res = await c.generate_text(system=system, prompt=prompt, feature=feature, max_tokens=max_tokens, temperature=temperature)
                 # Some providers can return an HTTP 200 but our parsing yields empty text.
                 # Treat that as a failure so we can fall back to the next configured provider.
                 if not (res.text or "").strip() and not isinstance(c, NoopLLMClient):
                     raise RuntimeError(f"{res.provider} returned empty text")
+                _note(c, None)
                 return res
             except Exception as e:
                 last_err = e
+                _note(c, e)
                 # Said, never silent: a provider that fails (a key, a quota, an empty balance) is logged for the superadmin,
                 # and the next provider answers.
                 import logging as _logging

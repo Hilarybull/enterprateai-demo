@@ -14,6 +14,12 @@ import { AgentGoalChat } from "./GoalLauncher";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
 const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
+// A draft handed to the chat for review ({runId, title, message}): kept in this tab until the chat shows it
+export const CHAT_REVIEW = "ea:chat:review";
+export function reviewInChat(detail) {
+  try { sessionStorage.setItem(CHAT_REVIEW, JSON.stringify(detail)); } catch { /* the chat opens without it */ }
+  try { window.dispatchEvent(new CustomEvent(CHAT_REVIEW)); } catch { /* read when the chat opens */ }
+}
 // "What should I do next?": answered here, from the cases and checks on record (no model, no credits)
 // The segments research asked for in words, as its button asks for it
 export const SEGMENTS = /\b(?:find|explore|research|look for|show me)\b.{0,20}\b(?:new )?customer segments?\b/i;
@@ -53,6 +59,9 @@ function toMessage(routed, businessId) {
   } else if (routed.kind === "answer") {
     message.links = (routed.actions || []).filter((a) => a.to).map((a) => ({ label: a.label, to: a.to }));
     message.prompts = (routed.actions || []).filter((a) => (a.capability || a.kind === "explain") && !a.to).map((a) => ({ label: a.label, prompt: a.prompt || a.label }));
+    // Funding and launch conversations return structured result/next-step cards alongside the reply.
+    // Keep those cards in the chat; dropping them here left the user with only the model's prose.
+    if (Array.isArray(routed.cards) && routed.cards.length) message.cards = routed.cards;
   } else if (routed.kind === "unavailable") {
     message.links = (routed.offers || []).filter((o) => o.to).map((o) => ({ label: o.label, to: o.to }));
     message.prompts = (routed.offers || []).filter((o) => o.kind === "explain").map((o) => ({ label: o.label, prompt: o.prompt }));
@@ -62,7 +71,9 @@ function toMessage(routed, businessId) {
 }
 
 /** A module page's own thread (a funding case or launch plan, the idea): never the panel's to restore or write over. */
-export const isModuleThread = (id) => /^case-/.test(String(id || "")) || String(id || "") === "idea-check";
+// A page's own thread: a case's, the idea's (and its earlier ones, "idea-check-<time>"), a check's ("check-customers"): never
+// the Agent's main chat (QA, 30 Oct: the Idea Validation thread showed in the Agent Centre)
+export const isModuleThread = (id) => /^(?:case-|idea-check(?:-|$)|check-)/.test(String(id || ""));
 
 export const hasOwnChat = (pathname, search = "") => /^\/(funding|launch)\/[^/]+\/?$/.test(pathname) || /^\/check\/idea\/?$/.test(pathname)
   || (/^\/launch\/?$/.test(pathname) && new URLSearchParams(search).get("tab") === "assistant");
@@ -196,6 +207,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   useEffect(() => { if (given === undefined) loadOwn(); }, [bizId, given === undefined]);      // eslint-disable-line react-hooks/exhaustive-deps
   const waiting = given === undefined ? own : given;
   const loadWaiting = () => (given === undefined ? loadOwn() : onWaitingChanged?.());
+  // Each reply can change a case: the page's cards read again, never the case as it was when the page opened (30 Oct)
+  const replies = messages.filter((m) => m.role === "assistant").length;
+  useEffect(() => { if (given !== undefined && replies > 1) onWaitingChanged?.(); }, [replies]);      // eslint-disable-line react-hooks/exhaustive-deps
   // Kept as it goes: every exchange is saved, so it can be opened again from History
   useEffect(() => {
     const said = messages.slice(1).filter((m) => m.content);
@@ -497,7 +511,25 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     }
     const onChat = (e) => { if (e?.detail) e.detail.handled = true; take(e?.detail?.text); };
     window.addEventListener("ea:chat", onChat);
-    return () => window.removeEventListener("ea:chat", onChat);
+    // A draft finished from the landing page is read and decided here, in the chat, never in a pop-up (the owner, 30 Oct:
+    // "we agreed that all these should be on the chat, from the landing page"); kept until this chat is there to show it
+    const review = async () => {
+      let r = null;
+      try { r = JSON.parse(sessionStorage.getItem(CHAT_REVIEW) || "null"); sessionStorage.removeItem(CHAT_REVIEW); } catch { r = null; }
+      if (!r?.runId) return;
+      // The task carries on here: its questions asked in the chat, then its draft to approve, edit or reject (the owner,
+      // 30 Oct: "once it's handing over, it should be executing on the Agent Centre chat accordingly")
+      if (r.message) push({ role: "assistant", at: new Date().toISOString(), content: r.message });
+      try {
+        const run = await apiRequest(`/workflow-runs/${r.runId}`, "GET");
+        if (run && !["succeeded", "cancelled", "failed"].includes(run.status)) { flow.follow(run); return; }
+      } catch { /* the draft is shown below either way */ }
+      push({ role: "assistant", at: new Date().toISOString(), content: "Here's your draft. Read it, then approve, edit or reject it here.",
+        cards: [{ type: "preview", item: { run_id: r.runId, title: r.title, open: true } }] });
+    };
+    review();
+    window.addEventListener(CHAT_REVIEW, review);
+    return () => { window.removeEventListener("ea:chat", onChat); window.removeEventListener(CHAT_REVIEW, review); };
   }, []);      // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(prefilledQuestion = "", { fresh = false } = {}) {
@@ -638,6 +670,20 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
   const card = (c, key) => {
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
+    if (["records", "result", "next"].includes(c.type)) {
+      const readiness = work.find((item) => item.id && String(item.id) === String(c.case_id));
+      if (c.type === "records") return <section key={key} aria-label="Business records checked" data-readiness-card="records" className="max-w-xl rounded-xl border border-slate-200 bg-white p-3 text-sm">
+        <p className="font-semibold text-slate-800">What I checked in your records</p>
+        <ul className="mt-2 grid gap-1 sm:grid-cols-2">{(ctx?.records || []).map((item) => <li key={item.key} className="flex justify-between gap-3 text-slate-600"><span>{item.label}</span><span className={item.available ? "text-emerald-700" : "text-slate-400"}>{item.detail}</span></li>)}</ul>
+      </section>;
+      if (readiness) return <section key={key} aria-label={c.type === "next" ? "Recommended next step" : "Readiness result"} data-readiness-card={c.type} className="max-w-xl rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-sm">
+        <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
+          <p className="mt-1 text-slate-700">{readiness.detail}</p></div>
+          <button type="button" onClick={() => go(readiness.to)} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">{c.type === "next" ? "See next steps" : "Open"}</button></div>
+      </section>;
+      return null;
+    }
+    if (c.type === "score_change") return <div key={key} data-readiness-card="score-change" className="w-fit rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">Readiness score: {c.before}/100 → {c.after}/100</div>;
     if (c.type === "risk" && risk) return <RiskCard key={key} risk={risk} onScenario={runScenario} onSegments={() => push(mine("Find new customer segments"), { role: "assistant", at: new Date().toISOString(), content: "I can research new customer segments for you.", cards: [{ type: "segments" }] })} />;
     if (c.type === "scenario") return <ScenarioCard key={key} card={c} />;
     if (c.type === "preview") return <PreviewCard key={key} businessId={bizId} item={c.item} preview={c.preview} go={go} onEdit={startEdit} onDone={(m) => { sayDone(m); loadWaiting(); }}

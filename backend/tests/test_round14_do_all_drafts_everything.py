@@ -24,7 +24,9 @@ class Model:
 def test_every_checklist_field_is_drafted_with_estimates_in_a_second_pass():
     m = Model()
     out = asyncio.run(research.draft_case_fields(m, "launch", {"currency": "NGN"}))
-    assert len(m.calls) == 2 and "ESTIMATE" in m.calls[1]
+    # In small batches, all at once, so one long reply is never cut off (30 Oct); the estimate pass after the strict one
+    n = -(-len(research.CASE_DRAFT_FIELDS["launch"]) // research.DRAFT_BATCH)
+    assert len([c for c in m.calls if "ESTIMATE" not in c]) == n and any("ESTIMATE" in c for c in m.calls)
     assert out["economics.price_per_unit"] == "1500" and out["target_date"] == "2026-12-24"
     assert out["control.review_date"] == "2027-01-21" and out["operations.process"].startswith("Orders by WhatsApp")
     assert out["control.milestones"][0]["due_date"] == "2026-12-10"

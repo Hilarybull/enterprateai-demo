@@ -85,9 +85,32 @@ def _company(data: dict | None) -> dict:
                    and str(q.get("status") or "").lower() in ("sent", "viewed", "accepted", "approved", "converted", "invoiced")],
         "target": str(profile.get("target_customer") or profile.get("target_market") or "").strip(),
         "about": str(profile.get("about_company") or "").strip(), "listed": bool(market.get("is_active")),
-        "plan": bool(data.get("business_plan") or data.get("live_plan") or data.get("blueprint")),
+        # A plan the Agent drafted counts too, waiting for review or accepted (QA, 30 Oct: "you have no business plan" beside a
+        # plan draft in Needs Approval)
+        "plan": bool(data.get("business_plan") or data.get("live_plan") or data.get("blueprint")
+                     or any(isinstance(d, dict) and d.get("kind") == "business_plan" and d.get("status") != "rejected" for d in data.get("agent_drafts") or [])),
         "forecast": bool((data.get("live_plan") or {}).get("forecast") or fin.get("forecast")),
     }
+
+
+def customer_match(name: Any, data: dict | None) -> dict | None:
+    """Reuse an exact, unambiguous customer record during the homepage invoice flow."""
+    key = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
+    if not key:
+        return None
+    co = _company(data)
+    matches = []
+    for row in [*co["customers"], *co["invoices"]]:
+        candidate = row.get("name") or row.get("customer_name") or row.get("customer")
+        if re.sub(r"[^a-z0-9]+", " ", str(candidate or "").lower()).strip() == key:
+            email = str(row.get("email") or row.get("customer_email") or "").strip()
+            if email:
+                matches.append((str(row.get("id") or row.get("customer_id") or "").strip(), email))
+    emails = {email.lower(): email for _id, email in matches}
+    if len(emails) != 1:
+        return None
+    ids = {id_ for id_, _email in matches if id_}
+    return {"customer_email": next(iter(emails.values())), **({"customer_id": next(iter(ids))} if len(ids) == 1 else {})}
 
 
 def _result(kind: str, *, criteria: list[dict], score: Any, score_label: str, classification: str | None = None, metrics: list[dict] | None = None,
@@ -523,8 +546,12 @@ def customers(a: dict, data: dict | None = None, now: datetime | None = None, si
     out["checked"] = sum(1 for c in crit if c["state"] != UNKNOWN)
     # Who buys from you now, from the records, first
     clients, monthly = f.get("clients") or 0, f.get("revenue_monthly")
+    # A month's average only from three months or more on record; else what came in, all time (QA, 30 Oct: one £450 invoice
+    # read as "about £450 a month")
+    earned = (f", about {_amount_words(monthly, sign)} a month" if monthly and (f.get("revenue_months") or 0) >= 3
+              else f", {_amount_words(f['revenue_all_time'], sign)} all time" if f.get("revenue_all_time") else "")
     out["focus"] = {"key": "now", "text": (f"Now: {clients} paying customer{'s' if clients != 1 else ''} on record"
-                                           + (f", about {_amount_words(monthly, sign)} a month" if monthly else "") + ".") if clients
+                                           + earned + ".") if clients
                     else "Now: no paying customers on record yet."}
     out["note"] = "This looks at what helps you win customers, from your records and answers. It does not promise customers."
     # What to do next, as cards, from the records (the owner, 26 Oct: "why are the next actions not cards"): never a listing
@@ -672,6 +699,21 @@ def _engines(f: dict, key_person: str) -> dict | None:
 
 def _amount_words(v: float, sign: str) -> str:
     return f"{sign}{v:,.2f}".replace(".00", "")
+
+
+def records_traction(data: dict | None) -> str:
+    """Traction as the records show it: paying customers and money received ("1 paying customer on record, £450 all time"),
+    a month's average only from three months on record. "" when nothing is on record. What was said earlier never stands in
+    for the records (QA, 30 Oct: "4 regular customers, about £1,200 a month" beside one customer and £450 all time)."""
+    from app.modules.agent import business as bz, figures
+    f = figures.of(data or {})
+    clients = f.get("clients") or 0
+    if not clients or not f.get("revenue_all_time"):
+        return ""
+    sign = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}.get(bz.currency_of(data or {}), "")
+    money = (f"about {_amount_words(f['revenue_monthly'], sign)} a month" if f.get("revenue_monthly") and (f.get("revenue_months") or 0) >= 3
+             else f"{_amount_words(f['revenue_all_time'], sign)} all time")
+    return f"{clients} paying customer{'s' if clients != 1 else ''} on record, {money}"
 
 
 def risks(a: dict, data: dict | None = None, now: datetime | None = None, sign: str = "£") -> dict:
@@ -1077,7 +1119,9 @@ def known_answers(goal_key: str, data: dict | None) -> dict[str, Any]:
         out["where"] = place
     if goal_key == "more_customers" and co["priced"]:      # the price to quote, from the catalogue (25 Oct)
         first = co["priced"][0]
-        out["price"] = f"{first['base_price']:g} for {first['name']}"
+        from app.modules.agent import business as bz
+        sign = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}.get(bz.currency_of(data), "")
+        out["price"] = f"{sign}{first['base_price']:g} for {first['name']}"
     if goal_key == "need_funding":
         # Where the business is, as the dashboard reads it (the owner's test, 27 Oct: "Not trading yet" beside two paying
         # customers): the stage given at sign-up until the records show the business is further on

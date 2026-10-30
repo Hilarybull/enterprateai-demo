@@ -116,7 +116,7 @@ describe("readiness detail", () => {
     expect(document.getElementById("adv-decision")).toBeTruthy();
   });
 
-  it("saves edits automatically and keeps them on the page when someone else saved first", async () => {
+  it("saves edits automatically, onto the latest version when the Agent saved first, never asking", async () => {
     let attempt = 0;
     routes = [
       { method: "GET", match: /launch-initiatives\/s1$/, reply: () => ({ body: subject() }) },
@@ -134,13 +134,13 @@ describe("readiness detail", () => {
     expect(screen.getByText("Saving shortly…")).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
     vi.useRealTimers();
-    await screen.findByText("Apply my changes to the latest version");
-    expect(screen.getByLabelText("Who is this launch for?").value).toBe("Practice owners");      // the edit was not lost
-    const first = calls.find((c) => c.method === "PATCH");
-    expect(first.body).toEqual({ revision: 3, changes: { customers: { target_segment: "Practice owners" } }, confirm: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Apply my changes to the latest version" }));
+    // The owner's change goes on the latest version by itself (the owner, 30 Oct: "why are you still asking this")
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy());
-    expect(calls.filter((c) => c.method === "PATCH")[1].body.revision).toBe(4);
+    expect(screen.queryByText("Apply my changes to the latest version")).toBeNull();
+    expect(screen.getByLabelText("Who is this launch for?").value).toBe("Practice owners");      // the edit was not lost
+    const patches = calls.filter((c) => c.method === "PATCH");
+    expect(patches[0].body).toEqual({ revision: 3, changes: { customers: { target_segment: "Practice owners" } }, confirm: [] });
+    expect(patches[1].body.changes).toEqual({ customers: { target_segment: "Practice owners" } });
   });
 
   it("shows field errors from the server beside the field, and a missing record as not found", async () => {

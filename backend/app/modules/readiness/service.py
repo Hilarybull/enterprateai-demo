@@ -133,10 +133,14 @@ def short_name(text: Any, words: int = 7) -> str:
     "Public liability insurance"."""
     t = re.split(r"(?<=[.!?])\s", str(text or "").strip())[0]
     t = re.sub(r"^[Ii]n\s+(?:the\s+)?[A-Z][\w ]{0,30},\s*", "", t)
+    # Research often leads with the market before naming the actual obligation:
+    # "carpet cleaners typically need to register for a waste licence if…".
+    # Keep the action and obligation, not a truncated market explanation.
+    t = re.sub(r"^[^,.;]{0,120}?\b(?:typically\s+)?(?:need(?:\s+to)?|must(?:\s+(?:have|hold|get))?|have\s+to|should(?:\s+get)?)\s+", "", t, flags=re.I)
     t = re.sub(r"^(?:you(?:'ll| will)?\s+(?:also\s+)?(?:need|must have|must get|have to get|should get|require)\s+(?:to\s+(?:get|have|obtain|hold|register for)\s+)?|"
                r"(?:[a-z]+\s+){0,2}(?:businesses|cleaners|companies|traders|operators|owners)\s+(?:need|must have|must hold|must get|require|should have)\s+)", "", t, flags=re.I)
     t = re.sub(r"^(?:a|an|the)\s+", "", t, flags=re.I)
-    t = re.split(r"\s*(?:[,;:(]|\s[-–]\s|\s(?:which|that|to cover|so that|because|if|before|in order|from|for)\b|\s(?:is|are)\s(?:recommended|required|needed|advised|essential|mandatory)\b)",
+    t = re.split(r"\s*(?:[,;:(]|\s[-–]\s|\s(?:which|that|to cover|so that|because|if|before|in order|from|(?<!register )for)\b|\s(?:is|are)\s(?:recommended|required|needed|advised|essential|mandatory)\b)",
                  t, maxsplit=1)[0].strip().rstrip(".")
     t = " ".join(t.split()[:words])
     return (t[:1].upper() + t[1:])[:60] if t else str(text or "")[:60]
@@ -1141,7 +1145,10 @@ class ReadinessService:
         if place:
             out["geography"] = (place, "where your business profile says you trade")
         who = str(wp.get("target_customer_type") or "").strip()
-        if who and not _vague(who):
+        # The profile's customers are its main offering's: a different launch (an app beside a car wash) never takes them
+        # (the owner, 30 Oct: "office workers" and "Clean cars for Abuja office workers" on the Rango marketplace app)
+        main_offer = {str(x).strip().lower() for x in [wp.get("key_offering_focus"), *services] if str(x or "").strip()}
+        if who and not _vague(who) and (not scope or not main_offer or scope.strip().lower() in main_offer):
             for path in ("customers.target_segment", "audience", "market.audience"):
                 out[path] = (who, "the customers your business profile names")
         product = next((x for x in products if scope and str(x.get("name") or "").strip().lower() == scope.lower()), None)
@@ -1157,6 +1164,12 @@ class ReadinessService:
         run = max(runs, key=lambda r: str(r.get("created_at") or "")) if runs else {}
         found = {i.get("topic"): i for i in run.get("items") or [] if i.get("sources") and i.get("value") and i.get("decision") != "rejected"}
         first = lambda t: re.split(r"(?<=[.!?])\s", str(t).strip())[0][:200]      # noqa: E731
+        # A registration for another legal form is never drafted (QA, 30 Oct: "Register as a sole trader" for a Ltd company)
+        form = " ".join(str(wp.get(k) or "") for k in ("legal_structure", "company_type", "business_type", "entity_type")).lower()
+        limited = bool(re.search(r"\b(?:ltd|limited|plc|llc|company)\b", form)) or bool(str(wp.get("registration_number") or wp.get("company_number") or "").strip())
+        prereq_text = str((found.get("prerequisites") or {}).get("value") or "")
+        if limited and re.search(r"\bsole[ -]?trader|self[- ]?assessment|self[- ]?employ", prereq_text, re.I):
+            found.pop("prerequisites", None)
         if found.get("prerequisites") and not case.get("no_prerequisites"):      # never beside "nothing has to be in place"
             src = (found["prerequisites"]["sources"] or [{}])[0]
             out["prerequisites"] = ([{"id": uuid.uuid4().hex[:12], "name": short_name(found["prerequisites"]["value"]), "applicable": "yes", "critical": True,
@@ -1183,7 +1196,7 @@ class ReadinessService:
             sign = _SYMBOLS.get(bz.currency_of(data), bz.currency_of(data) + " ")
             price_line = f" From {sign}{float(price):,.0f}." if price not in (None, "") and str(price).replace(".", "", 1).isdigit() else ""
             audience = str(engine.get(case, "audience") or "").strip()
-            audience = audience if audience and not _vague(audience) else str(who or "").strip()
+            audience = audience if audience and not _vague(audience) else (str(who or "").strip() if about_main else "")
             for_whom = f" for {audience.lower()}" if audience and not _vague(audience) else ""
             where = str(engine.get(case, "geography") or "").split(",")[0].strip()
             in_place = f" in {where}" if where and not _vague(where) else ""

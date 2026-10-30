@@ -63,7 +63,7 @@ export default function ResetPasswordPage() {
 
       <div className="relative w-full max-w-[440px]">
         <div className="text-center">
-          <img src={logoUrl} alt="EnterprateAI" className="mx-auto h-10 w-auto object-contain" />
+          <Link to="/" aria-label="EnterprateAI home" className="mx-auto block w-fit"><img src={logoUrl} alt="EnterprateAI" className="h-10 w-auto object-contain" /></Link>
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

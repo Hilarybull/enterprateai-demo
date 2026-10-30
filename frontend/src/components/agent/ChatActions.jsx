@@ -10,6 +10,11 @@ import { premiumFlow } from "../ResearchReview";
 import { toast } from "../../lib/toast";
 
 const BOX = "rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900";
+const dateWord = (value) => {
+  const raw = String(value || "").slice(0, 10);
+  const date = new Date(`${raw}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? raw : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
 const BTN = "rounded-lg border border-slate-200 px-3.5 py-1.5 text-[13.5px] font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200";
 const PRIMARY = "rounded-lg bg-blue-600 px-3.5 py-1.5 text-[13.5px] font-medium text-white hover:bg-blue-700 disabled:opacity-60";
 const at = () => new Date().toISOString();
@@ -54,7 +59,8 @@ export function chatActions(businessId) {
         return { role: "assistant", at: at(), content: r.message, cards: r.ok ? [{ type: "preview", item, preview: r.preview }] : [] };
       } catch (e) { return { role: "assistant", at: at(), content: agentErrorMessage(e, "I couldn't change that just now. Nothing was changed.") }; }
     },
-    preview: (item) => apiRequest(`/businesses/${businessId}/agent/chat/preview?${item.approval_id ? `run_id=${item.run_id}` : `draft_id=${item.draft_id}`}`, "GET"),
+    // A task's draft by its run (one handed over from the landing page has no approval id yet), else a saved draft
+    preview: (item) => apiRequest(`/businesses/${businessId}/agent/chat/preview?${item.run_id && !item.draft_id ? `run_id=${item.run_id}` : `draft_id=${item.draft_id}`}`, "GET"),
   };
 }
 
@@ -117,11 +123,13 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
       {p.customer && <p className="text-[13.5px] text-slate-500">For {p.customer}{p.to_email ? ` · ${p.to_email}` : ""}</p>}
       {(p.lines || []).length > 0 && (
         <table className="mt-3 w-full text-[13.5px]"><tbody className="divide-y divide-slate-100 dark:divide-slate-800">{p.lines.map((l, i) => (
-          <tr key={i}><td className="py-1.5 text-slate-800 dark:text-slate-100">{l.name}</td><td className="py-1.5 text-right tabular-nums text-slate-500">{l.quantity ?? ""}{l.quantity ? " × " : ""}{l.unit_price != null ? money(l.unit_price) : ""}</td></tr>
+          <tr key={i}><td className="py-1.5 text-slate-800 dark:text-slate-100">{l.name}</td><td className="py-1.5 text-right tabular-nums text-slate-500">{(l.quantity ?? l.qty) ?? ""}{(l.quantity ?? l.qty) ? " × " : ""}{l.unit_price != null ? money(l.unit_price) : ""}</td></tr>
         ))}</tbody></table>
       )}
       {p.total != null && <p className="mt-2 text-right text-[15px] font-semibold text-slate-900 dark:text-slate-50">Total {money(p.total)}</p>}
-      {(p.due_date || p.valid_until) && <p className="mt-1 text-right text-[13px] text-slate-500">{p.due_date ? `Due ${p.due_date}` : `Valid until ${p.valid_until}`}</p>}
+      {/* VAT is said, never added silently (QA F8, 30 Oct) */}
+      {Number(p.vat_rate) > 0 && <p className="text-right text-[13px] text-slate-500" data-vat>Includes {Number(p.vat_rate)}% VAT{p.vat_amount != null ? ` (${money(p.vat_amount)})` : ""}. Change it before you approve if that's not right.</p>}
+      {(p.due_date || p.valid_until) && <p className="mt-1 text-right text-[13px] text-slate-500">{p.due_date ? `Due ${dateWord(p.due_date)}` : `Valid until ${dateWord(p.valid_until)}`}</p>}
       {/* What the customer will get, read before anything is sent (the owner, 29 Oct: "Approve & send shows the email preview first") */}
       {p.message && (
         <div className="mt-3" data-email-preview>
@@ -134,7 +142,13 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
         <div className="ea-doc ea-doc-inline mt-3 max-h-80 overflow-y-auto rounded-xl bg-slate-50 p-4 text-slate-700 dark:bg-slate-800 dark:text-slate-200" data-preview-text
           dangerouslySetInnerHTML={{ __html: markdownToHtml(p.text) }} />
       )}
-      {!p.found && preview && <p className="mt-2 text-[13.5px] text-slate-500">This isn't waiting any more.</p>}
+      {!p.found && preview && (
+        // Never a dead end (the owner, 30 Oct: a business plan made, its card with no way to it): its own page, one press away
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <p className="text-[13.5px] text-slate-500">{item.to || p.to ? "Open it to read and decide on it." : "This isn't waiting any more."}</p>
+          {(item.to || p.to) && <button type="button" className={BTN} onClick={() => go(item.to || p.to)} data-open-draft>Open it</button>}
+        </div>
+      )}
       {state === "approved" || state === "rejected" ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <p className="text-[13.5px] font-semibold text-emerald-700">{state === "approved" ? "Done." : "Rejected."}</p>

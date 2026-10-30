@@ -1,5 +1,5 @@
 import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
-import { OPEN_APPROVAL_EVENT } from "../components/agent/AgentPanel";
+import { reviewInChat } from "../components/BusinessAssistant";
 import { latestOf, openOf, useFirstResult } from "../components/FirstValueCard";
 import { compactFigure, isFigure } from "../lib/figures";
 import { CountText } from "../components/Motion";
@@ -254,10 +254,10 @@ export default function DashboardPage() {
     try { ready = JSON.parse(sessionStorage.getItem("ea_goal_ready") || "null"); } catch { ready = null; }
     setTimeout(() => {
       if (ready?.run_id === task) {
-        // A document asked for on the homepage: it is ready, so it opens for review. No forms, no questions.
+        // A document asked for on the homepage: it is ready, so it is read and decided in the Agent's chat, never a pop-up
+        // (the owner, 30 Oct: "we agreed that all these should be on the chat")
         try { sessionStorage.removeItem("ea_goal_ready"); } catch { /* said once at most */ }
-        window.dispatchEvent(new CustomEvent(OPEN_APPROVAL_EVENT, { detail: { runId: task } }));
-        window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: "Ready", message: ready.message } }));
+        reviewInChat({ runId: task, message: `${ready.message} Read it below, then approve, edit or reject it here.` });
       } else {
         followInAgentBox({ runId: task });
       }

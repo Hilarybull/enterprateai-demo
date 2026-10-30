@@ -564,7 +564,9 @@ describe("carrying on after sign-in", () => {
     fireEvent.change(screen.getByLabelText(/What is your business called?/), { target: { value: "Newcomer Studio" } });
     await click(screen.getByRole("button", { name: "Continue" }));
     expect(posts(/\/resume$/)[0].body).toEqual({ business_name: "Newcomer Studio" });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
+    // Carried on in the Agent Centre's chat, never a dashboard pop-up (the owner, 30 Oct)
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
+    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).runId).toBe("run-7");
     expect(useWorkspaceStore.getState().workspaceId).toBe("biz-9");
     expect(localStorage.getItem("ea_task_session:anon")).toBeNull();
     expect(events()).toEqual([{ name: "dashboard_handoff_completed", session_id: "sess-1" }]);
@@ -669,7 +671,7 @@ describe("carrying on after sign-in", () => {
       : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
       : /\/prepare$/.test(path) ? session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } }) : {});
     mount();
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
     expect(posts(/\/prepare$/).length).toBe(1);
   });
 

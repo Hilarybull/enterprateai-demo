@@ -518,7 +518,7 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     answers = {"amount": 1000, "use": "stock", "stage": "trading", "route": "loan", "timing": "Within 3 months", "traction": "Paying customers", "kind": "service", "where": "Leeds", "evidence": "None yet",
                "monthly_sales": 10, "capacity": 20, "demand": "enquiries", "fixed_costs": 100, "positioning": "mid", "goal": "5 new clients", "sell": "bookkeeping", "customer": "Frank", "channel": "referrals", "price": 100, "cost": 40,
                "target_date": "2026-12-01", "owed": "some", "pressure": "late payers", "limit": "time", "description": "Bookkeeping for small firms",
-               "problem": "month end takes too long", "worry": "one big client", "top_share": "over_50", "runway": "3_6", "paid_on_time": "on_time", "key_person": "slows", "cash_in_bank": 400, "monthly_costs": 300, "item": "Consulting", "solution": "A website redesign",
+               "problem": "month end takes too long", "purpose": "investors", "worry": "one big client", "top_share": "over_50", "runway": "3_6", "paid_on_time": "on_time", "key_person": "slows", "cash_in_bank": 400, "monthly_costs": 300, "item": "Consulting", "solution": "A website redesign",
                # the document questions (an invoice or a quotation asks these too)
                "customer_email": "frank@example.test", "quantity": 1, "vat_rate": 0, "due_days": 14}
     for n, goal in enumerate(goals.GOALS):                                  # twelve tasks: well past Explorer's five a month, and still none refused

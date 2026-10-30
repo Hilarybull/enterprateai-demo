@@ -916,9 +916,17 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         unevidenced = [p for p in applicable if p.get("status") == "completed" and p.get("evidence_id") not in by_id]
         no_status = [p for p in applicable if p.get("status") not in ("completed", "not_completed")]
         needs_date = [p for p in applicable if p.get("status") == "completed" and parse_day(p.get("valid_until")) and target is None]
+        def named(p: dict) -> str:
+            """A prerequisite as a short name: one written as a long sentence (research saved before names were shortened)
+            reads as its obligation, never cut mid-word (QA F10, 30 Oct: "…need to register… if trans")."""
+            name = str(p.get("name") or "A prerequisite").strip().rstrip(". ")
+            if len(name) > 60:
+                from app.modules.readiness.service import short_name
+                name = short_name(name) or name[:60].rsplit(" ", 1)[0]
+            return name
         if undone or expired or unevidenced:
-            parts = ([f"Not completed: {', '.join(p.get('name') or 'A prerequisite' for p in undone[:4])}."] if undone else []) + expired[:2] + \
-                    ([f"Completed without evidence: {', '.join(p.get('name') or 'A prerequisite' for p in unevidenced[:4])}."] if unevidenced else [])
+            parts = ([f"Not completed: {', '.join(named(p) for p in undone[:4])}."] if undone else []) + expired[:2] + \
+                    ([f"Completed without evidence: {', '.join(named(p) for p in unevidenced[:4])}."] if unevidenced else [])
             r["C6.B"] = _res(FAILED, " ".join(parts))
         elif unresolved or no_status or needs_date:
             r["C6.B"] = _res(UNKNOWN, "Not yet known for every prerequisite: whether it applies, its status, or the launch date its validity is checked against.")
@@ -927,7 +935,7 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         critical_undone = [p for p in undone if p.get("critical")]
         critical_expired = [x for x in (at_launch(p) for p in applicable if p.get("critical") and p.get("status") == "completed") if x]
         if critical_undone or critical_expired:
-            parts = ([f"Required and not completed: {', '.join(str(p.get('name') or 'A prerequisite').rstrip('. ') for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
+            parts = ([f"Required and not completed: {', '.join(named(p) for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
             b["B3"] = _res(FAILED, " ".join(parts), trigger={"prerequisites": [p.get("id") for p in critical_undone]}, source="Operational prerequisites")
             dated = sorted(str(p["required_by"])[:10] for p in critical_undone if parse_day(p.get("required_by")))
             if dated:
