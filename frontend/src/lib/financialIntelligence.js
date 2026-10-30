@@ -1,3 +1,4 @@
+import { pinnedRate } from "./fx";
 function toNumber(value) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? num : 0;
@@ -210,13 +211,15 @@ function toRiskRecommendation(risk) {
 
 export function buildFinancialIntelligence({ catalogue, financials, validation, inputs, fxRates = {}, displayCurrencyIso = "GBP" }) {
   // Convert an amount from itemCurrencyIso to the workspace display currency using fxRates
-  function toWs(amount, itemCurrencyRaw) {
+  // The document's own pinned rate first, as Business Operations and the dashboard convert it (the owner, 30 Oct: £560 was
+  // ₦993,776 there and ₦1,001,537 here); with no rate yet it is left out, never added as if it were the workspace currency
+  function toWs(amount, itemCurrencyRaw, doc = null) {
     const num = Number(amount) || 0;
     if (!itemCurrencyRaw) return num;
     const iso = (String(itemCurrencyRaw).match(/\(([A-Z]{3})\)\s*$/) || String(itemCurrencyRaw).match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || String(itemCurrencyRaw).toUpperCase();
     if (!iso || iso === displayCurrencyIso) return num;
-    const rate = fxRates[iso];
-    return rate ? num * rate : num;
+    const rate = pinnedRate(doc, displayCurrencyIso) ?? fxRates[iso];
+    return rate ? num * rate : 0;
   }
   const serviceValidation =
     validation?.serviceValidation ||
@@ -275,7 +278,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   });
 
   // Revenue = grand total from paid + delivered (accrual basis), converted to workspace currency
-  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toWs(toNumber(item.total_amount || item.subtotal_amount), item.currency || item.source_currency), 0);
+  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toWs(toNumber(item.total_amount || item.subtotal_amount), item.currency || item.source_currency, item), 0);
   const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const lineItemCos = Array.isArray(item.line_items) ? item.line_items.reduce((s, li) => s + (Number(li.qty) || 1) * toNumber(li.cost_of_sales), 0) : 0;
@@ -288,7 +291,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toWs(toNumber(item.price || item.amount || item.total_amount), item.currency || item.source_currency), 0);
+  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toWs(toNumber(item.price || item.amount || item.total_amount), item.currency || item.source_currency, item), 0);
 
   function receivedAmt(inv) {
     if (inv.payments && inv.payments.length > 0) {
@@ -309,7 +312,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       if (!Number.isFinite(d.getTime())) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const rawVal = typeof field === "function" ? field(item) : field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
-      const val = toWs(rawVal, item.currency || item.source_currency);
+      const val = toWs(rawVal, item.currency || item.source_currency, item);
       byMonth[key] = Number(((byMonth[key] || 0) + val).toFixed(2));
     }
     return byMonth;

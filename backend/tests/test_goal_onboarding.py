@@ -39,7 +39,7 @@ def test_i_need_more_customers_is_a_composite_goal_with_an_honest_boundary_not_a
         assert r["resolution_class"] == "composite_goal" and r["goal_key"] == "more_customers", said
     r = goals.resolve(text="I need more customers")
     assert r["underlying_outcome"] == "Work toward winning more customers"
-    assert r["execution_boundary"] == "I can't guarantee customers or bring them to you directly."
+    assert not r["execution_boundary"]      # no "I can't guarantee…" (the owner, 30 Oct)
     assert r["message"].startswith("I can help you work toward getting more customers")
     assert not any(word in (r["message"] + r["execution_boundary"]).lower().replace("can't guarantee", "") for word in ("guarantee", "we will get you"))
     assert len(r["recommended_path"]) <= 4                                  # a short path, not the feature list
@@ -51,7 +51,7 @@ def test_i_need_funding_is_partial_support_through_funding_readiness_and_never_p
         r = goals.resolve(text=said, key="need_funding" if said is None else None)
         assert (r["resolution_class"], r["start_capability"]) == ("partial_support", "funding_readiness"), said
     r = goals.resolve(key="need_funding")
-    assert r["message"].startswith("I can help you become more funding-ready") and r["execution_boundary"] == "I can't guarantee funding, or a yes from any investor or lender."
+    assert r["message"].startswith("I can help you become more funding-ready") and not r["execution_boundary"]
     assert "will get you funding" not in r["message"].lower()
     assert not any(k.startswith("credit") for k in r)      # a task card never says what it costs
 
@@ -280,7 +280,7 @@ def test_an_existing_user_resumes_into_their_own_business_and_another_account_ca
 def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_case_with_no_promise(world):
     env, store, client, who = world
     s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
-    assert s["resolution"]["resolution_class"] == "partial_support" and "can't guarantee funding" in s["resolution"]["execution_boundary"]
+    assert s["resolution"]["resolution_class"] == "partial_support" and not s["resolution"]["execution_boundary"]
     assert [q["key"] for q in s["questions"] if not q.get("hidden")] == ["amount", "use", "stage", "route", "timing", "traction"]      # the six questions asked (the place is read, never asked)
     assert s["progress"] == {"answered": 0, "total": 6} and s["resolution"]["recommended_path"] == []      # counted in questions; no list of engines
     amount, _use, stage = s["questions"][:3]

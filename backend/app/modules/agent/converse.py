@@ -126,7 +126,14 @@ def _figures(case: dict | None) -> dict:
             **{k: (data.get("economics") or {}).get(k) for k in _ECONOMICS if (data.get("economics") or {}).get(k) not in (None, "")},
             "score_out_of_100": summary.get("score"), "score_so_far": bool(summary.get("score_partial")), "classification": summary.get("classification"),
             "things_to_do": summary.get("open_actions"), "next": (summary.get("next_action") or {}).get("title"),
+            # What they are, so "what are the 8 things?" is answered (the owner, 30 Oct: "I can't see the full list from here")
+            "to_do_list": open_steps(case)[:12],
             "blockers": [b.get("label") for b in summary.get("blockers") or []][:3], "research": case.get("research")}
+
+
+def open_steps(case: dict | None) -> list[str]:
+    """The case's open next steps, by title, in its own order."""
+    return [str(a.get("title")).strip() for a in (case or {}).get("actions") or [] if isinstance(a, dict) and a.get("status") == "open" and str(a.get("title") or "").strip()]
 
 
 def clean_change(change: Any) -> dict:
@@ -736,7 +743,22 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         return {**out, "changed": done, "case_id": str(case["id"])}
     word = {"replaced": "replaced your funding need (the old one is in your history)", "updated": "updated your funding case",
             "created": "set up your funding case"}[done[0]]
-    out = await _said(orch, user, business_id, text, f"Done. I've {word}.{line}", [], now, cards=cards)
+    # "with 10 things to do": the first of them said, with Do all for me and the way to all of them (the owner, 30 Oct: "why
+    # didn't it bring out the 10 things, with Do all for me?")
+    say, actions = f"Done. I've {word}.{line}", []
+    try:
+        from app.modules.readiness.service import service_for
+        whole = await service_for(orch).get_subject(user["id"], business_id, rules.FUNDING, case["id"], user.get("email"))
+        steps = open_steps(whole)
+    except Exception:      # noqa: BLE001 - said without the list
+        steps = []
+    if steps:
+        say += " First: " + "; ".join(t.rstrip(".") for t in steps[:3]) + (f"; and {len(steps) - 3} more." if len(steps) > 3 else ".")
+        cards = [*cards, {"type": "result", "case_id": str(case["id"])}, {"type": "steps", "case_id": str(case["id"])}]
+    say, actions = offer_things_left(say, {}, actions)
+    if steps:
+        actions = [*actions, {"label": f"See all {len(steps)}" if len(steps) > 1 else "See it", "to": f"/funding/{case['id']}?tab=overview"}]
+    out = await _said(orch, user, business_id, text, say, actions, now, cards=cards)
     return {**out, "changed": done, "case_id": str(case["id"])}
 
 

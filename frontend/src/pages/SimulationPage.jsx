@@ -8,7 +8,7 @@ import Spinner from "../components/Spinner";
 import NumberInput, { parseNumber } from "../components/NumberInput";
 import { SimulationIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
-import { useWorkspaceStore } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber, invoiceNumbers, shortDate } from "../lib/format";
 import InfoTip from "../components/InfoTip";
@@ -109,7 +109,11 @@ export default function SimulationPage() {
   const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const validation = useWorkspaceStore((s) => s.validation);
   const inputs = useWorkspaceStore((s) => s.inputs);
-  const currency = useWorkspaceStore((s) => s.currency);
+  const storeCurrency = useWorkspaceStore((s) => s.currency);
+  // The workspace's own currency once read, as the dashboard and Business Operations show it (the owner, 30 Oct: a Naira
+  // business's simulation shown in £, its first month the £ invoice alone)
+  const [ownCurrency, setOwnCurrency] = useState(null);
+  const currency = ownCurrency || storeCurrency;
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const email = useAuthStore((s) => s.email);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
@@ -323,9 +327,11 @@ export default function SimulationPage() {
         setFinancialsData(fin);
         setRegistrationStatus(ws?.data?.registration_status || { status: "not_started" });
         setAcceptedValidation(getAcceptedWorkspaceValidation(ws?.data));
-        // Fetch FX rates for any foreign-currency records
-        if (currency) {
-          const wsIso = (currency.match(/\(([A-Z]{3})\)\s*$/) || currency.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || currency.toUpperCase();
+        const own = workspaceCurrencyOf(ws?.data) || currency;
+        setOwnCurrency(workspaceCurrencyOf(ws?.data) || null);
+        // Fetch FX rates for any foreign-currency records, into the workspace's own currency
+        if (own) {
+          const wsIso = (own.match(/\(([A-Z]{3})\)\s*$/) || own.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || own.toUpperCase();
           const allRecs = [...(fin.invoices || []), ...(fin.expenses || [])];
           const foreign = [...new Set(allRecs.map(r => { const c = String(r.currency || r.source_currency || "").trim(); const iso = (c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || c.toUpperCase(); return iso; }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
           if (foreign.length) {

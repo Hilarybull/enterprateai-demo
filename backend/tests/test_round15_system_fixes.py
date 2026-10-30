@@ -203,3 +203,17 @@ def test_a_plan_the_task_made_is_previewed_from_its_draft(world):
     run(env.orch.rt.business.mutate("A", lambda d: drafts.add(d, kind="business_plan", title="Business plan", to="/blueprint?tab=business-plans", run_id="run-1")))
     got = asyncio.run(chat_actions.preview(OWNER, "A", run_id="run-1"))
     assert got["found"] and got["kind"] == "business_plan" and got["to"].startswith("/blueprint")
+
+
+def test_a_replaced_need_names_its_things_to_do_with_do_all_for_me(talk):
+    # The owner, 30 Oct: "Your score is now 48/100 so far, with 10 things to do": why didn't it bring them out, with Do all for me?
+    env, ask, model, cid = talk
+    model.replies += [{"say": "Should it replace that need, or just update it?"},
+                      {"say": "Done.", "change": {"target_amount": 2000000, "purpose": "a new site", "route_preference": "loan"}, "replace": True}]
+    ask("I need a £2m loan for a new site")
+    out = ask("replace it")
+    assert out["message"].startswith("Done. I've replaced your funding need")
+    assert "First:" in out["message"]
+    labels = [a["label"] for a in out["actions"]]
+    assert "Do all for me" in labels and any(l.startswith("See ") for l in labels)
+    assert {"result", "steps"} <= {c["type"] for c in out["cards"]}

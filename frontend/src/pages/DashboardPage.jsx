@@ -93,7 +93,7 @@ export default function DashboardPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceStatus = useWorkspaceStore(workspaceStatusOf);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
-  const currency = useWorkspaceStore((s) => s.currency);
+  const storeCurrency = useWorkspaceStore((s) => s.currency);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
@@ -306,6 +306,9 @@ export default function DashboardPage() {
   });
   const [acceptedValidation, setAcceptedValidation] = useState(null);
   const [docCurrency, setDocCurrency] = useState(null);      // the workspace's own, once loaded (never the app's GBP start)
+  // Totals, labels and conversions all in the workspace's own currency, the same as Business Operations (the owner, 30 Oct:
+  // a Naira car wash shown in £, its Naira invoices "not counted yet", while Business Operations converted the £ to ₦)
+  const currency = docCurrency || storeCurrency;
   const fxIso = fxIsoOf(docCurrency || currency) || "GBP";
   // The same rates as Business Operations, from the one conversion service (lib/fx): never two answers for one figure.
   const { rates: fxRates, dates: fxDates } = useFxRates(foreignOf([...(snapshot?.invoices || []), ...(snapshot?.expenses || [])], fxIso), docCurrency ? fxIso : "");

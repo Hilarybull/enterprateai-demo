@@ -92,7 +92,7 @@ GOALS: list[dict[str, Any]] = [
     {"key": "need_funding", "mode": "business_goal", "label": "I need funding", "outcome": "Become funding-ready and prepare what a funder will ask for",
      "class": PARTIAL, "start": "funding_readiness", "path": ["funding_readiness", "funding_pack_draft", "business_plan_draft", "scenario_help"],
      "say": "I can help you become more funding-ready: assess where you stand, show the gaps, organise your evidence and prepare the materials.",
-     "boundary": "I can't guarantee funding, or a yes from any investor or lender.",
+     "boundary": "",      # never "I can't guarantee…" on the landing page: it puts people off signing up (the owner, 30 Oct)
      "questions": [_money("amount", "How much funding are you looking for?", required=True, chips=_FUNDING_AMOUNTS),
                    _f("use", "What will the money be used for?", "textarea", required=True),
                    _f("stage", "Where is the business now?", "choice", required=True,
@@ -102,7 +102,7 @@ GOALS: list[dict[str, Any]] = [
      "class": COMPOSITE, "start": "offer_review", "path": ["offer_review", "marketplace_profile", "marketplace_offering", "new_proposal", "enquiry_to_quote"],
      "say": "I can help you work toward getting more customers: review what sells, improve how your business appears in the Marketplace, "
             "and prepare proposals and quotations for the enquiries you get.",
-     "boundary": "I can't guarantee customers or bring them to you directly.",
+     "boundary": "",      # never "I can't guarantee…" on the landing page: it puts people off signing up (the owner, 30 Oct)
      "questions": [_f("sell", "What do you sell?", "text", required=True), _f("customer", "Who is your ideal customer?", "text", required=True),
                    _f("channel", "Where do your customers come from today?", "text")]},
     {"key": "price_offer", "mode": "business_goal", "chip": False,      # off the landing shortcuts until ready (the owner, 22 Oct)
@@ -130,7 +130,7 @@ GOALS: list[dict[str, Any]] = [
     {"key": "grow", "mode": "business_goal", "label": "Help me grow my business", "chip": False, "outcome": "Find what limits growth and a path through it",
      "class": COMPOSITE, "start": "expansion_scenario", "path": ["expansion_scenario", "capacity_check", "offer_review", "scenario_help"],
      "say": "I can work out what growing would do to your revenue and costs, check whether you have the capacity for it, and review what sells.",
-     "boundary": "I can't guarantee a growth result.",
+     "boundary": "",      # never "I can't guarantee…" on the landing page: it puts people off signing up (the owner, 30 Oct)
      "questions": [_f("sell", "What do you sell?", "text", required=True), _f("limit", "What is holding growth back today?", "text")]},
     {"key": "test_idea", "mode": "business_goal",      # back on the landing shortcuts (the owner, 25 Oct)
      "label": "Test a business idea", "outcome": "Score a business idea and see its risks",
