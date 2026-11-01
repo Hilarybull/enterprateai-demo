@@ -13,7 +13,7 @@ const money = (sign, n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${sig
 
 // Each gap as a step: a plain title, one sentence of why, and how it is done. `answer`: one fact, typed here (re-checked
 // free). `doIt`: the Agent does it (its research, the price shown first). `mine`: the screen to do it yourself.
-const STEPS = {
+export const STEPS = {
   // Each risk: what was found as its title, why it matters, and a button that does something about it (the owner, 24 Oct)
   risks: {
     concentration: { title: "Relying on one customer", cta: "Run a what-if: lose them", to: "/simulation?template=tmpl_client_loss" },

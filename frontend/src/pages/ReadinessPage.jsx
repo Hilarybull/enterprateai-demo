@@ -195,7 +195,7 @@ function NewSubject({ businessId, feature, profiles, onCreated, onCancel }) {
 
 /** The funding case's saved research (the owner's QA, 15 Oct): the run date, the findings and the review state; opening one
  *  is free, and the same research is never bought twice. */
-export function SavedResearch({ businessId, goal = "need_funding", onStart = null }) {
+export function SavedResearch({ businessId, goal = "need_funding", onStart = null, onUsed = null }) {
   const [runs, setRuns] = useState(null);
   const [open, setOpen] = useState(null);
   const [problem, setProblem] = useState("");
@@ -251,7 +251,8 @@ export function SavedResearch({ businessId, goal = "need_funding", onStart = nul
         </details>
       )}
       {problem && <p role="alert" className="text-[12.5px] text-rose-700">{problem}</p>}
-      {open && <div id="review" data-review-on-page><ResearchReview businessId={businessId} run={open} onAdopted={() => {
+      {open && <div id="review" data-review-on-page><ResearchReview businessId={businessId} run={open} onAdopted={(used) => {
+        onUsed?.(used);
         window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "success", title: "All findings reviewed", message: "Your case was checked again. Open the Materials tab to view your funding pack." } }));
       }} /></div>}
     </div>
@@ -821,7 +822,11 @@ function SubjectDetail({ businessId, feature, subjectId }) {
     timer.current = setTimeout(() => flush(), SAVE_DELAY_MS);
   }, [flush]);
 
-  const onChanged = useCallback((detail) => (detail && detail.id === subjectId && detail.data ? accept(detail, true) : load()), [accept, load, subjectId]);
+  const onChanged = useCallback((detail) => {
+    // Saved from the chat (a forecast, evidence, a confirmation): the check runs again, as it does for an edit here (the owner, 1 Nov)
+    if (detail?.recheck) { editedHere.current = true; setSave((x) => (["pending", "saving"].includes(x?.state) ? x : { state: "saved" })); }
+    return detail && detail.id === subjectId && detail.data ? accept(detail, true) : load();
+  }, [accept, load, subjectId]);
   const setTab = (next) => { const p = new URLSearchParams(params); p.set("tab", next); p.delete("section"); setParams(p, { replace: true }); };
   const openSectionAt = (key) => { setOpenSectionState(key); const p = new URLSearchParams(params); p.set("tab", "answers"); p.set("section", key); p.delete("field"); setParams(p, { replace: true }); };
   // A section picked on the Inputs tab: kept in the address, so the next "Fill it in" always opens where it points.
@@ -1208,6 +1213,15 @@ function SubjectDetail({ businessId, feature, subjectId }) {
           <button type="button" onClick={() => setTab("assistant")} className="font-semibold text-brand-700 hover:underline dark:text-brand-300">Back to the Assistant</button>
         </p>
       )}
+      {/* Above both columns, so the steps card and the snapshot beside it start level (the owner, 1 Nov: "not aligned") */}
+      {tab === "overview" && (<>
+              {/* Where each area stands, at the top of the Checklist (it was in the score banner) */}
+              <div className="flex flex-wrap gap-2" data-case-areas>{heroPills.map((x) => (
+                <button key={x.key} type="button" onClick={() => openSectionAt(x.key)}
+                  className={`rounded-full px-3 py-1 text-[13px] font-medium ${x.state === "done" ? "bg-emerald-50 text-emerald-700" : x.state === "fix" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>
+                  {x.state === "done" ? "✓ " : ""}{x.text}</button>
+              ))}</div>
+      </>)}
       <div className={tab === "assistant" ? "contents" : "grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_25rem]"}>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className={tab === "assistant" ? "min-h-0 flex-1" : "min-w-0 space-y-4"}>
         {/* No "previous need" review (the owner's QA, 15 Oct): Replace replaced it, Update changed only what differed. The
@@ -1238,17 +1252,11 @@ function SubjectDetail({ businessId, feature, subjectId }) {
         )}
         {tab === "overview" && (
           <div className="space-y-4" data-case-overview>
-            {/* Where each area stands, at the top of the Checklist (it was in the score banner) */}
-            <div className="flex flex-wrap gap-2" data-case-areas>{heroPills.map((x) => (
-              <button key={x.key} type="button" onClick={() => openSectionAt(x.key)}
-                className={`rounded-full px-3 py-1 text-[13px] font-medium ${x.state === "done" ? "bg-emerald-50 text-emerald-700" : x.state === "fix" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>
-                {x.state === "done" ? "✓ " : ""}{x.text}</button>
-            ))}</div>
             {!checking && sm.classification && sm.classification !== "ready" && Number(heroScore) >= 75 && sm.not_ready_why && (
               <p className="text-[13px] font-medium text-amber-800 dark:text-amber-300" data-not-ready-why>{sm.not_ready_why}</p>
             )}
-            {overview === undefined ? (
-              // The case's own steps at once (F-5): they come from the case itself, never waiting on the chat's result
+            {overview === undefined || (overview?._failed && ownSteps?.steps?.length) ? (
+              // The case's own steps at once, and when the chat's result can't be loaded (the owner, 1 Nov: "nothing showing") (F-5): they come from the case itself, never waiting on the chat's result
               ownSteps?.steps?.length
                 ? <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900" data-steps-first>
                     <NextSteps result={{ assessment_type: feature === "launch" ? "launch_readiness_initial" : "funding_readiness_initial", blockers: [], criteria: [], case_steps: ownSteps.steps,

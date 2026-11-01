@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.modules.agent.converse import (MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _ask_do_all, _figures_in, _no, _parse, _said, _start_do_all,
+from app.modules.agent.converse import (MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _ask_do_all, _figures_in, _no, _parse, _said, _start_do_all, OutOfCredits, paid_reply, with_next_step,
                                         _yes, apply_drafts, approvals_waiting, asks_gaps, asks_help, cards_for, in_conversation)
 
 logger = logging.getLogger(__name__)
@@ -45,74 +45,131 @@ _DO_ALL = re.compile(r"\bdo\s+(?:it\s+)?al+\b|\bdo\s+everything\b", re.I)      #
 _FILL_REST = re.compile(r"\b(?:fill|populate|complete|draft)\b.{0,20}\b(?:them|the rest|the gaps|everything|it all|all|pending|missing)\b", re.I)
 
 
-async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict, text: str, now, keep: dict) -> dict:
+async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict, text: str, now, keep: dict, quiet: bool = False, topic: str = TOPIC) -> dict:
     """Every field of the plan still blank drafted, estimates where the records give no figure, each waiting for review (the
     owner, 29 Oct: "fill them and bring for review"). Nothing is written on the plan until approved."""
-    from app.modules.agent import research
-    from app.modules.agent.converse import _said
+    from app.modules.agent import goal_router, research
+    from app.modules.agent.converse import _ask_do_all, _said
     from app.modules.readiness import engine, rules
     from app.modules.readiness.service import service_for
+    if not await goal_router.may_do_all(user["id"], "need_funding" if topic == "funding" else "launch"):
+        # This drafting is part of Do all, Decision Engine and above, whichever way it's reached: the plan's own answer
+        return {} if quiet else await _ask_do_all(orch, user, business_id, plan, data, text, now, topic=topic, keep=keep)
     svc = service_for(orch)
     row = await svc.store.get("subjects", plan["id"])
     d = (row or {}).get("data") or {}
-    waiting = d.get("agent_drafts") or {}
-    fields = research.CASE_DRAFT_FIELDS.get("launch") or {}
+    waiting = svc.drafts_now(d, data)      # as the page shows them (the owner, 1 Nov: "Review drafts (1)" with nothing to review)
+    funding = topic == "funding"
+    kind = rules.FUNDING if funding else rules.LAUNCH
+    fields = research.fillable_fields("need_funding" if funding else "launch")
     blank = {k: v for k, v in fields.items() if engine.blank(engine.get(d, k)) and k not in waiting}
     from app.modules.agent.converse import launch_ask
-    if "loses money" in launch_ask(d):
+    if not funding and "loses money" in launch_ask(d):
         # A price at or below cost: a price and cost that work are drafted beside the plan's own (the owner, 29 Oct)
         blank.update({k: fields[k] + "; the price must be above the cost per unit" for k in ("economics.price_per_unit", "economics.variable_cost_per_unit")})
     # First what Business Operations and the profile already prove (the owner, 29 Oct: "it can fetch these from the business
     # operations"): demand evidence attached, the test run and the permit as drafts
     from app.modules.agent import operations_evidence
     try:
+        if funding:
+            raise LookupError("a launch plan's evidence")
         ops = await operations_evidence.gather(svc, user, business_id, str(plan["id"]), d, data, now.date())
     except Exception:      # noqa: BLE001 - the drafts below come either way
         logger.info("records not gathered for launch %s", plan["id"], exc_info=True)
         ops = {"drafts": {}, "found": [], "none": []}
     rejected = set(d.get("rejected_drafts") or [])
     blank = {k: v for k, v in blank.items() if k not in rejected}
+    has_forecast = bool(await svc._forecast_of(row)) if row else True
+    if blank and not has_forecast:
+        # The forecast too, from three estimates, for the owner to check and confirm
+        blank.update({"_forecast.opening_cash": "The cash the business starts with, as a whole number", "_forecast.receipts": "The money coming in during a typical month, as a whole number",
+                      "_forecast.payments": "The money going out during a typical month, as a whole number"})
     from_records = {k: v for k, v in ops["drafts"].items() if k not in waiting and k not in rejected}
+    if funding:
+        # What only needs a date, on lines already there: a month for each spending line, a due date on each milestone
+        import datetime as _dt
+        wanted = engine.parse_day(d.get("receipt_date")) or (now.date() + _dt.timedelta(days=30))
+        est = {"source": "an estimate by the Agent; check it before you approve", "at": now.date().isoformat()}
+        lines = d.get("use_of_funds") if isinstance(d.get("use_of_funds"), list) else []
+        if any(isinstance(x, dict) and not re.match(r"\d{4}-\d{2}", str(x.get("period") or "")) for x in lines) and "use_of_funds" not in waiting and "use_of_funds" not in rejected:
+            from_records["use_of_funds"] = {**est, "replaces": lines, "value": [{**x, "period": x.get("period") if re.match(r"\d{4}-\d{2}", str(x.get("period") or "")) else wanted.strftime("%Y-%m")} for x in lines]}
+        steps_ = d.get("milestones") if isinstance(d.get("milestones"), list) else []
+        if any(isinstance(x, dict) and engine.blank(x.get("due_date")) for x in steps_) and "milestones" not in waiting and "milestones" not in rejected:
+            from_records["milestones"] = {**est, "replaces": steps_, "value": [{**x, "due_date": x.get("due_date") or (wanted + _dt.timedelta(days=90)).isoformat()} for x in steps_]}
     records_line = operations_evidence.said(ops)
-    review = f"/launch/{plan['id']}?tab=assistant&review=1"
+    review = f"/{'funding' if funding else 'launch'}/{plan['id']}?tab=assistant&review=1"
+    noun = "case" if funding else "plan"
     waiting = {p: x for p, x in waiting.items() if isinstance(x, dict) and str(x.get("value")) != str(engine.get(d, p))}      # as the page counts them
-    summary = plan.get("summary") or {}
-    open_actions = summary.get("open_actions")
-    next_action = (summary.get("next_action") or {}).get("title")
-    if isinstance(open_actions, int) and open_actions > 0:
-        checklist_line = f"After that, {open_actions} checklist item{'s' if open_actions != 1 else ''} still need attention"
-        if next_action:
-            checklist_line += f", starting with {str(next_action).rstrip('.')}"
-        checklist_line += ". I'll show them below so we can work through them."
-    else:
-        checklist_line = "I'll show the remaining checklist steps below so we can work through them."
+    # What's left is shown live under this reply, from the case as it is now: never a count from the last check, taken before these
+    # drafts and approvals (the owner, 1 Nov: "9 things are still pending? so what did Do all fill")
+    checklist_line = "What's left is below, with what you've already approved."
     steps = [{"type": "steps", "case_id": str(plan["id"])}]
+    async def mark_filled() -> None:      # drafted once: never offered again (the owner, 1 Nov: "not after it still comes back with draft the rest")
+        def _m(x: dict) -> None:
+            x.setdefault("agent_filled", {})[str(plan["id"])] = True
+        await orch.rt.business.mutate(business_id, _m)
+    if not blank and not from_records:
+        await mark_filled()
+    if quiet and not blank and not from_records:      # part of Do all for me, which says its own result
+        return {}
     if not blank and not from_records:
         # Separate "nothing else can be drafted" from "the plan is complete" and put the live checklist actions in the chat.
         say = " ".join(x for x in (
-            "I can't draft the remaining items from the records I have.", records_line,
+            "I've drafted everything I can. What's left needs your own figures or proof.", records_line,
             f"First, review the {len(waiting)} draft{'s' if len(waiting) != 1 else ''} waiting and approve what's right." if waiting else "",
             checklist_line,
         ) if x)
         actions = [{"label": f"Review drafts ({len(waiting)})", "to": review}] if waiting else []
-        return await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, keep=keep, cards=steps)
+        return await _said(orch, user, business_id, text, say, actions, now, topic=topic, keep=keep, cards=steps)
     drafted = {}
     if blank:
-        facts = research.workspace_facts(data, {}, {"offering": d.get("name"), "customer": d.get("audience"), "where": d.get("geography")}, [])
+        facts = research.workspace_facts(data, {}, {"offering": d.get("purpose") if funding else d.get("name"), "customer": engine.get(d, "market.target_segment") if funding else d.get("audience"), "where": engine.get(d, "market.location") if funding else d.get("geography")}, [])
         facts["plan"] = {k: v for k, v in d.items() if k not in ("agent_drafts", "provenance") and not str(k).startswith("_")}
         facts["today"] = now.date().isoformat()      # the launch date and milestones are drafted from it
-        drafted = await research.draft_estimates(research._default_llm(user["id"]), "launch", facts, blank)
+        if d.get("currency"):      # estimates in the case's own currency
+            facts["currency"] = str(d["currency"]).upper()
+        goal = "need_funding" if funding else "launch"
+        drafted = await research.draft_estimates(research._default_llm(user["id"]), goal, facts, blank)
+        missing = {k: v for k, v in blank.items() if k not in drafted}
+        if missing:      # one more go for what the first reply left out: paid for, so never left for another press
+            drafted.update(await research.draft_estimates(research._default_llm(user["id"]), goal, facts, missing))
+        for k, how in blank.items():      # a real date, or left out
+            if "YYYY-MM-DD" in how and isinstance(drafted.get(k), str) and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", drafted[k]):
+                drafted.pop(k)
+        if isinstance(drafted.get("prerequisites"), list):      # never said to be done: that's for the owner
+            drafted["prerequisites"] = [{**r, "applicable": "no" if str(r.get("applicable")).strip().lower() == "no" else "yes",
+                                         "critical": str(r.get("critical")).strip().lower() == "true", "status": "not_completed"} for r in drafted["prerequisites"] if isinstance(r, dict)]
+        for k, v in list(drafted.items()):      # each row with its own id; amounts as figures
+            if isinstance(v, list):
+                drafted[k] = [{**r, "id": r.get("id") or f"a{n + 1}{abs(hash(k)) % 9999}", **({"amount": re.sub(r"[^0-9.]", "", str(r.get("amount")))} if k == "use_of_funds" else {})} for n, r in enumerate(v) if isinstance(r, dict)]
+        figures = {k.split(".", 1)[1]: re.sub(r"[^0-9.]", "", str(drafted.pop(k))) for k in list(drafted) if k.startswith("_forecast.")}
+        if len([v for v in figures.values() if v]) == 3 and not has_forecast:
+            today_ = orch.rt.clock().date()
+            first = today_.replace(day=1)
+            months = [f"{first.year + (first.month - 1 + i) // 12}-{(first.month - 1 + i) % 12 + 1:02d}" for i in range(12)]
+            try:
+                await svc.save_forecast(user["id"], business_id, kind, plan["id"], {"currency": d.get("currency"), "start_month": months[0], "opening_cash": figures["opening_cash"], "opening_cash_as_of": today_.isoformat(),
+                                        "assumptions": [{"id": f"f{w}", "applies_to": w, "text": "A typical month for this kind of business, estimated by the Agent", "source": "An estimate by the Agent, for you to confirm"} for w in ("receipts", "payments")],
+                                        "commitments": [{"id": "c1", "label": "Running costs each month", "amount": figures["payments"], "month": months[0], "basis": "assumption"}],
+                                        "months": [{"month": m, "receipts": figures["receipts"], "payments": figures["payments"], "basis": "forecast"} for m in months]}, None, user.get("email"), agent=True)
+            except Exception:      # noqa: BLE001 - the other drafts land either way
+                logger.info("forecast not drafted for %s", plan["id"], exc_info=True)
+    if quiet and not drafted and not from_records:
+        return {}
     if not drafted and not from_records:
         return await _said(orch, user, business_id, text,
                            "I couldn't prepare those drafts just now, so nothing was changed. " + checklist_line,
-                           [], now, topic=TOPIC, keep=keep, cards=steps)
+                           [], now, topic=topic, keep=keep, cards=steps)
     at = now.date().isoformat()
-    place = d.get("geography") or "your area"
+    place = (engine.get(d, "market.location") if funding else d.get("geography")) or "your area"
     new = {k: {"value": v, "source": f"an estimate by the Agent, typical for {place}; check it before you approve", "at": at,
                **({"replaces": engine.get(d, k)} if not engine.blank(engine.get(d, k)) else {})} for k, v in drafted.items()}
     new.update(from_records)
     row = await svc.store.get("subjects", plan["id"])      # evidence was just attached: its latest revision
-    saved = await svc.update_subject(user["id"], business_id, rules.LAUNCH, plan["id"], row["revision"], {"agent_drafts": {**waiting, **new}}, user.get("email"))
+    saved = await svc.update_subject(user["id"], business_id, kind, plan["id"], row["revision"], {"agent_drafts": {**(((row or {}).get("data") or {}).get("agent_drafts") or {}), **waiting, **new}}, user.get("email"))
+    await mark_filled()
+    if quiet:
+        return {}
     n = len(new)
     # Count the saved drafts, using the same pending-draft rule as the review UI. Counting the local proposal here can
     # disagree with the banner after the service normalizes or drops a draft that no longer changes its field.
@@ -120,9 +177,9 @@ async def _fill_rest(orch, user: dict, business_id: str, plan: dict, data: dict,
     total = len(draft_review.waiting((saved or {}).get("data") or {}))
     return await _said(orch, user, business_id, text, " ".join(x for x in (
         f"I've added {n} new draft{'s' if n != 1 else ''}, with estimates where your records have no figure.", records_line,
-        f"There {'are' if total != 1 else 'is'} {total} draft{'s' if total != 1 else ''} waiting for your review. Edit anything that's off and approve; nothing goes on your plan until then, and your score goes up as you approve.",
+        f"There {'are' if total != 1 else 'is'} {total} draft{'s' if total != 1 else ''} waiting for your review. Edit anything that's off and approve; nothing goes on your {noun} until then, and your score goes up as you approve.",
         checklist_line) if x),
-                       [{"label": f"Review drafts ({total})", "to": review}], now, topic=TOPIC, keep=keep, cards=steps)
+                       [{"label": f"Review drafts ({total})", "to": review}], now, topic=topic, keep=keep, cards=steps)
 
 
 def wants_launch(text: str) -> bool:
@@ -236,6 +293,11 @@ def _typed_change(text: str, now: datetime) -> dict:
         if not month.group(2) and (year, mi) < (now.year, now.month):
             year += 1
         out["target_date"] = f"{year:04d}-{mi:02d}-01"
+    else:      # "within 3 months", "in 6 to 12 months": the same reading as funding, never asked again
+        from app.modules.agent import goals
+        when = goals.end_of_month(t, now.date() if hasattr(now, "date") else now)
+        if when:
+            out["target_date"] = when
     return clean_change(out)
 
 
@@ -247,6 +309,8 @@ def _typed_reply(text: str, now: datetime, on: str | None, by_id: dict, typed: d
     """No model reply: the launch details typed, as the model's reply would carry them, asking for the next one missing
     (QA F3, 30 Oct). None when nothing was typed to read: the scripted chat answers that."""
     from app.modules.readiness.service import _vague
+    if typed is None and (str(text).strip().endswith("?") or re.match(r"^\s*(?:how|what|why|where|when|is|are|does|do|can|could|should|check|show|tell)\b", str(text), re.I)):
+        return None      # a question is never read as a change: "how is my launch looking?" renamed the plan "looking"
     typed = dict(typed) if typed is not None else _typed_change(text, now)
     if typed.get("name") and (_vague(typed["name"]) or re.fullmatch(r"(?:new\s+)?(?:launch\s+)?(?:readiness|plan|check)s?", typed["name"], re.I)):
         typed.pop("name")      # "new launch readiness" names no offering (the dashboard's "start a launch plan")
@@ -299,16 +363,19 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         return await _start_do_all(orch, user, business_id, by_id[on], asked, text, now, topic=TOPIC, keep=keep)
     if asked and _no(text):
         return await _said(orch, user, business_id, text, "No problem, nothing was started or charged.", [], now, topic=TOPIC, keep=keep)
-    if on and _FILL_REST.search(str(text)):
-        return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
     from app.modules.agent import research as _research
     researched = bool(on) and (_research.research_state(data, "launch", case_id=on, answers={}) or {}).get("state") in ("review", "adopted")
+    if on and _FILL_REST.search(str(text)):      # part of the paid Do all: before it has run, its price first
+        if researched:
+            return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
+        return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep)
     if on and (asks_help(text) or _DO_ALL.search(str(text))):
         # Research already done for this plan: the rest is drafted at once, free, never its price asked again (the owner,
         # 30 Oct: "do all for me" after the research)
         if researched:
             return await _fill_rest(orch, user, business_id, by_id[on], data, text, now, keep)
-        return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep)
+        from app.modules.agent.converse import PRICED_YES
+        return await _ask_do_all(orch, user, business_id, by_id[on], data, text, now, topic=TOPIC, keep=keep, go_now=bool(PRICED_YES.match(str(text))))
     # A new launch plan asked for without saying what: asked once, and the answer is its name, so the plan is made (QA,
     # 30 Oct: "a new plan" and Start a launch plan looped on the plan list and never made one)
     from app.modules.readiness.service import _vague
@@ -331,8 +398,10 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     got = forced
     if got is None and not no_model:
         try:
-            res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
+            res = await asyncio.wait_for(paid_reply(orch, user, lambda: llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500)), MODEL_SECONDS)
             got = _parse(getattr(res, "text", "") or "")
+        except OutOfCredits:
+            raise
         except Exception:      # noqa: BLE001 - what was typed is still read below
             logger.info("launch conversation: no model reply", exc_info=True)
     if got is None:
@@ -439,11 +508,19 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             if researched:
                 actions = [a for a in actions if str(a.get("label") or "").strip().lower() != "do all for me"]
             row = await svc.store.get("subjects", pid) if researched else None
-            say, actions = offer_things_left(say, got, actions, researched, launch_ask((row or {}).get("data") or {}) if researched else "")
+            held = (row or {}).get("data") or {}
+            # "Draft the rest" only while something can be drafted (the owner, 1 Nov: "remove draft it for me if you can't draft")
+            from app.modules.agent import research as _rs
+            from app.modules.readiness import engine as _en
+            can = not (data.get("agent_filled") or {}).get(str(pid)) and any(_en.blank(_en.get(held, k)) and k not in (held.get("agent_drafts") or {}) and k not in (held.get("rejected_drafts") or []) for k in _rs.fillable_fields("launch"))
+            if can or not researched:
+                say, actions = offer_things_left(say, got, actions, researched, launch_ask(held) if researched else "")
     if plan and _ASKS_READY.search(str(text)):
-        got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result", "next"]      # the result, never only words
+        got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result"]      # the result, never only words
     if not actions:
         actions = suggested("launch", bool(plan))
+    if plan and not keep:
+        say = with_next_step(say, by_id.get(str(plan["id"])) or plan, actions)
     out = await _said(orch, user, business_id, text, say, actions, now, topic=TOPIC, keep=keep,
                       cards=cards_for(got, not turns, bool(plan), str(plan["id"]) if plan else None, before, after, bool(waiting)))
     return {**out, "changed": done, **({"case_id": str(plan["id"])} if plan else {})}

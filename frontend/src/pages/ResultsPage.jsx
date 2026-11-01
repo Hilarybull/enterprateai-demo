@@ -83,7 +83,7 @@ function CircularScore({ score, size = 120, strokeWidth = 10, tone = "success" }
   );
 }
 
-export default function ResultsPage() {
+export default function ResultsPage({ embedded = false }) {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -155,9 +155,12 @@ export default function ResultsPage() {
         // V4 active history entry takes priority over legacy idea_validation_result
         const vHistory = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
         const activeVId = ws?.data?.active_validation_id || null;
-        const activeVEntry = activeVId ? vHistory.find((h) => h?.id === activeVId) : vHistory[0];
+        // the active one when it has a result, else the newest that has (31 Oct: an active id left on an old entry showed "No results yet")
+        const isV4 = (h) => h?.result?.engine_version === "4.0";
+        const activeVEntry = [activeVId && vHistory.find((h) => h?.id === activeVId), ...vHistory].find(isV4) || (activeVId ? vHistory.find((h) => h?.id === activeVId) : vHistory[0]);
         if (activeVEntry?.result?.engine_version === "4.0") {
           setValidation(activeVEntry.result);
+          if (activeVEntry.id) useWorkspaceStore.getState().setValidationEntryId(activeVEntry.id);      // Modify opens this one's form (31 Oct)
         } else if (ws?.data?.idea_validation_result) {
           setValidation(ws.data.idea_validation_result);
         }
@@ -579,11 +582,11 @@ export default function ResultsPage() {
 
     return (
       <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
-        <button type="button" onClick={() => navigate("/validation")}
+        {!embedded && <button type="button" onClick={() => navigate("/validation")}
           className="group flex items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600">
           <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
           Back to Validation
-        </button>
+        </button>}
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
         {decisionNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{decisionNotice}</div>}
@@ -1417,7 +1420,7 @@ export default function ResultsPage() {
       <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
 
         {/* ── Back link ── */}
-        <button
+        {!embedded && <button
           type="button"
           onClick={() => navigate("/validation")}
           className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
@@ -1426,7 +1429,7 @@ export default function ResultsPage() {
             <path d="M19 12H5m7 7l-7-7 7-7" />
           </svg>
           Back to Validation
-        </button>
+        </button>}
 
         {/* ── Title + badges ── */}
         <div>
@@ -2069,7 +2072,7 @@ export default function ResultsPage() {
     <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
 
       {/* ── Back link ── */}
-      <button
+      {!embedded && <button
         type="button"
         onClick={() => navigate("/validation")}
         className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
@@ -2078,7 +2081,7 @@ export default function ResultsPage() {
           <path d="M19 12H5m7 7l-7-7 7-7" />
         </svg>
         Back to Validation
-      </button>
+      </button>}
 
       {/* ── Title + badges ── */}
       <div>

@@ -302,7 +302,7 @@ def test_explorer_is_refused_by_plan_before_any_cost_and_nothing_starts(world): 
 
 def test_not_connected_says_so_and_charges_nothing(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "decision_engine", 100, OWNER      # funding and launch research: Decision Engine (31 Oct)
     monkeypatch.setattr(research, "connected", lambda: {"connected": False, "search": False, "model": True})
     q = client.post("/businesses/A/quick-check/launch/premium/quote", json={"answers": {"sell": "Consulting"}}).json()
     assert q["connected"] is False and q["cost"] == 0 and q["not_connected"].startswith("Research isn't available right now.")
@@ -328,7 +328,7 @@ def test_a_second_press_while_it_runs_is_the_same_run_never_a_second_charge():
 
 def test_the_result_card_and_the_run_count_the_same_blockers(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "decision_engine", 100, OWNER      # funding and launch research: Decision Engine (31 Oct)
     monkeypatch.setattr(research, "_search", Search())
     from app.modules.agent import credibility
     _pages = Pages()
@@ -345,7 +345,7 @@ def test_the_result_card_and_the_run_count_the_same_blockers(world, monkeypatch)
 
 def test_find_my_best_price_is_research_never_a_price_test(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 100, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "decision_engine", 100, OWNER      # funding and launch research: Decision Engine (31 Oct)
     monkeypatch.setattr(research, "_search", Search())
     from app.modules.agent import credibility
     _pages = Pages()
@@ -397,7 +397,7 @@ def test_out_of_credits_the_ai_filled_fields_are_asked_not_given(monkeypatch):
 
 def _funding_world(world, monkeypatch):  # noqa: F811
     env, _store, client, who = world
-    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "starter_insight", 200, OWNER
+    env.meter.plans[OWNER], env.meter.balances[OWNER], who["user"] = "decision_engine", 200, OWNER      # funding research: Decision Engine (31 Oct)
     monkeypatch.setattr(research, "_search", Search())
     from app.modules.agent import credibility
     _pages = Pages()

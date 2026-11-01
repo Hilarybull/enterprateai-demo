@@ -1016,6 +1016,16 @@ export default function Layout() {
                 </>
               )}
             </div>
+            {/* A paid plan that ended with no renewal, said plainly with the way back (the owner, 31 Oct: "the plan didn't
+                expire, no notification") */}
+            {subscription?.lapsed_plan_key && (
+              <p className="mt-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:bg-amber-900/20 dark:text-amber-200" data-plan-lapsed>
+                Your {accessLabel({ plan_key: subscription.lapsed_plan_key, status: "active" })} plan ended
+                {subscription.lapsed_at ? ` on ${new Date(subscription.lapsed_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""} as no payment came through.
+                Your work is all kept.{" "}
+                <button type="button" onClick={() => navigate("/pricing")} className="font-semibold underline">Renew it</button>
+              </p>
+            )}
             <button
               type="button"
               onClick={() => navigate("/credits")}

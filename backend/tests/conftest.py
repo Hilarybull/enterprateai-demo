@@ -78,3 +78,10 @@ def pytest_terminal_summary(terminalreporter):
     tests = sorted({t.split(" ")[0] for t in _ATTEMPTS})
     # Blocked, not failed: app code that reads optional data (a plan, a grant) carries on without it, as it would offline.
     terminalreporter.write_line(f"real-database attempts blocked: {len(_ATTEMPTS)} in {len(tests)} tests (no connection was made)")
+
+
+@pytest.fixture(autouse=True)
+def _agent_conductor_off_unless_asked(monkeypatch):
+    """The one-Agent switch in a developer's .env never changes what the tests check: off, unless a test turns it on."""
+    from app.core.config import get_settings
+    monkeypatch.setattr(get_settings(), "agent_conductor", False, raising=False)

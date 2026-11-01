@@ -98,7 +98,7 @@ def run(coro):
 
 # What each plan may do: (feature, the cheapest plan it is on).
 PAID = [
-    ("business_plan_full", "starter_insight"),   # Blueprints: business plan (Starter, the pricing PDF)
+    ("business_plan_full", "explorer"),          # Blueprints: business plan, every plan for its credits (31 Oct)
     ("proposal_full", "starter_insight"),        # Blueprints: proposal
     ("sales_letter_full", "starter_insight"),
     ("scenario_ai_interpretation", "starter_insight"),      # Simulation: the AI explanation (the run itself is free)
@@ -241,6 +241,14 @@ def test_the_catalogue_is_migration_016_as_written_with_042_s_prices_on_top():
         for code in re.findall(r"'([a-z_]+)'", codes):
             name, cost, enabled, _minimum, refundable, controlled = expected[code]
             expected[code] = (name, cost, enabled, plan, refundable, controlled)
+    # 044 (31 Oct): the business plan on every plan, for its credits
+    v4 = (here / "044_business_plan_any_plan.sql").read_text(encoding="utf-8")
+    for plan, code in re.findall(r"SET minimum_plan = '([a-z_]+)'\s*WHERE feature_code = '([a-z_]+)'", v4):
+        name, cost, enabled, _minimum, refundable, controlled = expected[code]
+        expected[code] = (name, cost, enabled, plan, refundable, controlled)
+    for cost, plan, code in re.findall(r"SET credit_cost = (\d+), credit_controlled = TRUE, minimum_plan = '([a-z_]+)'\s*WHERE feature_code = '([a-z_]+)'", v4):
+        name, _cost, enabled, _minimum, refundable, _controlled = expected[code]
+        expected[code] = (name, int(cost), enabled, plan, refundable, True)
     for code, want in expected.items():
         assert catalogue.FEATURES[code] == want, code
 
@@ -251,7 +259,7 @@ def test_the_owner_s_credit_chart_v2():
              "idea_validation_comprehensive": 25, "research_best_price": 40, "research_customer_opportunities": 40,
              "research_launch_blockers": 50, "research_funding_readiness": 60, "scenario_ai_interpretation": 15, "live_plan_full_refresh": 20}
     assert {k: catalogue.FEATURES[k][1] for k in chart} == chart
-    assert catalogue.FEATURES["idea_validation"][1] == 0 and catalogue.FEATURES["idea_validation"][5] is False      # Basic is free
+    assert catalogue.FEATURES["idea_validation"][1] == 25 and catalogue.FEATURES["idea_validation"][3] == "explorer"      # Basic: 25 credits, every plan (31 Oct)
 
 
 def test_a_research_run_id_is_charged_through_the_wallet_s_uuid_key_once(wallets, monkeypatch):

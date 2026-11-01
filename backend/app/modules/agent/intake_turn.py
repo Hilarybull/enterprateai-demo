@@ -130,7 +130,7 @@ def evidence_ok(evidence: Any, said: list[str]) -> bool:
 
 
 def currency_of(*texts: Any) -> str | None:
-    words = " ".join(str(t or "") for t in texts).lower()
+    words = re.sub(r"(?<![A-Za-z])N\s?(?=\d)", "₦", " ".join(str(t or "") for t in texts)).lower()      # "N5m", as owners type naira (the owner, 1 Nov)
     for code, names in CURRENCY_WORDS.items():
         for n in names:
             if (len(n) == 1 and n in words and not n.isalpha()) or (len(n) > 1 and re.search(rf"(?<![a-z]){re.escape(n)}(?![a-z])", words)):
@@ -459,6 +459,20 @@ def described(message: str, slots: list[dict], asked: str | None) -> dict[str, d
     return out
 
 
+def _offered(q: dict, value: Any) -> Any:
+    """A value read from words, as one of the question's own options: the nearest offered stage when that one isn't ("just an
+    idea" is "Not trading yet" where only that and "Trading" are asked)."""
+    if value is None:
+        return None
+    values = [o.get("value") for o in q.get("options") or []]
+    if not values or value in values or "," in str(value):
+        return value
+    # the funding stages and the launch stages (idea, prototype, testing, ready), each to the nearest the question offers
+    near = {"idea": ("pre_revenue", "idea"), "pre_revenue": ("prototype", "testing", "idea"), "growing": ("trading", "ready"),
+            "trading": ("ready", "growing")}.get(str(value), ())
+    return next((v for v in near if v in values), None)
+
+
 def _choice_words(key: str | None, message: str) -> Any:
     from app.modules.agent import goals as _goals
     return _goals.choice_from_words(str(key or ""), message)
@@ -497,8 +511,8 @@ def rule_read(message: str, slots: list[dict], asked: str | None) -> dict[str, d
             out[asked] = {"slot": asked, "value": message, "normalized": _number(message), "currency_or_unit": currency_of(message), "evidence": message, "confidence": 0.9}
         elif q.get("type") == "choice" and _option(q, message) is not None:
             out[asked] = {"slot": asked, "value": _option(q, message), "evidence": message, "confidence": 0.9}
-        elif q.get("type") == "choice" and _choice_words(asked, message) is not None:
-            out[asked] = {"slot": asked, "value": _choice_words(asked, message), "evidence": message, "confidence": 0.88}
+        elif q.get("type") == "choice" and _offered(q, _choice_words(asked, message)) is not None:
+            out[asked] = {"slot": asked, "value": _offered(q, _choice_words(asked, message)), "evidence": message, "confidence": 0.88}
         elif q.get("type") not in ("number", "choice") and not out:
             out[asked] = {"slot": asked, "value": message.strip(), "evidence": message, "confidence": 0.9}
         elif q.get("type") not in ("number", "choice"):

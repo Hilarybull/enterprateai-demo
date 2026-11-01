@@ -150,8 +150,10 @@ def test_chips_never_state_an_answer_the_owner_has_not_given(monkeypatch):
     monkeypatch.setattr("app.modules.agent.converse.approvals_waiting", nothing)
     out = asyncio.run(converse_idea.turn(orch=orch, user={"id": "u1"}, business_id="b1", text="what next?", llm=_Model()))
     labels = [a["label"] for a in out["actions"]]
-    assert labels and all(not any(ch.isdigit() for ch in x) and " is " not in x for x in labels)
-    assert "Add my cost per sale" in labels and "Add my price" not in labels      # only what is missing
+    assert all(not any(ch.isdigit() for ch in x) and " is " not in x for x in labels)
+    # details missing: the card to fill them in first, and no answer buttons beside it (the owner, 31 Oct: "Trainers /
+    # Kids' shoes / Keep it general" under "Choose how to continue")
+    assert "choose" in [c["type"] for c in out.get("cards") or []] and labels == []
 
 
 def test_another_idea_starts_afresh_and_research_is_for_it(monkeypatch):

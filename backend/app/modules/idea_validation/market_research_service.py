@@ -821,11 +821,16 @@ def _fallback_report(fields: dict[str, Any]) -> dict[str, Any]:
     currency = _clean_text(fields.get("currency") or "GBP")
     industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or "")
 
+    # The name on its own and the description as its own sentences, never glued together (the owner, 31 Oct: "Shoe polish
+    # production A small local producer… appears directionally promising")
+    name = _clean_text(fields.get("business_name") or "")
+    about = what if not name else _clean_text(what[len(name):] if what.lower().startswith(name.lower()) else what)
+    about = about.strip(" .")
+    place = f"the {location}" if location.lower().startswith(("united ", "netherlands", "philippines")) else location
+    lead = f"{name or 'This idea'} looks promising for {segment} in {place}."
+    summary = (f"{about[:1].upper() + about[1:]}. " if about and about.lower() != (name or "").lower() else "") + lead +         " The best next step is to check how urgently they need it and what they would pay, before building further."
     return {
-        "executive_summary": (
-            f"{what} appears directionally promising for {segment} in {location}. "
-            f"The best next step is to validate urgency and willingness to pay before building deeply."
-        ),
+        "executive_summary": summary,
         "idea_validation_result": {
             "overall_score": "Fair",
             "market_demand": "Medium",

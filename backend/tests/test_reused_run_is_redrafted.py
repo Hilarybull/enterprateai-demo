@@ -38,6 +38,7 @@ def test_the_premium_reuse_path_redrafts_with_this_cases_figures(world):  # noqa
     d.setdefault("research_runs", {})["rr_old"] = _stale_run(session["inputs"])
     d["catalogue"] = {"products": [{"id": "p1", "name": "Car wash", "base_price": 15000, "cost_of_sales": 6000}]}
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # funding Do all for me is Decision Engine and above (31 Oct)
     out = client.post(f"/task-sessions/{sid}/premium", json={}).json()
     run = out.get("research") or out
     assert run["id"] == "rr_old" and out.get("charged_now", 0) == 0      # reused, free
@@ -66,6 +67,7 @@ def test_research_again_is_a_new_run_within_60_credits(world):  # noqa: F811
     sid, _ = _chat(client, who, FIRST)
     d.setdefault("research_runs", {})["rr_old"] = _stale_run(client.get(f"/task-sessions/{sid}").json()["inputs"])
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # funding Do all for me is Decision Engine and above (31 Oct)
     assert client.post(f"/task-sessions/{sid}/premium/quote", json={}).json().get("reuse") == "rr_old"      # the same one, free
     quote = client.post(f"/task-sessions/{sid}/premium/quote", json={"fresh": True}).json()
     assert quote["allowed"] and not quote.get("reuse") and quote["max"] <= 60
@@ -85,6 +87,7 @@ def test_a_new_purpose_on_the_case_is_new_research_never_the_old_run_free(world)
     session = client.get(f"/task-sessions/{sid}").json()
     d.setdefault("research_runs", {})["rr_old"] = _stale_run(session["inputs"])
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # funding Do all for me is Decision Engine and above (31 Oct)
     assert client.post(f"/task-sessions/{sid}/premium/quote", json={}).json().get("reuse") == "rr_old"      # same need: free
     case = client.get("/businesses/A/funding-cases").json()["items"][0]
     case = client.get(f"/businesses/A/funding-cases/{case['id']}").json()

@@ -40,7 +40,8 @@ describe("the Agent card and the plan", () => {
     expect(included.querySelector("[data-tile-price]")).toBeNull();                       // no price on a tile: it is in Agent settings
     await act(async () => { fireEvent.click(locked); });
     const card = screen.getByRole("status");
-    expect(card.textContent).toContain("Scenario Help is on the Starter plan.");
+    expect(card.textContent).toContain("Unlock “Scenario Help” and I'll do it for you: you just approve.");
+    expect(card.textContent).toContain("It is included from the Starter plan.");
     expect(card.querySelector("[data-blocked-detail]").textContent).toBe("It is included from the Starter plan. Nothing was started.");
     expect(card.className).toContain("bg-brand-50");                        // a card in the brand colour, not an error
     expect(card.className).not.toMatch(/rose|amber/);

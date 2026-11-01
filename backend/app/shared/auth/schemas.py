@@ -59,6 +59,8 @@ class GoogleAuthRequest(BaseModel):
     credential: str = Field(min_length=20)
     ref_click_id: str | None = None
     ref_code: str | None = None
+    # "signin" from the sign-in page: an email with no account is told so, never given one unasked (31 Oct)
+    intent: str | None = None
 
 
 class ForgotPasswordRequest(BaseModel):

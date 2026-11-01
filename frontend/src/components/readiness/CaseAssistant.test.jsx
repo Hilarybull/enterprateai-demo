@@ -1,5 +1,5 @@
 // The owner's mockups, 27 Oct ("exactly like the mockups"): the Assistant tab's conversation and its cards.
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -84,10 +84,10 @@ it("reviews the drafts like the mockups: areas, sources, edit, Approve all, then
   expect(onField).toHaveBeenCalledWith("purpose", "A second van");      // the owner's edit, not the draft
   expect(onField).toHaveBeenCalledWith("market_note", "UK van hire grows 4% a year");
   expect(onField).toHaveBeenLastCalledWith("agent_drafts", {});
-  expect(await screen.findByText(/Done. I've added 2 drafts to your case/)).toBeTruthy();
+  expect(await screen.findByText(/I've added 2 drafts to your case\. Running/)).toBeTruthy();
   rerender(view({ score: null, checking: true }));
   rerender(view({ score: 64, checking: false }));
-  expect(await screen.findByText("I've run your funding readiness check again. You're at 64/100.")).toBeTruthy();
+  expect(await screen.findByText(/^I've run your funding readiness check again\. You're at 64\/100\. Should I help you become more funding ready\?/)).toBeTruthy();
   expect(document.querySelector('[data-card="score_change"]').textContent).toContain("from 40/100 to 64/100");
   expect(document.querySelector('[data-card="next"]')).toBeTruthy();
 });
@@ -191,12 +191,10 @@ it("tests an idea like the mockups: inputs, viability, launch fit, the risk, and
   expect(document.querySelector('[data-card="risk"]').textContent).toContain("Livont Limited");
   fireEvent.click(screen.getByRole("button", { name: "Run market research" }));
   await waitFor(() => expect(document.querySelector('[data-card="choose"]')).toBeTruthy());
-  fireEvent.click(screen.getByRole("button", { name: "Start · up to 60 credits" }));
-  await waitFor(() => expect(onResearch).toHaveBeenCalledTimes(1));
-  // One line and where to go on this page, never Agent tasks (QA, 30 Oct)
-  expect(await screen.findByText("Done. I found 3 things for your idea (60 credits).")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Review findings" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "See your result" })).toBeTruthy();
+  // The card runs the Idea Validation itself (the owner, 31 Oct: "start should just run the idea validation")
+  fireEvent.click(within(document.querySelector('[data-card="choose"]')).getByRole("button", { name: "Run the idea validation" }));
+  await waitFor(() => expect(submitAgentRequest).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Run the idea validation", page: "idea" })));
+  expect(onResearch).not.toHaveBeenCalled();
   expect(document.body.textContent).not.toMatch(/Agent tasks/);
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });
@@ -445,4 +443,136 @@ it("no greeting beside a message being answered, and what's typed meanwhile is s
   await act(async () => { release({ kind: "answer", message: "Reply one", actions: [] }); });
   expect(await screen.findByText("Reply two")).toBeTruthy();
   expect(submitAgentRequest).toHaveBeenLastCalledWith(expect.objectContaining({ text: "it's for offices" }));
+});
+
+it("shows a case's cut-short title whole, from what the case is for", async () => {
+  const { fullTitle } = await import("./CaseAssistant");
+  expect(fullTitle("$400 loan to buy an opening stock of shoes and set up the…", "To buy an opening stock of shoes and set up the online shop.")).toBe("$400 loan to buy an opening stock of shoes and set up the online shop");
+  expect(fullTitle("$400 loan for stock", "stock")).toBe("$400 loan for stock");
+  expect(fullTitle("$400 loan to buy…", "something else entirely")).toBe("$400 loan to buy…");
+});
+
+it("fills what's left in the chat: a typed answer, a month on each line and a forecast, without leaving (the owner, 1 Nov)", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] } }));
+  const onField = vi.fn();
+  const data = { ...subject.data, currency: "USD", use_of_funds: [{ id: "u1", purpose: "Stock", amount: "400" }] };
+  const steps = [{ key: "market.diff", title: "Say what sets you apart", to: "/funding/c1?tab=answers&field=market.differentiation", cta: "Add" },
+    { key: "uof.period", title: "Add a month to your line", to: "/funding/c1?tab=answers&field=use_of_funds", cta: "Add month" },
+    { key: "forecast", title: "Make your forecast", to: "/funding/c1?tab=answers&field=forecast", cta: "Open forecast" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data }} steps={steps} score={40} onTab={() => {}} onField={onField} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector('[data-card="pending"]'); if (!c) throw new Error("no card"); return c; });
+  expect(card.querySelector('[aria-label="Say what sets you apart"]')).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open forecast" })).toBeNull();      // done here, never another page
+  fireEvent.change(card.querySelector('[aria-label="Month for Stock"]'), { target: { value: "2026-12" } });
+  fireEvent.click(within(card.querySelector('[data-pending="uof.period"]')).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(onField).toHaveBeenCalledWith("use_of_funds", [{ id: "u1", purpose: "Stock", amount: "400", period: "2026-12" }]));
+  expect(card.querySelector('[aria-label="Cash you have now"]')).toBeTruthy();
+});
+
+it("what's left offers drafting only for what the Agent can write, and filling it in by hand beside it", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] }, draft_fields: ["market.differentiation"] }));
+  const onTab = vi.fn();
+  const steps = [{ key: "market.diff", title: "Say what sets you apart", to: `/funding/${subject.id}?tab=answers&field=market.differentiation`, cta: "Add" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={subject} steps={steps} score={40} onTab={onTab} onField={vi.fn()} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Fill it in myself" }));
+  expect(onTab).not.toHaveBeenCalled();      // stays in the chat (the owner, 1 Nov)
+  expect(document.querySelector("[data-pending-myself]")).toBeTruthy();
+});
+
+it("every step is done in the chat: evidence, risks, a link to a milestone, never another tab (the owner, 1 Nov)", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] } }));
+  const onTab = vi.fn();
+  const onField = vi.fn();
+  const base = `/funding/${subject.id}`;
+  const data = { ...subject.data, milestones: [{ id: "m1", outcome: "Stock bought" }] };
+  const steps = [{ key: "evidence", title: "Attach one dated piece of customer evidence", to: `${base}?tab=evidence&add=evidence`, cta: "Add evidence" },
+    { key: "risks", title: "List your known risks", to: `${base}?tab=answers&field=no_known_risks`, cta: "Add risks" },
+    { key: "goal.link", title: "Link your funding purpose", to: `${base}?tab=answers&field=purpose_milestone_id`, cta: "Choose milestone" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data }} steps={steps} score={40} onTab={onTab} onField={onField} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector('[data-card="pending"]'); if (!c) throw new Error("no card"); return c; });
+  expect(card.querySelector('[data-pending="evidence"] form')).toBeTruthy();      // the evidence form itself
+  expect(within(card).getByRole("button", { name: "Add evidence" }).getAttribute("type")).toBe("submit");      // saves here, never a link away
+  fireEvent.click(within(card.querySelector('[data-pending="risks"]')).getByRole("button", { name: "There are none" }));
+  await waitFor(() => expect(onField).toHaveBeenCalledWith("no_known_risks", true));
+  fireEvent.click(within(card.querySelector('[data-pending="goal.link"]')).getByRole("button", { name: "Stock bought" }));
+  await waitFor(() => expect(onField).toHaveBeenCalledWith("purpose_milestone_id", "m1"));
+  expect(onTab).not.toHaveBeenCalled();
+});
+
+it("next steps come after the words, live from the case, saying what's been done and approved (the owner, 1 Nov)", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] } }));
+  replies.push({ kind: "answer", message: "I've added 2 new drafts.", actions: [], cards: [{ type: "steps", case_id: subject.id }] });
+  const data = { ...subject.data, provenance: { "market.location": { source: "The Agent's draft, accepted by you" } } };
+  const steps = [{ key: "market.diff", title: "Say what sets you apart", to: `/funding/${subject.id}?tab=answers&field=market.differentiation`, cta: "Add" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data, sections: [{ key: "goal", answered: 7, total: 8 }, { key: "team", answered: 3, total: 3 }] }} steps={steps} score={40} onTab={() => {}} onField={vi.fn()} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Tell me more" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const words = await screen.findByText("I've added 2 new drafts.");
+  const card = document.querySelector('[data-card="pending"]');
+  expect(card.querySelector("[data-pending-done]").textContent.trim()).toBe("Done so far: 10 of 11 answers on your case. 1 from drafts you approved.");
+  const box = card.closest(".flex-col-reverse");
+  expect(box.firstElementChild.contains(card)).toBe(true);      // first in a reversed column: drawn after the words
+  expect(box.contains(words)).toBe(true);
+});
+
+it("when the score moves with no reply, the chat says so, once, and the side card's previous is what the chat last gave (the owner, 1 Nov)", async () => {
+  const { getChat, saveChat } = await import("../../lib/agent");
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] } }));
+  getChat.mockImplementationOnce(async () => ({ messages: [{ role: "assistant", content: "I've run your check again.", at: "2026-11-01T15:49:00Z", cards: [{ type: "score_change", case_id: subject.id, before: 41, after: 48 }] }] }));
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={subject} steps={[]} score={55} onTab={() => {}} /></MemoryRouter>);
+  expect(await screen.findByText("Your score is now 55/100, up from 48.")).toBeTruthy();
+  const cards = document.querySelectorAll('[data-card="score_change"]');
+  expect(cards.length).toBe(2);
+  expect(cards[0].textContent).toContain("from 41/100 to 48/100");
+  expect(cards[0].querySelector("[data-score-why]")).toBeNull();
+  expect(cards[1].textContent).toContain("from 48/100 to 55/100");
+  expect(document.querySelector("[data-score-before-after]").textContent).toContain("48/100");
+  expect(screen.getAllByText("Your score is now 55/100, up from 48.").length).toBe(1);
+  expect(saveChat).toHaveBeenCalled();
+});
+
+it("no Draft the rest when nothing listed can be drafted (the owner, 1 Nov: \"remove draft it for me if you can't draft\")", async () => {
+  const { canDraftAny } = await import("./CaseAssistant");
+  const fields = ["market.differentiation", "risks"];
+  const forecast = { key: "forecast", to: "/funding/c1?tab=answers&section=finances&field=forecast" };
+  const evidence = { key: "evidence", to: "/funding/c1?tab=evidence&add=evidence" };
+  expect(canDraftAny([forecast, evidence], fields)).toBe(false);
+  expect(canDraftAny([{ key: "market.diff", to: "/funding/c1?tab=answers&field=market.differentiation" }], fields)).toBe(true);
+  expect(canDraftAny([{ key: "market.diff", drafted: true, to: "/funding/c1?tab=answers&field=market.differentiation" }], fields)).toBe(false);
+  expect(canDraftAny([{ key: "risks", to: "/funding/c1?tab=answers&field=no_known_risks" }], fields)).toBe(true);
+});
+
+it("never says Done from a reading taken before the run started (the owner, 1 Nov)", async () => {
+  const { getChat } = await import("../../lib/agent");
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "none" }, working: true, approvals: { count: 0, items: [] } }));
+  const data = { ...subject.data, agent_drafts: { purpose: { value: "Stock", source: "suggested by the Agent" } } };
+  getChat.mockImplementationOnce(async () => ({ messages: [{ role: "assistant", content: "Started.", at: new Date(Date.now() - 1000).toISOString(), cards: [{ type: "progress", case_id: subject.id }] }] }));
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data }} steps={[]} score={40} onTab={() => {}} /></MemoryRouter>);
+  await screen.findByText("Started.");
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  expect(screen.queryByText(/^Done\. I've drafted/)).toBeNull();      // still working: no Done, whatever drafts already wait
+});
+
+it("while drafts wait, the only thing offered is approving them: no list, no Draft the rest (the owner, 1 Nov)", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] }, draft_fields: [] }));
+  const data = { ...subject.data, agent_drafts: { purpose: { value: "Stock", source: "an estimate by the Agent" } } };
+  const steps = [{ key: "market.diff", title: "Say what sets you apart", to: `/funding/${subject.id}?tab=answers&field=market.differentiation`, cta: "Add" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data }} steps={steps} score={40} onTab={() => {}} onField={vi.fn()} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector("[data-pending-review]"); if (!c) throw new Error("no card"); return c; });
+  expect(within(card).getByRole("button", { name: "Review drafts (1)" })).toBeTruthy();
+  expect(card.querySelector('[data-pending="market.diff"]')).toBeNull();
+  expect(screen.queryByRole("button", { name: /Draft the rest/ })).toBeNull();
 });

@@ -213,7 +213,151 @@ def test_a_replaced_need_names_its_things_to_do_with_do_all_for_me(talk):
     ask("I need a £2m loan for a new site")
     out = ask("replace it")
     assert out["message"].startswith("Done. I've replaced your funding need")
-    assert "First:" in out["message"]
+    # One question at a time (31 Oct): the route is known (a loan), so when the money is needed, with its answers as buttons
+    assert "; " not in out["message"] and "First:" not in out["message"]      # never the checklist as one sentence
+    assert "When do you need the money?" in out["message"] or "I'd start with this:" in out["message"]
     labels = [a["label"] for a in out["actions"]]
-    assert "Do all for me" in labels and any(l.startswith("See ") for l in labels)
-    assert {"result", "steps"} <= {c["type"] for c in out["cards"]}
+    assert any(l.startswith("See ") for l in labels)
+    assert "result" in {c["type"] for c in out["cards"]}
+
+
+def test_mvp_is_a_stage_and_an_answer_not_understood_is_never_kept():
+    # The owner, 30 Oct: "MVP" for the stage: "I didn't quite get that", then the next question anyway
+    import asyncio
+    from app.modules.agent import goals
+    for word, stage, nxt in (("MVP", "pre_revenue", "route"), ("blah blah", None, "stage")):
+        store = goals.SessionStore()
+        s = asyncio.run(goals.start(store, text=None, key="need_funding", entry_mode="business_goal"))
+        for msg, k in (("£50k", "amount"), ("stock", "use")):
+            s = asyncio.run(goals.add_inputs(store, s, {k: msg}, message=msg, asked=k, rules_only=True))
+        s = asyncio.run(goals.add_inputs(store, s, {"stage": word}, message=word, asked="stage", rules_only=True))
+        assert s["inputs"].get("stage") == stage and s["agent_turn"]["next"] == nxt, word
+
+
+def test_each_written_chat_reply_costs_two_credits_and_none_when_short(talk):
+    # The owner, 31 Oct: "every chat after signup should cost 2 credits": a reply the model writes, never a failure; too few
+    # credits is said with Top up and nothing is written or charged
+    from test_goal_onboarding import OWNER
+    env, ask, model, cid = talk
+    env.meter.balances[OWNER] = 10
+    model.replies.append({"say": "You're at 40/100 so far."})
+    ask("Where does my funding case stand?")
+    assert [c for c in env.meter.charges if c[1] == "chat_message"] == [(OWNER, "chat_message", 2)] and env.meter.balances[OWNER] == 8
+    env.meter.balances[OWNER] = 1
+    out = ask("What's missing?")
+    assert out["kind"] == "blocked" and out["actions"][0]["label"] == "Top up" and env.meter.balances[OWNER] == 1
+
+
+def test_the_welcome_credits_are_given_once_however_many_first_requests_arrive_together(monkeypatch):
+    # The owner, 31 Oct: a brand-new user had 100, then 186, not the one-time 50: the first sign-in's requests each granted it
+    import asyncio
+    from app.modules.credits import service as cs
+    wallets, grants, txns = {}, [], []
+
+    async def get_wallet(uid):
+        await asyncio.sleep(0)
+        return wallets.get(uid)
+
+    async def rpc(name, args):
+        await asyncio.sleep(0.01)      # the grant takes a moment, as the database does
+        grants.append(args["p_amount"])
+        txns.append({"user_id": args["p_user_id"], "description": args["p_reason"]})
+        wallets[args["p_user_id"]] = {"available_credits": sum(grants)}
+
+    async def sb_select(table, filters=None, **_):
+        return [t for t in txns if all(t.get(k) == v for k, _, v in filters or [])]
+
+    async def initial(uid):
+        return 50, "explorer"
+
+    monkeypatch.setattr(cs, "get_wallet", get_wallet)
+    monkeypatch.setattr(cs, "_rpc", rpc)
+    monkeypatch.setattr(cs, "sb_select", sb_select)
+    monkeypatch.setattr(cs, "_initial_credits_for_user", initial)
+    cs._wallet_locks.clear()
+
+    async def burst():
+        await asyncio.gather(*[cs.ensure_wallet("new-user") for _ in range(6)])
+    asyncio.run(burst())
+    assert grants == [50] and wallets["new-user"]["available_credits"] == 50
+
+
+
+def test_funding_do_all_for_me_on_starter_is_the_decision_engine_upgrade(talk):
+    # The owner, 31 Oct: "it should be upgrade to Decision Engine, not Starter"
+    from test_goal_onboarding import OWNER
+    env, ask, model, cid = talk
+    env.meter.plans[OWNER] = "starter_insight"
+    model.replies.append({"say": "I can do that for you.", "do_all": True})
+    out = ask("Do it all for me", page="funding")
+    assert "Decision Engine" in out["message"] and "Shall I start?" not in out["message"]
+
+
+def test_google_sign_in_with_no_account_says_so_and_create_account_still_makes_one(monkeypatch):
+    # The owner, 31 Oct: a deleted account could sign in with Google again instead of being told to create one
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.shared.auth import router as ar
+    from app.shared.auth.schemas import GoogleAuthRequest
+    made = []
+    monkeypatch.setattr(ar, "get_settings", lambda: SimpleNamespace(google_client_id="x"))
+    monkeypatch.setattr(ar, "verify_google_id_token", lambda **_: SimpleNamespace(email="gone@example.test", sub="1", name="Gone", picture=None))
+
+    async def select(*_a, **_k):
+        return None
+
+    async def insert(table, row):
+        made.append(row["id"])
+
+    async def nothing(*_a, **_k):
+        return None
+    monkeypatch.setattr(ar, "sb_select", select)
+    monkeypatch.setattr(ar, "sb_insert", insert)
+    monkeypatch.setattr(ar, "_mark_verified", nothing)
+    monkeypatch.setattr(ar, "_resolve_referral_attribution", nothing)
+    cred = "x" * 30
+    try:
+        asyncio.run(ar.google_auth(GoogleAuthRequest(credential=cred, intent="signin")))
+        assert False, "signing in made an account"
+    except HTTPException as e:
+        assert e.status_code == 404 and e.detail["error"] == "NO_ACCOUNT"
+    assert made == []
+    asyncio.run(ar.google_auth(GoogleAuthRequest(credential=cred, intent="signup")))
+    assert made == ["gone@example.test"]
+
+
+def test_closing_an_account_clears_everything_it_owns_and_nothing_else(monkeypatch):
+    # The owner, 31 Oct: "I'm deleting users... it should clear everything he owns" (a re-signup kept the old 140 credits)
+    import asyncio
+    from app.shared.auth import purge
+    deleted = []
+
+    async def select(table, filters=None, **_):
+        return [{"id": "ws-mine"}] if table == "workspaces" else []
+
+    async def delete(table, filters=None):
+        deleted.append((table, filters[0][0], filters[0][2]))
+
+    async def update(*_a, **_k):
+        return None
+    monkeypatch.setattr(purge, "sb_select", select)
+    monkeypatch.setattr(purge, "sb_delete", delete)
+    monkeypatch.setattr(purge, "sb_update", update)
+    asyncio.run(purge.purge_account("gone@example.test", "Gone@example.test"))
+    at = {d: i for i, d in enumerate(deleted)}
+    assert ("readiness_subjects", "business_id", "ws-mine") in at and ("agent_workflow_runs", "business_id", "ws-mine") in at
+    assert at[("agent_workflow_runs", "business_id", "ws-mine")] < at[("workspaces", "id", "ws-mine")]
+    assert at[("credit_transactions", "user_id", "gone@example.test")] < at[("credit_wallets", "user_id", "gone@example.test")]
+    assert ("user_subscriptions", "user_id", "gone@example.test") in at and ("mailing_list", "email", "gone@example.test") in at
+    assert all(v in ("ws-mine", "gone@example.test") for _t, _c, v in deleted)      # only what this account owns
+
+
+def test_a_plan_is_named_after_what_the_business_sells_never_a_generic_word():
+    # The owner, 1 Nov: "Business Plan for Business" for bow ties
+    from app.modules.agent.workflows import idea_name
+    assert idea_name("A fashion accessories business that makes and sells bow ties") == "Bow ties"
+    assert idea_name("Business that makes and sells bow ties to style conscious adults") == "Bow ties"
+    assert idea_name("A small business selling handmade candles in Leeds") == "Handmade candles"
+    assert idea_name("Fashionista, the business as a whole, building on the Clothe") == "Fashionista"
+    assert idea_name("Mobile dog grooming van") == "Mobile dog grooming van"

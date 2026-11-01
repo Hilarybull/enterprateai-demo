@@ -146,15 +146,8 @@ async def blueprint_generate(
     user_id: str = user["id"]
     _ask_for_missing(payload)
 
-    if payload.type == "business_plan":
-        # QA PF1: the effective plan (/plans/my's resolver): a full-access grant or an early-access account is not "free".
-        from app.modules.credits.service import entitled_plan
-        plan_key = await entitled_plan(user_id)
-        has_blueprint_grant = await _has_platform_grant(user_id, "business_plan")
-        if plan_key in _FREE_PLAN_KEYS and not has_blueprint_grant:
-            # The AI Business Plan Generator is on Starter and above (the pricing PDF, 19 Oct 2026).
-            from app.modules.plans.access import refusal
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, "starter_insight", "The AI Business Plan Generator"))
+    # The AI Business Plan is on every plan, paid for in its credits (the owner, 31 Oct: "business plan … is free depending on
+    # the credits"); the credit check below refuses it when there aren't enough, and nothing is charged unless it is written.
 
     feature_code = _blueprint_feature_code(payload.type, payload.sections)
     logger.info("blueprint-generate start user=%s type=%s", user_id, payload.type)

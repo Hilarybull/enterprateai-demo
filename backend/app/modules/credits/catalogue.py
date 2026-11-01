@@ -18,10 +18,12 @@ from __future__ import annotations
 
 FEATURES: dict[str, tuple[str, int, bool, str, bool, bool]] = {
     # migration 016 (credit system v2)
-    "idea_validation": ("Idea Validation", 0, True, "explorer", True, False),      # Basic: deterministic, free (042)
+    "idea_validation": ("Idea Validation", 25, True, "explorer", True, True),      # Basic: 25 credits, every plan (044, the owner 31 Oct)
     "idea_validation_comprehensive": ("Idea Validation (Comprehensive)", 25, True, "starter_insight", True, True),
+    # The idea page's Research & Prepare: every plan, for its credits (the owner, 31 Oct); the Comprehensive validation stays paid
+    "research_idea": ("Idea research", 25, True, "explorer", True, True),      # 044
     "market_data_refresh": ("Market Data Refresh", 4, True, "explorer", True, True),
-    "business_plan_full": ("Complete Business Plan", 40, True, "starter_insight", True, True),      # Starter (the pricing PDF)
+    "business_plan_full": ("Complete Business Plan", 40, True, "explorer", True, True),      # every plan, for its credits (31 Oct)      # Starter (the pricing PDF)
     "business_plan_section": ("Regenerate Business Plan Section", 5, True, "starter_insight", True, True),
     "proposal_full": ("Complete Business Proposal", 10, True, "starter_insight", True, True),
     "proposal_section": ("Regenerate Proposal Section", 2, True, "starter_insight", True, True),

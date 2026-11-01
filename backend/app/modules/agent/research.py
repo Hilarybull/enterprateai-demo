@@ -50,7 +50,7 @@ FEATURE = "agent_task"      # an Agent task with no price of its own
 # Credit allocation v2 (15 Oct 2026): each check's premium research has one price on the price list, charged once a
 # run, and only when it found something with a checked source.
 FEATURE_OF = {"launch": "research_launch_blockers", "need_funding": "research_funding_readiness", "price_offer": "research_best_price",
-              "more_customers": "research_customer_opportunities", "test_idea": "idea_validation_comprehensive"}
+              "more_customers": "research_customer_opportunities", "test_idea": "research_idea"}      # its own price, on every plan (31 Oct)
 
 
 def feature_of(goal: str) -> str:
@@ -59,7 +59,7 @@ def feature_of(goal: str) -> str:
 
 # What the owner gets, in their words, for each check's research (never a capability or price-list code).
 ACTION_NAME = {"launch": "Find what you need to launch", "need_funding": "Find evidence for your funding case",
-               "price_offer": "Find your best price", "more_customers": "Find customer opportunities", "test_idea": "Validate your idea fully"}
+               "price_offer": "Find your best price", "more_customers": "Find customer opportunities", "test_idea": "Idea validation"}
 LLM_TIMEOUT_SECONDS = 30.0      # one synthesis call; retried once on a timeout
 DRAFT_TIMEOUT_SECONDS = 90.0      # the case and plan drafts run in the background: room for a long reply (23 Oct: timed out at 30 s)
 NOT_CONNECTED = "Research isn't connected yet"
@@ -1458,10 +1458,10 @@ CASE_DRAFT_FIELDS["launch"] = {
     "control.review_date": "The post-launch review date, YYYY-MM-DD, about four weeks after the launch date (FACTS.plan.target_date, or the launch date you draft)",
     "control.milestones": "A list of {outcome, due_date, owner}: two or three launch milestones up to and on the launch date (FACTS.plan.target_date, or the launch date you draft), each due_date YYYY-MM-DD and owned by a person from FACTS or \"The owner\"",
 }
-CASE_LIST_FIELDS = {"team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
+CASE_LIST_FIELDS = {"prerequisites": ("name", "applicable", "critical"), "use_of_funds": ("purpose", "amount", "category", "period"), "team.responsibilities": ("area", "owner"), "team.gaps": ("gap", "action"), "risks": ("risk", "action"),
                     "milestones": ("outcome", "measure", "target"), "delivery.dependencies": ("name", "kind", "contingency", "available"),
                     "control.milestones": ("outcome", "due_date", "owner")}
-NUMBER_DRAFTS = ("market.budget", "planned_volume.amount", "delivery.capacity_per_unit", "delivery.capacity_available", "delivery.capacity_committed",
+NUMBER_DRAFTS = ("economics.price", "economics.direct_cost", "offer.price", "market.budget", "planned_volume.amount", "delivery.capacity_per_unit", "delivery.capacity_available", "delivery.capacity_committed",
                  "economics.price_per_unit", "economics.variable_cost_per_unit", "economics.fixed_costs_monthly")
 _DRAFT_SYSTEM = ("You fill in a small business's funding case. Write plain, specific sentences a funder can read. "
                  "Facts about the past (customers, sales, revenue, partners, approvals) come only from FACTS: never invent them, and "
@@ -1510,7 +1510,8 @@ def workspace_facts(data: dict | None, answers: dict | None, i: dict | None, fou
             for x in (found or []) if x.get("sources")][:8]
     # Older chat answers stay out of the drafts until the owner confirms them (the owner, 28 Oct: a risk about "office workers…
     # subscription" from an earlier chat): only the figures worked out, as numbers, and never the words said
-    return {"profile": profile, "catalogue": products, "marketplace": listing, "records": rec, "currency": task_currency(data),
+    return {"profile": profile, "catalogue": products, "marketplace": listing, "records": rec,
+            "currency": str((i or {}).get("currency") or (answers or {}).get("currency") or "").upper() or task_currency(data),
             "figures": {k: v for k, v in (i or {}).items() if not str(k).startswith("_") and isinstance(v, (int, float)) and not isinstance(v, bool)}, "research": seen}
 
 
@@ -1598,7 +1599,32 @@ def _grounded_draft(value, known: set[float]) -> bool:
     return all(n in known for n in money_figures(text))
 
 
-_ESTIMATE = (" The owner asked you to fill every field. Where FACTS give no figure, give a realistic ESTIMATE for this kind of "
+# What only the owner's records can say is never estimated: a funder would read it as fact. Everything else a paid Do all drafts.
+NEVER_ESTIMATED = {"traction.summary", "traction.customers", "traction.monthly_revenue", "traction.results_through", "title", "target_amount", "currency",
+                   "operations.process_version", "operations.dry_run.date", "operations.dry_run.notes", "no_prerequisites_rationale"}
+
+
+def fillable_fields(goal: str) -> dict[str, str]:
+    """Every checklist field a paid Do all drafts (the owner, 1 Nov: "the do all that cost credits should handle all"): the written
+    instructions where there are some, else the field's own label. Choices, links and confirmations stay the owner's."""
+    from app.modules.readiness import rules
+    profile = rules.PROFILES[rules.CURRENT[rules.FUNDING if goal == "need_funding" else rules.LAUNCH]]
+    out = dict(CASE_DRAFT_FIELDS.get(goal) or {})
+    for section in profile["sections"]:
+        for f in section["fields"]:
+            if f["key"] in out or f.get("when") or f.get("type") not in ("text", "textarea", "money", "number", "date"):
+                continue
+            out[f["key"]] = f"{f.get('label') or f['key']}" + (", as YYYY-MM-DD, after FACTS.today" if f.get("type") == "date" else "")
+    if goal == "need_funding":
+        out["use_of_funds"] = ("A list of {purpose, amount, category, period}: what the money pays for, amounts as whole numbers adding up to exactly "
+                               "FACTS.plan.target_amount, category one of Operations, Equipment, Reserve or Other, period as YYYY-MM")
+    else:
+        out["target_date"] = "The launch date, as YYYY-MM-DD, after FACTS.today"
+        out["prerequisites"] = "A list of {name, applicable, critical}: licences, registrations or set-up this launch needs; applicable is yes or no, critical is true or false"
+    return {k: v for k, v in out.items() if k not in NEVER_ESTIMATED}
+
+
+_ESTIMATE = (" This overrides any rule above about leaving a figure null. The owner asked you to fill every field. Where FACTS give no figure, give a realistic ESTIMATE for this kind of "
              "business in its place and currency (typical local prices, costs and budgets), as a whole number; never leave a money field "
              "null. Everything else stays factual and specific.")
 
@@ -2145,6 +2171,17 @@ def own_runs(data: dict | None, goal: str, case_id: str | None) -> dict | None:
 
 def reuse_for(data: dict | None, goal: str, fingerprint: str, answers: dict | None = None, now: datetime | None = None,
               only: list[str] | None = None, case_id: str | None = None) -> dict | None:
+    """Never a run worked out in another currency than the case now asks for: its figures would come back wrong."""
+    run = _reuse_for(data, goal, fingerprint, answers, now, only, case_id)
+    if run and run.get("replaced_need"):      # research for an earlier need, now in History
+        return None
+    wanted = str((answers or {}).get("currency") or "").upper()
+    had = str(((run or {}).get("context") or {}).get("currency") or "").upper()
+    return None if run and wanted and had and wanted != had else run
+
+
+def _reuse_for(data: dict | None, goal: str, fingerprint: str, answers: dict | None = None, now: datetime | None = None,
+               only: list[str] | None = None, case_id: str | None = None) -> dict | None:
     """The one rule for opening research again, free: the price check and the start both use it, so a quote that says free
     can never be followed by a charge (the owner's QA, 17 Oct). The same research by its key, else the run the result's own
     button shows as waiting for review or adopted. A launch plan only ever reuses its own."""
@@ -2180,8 +2217,8 @@ def research_state(data: dict | None, goal: str, now: datetime | None = None, an
     told = answers if answers is not None else ((((data or {}).get("quick_check_answers") or {}).get(goal) or {}).get("answers") or {})
     # Only what the owner said: a value the run took from the records ("office workers" from the profile) is not a change
     # (the owner, 28 Oct: research done in 29 seconds read as "your answers changed" at once, and the progress never ended)
-    changed = bool(told) and any(_norm_said(told.get(k)) != _norm_said((run.get("answers") or {}).get(k)) for k in SEARCH_KEYS
-                                 if k in told)      # a figure changed is worked out again, free
+    changed = bool(run.get("replaced_need")) or (bool(told) and any(_norm_said(told.get(k)) != _norm_said((run.get("answers") or {}).get(k)) for k in SEARCH_KEYS
+                                                                     if k in told))      # a figure changed is worked out again, free
     old = (now - datetime.fromisoformat(run["created_at"])).total_seconds() >= REUSE_RESEARCH_DAYS * 86400
     at = run["created_at"][:10]
     if run.get("status") == "review" and not changed and not old:

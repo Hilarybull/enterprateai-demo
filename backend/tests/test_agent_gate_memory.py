@@ -122,7 +122,7 @@ def test_who_sent_my_latest_request_is_answered_from_the_requests_and_not_from_q
     assert a["kind"] == "answer" and a["topic"] == "requests"
     assert "Nova Labs (dana@novalabs.test) on 2026-09-30" in a["message"] and "2 x Strategy Workshop" in a["message"] and "waiting for a reply" in a["message"]
     assert "QA Round Six" not in str(a) and "made-up@example.test" not in str(a) and "100" not in a["message"]
-    assert run(env.store.list_runs("A")) == [] and env.meter.charges == []      # an answer from records: no task, no charge
+    assert run(env.store.list_runs("A")) == [] and {c[1] for c in env.meter.charges} <= {"chat_message"}      # an answer from records: no task, one chat reply (the owner, 1 Nov)
     none = Env()
     none.fin["quotes"] = list(env.fin["quotes"])
     said = none.submit(text=QUESTION)

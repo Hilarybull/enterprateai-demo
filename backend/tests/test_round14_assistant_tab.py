@@ -43,7 +43,7 @@ def test_a_first_look_at_the_case_shows_what_was_checked_and_the_result(world, m
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: model)
     ask = lambda t: client.post("/agent/requests", json={"business_id": "A", "text": t, "source_channel": "text"}).json()      # noqa: E731
     first = ask("I need funding for my business")
-    assert [c["type"] for c in first["cards"]] == ["records", "result"]
+    assert [c["type"] for c in first["cards"]] == ["records", "result"]      # the next step in words; its card only after a paid result (31 Oct)
     again = ask("thanks, and when do funders usually reply?")
     assert not again.get("cards")      # only once, unless the model shows them
 

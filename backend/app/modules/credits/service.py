@@ -107,18 +107,28 @@ async def ensure_wallet(user_id: str) -> dict:
     if wallet:
         return wallet
 
-    # Look up plan so the first wallet gets the right credit amount
-    initial_credits, plan_code = await _initial_credits_for_user(user_id)
-
-    await _rpc("grant_credits", {
-        "p_user_id": user_id,
-        "p_amount": initial_credits,
-        "p_type": "allocation",
-        "p_reason": f"{plan_code} initial credit allocation",
-        "p_next_reset_at": None,
-    })
-    wallet = await get_wallet(user_id)
+    # Once only (the owner, 31 Oct: a new user had 100, not the one-time 50): the first sign-in's requests arrive together
+    # and each found no wallet, so each granted the welcome credits. One at a time per account, and never a second grant.
+    async with _wallet_locks.setdefault(user_id, asyncio.Lock()):
+        wallet = await get_wallet(user_id)
+        if wallet:
+            return wallet
+        initial_credits, plan_code = await _initial_credits_for_user(user_id)
+        reason = f"{plan_code} initial credit allocation"
+        given = await sb_select("credit_transactions", filters=[("user_id", "eq", user_id), ("description", "eq", reason)], columns="id", limit=1)
+        if not given:
+            await _rpc("grant_credits", {
+                "p_user_id": user_id,
+                "p_amount": initial_credits,
+                "p_type": "allocation",
+                "p_reason": reason,
+                "p_next_reset_at": None,
+            })
+        wallet = await get_wallet(user_id)
     return wallet  # type: ignore[return-value]
+
+
+_wallet_locks: dict[str, asyncio.Lock] = {}
 
 
 async def _get_subscription(user_id: str) -> dict | None:

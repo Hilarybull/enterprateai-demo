@@ -23,7 +23,7 @@ def test_explorer_runs_basic_free_and_is_offered_the_full_check():
     assert r["state"]["params"]["depth"] == "basic" and r["state"]["outcome"]["depth"] == "basic"
     assert "Comprehensive validation checks your market, competitors, pricing and unit economics. Available on Starter." in r["summary"]
     assert any(l.get("label") == "Upgrade to validate fully" for l in r["state"]["outcome"]["links"])
-    assert not [c for c in env.meter.charges if c[1].startswith("idea_validation") and c[2]]      # nothing charged
+    assert [c[1:] for c in env.meter.charges if c[1].startswith("idea_validation") and c[2]] == [("idea_validation", 25)]      # Basic: 25 credits (31 Oct)
 
 
 def test_a_paid_plan_runs_comprehensive_and_the_upgrade_keeps_the_same_draft():
@@ -36,7 +36,7 @@ def test_a_paid_plan_runs_comprehensive_and_the_upgrade_keeps_the_same_draft():
     env.meter.plans[OWNER] = "starter_insight"
     full = _validate(env, params={"depth": "comprehensive"})      # asked for (G3, 23 Oct: the paid check only on request)
     assert full["state"]["params"]["depth"] == "comprehensive"
-    assert [c[1] for c in env.meter.charges if c[1].startswith("idea_validation") and c[2]] == ["idea_validation_comprehensive"]
+    assert [c[1] for c in env.meter.charges if c[1].startswith("idea_validation") and c[2]] == ["idea_validation", "idea_validation_comprehensive"]      # each run its own price
     assert full["state"]["outcome"]["links"][0]["to"] == first_id      # the same draft, validated again
     drafts = [e for e in env.businesses["A"]["data"].get("validation_history") or [] if str(e.get("id", "")).startswith("agent-")]
     assert len(drafts) <= 1      # one draft per idea, never a second

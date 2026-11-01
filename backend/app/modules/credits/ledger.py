@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-LABEL = {"research_funding_readiness": "Funding research", "research_launch_blockers": "Launch research", "research_best_price": "Price research",
+LABEL = {"research_funding_readiness": "Funding research", "research_idea": "Idea research", "research_launch_blockers": "Launch research", "research_best_price": "Price research",
          "research_customer_opportunities": "Customer research", "business_plan_full": "Business plan", "business_plan_section": "Business plan section",
          "proposal_full": "Business proposal", "proposal_section": "Proposal section", "sales_letter_full": "Sales letter",
          "sales_letter_section": "Sales letter section", "idea_validation": "Idea validation", "idea_validation_comprehensive": "Comprehensive idea validation",

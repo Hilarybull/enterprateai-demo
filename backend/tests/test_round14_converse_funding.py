@@ -2,6 +2,7 @@
 static deterministic chats", "start with funding", ""Do all for me" should be conversational". A stand-in model here: no real
 model, search or charge is used."""
 import json
+import re
 
 import pytest
 
@@ -23,6 +24,7 @@ class _Model:
 def talk(world, monkeypatch):
     env, store, client, who = world
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # funding's Do all for me is Decision Engine and above (31 Oct)
     _sid, made = _funding(client, amount=50000, use="a second van")
     model = _Model()
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: model)
@@ -53,7 +55,7 @@ def test_a_typed_change_goes_on_the_case_and_a_follow_up_stays_in_the_conversati
     # Saved straight away and said in one line, with Undo (the owner, 28 Oct); only the case's own fields
     data = _case(env, cid)
     assert float(data["target_amount"]) == 60000 and "favourite_colour" not in data
-    assert out["message"].startswith("Updated amount: £50,000 → £60,000.") and [a["label"] for a in out["actions"]] == ["Undo"]
+    assert out["message"].startswith("Updated amount: £50,000 → £60,000.") and [a["label"] for a in out["actions"]][-1] == "Undo"
     assert data["provenance"]["target_amount"]["source"].startswith("From you")
     ask("make it equity")      # no funding words: a follow-up in the same conversation
     assert model.prompts[1]["TURNS"][0] == {"role": "owner", "text": "I need £60,000 for funding"}
@@ -75,7 +77,7 @@ def test_do_all_for_me_is_priced_and_asked_then_started_on_yes(talk, monkeypatch
     assert asked["message"].endswith("Shall I start?") and asked["message"].startswith("I'll research ")      # what, and its price or "free"
     assert "credits" in asked["message"] or "This one is free." in asked["message"]
     assert [a["label"] for a in asked["actions"]][-1] == "Not now" and asked["actions"][0]["label"].startswith("Start")
-    assert started == [] and env.meter.charges == []      # nothing before the yes
+    assert started == [] and [c for c in env.meter.charges if c[1] != "chat_message"] == []      # nothing before the yes (a reply is 2 credits)
     out = ask("yes, start")
     run(__import__("asyncio").sleep(0))
     assert out["message"].startswith("Started.") and len(started) == 1
@@ -196,7 +198,7 @@ def test_a_correction_just_updates_without_asking_replace_or_keep_both(talk):
                                                      {"kind": "reply", "label": "Keep both options", "text": "keep both"}]})
     out = ask("Make it 10m for two more washing bays")
     assert "replace" not in out["message"].lower() and all("both" not in a["label"].lower() for a in out["actions"])
-    assert [a["label"] for a in out["actions"]] == ["Undo"]
+    assert [a["label"] for a in out["actions"]][-1] == "Undo"
     data = _case(env, cid)
     assert float(data["target_amount"]) == 10000000 and not data.get("previous_needs")      # updated, not replaced
 
@@ -220,7 +222,7 @@ def test_yes_to_replace_or_update_is_asked_again_with_the_two_buttons(talk):
     assert out["message"].startswith("Should it replace") and [a["label"] for a in out["actions"]] == ["Replace it", "Update it"]
     assert len(model.prompts) == 1 and float(_case(env, cid)["target_amount"]) == 50000
     shown = ask("Update it")      # how they answered: made, and said with Undo
-    assert [a["label"] for a in shown["actions"]] == ["Undo"]
+    assert [a["label"] for a in shown["actions"]][-1] == "Undo"
     assert float(_case(env, cid)["target_amount"]) == 2000000 and not _case(env, cid).get("previous_needs")
 
 
@@ -230,7 +232,7 @@ def test_a_picked_amount_is_not_asked_about_again(talk):
     ask("How ready am I for funding?")
     assert ask("make it 50 for a second van")["message"] == "Did you mean £50 or £50,000?"
     out = ask("Make it £50")
-    assert [a["label"] for a in out["actions"]] == ["Undo"] and float(_case(env, cid)["target_amount"]) == 50      # picked: saved, not asked again
+    assert [a["label"] for a in out["actions"]][-1] == "Undo" and float(_case(env, cid)["target_amount"]) == 50      # picked: saved, not asked again
 
 
 def test_an_amount_a_thousand_times_off_is_asked_with_both_as_buttons(talk):
@@ -278,7 +280,7 @@ def test_help_me_complete_it_is_the_research_with_its_price_never_a_question(tal
     out = ask("Go ahead. Help me complete it.")
     assert len(model.prompts) == 1      # no model turn to ask for details: the research is offered
     assert out["message"].endswith("Shall I start?") and [c["type"] for c in out["cards"]] == ["choose"]
-    assert env.meter.charges == []      # nothing before the yes
+    assert [c for c in env.meter.charges if c[1] != "chat_message"] == []      # nothing before the yes (a reply is 2 credits)
 
 
 def test_whats_missing_shows_the_gaps_card_beside_the_words(talk):
@@ -286,7 +288,7 @@ def test_whats_missing_shows_the_gaps_card_beside_the_words(talk):
     model.replies += [{"say": "You're at 40/100."}, {"say": "The forecast and the use of funds are the main gaps."}]
     ask("How ready am I for funding?")
     out = ask("Only 40? What's missing?")
-    assert [c["type"] for c in out.get("cards") or []] == ["result", "next"]      # the gaps, then what to do next (29 Oct)
+    assert [c["type"] for c in out.get("cards") or []] == ["result"]      # the gaps; what to do next is recommended in the words (31 Oct)
 
 
 # The owner's recheck, 28 Oct
@@ -294,7 +296,7 @@ def test_a_field_named_in_the_chat_is_saved_and_said_with_undo(talk):
     env, ask, model, cid = talk
     done = ask("Please change who owns customer acquisition to Hilary", page="funding")
     assert not model.prompts      # no model needed
-    assert done["message"] == "Updated Who owns customer acquisition: Not set → Hilary." and _case(env, cid)["market"]["acquisition_owner"] == "Hilary"
+    assert done["message"] == "Updated Who owns customer acquisition: Hilary." and _case(env, cid)["market"]["acquisition_owner"] == "Hilary"
     assert [a["label"] for a in done["actions"]] == ["Undo"]
     ask("Undo", page="funding")
     assert (_case(env, cid).get("market") or {}).get("acquisition_owner") != "Hilary"
@@ -447,3 +449,138 @@ def test_options_search_that_ends_with_nothing_says_why_and_stops_spinning(talk,
         run(__import__("asyncio").sleep(0))
     held = (run(env.orch.rt.business.load("A")).get("agent_working") or {}).get(str(cid)) or {}
     assert said in str(held.get("failed") or "") and "at" not in held      # the card says why, with Retry; nothing still "working"
+
+
+def test_the_button_on_a_priced_offer_starts_it_and_never_asks_again(talk, monkeypatch):
+    """The owner, 1 Nov: "why ask twice?": the offer said 60 credits, then Do all for me asked for the price again."""
+    env, ask, model, cid = talk
+    started = []
+
+    async def premium(session_id, body=None, user=None):
+        started.append(session_id)
+        return {"started": True}
+    from app.modules.agent import goal_router
+    monkeypatch.setattr(goal_router, "session_premium", premium)
+    out = ask("Yes, do it all for me", page="funding")      # as the funding page's button sends it
+    run(__import__("asyncio").sleep(0))
+    assert out["message"].startswith("Started.") and "Shall I start" not in out["message"] and len(started) == 1
+    assert not [a for a in out.get("actions") or [] if a.get("to")]      # nothing to open while it works
+
+
+def test_a_do_all_link_never_opens_the_checklist(talk):
+    env, ask, model, cid = talk
+    model.replies.append({"say": "Here's where you stand.", "buttons": [{"kind": "do_all"}]})
+    out = ask("How ready am I for funding?")
+    do_all = next(a for a in out["actions"] if a["label"] == "Do all for me")
+    assert "to" not in do_all and do_all["prompt"] == "Do it all for me"
+
+
+def test_draft_the_rest_on_a_funding_case_drafts_what_is_empty_as_estimates(talk, monkeypatch):
+    """The owner, 1 Nov: "I approved most of this": what sets you apart, its cost and the date were never drafted on funding."""
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"state": "adopted"})      # Do all has run
+    env, ask, model, cid = talk
+
+    async def drafted(_llm, goal, _facts, only):
+        assert goal == "need_funding" and "traction.summary" not in only      # past demand is never estimated
+        return {k: v for k, v in {"market.differentiation": "Hand-finished work", "market.acquisition_cost": "£50 a month", "receipt_date": "not a date"}.items() if k in only}
+    monkeypatch.setattr(research, "draft_estimates", drafted)
+    out = ask("Fill the rest for me", page="funding")
+    assert "waiting for your review" in out["message"] and "nothing goes on your case" in out["message"]
+    drafts = _case(env, cid)["agent_drafts"]
+    assert drafts["market.differentiation"]["value"] == "Hand-finished work" and "estimate" in drafts["market.differentiation"]["source"]
+    assert "receipt_date" not in drafts and not (_case(env, cid).get("market") or {}).get("differentiation")      # nothing counts until approved
+
+
+def test_a_dollar_case_is_researched_in_dollars_never_the_workspace_pounds(talk):
+    """The owner, 1 Nov: a $400 loan came out as "We are looking for £400" with "Amounts in GBP"."""
+    from app.modules.agent import goal_router
+    from app.modules.readiness.service import service_for
+    env, ask, model, cid = talk
+    svc = service_for(env.orch)
+    row = run(svc.store.get("subjects", cid))
+    run(svc.store.update("subjects", cid, {"data": {**row["data"], "currency": "USD", "target_amount": 400}}))
+    assert env.businesses["A"]["data"].get("settings", {}).get("currency") in (None, "GBP")      # the workspace stays in pounds
+    sid = env.businesses["A"]["data"]["chat_sessions"][cid]
+    _s, goal, data, answers, _r = run(goal_router._session_premium_context(sid, {"id": OWNER, "email": None}))
+    assert answers["currency"] == "USD"
+    i = research.inputs_of(goal, answers, data)
+    context = research.context_of(data, i)
+    assert context["currency"] == "USD" and "USD" in context["amount"]
+    assert research.workspace_facts(data, answers, i, [])["currency"] == "USD"
+    # A run worked out in pounds is never reopened for it
+    old = {"id": "r1", "goal": goal, "fingerprint": "fp", "created_at": research._now().isoformat(), "status": "adopted", "context": {"currency": "GBP"}, "counts": {"sources": 1}}
+    runs = {**data, "research_runs": {"r1": old}}
+    assert research.reuse_for(runs, goal, "fp", {"currency": "USD"}) is None
+    assert research.reuse_for(runs, goal, "fp", {"currency": "GBP"})["id"] == "r1"
+
+
+def test_a_draft_the_page_hides_neither_blocks_its_field_nor_counts_as_waiting(talk, monkeypatch):
+    """The owner, 1 Nov: "I can't draft..." with "Review drafts (1)" and nothing to review."""
+    from app.modules.readiness.service import service_for
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"state": "adopted"})      # Do all has run
+    env, ask, model, cid = talk
+    svc = service_for(env.orch)
+    row = run(svc.store.get("subjects", cid))
+    hidden = {"market.differentiation": {"value": "An old answer", "source": "from an earlier chat", "at": "2026-10-01"}}
+    run(svc.store.update("subjects", cid, {"data": {**row["data"], "agent_drafts": hidden}}))
+
+    async def drafted(_llm, _goal, _facts, only):
+        return {"market.differentiation": "Hand-finished work"} if "market.differentiation" in only else {}
+    monkeypatch.setattr(research, "draft_estimates", drafted)
+    ask("Fill the rest for me", page="funding")
+    assert _case(env, cid)["agent_drafts"]["market.differentiation"]["value"] == "Hand-finished work"
+
+
+def test_do_all_covers_the_whole_checklist_and_never_estimates_what_only_records_can_say():
+    """The owner, 1 Nov: "the do all that cost credits should handle all"."""
+    funding, launch = research.fillable_fields("need_funding"), research.fillable_fields("launch")
+    for key in ("economics.price", "economics.direct_cost", "economics.fixed_costs_monthly", "receipt_date", "use_of_funds", "market.differentiation", "market.acquisition_cost", "risks"):
+        assert key in funding, key
+    for key in ("offer.customer_promise", "market.channel", "customers.problem", "geography", "economics.price_per_unit"):
+        assert key in launch, key
+    assert not research.NEVER_ESTIMATED & (set(funding) | set(launch))
+
+
+def test_one_press_drafts_figures_lines_dates_and_the_forecast_for_approval(talk, monkeypatch):
+    from app.modules.readiness.service import service_for
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"state": "adopted"})      # Do all has run
+    env, ask, model, cid = talk
+    svc = service_for(env.orch)
+    row = run(svc.store.get("subjects", cid))
+    run(svc.store.update("subjects", cid, {"data": {**row["data"], "use_of_funds": [{"id": "u1", "category": "Other", "amount": "50000", "purpose": "A van"}], "forecast_id": None, "receipt_date": None}}))
+    values = {"economics.price": "35", "economics.direct_cost": "10", "market.differentiation": "Hand finished", "receipt_date": "2027-02-01",
+              "_forecast.opening_cash": "100", "_forecast.receipts": "900", "_forecast.payments": "700"}
+
+    async def drafted(_llm, _goal, _facts, only):
+        return {k: v for k, v in values.items() if k in only}
+    monkeypatch.setattr(research, "draft_estimates", drafted)
+    ask("Fill the rest for me", page="funding")
+    after = _case(env, cid)
+    drafts = after["agent_drafts"]
+    assert drafts["economics.price"]["value"] and drafts["receipt_date"]["value"] == "2027-02-01" and "estimate" in drafts["market.differentiation"]["source"]
+    assert re.match(r"\d{4}-\d{2}", drafts["use_of_funds"]["value"][0]["period"])      # the month on a line already there
+    assert not (after.get("economics") or {}).get("price") and after.get("forecast_id")      # nothing counts until approved; the forecast is a draft to confirm
+    forecast = run(svc._forecast_of(run(svc.store.get("subjects", cid))))["data"]
+    assert forecast["drafted_by"] == "Agent" and not forecast["confirmed_at"] and len(forecast["months"]) == 12
+
+
+def test_what_the_sentence_says_is_saved_and_never_asked_even_when_the_model_leaves_it_out(talk):
+    """The owner, 1 Nov: "I need funding: N5m for stock, a loan, within 3 months", then "When do you need the money?"."""
+    env, ask, model, cid = talk
+    model.replies.append({"say": "Done.", "change": {"target_amount": 60000, "purpose": "stock"}})
+    out = ask("Make it 60000 for stock, a loan, within 3 months", page="funding")
+    data = _case(env, cid)
+    assert data["receipt_date"] and data["route_preference"] == "loan"
+    assert "When do you need the money" not in out["message"] and "loan, a grant or investors" not in out["message"]
+    # A one-line answer the model passes over
+    run(service_for_case(env, cid, {"receipt_date": None}))
+    model.replies.append({"say": "Thanks."})
+    ask("I need it within 3 months", page="funding")
+    assert _case(env, cid)["receipt_date"]
+
+
+async def service_for_case(env, cid, patch):
+    from app.modules.readiness.service import service_for
+    svc = service_for(env.orch)
+    row = await svc.store.get("subjects", cid)
+    await svc.store.update("subjects", cid, {"data": {**row["data"], **patch}})

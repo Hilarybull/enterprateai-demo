@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { apiRequest, apiRequestCached } from "../api/client";
 import { useAuthStore } from "../store/auth";
 
@@ -341,3 +342,76 @@ export async function caseChatPath(businessId, text) {
   return asked?.converse && asked.to ? `${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(said.slice(0, 500))}` : null;
 }
 export const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+// The buttons that start the paid work for the owner ("Do all for me", "Draft the rest", "Run the idea validation"): shown first
+// and filled, so the way to have it done is obvious (the owner, 31 Oct: "the Do it button is another task, make it obvious")
+// A new request or question, never the answer to what was just asked (the owner, 1 Nov: "Research funding options" was taken as
+// the answer to a business plan's question): every chat checks this before treating a message as an answer or a no
+// A long task started from a chat, followed until it ends and then said in that chat, also after a reload (the owner, 1 Nov:
+// "no response"): a message carrying follow: {run_id} gets its result posted under the conversation, once.
+const RUN_POLL_MS = 4000;
+const RUN_FOLLOW_MS = 15 * 60000;
+export function ranMessage(run) {
+  const to = (run?.outcome?.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
+  const open = run?.status === "failed" ? [] : to.length ? to : [{ label: "See it", to: `/agent/runs/${run?.id}` }];
+  return { role: "assistant", at: new Date().toISOString(), links: open,
+    content: run?.status === "failed" ? (run.error || "That didn't finish. Nothing was charged; please try again.") : replyText({ kind: "workflow", run }) || "It's done." };
+}
+export function useFollowRuns(messages, update) {
+  const seen = useRef(new Set());
+  const live = useRef(true);
+  const latest = useRef(update);
+  latest.current = update;
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => {
+    (messages || []).forEach((m) => {
+      const id = m.follow?.run_id;
+      if (!id || m.follow.done || seen.current.has(id)) return;
+      seen.current.add(id);
+      (async () => {
+        const until = Date.now() + RUN_FOLLOW_MS;
+        let run = null;
+        while (live.current && Date.now() < until) {
+          try {
+            const got = await apiRequest(`/workflow-runs/${id}`, "GET");
+            run = got?.run || got;
+            if (run && (run.pending_question || !["queued", "running"].includes(run.status))) break;
+            run = null;
+          } catch { /* asked again below */ }
+          await new Promise((r) => setTimeout(r, RUN_POLL_MS));
+        }
+        if (!live.current) return;
+        const said = run ? ranMessage(run) : { role: "assistant", at: new Date().toISOString(), content: "This is taking longer than usual. It's still in your Agent Centre, and I'll have it there when it finishes.",
+          links: [{ label: "See it", to: `/agent/runs/${id}` }] };
+        latest.current((prev) => [...prev.map((x) => (x.follow?.run_id === id ? { ...x, follow: { ...x.follow, done: true } } : x)), said]);
+        try { window.dispatchEvent(new CustomEvent("ea:credits:refresh")); } catch { /* read on the next page */ }
+      })();
+    });
+  }, [messages]);
+}
+// A form or action card leaves the conversation once it has been dealt with, on every chat (the owner, 1 Nov: "don't like when the
+// user still scrolls... to attend to forms they already attended to... if they want to attend again they can request"): it shows
+// only until the owner replies or a newer one comes. Results stay, as the record of what happened. A draft stays as one line with
+// Show it again; work still running keeps its card.
+const FORM_CARDS = new Set(["choose", "findings", "pending", "next", "steps", "approvals", "change", "idea_form", "idea_inputs", "options", "research_again", "segments", "risk", "records", "progress", "work"]);
+// What to do next comes after the reply's words; results before them (the owner, 1 Nov: "next steps card should be after the chat")
+export const AFTER_WORDS = new Set(["next", "steps", "pending"]);
+export function cardsToShow(list, i, stillWorking = false) {
+  const cards = (list[i]?.cards || []);
+  if (!cards.length) return cards;
+  const later = list.slice(i + 1);
+  const movedOn = later.some((m) => m.role === "user" || (m.cards || []).some((c) => FORM_CARDS.has(c.type)));
+  if (!movedOn) return cards;
+  return cards.filter((c) => !FORM_CARDS.has(c.type) || (c.type === "progress" && stillWorking))
+    .map((c) => (c.type === "preview" && c.item ? { type: "preview", item: { ...c.item, open: false } } : c));
+}
+export const NEW_REQUEST = /^\s*(?:research|find|search|draft|create|write|prepare|generate|validate|run|check|publish|help me|do (?:it )?all|i (?:want|need|would like)|can you|could you|how|what|why|which|when|where|show me|tell me)\b/i;
+// The next question of a task, as chat words and buttons: the same on every chat
+export function questionOf(fields, params = {}) {
+  const f = (fields || []).find((x) => x.required && [undefined, null, ""].includes(params[x.key])) || (fields || [])[0];
+  if (!f) return null;
+  const options = (f.options || f.chips || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+  return { field: f, label: f.label, options, prompts: options.map((o) => ({ label: o.label, prompt: o.label })) };
+}
+export const DOES_IT = /^(?:go ahead|do (?:it )?all for me|do it for me|fill (?:it )?all for me|draft the rest|fill the rest|run the idea validation|research (?:it )?for me)\b/i;
+export const doesItFirst = (list) => [...(list || [])].sort((a, b) => Number(DOES_IT.test(String(b.label || ""))) - Number(DOES_IT.test(String(a.label || ""))));

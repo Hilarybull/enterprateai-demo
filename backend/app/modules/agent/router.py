@@ -6,6 +6,7 @@ with no access gets 404 for that business, never data.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -325,26 +326,40 @@ class ChatIn(BaseModel):
     client_at: float | None = None      # when the page made this save: an older one never overwrites a newer one
 
 
+def _small(value, limit: int = 6000):
+    """A bit of a task kept with its message, only when it is plain data of a small size."""
+    try:
+        return value if isinstance(value, dict) and len(json.dumps(value, default=str)) <= limit else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _chat_message(m: dict) -> dict | None:
-    """What is kept of a message: who said it, the words, and its buttons (never anything else the page held)."""
+    """What is kept of a message: who said it, the words, its buttons, and what it is waiting on (a task's price or question, a
+    run being followed), so these still work after a reload (the owner, 1 Nov: "no response"); never anything else the page held."""
     role = m.get("role") if m.get("role") in ("user", "assistant") else None
     text = str(m.get("content") or "").strip()[:4000]
     if not role or not text:
         return None
     links = [{"label": str(x.get("label") or "")[:80], "to": str(x.get("to") or "")[:300]} for x in m.get("links") or [] if isinstance(x, dict) and x.get("to")][:4]
-    prompts = [{"label": str(x.get("label") or "")[:80], "prompt": str(x.get("prompt") or "")[:300]} for x in m.get("prompts") or [] if isinstance(x, dict) and x.get("prompt")][:4]
+    prompts = [{"label": str(x.get("label") or "")[:80], "prompt": str(x.get("prompt") or "")[:300], **({"value": x["value"]} if isinstance(x.get("value"), (str, int, float)) else {})}
+               for x in m.get("prompts") or [] if isinstance(x, dict) and x.get("prompt")][:12]
     # The Assistant tab's cards, by type only: drawn again from the live case and records when the conversation is opened
     cards = [_card_kept(x) for x in m.get("cards") or [] if isinstance(x, dict) and x.get("type") in _CARD_TYPES][:4]
     at = str(m.get("at") or "")[:32]
     # An idea validation still running: kept, so the chat goes on checking after a reload or a visit elsewhere (30 Oct)
     w = m.get("wait") if isinstance(m.get("wait"), dict) else None
     wait = {k: (bool(w[k]) if k == "done" else str(w[k])[:64]) for k in ("kind", "history_id", "since", "done") if w.get(k) is not None} if w else None
+    f = m.get("follow") if isinstance(m.get("follow"), dict) else None
+    follow = {"run_id": str(f["run_id"])[:64], **({"done": True} if f.get("done") else {})} if f and f.get("run_id") else None
+    held = {k: _small(m.get(k)) for k in ("confirm", "task", "asks", "answers")}
     return {"role": role, "content": text, **({"links": links} if links else {}), **({"prompts": prompts} if prompts else {}),
-            **({"cards": cards} if cards else {}), **({"at": at} if at else {}), **({"wait": wait} if wait and wait.get("history_id") else {})}
+            **({"cards": cards} if cards else {}), **({"at": at} if at else {}), **({"wait": wait} if wait and wait.get("history_id") else {}),
+            **({"follow": follow} if follow else {}), **({"announced": True} if m.get("announced") else {}), **{k: v for k, v in held.items() if v is not None}}
 
 
 _CARD_TYPES = {"records", "result", "next", "score_change", "choose", "progress", "approvals", "idea_inputs", "viability", "launch_fit", "risk",
-               "scenario", "preview", "segments", "findings", "steps", "options", "research_again"}
+               "scenario", "preview", "segments", "findings", "steps", "options", "research_again", "pending", "check_card", "check_result", "rechecking"}
 
 
 def _card_kept(x: dict) -> dict:
@@ -356,6 +371,10 @@ def _card_kept(x: dict) -> dict:
         out.update({"title": short(x.get("title"), 120), "summary": short(x.get("summary"), 600), "months": x.get("months") if isinstance(x.get("months"), int) else None,
                     "worse": bool(x.get("worse")), "kind": short(x.get("kind"), 40),
                     "rows": [{k: short(r.get(k), 60) for k in ("label", "before", "after")} for r in x.get("rows") or [] if isinstance(r, dict)][:5]})
+    if x.get("type") == "check_card" and _small(x.get("card"), 8000):
+        out["card"] = x["card"]
+    if x.get("type") == "check_result" and _small(x.get("result"), 8000):
+        out["result"] = x["result"]
     if x.get("type") == "preview" and isinstance(x.get("item"), dict):
         out["item"] = {k: short(x["item"].get(k), 120) for k in ("title", "draft_id", "run_id", "approval_id", "to", "kind") if x["item"].get(k)}
     return out
@@ -458,6 +477,23 @@ async def chat_attach(business_id: str, file: UploadFile = File(...), user=Depen
     except Exception as e:      # noqa: BLE001 - said plainly
         message = getattr(e, "message", None) or str(e) or "That file couldn't be saved."
         raise HTTPException(status_code=400, detail=message) from e
+
+
+class SignOffIn(BaseModel):
+    kind: str = Field(pattern="^(funding|launch)$")
+
+
+@router.post("/businesses/{business_id}/cases/{case_id}/sign-off")
+async def sign_off_case(business_id: str, case_id: str, body: SignOffIn, user=Depends(get_current_user)):
+    """The Agent's drafts approved: what they need in order to count, then the check once. The case as it is now."""
+    from app.modules.agent import sign_off
+    _known_id(case_id)
+    orch = get_orchestrator()
+    try:
+        await orch.actor_for(user["id"], business_id, user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    return await sign_off.sign_off(orch, user, business_id, body.kind, case_id)
 
 
 @router.get("/businesses/{business_id}/agent/assistant-context")
@@ -625,12 +661,27 @@ async def idea_validation_status(business_id: str, history_id: str, since: str =
     draft in Validation history, newer than when it started; else its task failed; else still running."""
     from app.modules.agent import goal_router
     data = await goal_router._business_for(user, business_id)
-    entry = next((e for e in data.get("validation_history") or [] if isinstance(e, dict) and e.get("id") == history_id
+    # "latest": the newest validation since then, when the chat lost which one it started (the reply never arrived, 31 Oct)
+    entry = next((e for e in data.get("validation_history") or [] if isinstance(e, dict) and (e.get("id") == history_id or history_id == "latest")
                   and str(e.get("created_at") or "") >= since), None)
+    if entry:
+        history_id = str(entry.get("id"))
     to = f"/validation?history_id={history_id}&history_type=v4_validation"
     if entry:
         score = entry.get("score")
         said = (f"Your idea validation is done: {round(score)}/100" + (f", {entry['verdict']}." if entry.get("verdict") else ".")) if isinstance(score, (int, float))             else "Your idea validation is done."
+        # its estimates on the idea too, once (31 Oct: the Assessment updates after the run)
+        filled = None
+        try:
+            runs = await get_orchestrator().rt.store.list_runs(business_id, limit=30)
+            done = next((r for r in runs if r.get("workflow_key") == "idea_validation" and ((r.get("outcome") or {}).get("estimates") or (r.get("outcome") or {}).get("figures"))), None)
+            est = {k: v for k, v in ((done or {}).get("outcome") or {}).get("estimates", {}).items() if v is not None}
+            used = {k: v for k, v in ((done or {}).get("outcome") or {}).get("figures", {}).items() if v is not None}
+            filled = await _apply_estimates(business_id, {**used, **est}, estimated=set(est)) if (est or used) else None
+        except Exception:      # noqa: BLE001
+            logger.info("estimates not read for %s", business_id, exc_info=True)
+        if isinstance(filled, (int, float)):
+            said += f" I've added its estimates to your idea, marked as estimates, so your assessment is now {round(filled)}/100."
         return {"state": "done", "message": said + " Its draft is waiting for you to accept, modify or reject.",
                 "links": [{"label": "See your validation results", "to": f"{to}&view=results"}, {"label": "Open the Idea Validation form", "to": to}]}
     runs = await get_orchestrator().rt.store.list_runs(business_id, limit=30)
@@ -716,9 +767,8 @@ async def _validate_idea(user: dict, body, known: dict) -> dict | None:
         return {"kind": "answer", "conversational": True, "actions": [], **waiting}
     said = str(run.get("summary") or "Your idea is validated.").strip()
     est = {k: v for k, v in ((run.get("outcome") or {}).get("estimates") or {}).items() if v is not None}
-    if est:
-        # Held until the owner says: the idea's own figures from the validation's estimates, never written unasked
-        await get_orchestrator().rt.business.mutate(body.business_id, lambda d: d.__setitem__("idea_estimates", {"idea": idea, "figures": est}))
+    used = {k: v for k, v in ((run.get("outcome") or {}).get("figures") or {}).items() if v is not None}
+    filled = await _apply_estimates(body.business_id, {**used, **est}, estimated=set(est)) if (est or used) else None
     from app.modules.agent import business as _bz
     from app.modules.agent.research import money as _m
     cur = _bz.currency_of(known)
@@ -726,10 +776,36 @@ async def _validate_idea(user: dict, body, known: dict) -> dict | None:
     offer = ", ".join(words[k](v) for k, v in est.items() if k in words)
     return {"kind": "answer", "conversational": True,
             "message": f"{said} I filled in the Idea Validation form from your idea and records; its draft is waiting in Validation history for you to accept, modify or reject.",
-            "actions": [{"label": "See your validation results", "to": results}, {"label": "Open the Idea Validation form", "to": form},
-                        *([{"label": "Use these figures", "kind": "explain", "prompt": "Use the estimated figures for my idea"}] if est else [])],
+            "actions": [{"label": "See your validation results", "to": results}, {"label": "Open the Idea Validation form", "to": form}],
             **({"message": f"{said} I filled in the Idea Validation form from your idea and records; its draft is waiting in Validation history for you to accept, "
-                           f"modify or reject. It estimated {offer} for your idea: use these figures on your idea too?"} if est else {})}
+                           f"modify or reject. I've added its estimates to your idea ({offer}), marked as estimates"
+                           + (f", so your assessment is now {round(filled)}/100" if isinstance(filled, (int, float)) else "")
+                           + "; change any of them on the Assessment tab."} if est else {})}
+
+
+async def _apply_estimates(business_id: str, figures: dict, estimated: set | None = None) -> float | None:
+    """The validation's estimates on the idea itself once it has run (the owner, 31 Oct: "it should update this after the run
+    idea validation"): only where the idea has no figure of its own, marked as estimates, and its check worked out again.
+    Returns the new score."""
+    from app.modules.agent import answer_memory, business as _bz, first_value
+    out: dict = {}
+
+    def _keep(d: dict) -> None:
+        answers = dict(((d.get("quick_check_answers") or {}).get("test_idea") or {}).get("answers") or {})
+        added = {k: v for k, v in figures.items() if answers.get(k) in (None, "")}
+        if not added:
+            return
+        guessed = set(added) if estimated is None else set(added) & set(estimated)
+        merged = {**answers, **added, "_estimated": ",".join(sorted({*str(answers.get("_estimated") or "").split(","), *guessed} - {""}))}
+        result = first_value.assess("test_idea", merged, d) or {}
+        answer_memory.remember(d, "test_idea", merged, result=result, currency=_bz.currency_of(d))
+        d.pop("idea_estimates", None)
+        out["score"] = result.get("score")
+    try:
+        await get_orchestrator().rt.business.mutate(business_id, _keep)
+    except Exception:      # noqa: BLE001 - the validation's own result still stands
+        logger.warning("idea estimates not applied for %s", business_id, exc_info=True)
+    return out.get("score")
 
 
 async def _use_estimates(user: dict, body, known: dict) -> dict | None:
@@ -800,6 +876,17 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         except Exception:      # noqa: BLE001
             known = {}
         from app.modules.agent import converse_idea, converse_launch
+        # The one Agent conversation (the owner, 31 Oct), behind its switch: the Agent Centre and the dashboard's chat. It answers,
+        # or assigns the work to a module; a module that keeps its own flow (funding, launch, documents) carries on below.
+        from app.modules.agent import conductor
+        if not body.page and conductor.enabled(known):
+            try:
+                led = await conductor.turn(get_orchestrator(), user, body, known)
+            except converse.OutOfCredits as e:
+                return {"kind": "blocked", "reason_codes": ["credits_exhausted"], "upgrade": True, "message": agent_config.short_of(e.needed, e.have),
+                        "actions": [{"label": "Top up", "to": "/pricing"}]}
+            if led and led != conductor.PASS:
+                return _result(led)
         # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
         from app.modules.agent import converse_check
         resolved = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key")
@@ -810,6 +897,10 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         _TASKS = {"receipt_send", "new_invoice", "enquiry_to_quote", "quote_to_cash", "payment_followup", "new_contract", "new_proposal", "new_purchase_order"}
         if any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules) and not converse.wants_funding(body.text):
             other = True
+            if body.page:
+                # Asked on a module's page: the Agent Centre does the whole task, questions and all (the owner, 31 Oct: an
+                # invoice's answer went to the idea's chat, "why is it not flexible")
+                return _result({"kind": "answer", "elsewhere": "/agent", "message": "I'll do that in the Agent Centre."})
         # An earlier conversation opened from History carries on as it was (the owner, 27 Oct: "can't continue previous convo")
         earlier = [{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]]
         was = next((k for t in reversed(earlier) if t["role"] == "user"
@@ -871,10 +962,19 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             # The free checks talk on their own pages too (the owner, 30 Oct: "they should be in a chat")
             talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn,
                     **{k: converse_check.turn for k in converse_check.GOALS}}[topic]
-            talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
-                                **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}),
-                                **({"on_page": True} if topic == "launch" and body.page == "launch" else {}),
-                                **({"topic": topic} if topic in converse_check.GOALS else {}))
+            try:
+                talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
+                                    **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}),
+                                    **({"on_page": True} if topic == "launch" and body.page == "launch" else {}),
+                                    **({"topic": topic} if topic in converse_check.GOALS else {}))
+            except converse.OutOfCredits as e:
+                # A written reply is 2 credits (the owner, 31 Oct): too few, said with Top up; nothing written, nothing charged
+                return {"kind": "blocked", "reason_codes": ["credits_exhausted"], "upgrade": True, "message": agent_config.short_of(e.needed, e.have),
+                        "actions": [{"label": "Top up", "to": "/pricing"}]}
+            if talked and not body.page and topic in ("funding", "launch") and talked.get("case_id"):
+                # Asked in the Agent Centre: carried on on its own page, with this exchange (the owner, 31 Oct: "it should have just
+                # opened the funding flow… and handed over the request well")
+                talked = {**talked, "handover": f"/{topic}/{talked['case_id']}?tab=assistant", "asked": body.text.strip()}
             if talked:
                 return _result(talked)
     if body.text and not body.capability and body.business_id:
@@ -1315,6 +1415,38 @@ async def answer_run(run_id: str, body: RunInputIn, user=Depends(get_current_use
         raise _conflict(e)
 
 
+class ReadIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/workflow-runs/{run_id}/read")
+async def read_answer(run_id: str, body: ReadIn, user=Depends(get_current_user)):
+    """Everything an answer says, read by the model for the task's other questions too (the owner, 31 Oct: "you're smart and
+    can pick things you didn't even ask for… and don't ask them again"): {field: value} for the questions it answers."""
+    _known_id(run_id)
+    orch = get_orchestrator()
+    try:
+        run, _actor = await orch._owned_run(run_id, user["id"], user.get("email"))
+    except AccessDenied as e:
+        raise _denied(e)
+    fields = ((run.get("pending_question") or {}).get("fields")) or []
+    if not fields:
+        return {"values": {}}
+    from app.modules.agent import business as _bz, extraction
+    from app.modules.agent.orchestrator import extraction_defaults
+    try:
+        data = await orch.rt.business.load(run["business_id"]) or {}
+        today = _bz.local_now(data, orch.rt.clock()).date()
+        read = await asyncio.wait_for(extraction.understand(orch.rt.classifier, run.get("workflow_key") or "", body.text, data, today, user["id"]), timeout=20)
+    except Exception:      # noqa: BLE001 - the answer still counts for the question asked
+        return {"values": {}}
+    if read.get("by") != "model":
+        return {"values": {}}
+    filled = extraction_defaults(fields, read.get("fields") or {}, {})
+    before = {f["key"]: f.get("default") for f in fields}
+    return {"values": {f["key"]: f.get("default") for f in filled if f.get("default") not in (None, "", []) and f.get("default") != before.get(f["key"])}}
+
+
 class CustomerEmailIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
@@ -1629,10 +1761,10 @@ async def _plans_turn(user: dict, body) -> dict | None:
     if not asked or not n:
         return None
     shown = items[:5]
-    names = ", ".join(f"“{i['subject']}”{' (waiting for your review)' if i['needs_review'] else ''}" for i in shown)
+    names = ", ".join(i["subject"] for i in shown)      # plain names, never quoted labels (the owner's rule)
     head = f"You have {n} business plan{'s' if n != 1 else ''}" + (f", {waiting} waiting for your review" if waiting else "") + f": {names}"
     return {"kind": "answer", "conversational": False, "message": head + (f", and {n - 5} more" if n > 5 else "") + f". {_PLANS_ASKED}",
-            "offers": [{"label": f"Open “{i['subject'][:32]}”", "to": i["to"]} for i in shown[:3]]
+            "offers": [{"label": f"Open {i['subject'][:32]}", "to": i["to"]} for i in shown[:3]]
                       + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]}
 
 

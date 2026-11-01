@@ -913,15 +913,11 @@ async def remove_user_grant(
 async def delete_user(user_id: str, user=Depends(require_admin)) -> Response:
     if user_id == user.get("id"):
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
-    # Clear non-cascading FK reference before deleting the user
-    try:
-        await sb_update(
-            "workspace_invitations",
-            payload={"accepted_by_user_id": None},
-            filters=[("accepted_by_user_id", "eq", user_id)],
-        )
-    except Exception:
-        pass
+    # Everything the user owns goes with them: workspaces and their data, credits, plan, documents (the owner, 31 Oct:
+    # "I'm deleting users... it should clear everything he owns")
+    from app.shared.auth.purge import purge_account
+    target = await sb_select("users", filters=[("id", "eq", user_id)], columns="id,email", single=True)
+    await purge_account(user_id, (target or {}).get("email"))
     await sb_delete("users", filters=[("id", "eq", user_id)])
     return Response(status_code=204)
 

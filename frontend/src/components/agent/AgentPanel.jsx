@@ -458,7 +458,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           <button key={c.key} type="button" disabled={busy || (paused && startsTask(c.action))} title={paused && startsTask(c.action) ? PAUSED_TIP : c.text}
             data-mood={c.mood || undefined}
             onClick={() => (c.held ? setReply(blockedReply({ reason: "plan", message: c.text.replace(/\s*Upgrade or cancel\.?$/, ""), plan_required_label: c.held.plan_required_label,
-              actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Cancel this task", cancel: c.held.run_id }] })) : lockedFor(c.action) ? setReply(blockedReply({ reason: "plan", message: `${c.label || "This"} is on the ${lockedFor(c.action)} plan.`, plan_required_label: lockedFor(c.action),
+              actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Cancel this task", cancel: c.held.run_id }] })) : lockedFor(c.action) ? setReply(blockedReply({ reason: "plan", message: `Unlock “${c.label || "This"}” and I'll do it for you: you just approve.`, plan_required_label: lockedFor(c.action),
               actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }] })) : c.question ? flow.openQuestion(c.question) : act(c.action))}
             data-locked={c.held?.plan_required_label || lockedFor(c.action) || undefined}
             className="group flex min-h-[4.5rem] items-center gap-3 overflow-hidden rounded-xl border border-white/15 bg-white/10 px-3.5 py-2 text-left transition hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60">

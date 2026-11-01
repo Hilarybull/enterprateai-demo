@@ -60,7 +60,9 @@ def documented(pairs: list[tuple[str, Any]]) -> dict:
         return _res(PASSED)
     if len(empty) == len(pairs):
         return _res(UNKNOWN, "Not filled in yet: " + ", ".join(empty) + ".", missing=empty)
-    return _res(FAILED, "Still missing: " + ", ".join(empty) + ".", missing=empty)
+    # What is filled counts towards the score so far (the owner, 31 Oct: "launch readiness should also give some score based
+    # on the data provided"): the share of the fields given
+    return _res(FAILED, "Still missing: " + ", ".join(empty) + ".", missing=empty, filled=round((len(pairs) - len(empty)) / len(pairs), 2))
 
 
 def _amount(value: Any) -> tuple[Decimal | None, bool]:
@@ -262,7 +264,9 @@ def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     # The score so far, from what the owner has answered (the owner, 26 Oct: "i told you score based on the user answers",
     # "why 0"): each criterion's share of its checks passed, so a criterion with one check still open counts what passed.
     # The same as the full score once everything is known.
-    answered = sum(Decimal(c["weight"]) * Decimal(sum(1 for ch in c.get("checks") or [] if ch.get("state") == PASSED)) / Decimal(max(1, len(c.get("checks") or [])))
+    # ... and a check partly filled in counts the share given (31 Oct)
+    credit = lambda ch: Decimal(1) if ch.get("state") == PASSED else Decimal(str(ch.get("filled") or 0))      # noqa: E731
+    answered = sum(Decimal(c["weight"]) * sum((credit(ch) for ch in c.get("checks") or []), Decimal(0)) / Decimal(max(1, len(c.get("checks") or [])))
                    for c in criteria if c["score"] is None)
     known_points = known_points + answered
     t = profile["thresholds"]
@@ -472,15 +476,18 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
         only_date = target is not None and currency and receipt is None
         r["C1.A"] = g["G1"] = _res(UNKNOWN, "Not entered yet: " + ", ".join(gone) + "." + (f" Already entered: {have[0]}." if have else ""),
                                    how_to="When do you need the money?" if only_date else
-                                   "Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ".")
+                                   "Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ".",
+                                   # what is entered counts towards the score so far (the owner, 31 Oct: 0/100 with the amount given)
+                                   filled=round((3 - len(gone)) / 3, 2))
     elif not s.get("timing_confirmed"):
-        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not saved as final yet.", how_to="Check the amount and date in Your answers, then save.")
+        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not saved as final yet.", how_to="Check the amount and date in Your answers, then save.",
+                                   filled=0.75)
     else:
         r["C1.A"] = g["G1"] = _res(PASSED, f"{_cash(currency, target)}, expected {receipt.strftime('%d %b %Y').lstrip('0')}.")
 
     if not blank(s.get("purpose")) and not milestones:
         r["C1.B"] = _res(UNKNOWN, "What the funding is for is entered. It isn't linked to a milestone yet.",
-                         how_to="Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.")
+                         how_to="Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.", filled=0.5)
     elif blank(s.get("purpose")) and milestones:
         r["C1.B"] = _res(UNKNOWN, "Say what the funding is for.", how_to="Say what the funding is for and link it to one of your milestones.")
     elif blank(s.get("purpose")) or not milestones:
@@ -785,9 +792,9 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
 
     # C2 / B5: offer, pricing and contribution
     # One price: the offer's, or the one the money check uses (the owner, 29 Oct: "Still missing: price" beside a ₦1,000 price)
-    offer = documented([("what you are launching", get(s, "offer.launch_scope")), ("price", get(s, "offer.price") or get(s, "economics.price_per_unit")),
+    offer = documented([("what you are launching", get(s, "offer.launch_scope") or get(s, "name")), ("price", get(s, "offer.price") or get(s, "economics.price_per_unit")),
                         ("delivery terms", get(s, "offer.delivery_terms")), ("customer promise", get(s, "offer.customer_promise"))])
-    r["C2.A"] = _res(UNKNOWN, "The offer is filled in but not confirmed yet.") if offer["state"] == PASSED and not get(s, "offer.confirmed") else offer
+    r["C2.A"] = _res(UNKNOWN, "The offer is filled in but not confirmed yet.", filled=0.5) if offer["state"] == PASSED and not get(s, "offer.confirmed") else offer
     econ = {k: _amount(get(s, f"economics.{k}")) for k in ("price_per_unit", "variable_cost_per_unit", "fixed_costs_monthly")}
     price, variable, fixed = (econ[k][0] for k in econ)
     stale_econ = confirmed_within("economics.confirmed_at", days["economics"], "Price and costs")

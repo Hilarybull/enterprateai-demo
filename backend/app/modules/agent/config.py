@@ -164,6 +164,9 @@ FREE_FIRST_TASKS = ("new_invoice", "enquiry_to_quote")
 # the plan's task allowances (a month, and at once) do not apply to it, and AI Credits are what it costs. Asked for
 # from inside the app, the same tasks follow CAPABILITY_MIN_PLAN and the allowance as before.
 HOMEPAGE_TASKS_ON_ANY_PLAN = True
+# Never sold for credits below its plan, even from the homepage (the owner's QA, 31 Oct: a new Explorer user was charged 40
+# credits for a business plan the plan doesn't include): Explorer is shown the upgrade instead
+PLAN_GATED_FROM_HOMEPAGE: frozenset[str] = frozenset()      # the business plan is on every plan for credits (31 Oct)
 # A plan-included task is limited by AI Credits, not by a monthly count of tasks: a new account
 # with credits can keep asking until they run out. (The counted things, like scenario simulations,
 # have their own monthly numbers in the plan map.) Set to True to apply DEFAULT_PLAN_LIMITS' monthly_runs and

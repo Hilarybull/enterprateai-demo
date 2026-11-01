@@ -1108,7 +1108,7 @@ async def _planned(ctx) -> dict:
                 shared[k] = {"value": float(v), "offering": "", "goal": ctx.run.get("workflow_key"), "at": now, "source": words + " (planned)",
                              "state": "accepted", "basis": "forecast"}
         await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    return pl.monthly(await ctx.rt.business.load(ctx.run["business_id"]))
+    return pl.monthly(await ctx.rt.business.load(ctx.run["business_id"]), today=ctx.now().date())      # freshness by the task's own clock
 
 
 def _ask_planned(intro: str, missing: list[str]):
@@ -1636,16 +1636,18 @@ async def idea_validation_step(ctx):
     if depth == "basic":
         plan = await ctx.rt.meter.plan(ctx.actor.user_id)
         if plan == "explorer":
-            summary += (" This is the Basic check, worked out from your numbers (free). Comprehensive validation checks your market, competitors,"
+            summary += (" This is the Basic check, worked out from your numbers. Comprehensive validation checks your market, competitors,"
                         " pricing and unit economics. Available on Starter.")
             links += [{"label": "Upgrade to validate fully", "to": "/pricing", "upgrade": True}]
         else:
-            summary += " As you asked, I ran the quick Basic check (free). Ask me to validate it fully when you want the market research."
+            summary += " As you asked, I ran the quick Basic check. Ask me to validate it fully when you want the market research."
     return Done(plain(summary),
                 next_action="I'll score it again when what you've told me about the business changes.",
                 outcome={"score": r["score"], "risks": risks, "next_steps": steps, "form_filled": True, "depth": depth, "links": links,
                          # its estimated figures, offered back to the idea for the owner to approve (the owner, 29 Oct)
                          "estimates": {k: (idea.get("known") or {}).get(k) for k in (idea.get("estimated") or []) if (idea.get("known") or {}).get(k) is not None},
+                         # every figure it used, so the idea's empty fields fill from them too (31 Oct: the snapshot stayed "Not known")
+                         "figures": {k: v for k, v in (idea.get("known") or {}).items() if k in ("price", "cost", "monthly_sales", "capacity", "fixed_costs") and v not in (None, "")},
                          "estimate_basis": idea.get("estimate_basis")})
 
 
@@ -1879,7 +1881,15 @@ def idea_name(said: str) -> str:
     core = re.sub(r"^(?:(?:a|an|the|new|my|our|this|another)\s+)+", "", words, flags=re.I)
     core = re.sub(r"\s+(?:product|service|idea|business|offering)s?$", "", core, flags=re.I).strip(" .,")
     core = core or words
-    return (core[:1].upper() + core[1:])[:60]
+    # the name only, never a sentence about it (the owner, 31 Oct: "Fashionista, the business as a whole, building on the Clothe")
+    head = re.split(r"\s*(?:,|;|:|\s-\s|\s+(?:the business|building|which|that|who|so)\b)", core, maxsplit=1)[0].strip() or core
+    generic = r"\b(?:business|company|brand|shop|venture|firm|startup)s?\b"
+    sells = re.search(r"\b(?:makes? and sells?|sells?|selling|makes?|making|offers?|offering|provides?|providing)\s+(.+)", core, re.I)
+    if sells and (re.search(generic, head, re.I) or re.fullmatch(r"(?:(?:a|an|the|my|our|new)\s+)*(?:service|product|idea)s?", head, re.I)):
+        # a business described by what it sells: named after that (the owner, 1 Nov: "Business Plan for Business" for bow ties)
+        sold = re.split(r"\s*(?:,|;|:|\.|\s-\s|\s+(?:for|to|in|at|with|which|that|who|so)\b)", sells.group(1), maxsplit=1)[0].strip()
+        head = re.sub(r"^(?:(?:a|an|the|its|their|own)\s+)+", "", sold, flags=re.I) or head
+    return (head[:1].upper() + head[1:])[:60]
 
 
 def owner_said(ctx) -> str:
@@ -2070,9 +2080,12 @@ async def business_plan_step(ctx):
         return Done("You already have this business plan draft" + (f" ({r['title']})" if r.get("title") else "") + ", so I haven't made another. Nothing was charged.",
                     next_action="Ask me to redraft it when you want a new version.",
                     outcome={"plan": r, "reused": True, "links": [{"label": "Business plan", "to": "/blueprint?tab=business-plans", "primary": True}]}, skipped=True)
+    # The card in the chat is named for the plan, never the link's words (the owner, 1 Nov: a card titled "draft business plan")
+    named = str(r.get("title") or idea.get("name") or "").strip()
+    named = named if not named or named.lower().startswith("business plan") else f"Business plan: {named}"
     return Done("Your business plan is ready to review" + (f": {r['sections']} sections" if r.get("sections") else "") + ".",
                 next_action="Review it: accept it, edit it or reject it.",
-                outcome={"plan": r, "links": [{"label": "draft business plan", "to": r.get("to") or "/blueprint?tab=business-plans", "primary": True}]})      # See details opens it (26 Oct)
+                outcome={"plan": {**r, "title": named or "Business plan"}, "links": [{"label": "Business plan", "to": r.get("to") or "/blueprint?tab=business-plans", "primary": True}]})      # See details opens it (26 Oct)
 
 
 async def sales_letter_step(ctx):

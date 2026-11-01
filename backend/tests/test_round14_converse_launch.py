@@ -23,6 +23,7 @@ def _make_plan(env, name="Car wash subscription", **more):
 def talk(world, monkeypatch):
     env, store, client, who = world
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # launch Do all for me is Decision Engine and above (31 Oct)
     model = _Model()
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: model)
     ask = lambda text, **kw: client.post("/agent/requests", json={"business_id": "A", "text": text, "source_channel": "text", **kw}).json()      # noqa: E731
@@ -84,6 +85,7 @@ def test_which_plan_is_asked_when_there_are_several(talk):
 def test_the_landing_page_hands_launch_to_the_chat_panel(world):
     env, store, client, who = world
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # launch Do all for me is Decision Engine and above (31 Oct)
     said = lambda t: client.post("/agent/readiness-question", json={"business_id": "A", "text": t}).json()      # noqa: E731
     # No launch plan yet: Launch Readiness's own conversation (the owner, 27 Oct: "launch readiness has no destination")
     assert said("I want to launch a product/service") == {"kind": "launch", "converse": True, "to": "/launch?tab=assistant"}
@@ -93,6 +95,7 @@ def test_the_landing_page_hands_launch_to_the_chat_panel(world):
 def test_without_a_model_typed_launch_details_create_and_check_a_plan(world, monkeypatch):
     env, store, client, who = world
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # launch Do all for me is Decision Engine and above (31 Oct)
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: None)
     out = client.post("/agent/requests", json={"business_id": "A", "text": "I want to launch window cleaning for offices in Leeds in March at £40 per visit", "source_channel": "text"}).json()
     assert out.get("conversational") and "created" in out.get("changed", [])
@@ -115,6 +118,7 @@ def test_an_invoice_mid_launch_conversation_goes_to_its_own_flow(talk):
 def test_with_one_plan_a_launch_question_opens_that_plans_assistant_and_with_two_the_launch_page(world):
     env, store, client, who = world
     who["user"] = OWNER
+    env.meter.plans[OWNER] = "decision_engine"      # launch Do all for me is Decision Engine and above (31 Oct)
     said = lambda t: client.post("/agent/readiness-question", json={"business_id": "A", "text": t}).json()      # noqa: E731
     one = _make_plan(env)
     assert said("So, am I ready to launch my new service?")["to"] == f"/launch/{one['id']}?tab=assistant"
@@ -166,6 +170,7 @@ def test_fill_them_drafts_every_blank_field_with_estimates_for_review(talk, monk
     import json as _json
     env, ask, model = talk
     pot = _make_plan(env, name="Pot selling", audience="households", geography="Abuja")
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"state": "adopted", "run_id": "r1"})      # part of a Do all that has run: before it, its price first (1 Nov)
 
     class _Writer:
         async def generate_text(self, **_k):

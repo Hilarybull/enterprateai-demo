@@ -482,12 +482,13 @@ const offerMoney = (n, currency) => {
   catch { return String(n); }
 };
 
-/** Offered once on a draft: its items not in the catalogue yet ("Add 'Flower · £200' to your catalogue?"). Either answer
+/** Offered once on a draft: its items not in the catalogue yet ("Add Flower at £200 to your catalogue?"). Either answer
  *  closes it for good; Add saves them in Catalogue > Products at the draft's price. */
 export function CatalogueOffer({ runId, items }) {
   const [state, setState] = useState("");      // "" | "busy" | "closed" | the message after Add
   if (!items?.length || state === "closed") return null;
-  const what = items.map((i) => `'${i.name} · ${offerMoney(i.unit_price, i.currency)}'`).join(", ");
+  // "Add food at £200 to your catalogue?": plain words, never a quoted label (the owner's rule on quoted labels)
+  const what = items.map((i) => `${i.name} at ${offerMoney(i.unit_price, i.currency)}`).join(", ");
   const answer = async (add) => {
     setState("busy");
     try {

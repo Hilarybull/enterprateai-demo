@@ -19,7 +19,8 @@ export const creditCopy = {
   nothingFound: () => "I couldn't find anything useful this time, so nothing was charged.",
   unavailable: () => "Research isn't available right now. Nothing was charged.",
   insufficient: ({ cost, balance }) => `This needs ${credits(cost)} and you have ${n(balance)}.`,
-  planGate: ({ feature, plan }) => `${feature} is on the ${plan} plan.`,
+  // Said kindly, never a bare "X is on the Starter plan." (the owner, 30 Oct)
+  planGate: ({ feature, plan }) => `Unlock “${feature}” with ${plan}: I do the work, you just approve. Everything you've done so far stays here.`,
   agentAuto: ({ did, cost }) => `While you were away I ${did} (${credits(cost)}).`,
 };
 

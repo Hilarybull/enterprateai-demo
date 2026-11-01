@@ -49,7 +49,7 @@ def test_explorer_never_sees_a_locked_request_by_any_route(monkeypatch):
     # A task from the request is refused for the plan: no run, no charge.
     asked = env.submit(capability="enquiry_to_quote", params={"rfq_id": rfq["id"]}, channel="ui_action")
     assert asked["kind"] == "blocked" and asked["reason"] == "plan" and asked["upgrade"] is True
-    assert market.runs() == [] and env.meter.charges == []
+    assert market.runs() == [] and {c[1] for c in env.meter.charges} <= {"chat_message"}      # no task; a chat reply at most
     _nowhere(json.dumps(asked, default=str), "the refusal")
     _nowhere(json.dumps(run(env.store.list_runs("A")), default=str), "the task records")
     _nowhere(json.dumps(run(env.store.list_enquiries("A")), default=str), "the enquiries")

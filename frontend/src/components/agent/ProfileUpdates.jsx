@@ -42,9 +42,10 @@ export default function ProfileUpdates({ businessId }) {
         </div>
       )}
       {conflict && (
-        <div className="rounded-xl border border-amber-300/40 bg-amber-50/95 px-3 py-2 text-[13px] text-amber-950" data-profile-conflict={conflict.field}>
-          <p>{conflict.question}</p>
-          <div className="mt-2 flex flex-wrap gap-2">
+        // The question and its answers on one line, wrapping only when there isn't room (the owner, 31 Oct)
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-amber-300/40 bg-amber-50/95 px-3 py-2 text-[13px] text-amber-950" data-profile-conflict={conflict.field}>
+          <p className="min-w-0 flex-1">{conflict.question}</p>
+          <div className="ml-auto flex flex-wrap justify-end gap-2">
             {conflict.options.map((o) => (
               <button key={o.choice} type="button" onClick={() => answer(conflict.field, o.choice)}
                 className={o.choice === "update" ? "rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700"

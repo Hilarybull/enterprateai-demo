@@ -323,6 +323,13 @@ export default function LoginPage() {
     setMode(next);
     setForgotNotice(null);
   }
+  // No account for that Google email: the create form opens, the message shown above it (the owner, 31 Oct)
+  const noAccount = useAuthStore((s) => s.noAccount);
+  useEffect(() => {
+    if (!noAccount) return;
+    useAuthStore.setState({ noAccount: false });
+    if (mode !== "signup") setMode("signup");
+  }, [noAccount]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (verificationPending) {
     return (
@@ -467,7 +474,7 @@ export default function LoginPage() {
             )}
             <h2 className="lg-welcome">{isSignup ? "Create your account" : taskId ? "Welcome back. Sign in to save your work" : "Welcome back"}</h2>
             <p className="lg-signsub">{isSignup ? "Start free. No credit card required." : "Sign in to your EnterprateAI account"}</p>
-            {isSignup && !claiming && <p className="mb-2 text-[13px] text-slate-500">Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-indigo-600 hover:underline">Claim your business</a></p>}
+            {isSignup && !claiming && <p className="mb-2 text-center text-[13px] text-slate-500">Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-indigo-600 hover:underline">Claim your business</a></p>}
 
             <form className="lg-form" onSubmit={onSubmit}>
               {isSignup ? (
@@ -548,7 +555,7 @@ export default function LoginPage() {
               ) : null}
 
               {isSignup && (
-                <label className="mb-3 flex items-start gap-2 text-left text-[13px] text-slate-600">
+                <label className="mb-3 mt-4 flex items-start gap-2 text-left text-[13px] text-slate-600">
                   <input type="checkbox" className="mt-0.5" checked={wantsTips} onChange={(e) => setWantsTips(e.target.checked)} />
                   <span>Send me getting-started guides and product tips by email. Optional; you can unsubscribe at any time.</span>
                 </label>
@@ -571,7 +578,7 @@ export default function LoginPage() {
                     <span>Continue with Google</span>
                   </div>
                   <div className="lg-google-hit">
-                    <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
+                    <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred, isSignup ? "signup" : "signin")} />
                   </div>
                 </div>
               </>

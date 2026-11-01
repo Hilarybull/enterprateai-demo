@@ -3,6 +3,9 @@ import { apiRequest, apiRequestCached, clearSessionCache, sessionGet } from "../
 import { useWorkspaceStore } from "./workspace";
 import { firstNameOf } from "../lib/greeting";
 
+// Signing in with Google where there's no account (the server's 404, said in words, never "HTTP 404: …"; 31 Oct)
+const noAccountError = (msg) => /NO_ACCOUNT|no EnterprateAI account/i.test(String(msg || ""));
+
 function humanizeAuthError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
   if (e?.code === "NETWORK_ERROR" || msg === "NETWORK_ERROR") {
@@ -14,6 +17,7 @@ function humanizeAuthError(e) {
     return "We couldn't reach the server. Please check your connection and try again in a moment.";
   }
   if (msg === "AUTH_RESPONSE_INVALID") return "Authentication failed. Please try again.";
+  if (noAccountError(msg)) return "There's no EnterprateAI account for this Google email. Create an account to get started.";
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
   if (msg.startsWith("HTTP 403:")) {
     const lower = msg.toLowerCase();
@@ -28,7 +32,7 @@ function humanizeAuthError(e) {
   if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
   if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
   if (msg.startsWith("HTTP 500:")) return "Server configuration error. Try again later.";
-  return msg;
+  return msg.replace(/^HTTP \d{3}:\s*/, "");      // the words only, never a status code
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -315,7 +319,7 @@ export const useAuthStore = create((set, get) => ({
     }).catch(() => {});
   },
 
-  googleLogin: async (credential) => {
+  googleLogin: async (credential, intent = null) => {
     set({ isLoading: true, error: null });
     try {
       let refData = {};
@@ -330,7 +334,7 @@ export const useAuthStore = create((set, get) => ({
           localStorage.removeItem("ea_referral");
         }
       } catch (_) {}
-      const tokenRes = await apiRequest("/auth/google", "POST", { credential, ...refData });
+      const tokenRes = await apiRequest("/auth/google", "POST", { credential, ...refData, ...(intent ? { intent } : {}) });
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
       localStorage.setItem("ea_token", token);
@@ -357,7 +361,7 @@ export const useAuthStore = create((set, get) => ({
         await backfillAuthName(me?.email ?? localStorage.getItem("ea_email") ?? "", me?.name ?? null, set);
       }).catch(() => {});
     } catch (e) {
-      set({ error: humanizeAuthError(e) });
+      set({ error: humanizeAuthError(e), noAccount: noAccountError(e?.message || e) });
     } finally {
       set({ isLoading: false });
     }

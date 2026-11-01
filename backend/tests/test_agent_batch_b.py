@@ -113,8 +113,10 @@ def test_the_recorded_cost_follows_the_price_list_and_free_work_records_nothing(
     env.meter.costs["agent_analyse"] = 2                                  # an admin has set the price to 2
     r = env.submit(capability="risk_concentration", channel="ui_action")["run"]
     assert agent_router.credits_of(r) == 2 and env.meter.balances[OWNER] == 98
-    answer = env.submit(text="What is my biggest risk?")                  # answered from records: no task, no charge
-    assert answer["kind"] == "answer" and env.meter.balances[OWNER] == 98
+    before = len([c for c in env.meter.charges if c[1] == "chat_message"])
+    answer = env.submit(text="What is my biggest risk?")                  # answered from records: no task, one chat reply (the owner, 1 Nov)
+    assert answer["kind"] == "answer" and len([c for c in env.meter.charges if c[1] == "chat_message"]) == before + 1
+    env.meter.balances[OWNER] = 98
     env.fin["rfq_requests"] = [{"id": "r1", "status": "pending", "customer_name": "BrightTech Ltd", "customer_email": "buyer@brighttech.test",
                                 "items": [{"name": "Strategy Workshop", "quantity": 1}]}]
     rfq = env.submit(capability="enquiry_to_quote", params={"rfq_id": "r1"}, channel="ui_action")["run"]

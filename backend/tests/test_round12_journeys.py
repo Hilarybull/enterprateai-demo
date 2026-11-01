@@ -32,7 +32,8 @@ def test_1_landing_business_plan_reuses_the_business_record(owner):
     env, client = owner
     s = land(client, "I need a business plan")
     rows = {r["key"]: r for r in s["summary"]}
-    assert s["goal_key"] == "create_business_plan" and rows["description"]["from_records"] and s["missing"] == []
+    # who the plan is for is the one thing asked (31 Oct): the records can't say it
+    assert s["goal_key"] == "create_business_plan" and rows["description"]["from_records"] and s["missing"] == ["purpose"]
     assert env.meter.charges == []
 
 
@@ -78,7 +79,7 @@ def test_6_dashboard_idea_check_is_free_first_and_paid_only_on_request(owner):
     full = ask(client, "validate my idea: a mobile drone window cleaning service in Leeds")
     assert full["kind"] == "needs_confirmation" and "credits" in full["message"]
     free = ask(client, "validate my idea, just a quick check: a mobile drone window cleaning service in Leeds")
-    assert free["kind"] == "workflow" and free["run"]["substatus"] == "waiting_for_information"      # asks what is missing, free
+    assert free["kind"] == "needs_confirmation" and "credits" in free["message"]      # Basic too: 25 credits, its price first (31 Oct)
     paid = ask(client, "validate my idea fully: a mobile drone window cleaning service in Leeds")
     assert paid["kind"] == "needs_confirmation" and "credits" in paid["message"]      # its price first
     assert env.meter.charges == []

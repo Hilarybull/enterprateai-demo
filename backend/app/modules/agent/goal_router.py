@@ -792,6 +792,8 @@ async def _premium_context(user: dict, business_id: str, goal_key: str, raw: dic
         except Exception:      # noqa: BLE001 - asked instead
             pass
     answers = {**first_value.known_answers(goal_key, data), **_read_answers(goal_key, raw)}
+    if (raw or {}).get("currency"):      # the case's own, kept with its figures
+        answers["currency"] = raw["currency"]
     return data, answers, first_value.assess(goal_key, answers, data)
 
 
@@ -912,6 +914,10 @@ async def _case_of(user: dict, business_id: str, case_id: str | None = None) -> 
         return None
 
 
+DO_ALL_MIN_PLAN = {"need_funding": "decision_engine", "launch": "decision_engine"}
+RESEARCH_ANY_PLAN = {"test_idea"}
+
+
 async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict | None = None, data: dict | None = None,
                          only: list[str] | None = None, fresh: bool = False, case_id: str | None = None) -> dict:
     """QA PF1/PF3: entitlement first (the registry's plan for what the research stands for, admin grants included),
@@ -940,15 +946,22 @@ async def _premium_quote(user: dict, goal_key: str, result: dict, answers: dict 
     # The same research within 30 days is opened again, free: no quote, no hold, no charge (the owner's QA, 15 Oct).
     fp = research.fingerprint_of(answers or {}, {k: v for k, v in i.items() if not k.startswith("_")}, [t["topic"] for t in topics],
                                  research.context_of(data, i).get("country")) + (":" + ",".join(sorted(only)) if only else "")
+    # "Do all for me" for funding and launch is Decision Engine and above (the owner, 31 Oct: "it should be upgrade to Decision
+    # Engine, not Starter"); the free checks and the automatic re-checks keep their own plans
+    floor = DO_ALL_MIN_PLAN.get(goal_key)
+    below = bool(floor) and agent_config.PLAN_ORDER.index(plan if plan in agent_config.PLAN_ORDER else "explorer") < agent_config.PLAN_ORDER.index(floor)
+    # The idea's research is on every plan, for its credits (the owner, 31 Oct); its credits are still checked below
+    any_plan = goal_key in RESEARCH_ANY_PLAN
+    if below or (not any_plan and not agent_config.plan_allows(plan, capability)):
+        need = floor if below else (agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight")
+        return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False, feature=base["action"],
+                                                                         plan=agent_config.PLAN_LABEL.get(need, need)),
+                "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
+    # The plan first (the owner, 1 Nov: "only decision engine can run the readiness do all for me"): reopening an earlier run is no way round it
     again = None if fresh else research.reuse_for(data, goal_key, fp, answers, only=only, case_id=case_id)      # the same rule the start uses: free here means free there
     if again:
         return {**base, "allowed": True, "reuse": again["id"], "cost": 0, "max": 0, "balance": None,
                 "existing": {"at": again["created_at"][:10], "findings": (again.get("counts") or {}).get("researched", 0)}}
-    if not agent_config.plan_allows(plan, capability):
-        need = agent_config.CAPABILITY_MIN_PLAN.get(capability) or "starter_insight"
-        return {**base, "allowed": False, "gate": first_value.premium_gate(result, entitled=False, feature=base["action"],
-                                                                         plan=agent_config.PLAN_LABEL.get(need, need)),
-                "refusal": {"minimum_plan": need, "minimum_plan_label": agent_config.PLAN_LABEL.get(need, need)}}
     # One price for the run, the check's own on the price list (credit allocation v2); charged only when it finds something
     # with a checked source. What is worked out from the owner's figures, and every question, is free (Credit System v2 §6).
     price = plan_["price"]
@@ -1024,6 +1037,9 @@ async def _session_premium_context(session_id: str, user: dict) -> tuple:
         # the stage and the amount are the case's own (the place is the business's, from its profile).
         case = await _case_of(user, session["business_id"], (session.get("handoff") or {}).get("subject_id"))
         raw = {**raw, **{k: v for k, v in _case_answers((case or {}).get("data") or {}).items() if k in ("use", "route", "stage", "amount")}}
+        # In the case's own currency (the owner, 1 Nov: a $400 case came out as "£400"): figures held in another are converted or asked
+        if ((case or {}).get("data") or {}).get("currency"):
+            raw["currency"] = str(case["data"]["currency"]).upper()
     data, answers, result = await _premium_context(user, session["business_id"], goal, raw)
     return session, goal, data, answers, result
 
@@ -1362,6 +1378,23 @@ async def research_runs(business_id: str, goal: str | None = None, user=Depends(
                      for r in sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)]}
 
 
+# A research question and where its answer lives on a funding case
+_QUESTION_ON_CASE = {"team": "team.responsibilities", "customers": "market.target_segment", "customer": "market.target_segment", "traction": "traction.summary", "contracts": "traction.summary",
+                     "use": "purpose", "where": "market.location", "amount": "target_amount", "price": "economics.price", "cost": "economics.direct_cost",
+                     "fixed_costs": "economics.fixed_costs_monthly", "monthly_revenue": "traction.monthly_revenue"}
+
+
+def _without_answered(items: list[dict], case: dict) -> list[dict]:
+    """The run's items less the questions not yet answered in it that the case now holds an answer to."""
+    def held(field) -> bool:
+        path = _QUESTION_ON_CASE.get(str(field or ""))
+        value: Any = case if path else None
+        for part in (path or "").split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value not in (None, "", [], {})
+    return [x for x in items if not (isinstance(x, dict) and x.get("kind") == "question" and not x.get("decision") and held(x.get("field")))]
+
+
 @router.get("/businesses/{business_id}/research/{run_id}")
 async def research_run(business_id: str, run_id: str, user=Depends(get_current_user)):
     data = await _business_for(user, business_id)
@@ -1369,7 +1402,15 @@ async def research_run(business_id: str, run_id: str, user=Depends(get_current_u
     if not run:
         raise HTTPException(status_code=404, detail="Not found.")
     from app.modules.agent import research
-    return {"research": research.redraft(research.refresh_from_records(run, data), data)}      # the records' figures and the case's answers, free
+    shown = research.redraft(research.refresh_from_records(run, data), data)      # the records' figures and the case's answers, free
+    # What the case already holds is never asked again (the owner, 1 Nov: "why bring fills that are already... approved")
+    if shown.get("goal") == "need_funding":
+        try:
+            case = await _case_of(user, business_id, shown.get("case_id"))
+        except Exception:      # noqa: BLE001 - shown as it is
+            case = None
+        shown = {**shown, "items": _without_answered((shown.get("items") or []), (case or {}).get("data") or {})}
+    return {"research": shown}
 
 
 @router.post("/businesses/{business_id}/research/{run_id}/preview")
@@ -1442,6 +1483,26 @@ async def research_review(business_id: str, run_id: str, body: ResearchReview, u
             "checking": bool(out.get("checking"))}
 
 
+_FILLING: dict = {}      # a run's drafting still going, by run id
+
+
+async def may_do_all(user_id: str, goal_key: str) -> bool:
+    """Whether this account's plan runs Do all for me on this check."""
+    from app.modules.agent import config as agent_config
+    floor = DO_ALL_MIN_PLAN.get(goal_key)
+    if not floor:
+        return True
+    plan = await get_orchestrator().rt.meter.plan(user_id)
+    return agent_config.PLAN_ORDER.index(plan if plan in agent_config.PLAN_ORDER else "explorer") >= agent_config.PLAN_ORDER.index(floor)
+
+
+async def filling(run_id) -> None:
+    """Waits for a run's drafting, so "done" is only said when it is."""
+    task = _FILLING.get(str(run_id))
+    if task:
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def _fill_case_later(user: dict, business_id: str, goal: str, run: dict, case_id: str | None) -> None:
     """The finished research's drafts on the case: every empty field it drafted, the use-of-funds lines it worked out, and
     the milestone links; then the case is checked again (its steps close, its score moves). In the background."""
@@ -1457,9 +1518,26 @@ def _fill_case_later(user: dict, business_id: str, goal: str, run: dict, case_id
                                           as_drafts=True)      # suggestions to accept, edit or reject (25 Oct)
         except Exception:      # noqa: BLE001 - the drafts stay on the run, to adopt from the page
             logger.info("research %s not put on the case", run.get("id"), exc_info=True)
+        # Then everything still empty, in the same paid run, from whichever button started it (the owner, 1 Nov: "the do all that cost
+        # credits should handle all"): never a second press. A search for funding options only searches.
+        if run.get("only"):
+            return
+        try:
+            from app.modules.agent.converse_launch import _fill_rest
+            orch = get_orchestrator()
+            target = case_id or run.get("case_id")
+            if not target and goal == "need_funding":
+                target = ((await _case_of(user, business_id)) or {}).get("id")
+            if target:
+                await _fill_rest(orch, user, business_id, {"id": target}, await orch.rt.business.load(business_id) or {}, "", orch.rt.clock(), {}, quiet=True,
+                                 topic="funding" if goal == "need_funding" else "launch")
+        except Exception:      # noqa: BLE001 - what was drafted stays; the rest can still be asked for
+            logger.warning("research %s: the rest not drafted", run.get("id"), exc_info=True)
     task = asyncio.ensure_future(go())
     _BACKGROUND.add(task)
     task.add_done_callback(_BACKGROUND.discard)
+    _FILLING[str(run.get("id"))] = task
+    task.add_done_callback(lambda _t: _FILLING.pop(str(run.get("id")), None))
 
 
 REVIEW_CHECK_SECONDS = 2.5      # then "Saved. Checking your score…", and the page fetches it (the owner's QA: under 5 s)

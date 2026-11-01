@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.modules.agent.converse import MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _figures_in, _parse, _said, in_conversation
+from app.modules.agent.converse import MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _figures_in, _parse, _said, in_conversation, OutOfCredits, paid_reply
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +196,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     prompt = json.dumps({"IDEA": view(answers, result), "RISK": risk, "WAITING": waiting, "TURNS": turns, "MESSAGE": str(text)[:2000]},
                         ensure_ascii=False, default=str)
     try:
-        res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
+        res = await asyncio.wait_for(paid_reply(orch, user, lambda: llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500)), MODEL_SECONDS)
+    except OutOfCredits:
+        raise
     except Exception:      # noqa: BLE001 - the scripted check answers instead
         logger.info("idea conversation: no model reply", exc_info=True)
         return None
@@ -318,7 +320,11 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
                for b in (got.get("buttons") or [])[:3] if isinstance(b, dict) and b.get("kind") == "reply" and str(b.get("label") or "").strip()
                and str(b.get("text") or "").strip() and not _BOTH.search(f"{b.get('label')} {b.get('text')}")
                and not _STATES.search(f"{b.get('label')} {b.get('text')}")]
-    if not actions and (got.get("buttons") or []):
+    if any(c["type"] == "choose" for c in cards):
+        # Answer buttons only beside the question they answer (the owner, 31 Oct: "Trainers / Kids' shoes / Keep it general"
+        # left under "Choose how to continue"): the reply's own card or next step instead
+        actions = []
+    if not actions and (got.get("buttons") or []) and not any(c["type"] == "choose" for c in cards):
         held = {**answers, **change}
         actions = [{"label": w, "kind": "explain", "prompt": w} for k, w in _ADD if held.get(k) in (None, "")][:3]
     if not actions and not any(c["type"] == "choose" for c in cards):

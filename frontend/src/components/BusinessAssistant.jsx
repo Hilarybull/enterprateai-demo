@@ -5,7 +5,7 @@ import { useInRouterContext, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useWorkspaceStore } from "../store/workspace";
 import { cameFrom, noteCameFrom } from "../lib/cameFrom";
-import { agentErrorMessage, approveAction, caseChatPath, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
+import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, caseChatPath, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
 import { apiRequest } from "../api/client";
 import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
 import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
@@ -145,6 +145,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // The conversation so far in this business is picked up again (it is shared with the Agent box).
   // The last conversation, brought back on every load (the owner's QA, 27 Oct); the others are in History
   const [messages, setMessages] = useState(() => [{ role: "assistant", content: intro }]);
+  const [handedOver, setHandedOver] = useState(false);      // this conversation began with a request handed to it
   const [chatId, setChatId] = useState(newChatId);
   const openedAt = useRef(new Date().toISOString());      // when the opening was said
   const act = useMemo(() => chatActions(useWorkspaceStore.getState().workspaceId), []);      // eslint-disable-line react-hooks/exhaustive-deps
@@ -256,10 +257,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     if (f.type === "line_items") return !checkLines(f, f.default || []).error && (f.default || []).length > 0;
     return !questionIsEmpty(f, f.default);
   };
-  function startTaskQuestions({ question, answer, discard }) {
+  function startTaskQuestions({ question, answer, discard, run = null }) {
     const fields = question.fields || [];
     const values = Object.fromEntries(fields.map((f) => [f.key, f.type === "line_items" ? (known(f) ? f.default : []) : questionDefault(f)]));
-    taskAsk.current = { fields, values, answer, discard, at: 0, lead: question.question || "", filled: new Set() };
+    taskAsk.current = { fields, values, answer, discard, at: 0, lead: question.question || "", filled: new Set(), runId: run?.id || null };
     setWorking(false);      // waiting for the owner now, never "Working on it…" (the owner, 29 Oct)
     askTaskNext(true);
   }
@@ -285,9 +286,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     if (a.at >= a.fields.length) return finishTask();
     const f = a.fields[a.at];
     const head = first && a.lead && a.lead !== askFor(f) ? `${a.lead} ` : "";
-    const ask = f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}` : askFor(f);
+    const ask = head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}` : askFor(f);
     const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
-    setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`,
+    setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`.trim(),
       prompts: f.confirm ? [{ label: "Yes", prompt: "Yes" }, { label: "Change it", prompt: "Change it" }] : chipsFor(f, a.values) }]);
   }
   async function finishTask() {
@@ -295,6 +296,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     taskAsk.current = null;
     if (!a) return;
     const given = Object.fromEntries(a.fields.filter((f) => shows(f, a.values) && !questionIsEmpty(f, a.values[f.key])).map((f) => [f.key, questionNormalize(f, a.values[f.key])]));
+    if (a.currency && given.items && !given.currency) given.currency = a.currency;      // "$200": the quotation in dollars
     setLoading(true);
     try { await a.answer(given); } finally { setLoading(false); }
   }
@@ -305,7 +307,26 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     const low = t.toLowerCase();
     const say = (content, prompts = []) => setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content, prompts }]);
     setMessages((prev) => [...prev, mine(t)]);
+    const before = new Set(a.filled);      // answered earlier: kept as given
+    // the currency written with an amount ("@$200", "200 USD") goes with the items (the owner, 1 Nov: "I remember giving the currency in $")
+    const money = /(?:^|[\s@(])([$£€₦])\s?\d|\d\s*(usd|gbp|eur|ngn|dollars?|pounds?|euros?|naira)\b|\b(usd|gbp|eur|ngn)\s?\d/i.exec(t);
+    if (money) {
+      const w = String(money[1] || money[2] || money[3]).toLowerCase();
+      a.currency = { $: "USD", "£": "GBP", "€": "EUR", "₦": "NGN", usd: "USD", dollar: "USD", dollars: "USD", gbp: "GBP", pound: "GBP", pounds: "GBP",
+        eur: "EUR", euro: "EUR", euros: "EUR", ngn: "NGN", naira: "NGN" }[w] || a.currency;
+    }
     if (/^(discard|cancel|stop)( it| this| the request)?$/i.test(t)) { taskAsk.current = null; a.discard?.(); say("Discarded. Nothing was created or sent."); return; }
+    // name and items from one answer: "Food quotation @$500 for Luke" is Luke; "mark, 2 fishes @ $300 each" is Mark (31 Oct)
+    const named = (() => {
+      const m = /^(.*?\d.*?)\s+for\s+([A-Za-z][\w'.-]*(?:\s+[A-Za-z][\w'.-]*){0,2})\s*\.?$/i.exec(t);
+      if (m) return { name: m[2].trim(), rest: m[1].trim() };
+      // "food for Joe @$200": Joe, and food at 200 (the owner, 1 Nov)
+      const mid = /\s+for\s+([A-Za-z][\w'.-]*(?:\s+(?!at\b)[A-Za-z][\w'.-]*){0,2})(?=\s*(?:[@,;]|\bat\b|[£$€₦]?\d))/i.exec(t);
+      if (mid) return { name: mid[1].trim(), rest: `${t.slice(0, mid.index)} ${t.slice(mid.index + mid[0].length)}`.replace(/\s+/g, " ").trim() };
+      const [first, ...more] = t.split(/\s*[,;]\s*/);
+      return { name: (first || t).trim(), rest: more.join(", ").trim() };
+    })();
+    const isName = f.type === "customer" || /name|customer/i.test(f.key);
     let value;
     if (f.confirm) {
       if (/^(yes|yep|right|correct|ok)/i.test(t)) value = a.values[f.key];
@@ -316,7 +337,12 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (hit) value = hit.value;
       else if (f.type === "customer") {
         value = "new";
-        if (!/^\+?\s*new (customer|supplier)$/i.test(t) && !a.values.customer_name) { a.values.customer_name = t; a.filled.add("customer_name"); }      // a name typed: the new customer's
+        // a name typed: the new customer's; "mark, 2 fishes @ $300 each" is Mark, and the rest is read below (the owner, 31 Oct)
+        const name = /\d/.test(t) ? named.name : t;
+        if (!/^\+?\s*new (customer|supplier)$/i.test(t) && !a.values.customer_name) {
+          a.values.customer_name = name;
+          a.filled.add("customer_name");
+        }
       } else { say(`Pick one: ${opts.map((o) => o.label).join(", ")}.`, chipsFor(f, a.values)); return; }
     } else if (f.type === "checkbox") value = /^(yes|y|ok|sure|save)/i.test(t);
     else if (f.type === "date") {
@@ -336,10 +362,33 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       say(`Added: ${questionSummary(f, rows)}. Anything else?`, chipsFor(f, a.values));
       return;
     } else if (/^skip$/i.test(t) && !f.required) value = "";
-    else value = t;
+    else value = isName && /\d/.test(t) ? named.name : t;      // "mark, 2 fishes…": Mark; "food @ $500 for Luke": Luke
     if (f.required && questionIsEmpty(f, value)) { say(`${f.label} is needed. ${askFor(f)}`, chipsFor(f, a.values)); return; }
     a.values[f.key] = value;
     a.filled.add(f.key);
+    // Items said in the same answer are kept too, never asked for again (the owner, 31 Oct: "I already gave him")
+    for (const g of a.fields) {
+      if (g.type !== "line_items" || a.filled.has(g.key) || (a.values[g.key] || []).length) continue;
+      const rest = isName && /\d/.test(t) ? named.rest : t;
+      const rows = /\d/.test(rest) ? linesFromText(rest, g.catalogue || []) : [];
+      if (rows.length) { a.values[g.key] = rows; a.filled.add(g.key); }
+    }
+    // The whole answer read by Claude: what it reads wins over the quick reading above, for this question and every other one
+    // the answer covers, never asked again (the owner, 1 Nov: "we are using Claude"); only earlier answers stay as given
+    if (a.runId && t.split(/\s+/).length > 2) {
+      a.at += 1;
+      const at = a.at;
+      setLoading(true);
+      apiRequest(`/workflow-runs/${a.runId}/read`, "POST", { text: t }).then((r) => {
+        Object.entries(r?.values || {}).forEach(([k, v]) => {
+          const g = a.fields.find((x) => x.key === k);
+          if (!g || before.has(k) || questionIsEmpty(g, v)) return;
+          a.values[k] = v;
+          a.filled.add(k);
+        });
+      }, () => null).finally(() => { setLoading(false); if (taskAsk.current === a && a.at === at) askTaskNext(); });
+      return;
+    }
     a.at += 1;
     askTaskNext();
   }
@@ -347,6 +396,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // A task's questions, asked here in the chat one at a time (never a dialog); its answers sent together once all are given
   const asking = useRef(null);
   const confirming = useRef(null);      // a priced task waiting for Start
+  const landingTask = useRef(null);      // a task begun on the landing page, its price said, waiting for Start
   async function answerPrice(text) {
     const c = confirming.current;
     confirming.current = null;
@@ -410,6 +460,18 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   function deliver(routed, businessId) {
     const parts = routed.kind === "multi" ? routed.results || [] : [routed];
     const single = parts.length === 1 ? parts[0] : null;
+    if (single?.handover && single.case_id) {
+      // Funding or launch: carried on on its own page, this exchange already in its chat (the owner, 31 Oct: "it should have
+      // opened the funding flow… and handed over the request well")
+      const id = `case-${single.case_id}`;
+      const at = new Date().toISOString();
+      const reply = { role: "assistant", at, content: replyText(single), ...(single.cards ? { cards: single.cards } : {}),
+        prompts: (single.actions || []).filter((a) => a.prompt).map((a) => ({ label: a.label, prompt: a.prompt })) };
+      setMessages((prev) => [...prev, { role: "assistant", at, content: "I've set that up. Taking you to it now so we can carry on there." }]);
+      getChat(businessId, id).then((c) => c?.messages || [], () => []).then((had) => saveChat(businessId, id, [...had, { role: "user", at, content: single.asked || "" }, reply]))
+        .catch(() => null).finally(() => go(single.handover));
+      return undefined;
+    }
     const run = single?.kind === "workflow" && !((single.runs || []).length > 1) ? single.run : null;
     if (run && !["succeeded", "cancelled"].includes(run.status)) return flow.follow(run);
     // A guided chat (funding, launch, customers, risks, an idea): carried on here in the panel, as in the Agent Centre (the
@@ -432,7 +494,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     // Its price said, then Start or Not now, here in the chat (the owner, 28 Oct: "go ahead" asked the question again)
     if (single?.kind === "needs_confirmation" && single.price) {
       confirming.current = { single, businessId };
-      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: single.message,
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: single.message, confirm: { capability: single.capability, params: single.params || {} },
         prompts: [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }] }]);      // the price is in the sentence above
       return undefined;
     }
@@ -444,6 +506,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       const asked = [...prev].reverse().find((m) => m.role === "user")?.content || "";
       const doubted = /\b(?:but you said|you said|i thought|that'?s (?:not right|wrong)|isn'?t right|why (?:only|did you say)|how come|not true)\b/i.test(asked);
       if (said.length === 1 && before && doubted && said[0].content === before) said[0] = { ...said[0], content: "I've said that already. Tell me what doesn't look right and I'll check it again.", offers: [], links: [] };
+      // the same reply delivered twice for one message is shown once (the owner, 31 Oct: the price line came twice)
+      const last = prev[prev.length - 1];
+      if (said.length === 1 && last?.role === "assistant" && last.content === said[0].content) return prev;
       return [...prev, ...said];
     });
   }
@@ -497,6 +562,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (!t || (once && handed.current === t)) return;
       if (once) handed.current = t;
       sent.current = true;
+      setHandedOver(true);
       clearConversation(useWorkspaceStore.getState().workspaceId);
       setChatId(newChatId());
       setHistory(null);
@@ -516,6 +582,30 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     const review = async () => {
       let r = null;
       try { r = JSON.parse(sessionStorage.getItem(CHAT_REVIEW) || "null"); sessionStorage.removeItem(CHAT_REVIEW); } catch { r = null; }
+      if (r?.sessionId) {
+        // Begun on the landing page: started here, in the chat, with what it was told there (the owner, 1 Nov)
+        if (r.message) push({ role: "assistant", at: new Date().toISOString(), content: r.message });
+        setLoading(true);
+        let done = null;
+        try {
+          done = await apiRequest(`/task-sessions/${r.sessionId}/prepare`, "POST", { confirmed: Boolean(r.confirmed) }, { timeoutMs: 120000 });
+        } catch (e) {
+          push({ role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(e, "That couldn't be started just now. Nothing was lost; ask me again and I'll pick it up.") });
+        } finally { setLoading(false); }
+        if (!done) return;
+        if (done.confirm && !r.confirmed) {
+          landingTask.current = r.sessionId;
+          push({ role: "assistant", at: new Date().toISOString(), content: `${done.confirm.message} You're charged only when it's done.`,
+            prompts: [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }] });
+          return;
+        }
+        if (!done.handoff?.run_id) {
+          push({ role: "assistant", at: new Date().toISOString(), content: done.handoff?.message || done.problem || "That couldn't be started just now. Nothing was lost.",
+            ...(done.handoff?.upgrade ? { link: "/pricing" } : {}) });
+          return;
+        }
+        r = { runId: done.handoff.run_id, message: done.handoff.ready_message || "" };
+      }
       if (!r?.runId) return;
       // The task carries on here: its questions asked in the chat, then its draft to approve, edit or reject (the owner,
       // 30 Oct: "once it's handing over, it should be executing on the Agent Centre chat accordingly")
@@ -567,14 +657,36 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         content: `${risk.customer} makes up ${risk.share}% of your customer revenue. That's a concentration risk.`, cards: [{ type: "risk" }] }]);
       return;
     }
+    // Whatever was priced and waiting gives way to a new request too, never "nothing was started" and the request dropped
+    if (NEW_REQUEST.test(question) && !/^\s*(?:start|yes|go ahead)\b/i.test(question)) { confirming.current = null; landingTask.current = null; asking.current = null; }
+    if (taskAsk.current && (/^\s*(?:how|what|why|which|when|where)\b/i.test(question) || (/\b(?:funding|loan|grant|investors?|launch\w*|business plan|validat\w*|idea|invoice|quot\w*|proposal|receipt|contract|sales letter|research|customers?)\b/i.test(question)
+      && /^\s*(?:i (?:want|need|would like)|can you|could you|please|help me|check|create|make|draft|write|start|validate|run|research|find)\b/i.test(question)))) {
+      // a new request, never an answer to the open question (the owner, 31 Oct: a funding request was added as a quotation item)
+      taskAsk.current = null;
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: "I've paused that task; you'll find it in Needs You. Now, your new request." }]);
+    }
     if (taskAsk.current) {      // the answer to the task's question just asked
       setInput("");
       answerTask(question);
       return;
     }
+    // Start or Not now on a price said before a reload: kept on its message (the owner, 1 Nov: "no response")
+    if (!confirming.current && !NEW_REQUEST.test(question) && messages[messages.length - 1]?.confirm) {
+      confirming.current = { single: messages[messages.length - 1].confirm, businessId: useWorkspaceStore.getState().workspaceId };
+    }
     if (confirming.current) {      // Start or Not now, for the price just said
       setInput("");
       answerPrice(question);
+      return;
+    }
+    if (landingTask.current) {      // Start or Not now, for a landing page task's price
+      const id = landingTask.current;
+      landingTask.current = null;
+      setInput("");
+      push({ role: "user", at: new Date().toISOString(), content: question });
+      if (/^\s*(?:start|yes|yeah|yep|ok(?:ay)?|sure|go ahead|go on|do it|proceed|confirm)\b/i.test(question)) {
+        reviewInChat({ sessionId: id, confirmed: true });
+      } else push({ role: "assistant", at: new Date().toISOString(), content: "No problem, nothing was started or charged. It's in your tasks whenever you want it." });
       return;
     }
     if (asking.current) {      // the answer to the question the chat just asked
@@ -652,7 +764,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   }
   // Words only: the approvals and the risk are cards when asked for, never posted with every greeting (the owner, 29 Oct:
   // "stop showing the pending approval, risk cards on the conversation except when asked or needed")
-  const opening = [{ role: "assistant", at: openedAt.current, cards: [],
+  // Arrived with a request (the landing page's funding answers, a page's question): greeted, then that request answered,
+  // never the day's briefing first (the owner, 30 Oct: "10 things need you today… concentration risk" before their funding)
+  const opening = handedOver ? [{ role: "assistant", at: openedAt.current, cards: [], content: `${intro.split(". ")[0]}.`, prompts: [] }]
+    : [{ role: "assistant", at: openedAt.current, cards: [],
     content: `${intro.split(". ")[0]}. I've checked ${biz}. ${n ? `${n === 1 ? "One thing needs" : `${(NUMBER[n] || String(n)).replace(/^./, (c) => c.toUpperCase())} things need`} you today.` : "Nothing is waiting for you right now. Tell me the job and I'll get on with it."}`
       + (risk ? ` ${risk.customer} makes up ${risk.share}% of your customer revenue, a concentration risk.` : ""),
     prompts: [...(n ? [{ label: "Show what's waiting", prompt: "Show what's waiting for my approval" }] : []),
@@ -666,7 +781,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // Placed by time, never by count (the owner, 28 Oct: the greeting came again after a reply, with an earlier time): each
   // message keeps the time of the one before it when it has none, and the order is otherwise kept
   const inOrder = (list) => { let t = ""; return list.map((m, k) => { t = m.at || t; return { m, t, k }; }).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.k - b.k)).map((x) => x.m); };
-  const shown = !ready ? said : restored ? inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)]) : [...opening, ...said];
+  // A conversation carried on is never greeted again (the owner, 1 Nov: "it already greeted me"): the greeting only opens a new one
+  const greetedAlready = restored > 0 && said.slice(0, restored).some((m) => m.role === "assistant");
+  const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
   const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
   const card = (c, key) => {
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
@@ -751,7 +868,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             {message.at && <span className="mt-1 text-[12px] text-slate-500">{clock(message.at)}</span>}
           </div>
         ) : (
-          <div key={`a-${index}`} className="space-y-3">
+          // its cards first, then its words under them, as in the case chats (the owner, 1 Nov)
+          <div key={`a-${index}`} className={`flex gap-3 ${cardsToShow(shown, index).length ? "flex-col-reverse" : "flex-col"}`}>
+            {/* Recommended next actions come after the reply's words (the owner, 1 Nov) */}
+            {cardsToShow(shown, index).some((c) => AFTER_WORDS.has(c.type)) && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => (AFTER_WORDS.has(c.type) ? <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div> : null))}</div>}
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
               <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
@@ -775,7 +895,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                 )}
               </div>
             </div>
-            {(message.cards || []).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>)}
+            {cardsToShow(shown, index).some((c) => !AFTER_WORDS.has(c.type)) && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => (AFTER_WORDS.has(c.type) ? null : <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>))}</div>}
           </div>
         )))}
         {loading || working ? (
@@ -788,9 +908,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         <div className="flex items-center gap-2 pb-2.5">
           {!history && !loading && (
             // One line, never wrapped (the owner, 27 Oct); on a narrow screen it scrolls sideways, no scrollbar shown
-            <div className="no-scrollbar flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto pr-6 [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]" data-chat-chips>{chips.map((p) => (
-              <button key={p.label} type="button" onClick={() => void send(p.prompt)}
-                className="shrink-0 whitespace-nowrap rounded-full border border-slate-200 px-3.5 py-1.5 text-[13.5px] text-slate-700 hover:border-brand-400 hover:text-brand-700 dark:border-slate-700 dark:text-slate-200">{p.label}</button>
+            <div className="no-scrollbar flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto pr-6 [mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]" data-chat-chips>{doesItFirst(chips).map((p) => (
+              <button key={p.label} type="button" onClick={() => void send(p.prompt)} data-does-it={DOES_IT.test(p.label) || undefined}
+                className={DOES_IT.test(p.label) ? "shrink-0 whitespace-nowrap rounded-full bg-brand-600 px-4 py-1.5 text-[13.5px] font-bold text-white shadow-sm hover:bg-brand-700"
+                  : "shrink-0 whitespace-nowrap rounded-full border border-slate-200 px-3.5 py-1.5 text-[13.5px] text-slate-700 hover:border-brand-400 hover:text-brand-700 dark:border-slate-700 dark:text-slate-200"}>{p.label}</button>
             ))}</div>
           )}
         </div>

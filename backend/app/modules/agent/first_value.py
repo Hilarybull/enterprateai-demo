@@ -487,9 +487,15 @@ def customers(a: dict, data: dict | None = None, now: datetime | None = None, si
     elif _known(ideal):
         crit.append({"key": "target", "label": "Who you want more of", "state": PARTIAL, "ask": "customer", "ask_type": "text",
                      "gap": f"“{str(ideal).strip()}” is too broad to aim at", "why": "Say who exactly, for example office managers in Abuja."})
+    elif str(ideal or "").strip().lower() == UNSURE:
+        # Answered "not sure": never asked again anywhere (the owner, 1 Nov: "you even asked me here... why repeat"); Do all for
+        # me researches who to aim for
+        crit.append({"key": "target", "label": "Who you want more of", "state": UNKNOWN,
+                     "gap": "Who to aim for isn't decided yet. Do all for me can research it for you."})
     else:
         crit.append({"key": "target", "label": "Who you want more of", "state": UNKNOWN, "ask": "customer", "ask_type": "text",
-                     "gap": "Who you want more of isn't said yet. Who is your best customer?"})
+                     # never asked as if they should already know (the owner, 1 Nov: "if I know, will I be running the flow?")
+                     "gap": "Who you'd most like to sell to isn't said yet. A rough idea is enough, or I can research it for you."})
     # 2. How new customers find you
     if none_yet:
         crit.append({"key": "channel", "label": "How new customers find you", "state": UNMET, "gap": "No way for new customers to find you yet",
@@ -553,7 +559,7 @@ def customers(a: dict, data: dict | None = None, now: datetime | None = None, si
     out["focus"] = {"key": "now", "text": (f"Now: {clients} paying customer{'s' if clients != 1 else ''} on record"
                                            + earned + ".") if clients
                     else "Now: no paying customers on record yet."}
-    out["note"] = "This looks at what helps you win customers, from your records and answers. It does not promise customers."
+    out["note"] = "This looks at what helps you win customers, from your records and answers."
     # What to do next, as cards, from the records (the owner, 26 Oct: "why are the next actions not cards"): never a listing
     # set-up for a business already listed
     cards = [{"label": "Quote your next enquiry", "to": "/operations?tab=Sales&sub=Quotations", "why": "A quick, priced quote turns an enquiry into a customer."}]
@@ -1176,9 +1182,16 @@ def premium_gate(result: dict, *, entitled: bool, credits: int | None = None, fe
         # Adopted: nothing paid is offered (the owner's QA, 21 Oct: this crashed the case page after every apply).
         return {"allowed": True, "reason": None, "message": ""}
     if not entitled:
+        # What they'd get and what they can still do, never a bare "X is on the Starter plan." (the owner, 30 Oct: "this plan
+        # gating wording is not nice")
+        what = str(feature or action["label"]).strip().rstrip(".")
         return {"allowed": False, "reason": "plan",
-                "message": f"{feature or action['label']} is on the {plan or 'Starter'} plan.",
-                "primary": {"label": "See plans", "to": "/pricing", "upgrade": True},
+                # Said to win the upgrade (the owner, 31 Oct: "geared towards marketing, conversions"): what they get, then the free way on
+                # No claim we can't back (the playbook's honesty rules, 31 Oct): what it does, and the free way on
+                # Plain English, never a quoted label (the owner, 31 Oct: "warned against this kind of English")
+                "message": f"Having me do this for you is part of the {plan or 'Starter'} plan: I research it, draft everything that's "
+                           "missing, and you just approve it. Prefer to do it yourself? Fill in the gaps here and your score updates as you go.",
+                "primary": {"label": f"Upgrade to {plan or 'Starter'}", "to": "/pricing", "upgrade": True},
                 "secondary": [{"label": "Continue with free tools", "actions": [x for x in result["free_next_actions"] if not x.get("save")]}, {"label": "Save for later", "save": True}]}
     if credits is not None and (credits <= 0 or (cost and credits < cost)):
         have = max(0, int(credits or 0))

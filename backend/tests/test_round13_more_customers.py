@@ -24,7 +24,7 @@ def test_the_records_are_read_and_only_the_rest_asked_as_buttons(world, monkeypa
     _records(env, who, monkeypatch)
     s = client.post("/task-sessions", json={"text": "I need more customers", "entry_mode": "free_text", "business_id": "A"}).json()
     assert s["goal_key"] == "more_customers"
-    assert s["value_line"].startswith("I'll look at who buys from you now")
+    assert s["value_line"].startswith("Find out who buys from you")
     assert "price" not in s["missing"] and "where" not in s["missing"]          # from the catalogue and the profile
     q = {x["key"]: x for x in s["questions"]}
     assert q["channel"]["type"] == "choice" and q["goal"]["type"] == "choice"        # buttons, never a blank box
@@ -58,7 +58,8 @@ def test_what_isnt_said_is_asked_in_place(world, monkeypatch):
     out = client.post(f"/task-sessions/{s['id']}/risk-check", json={"answers": {"sell": "Monthly car wash", "customer": "unknown", "channel": "none", "goal": "unknown"}}).json()
     gaps = {x["key"]: x for x in out["result"]["not_on_record"]}
     assert gaps["goal"]["ask"] == "goal" and gaps["goal"]["ask_type"] == "choice" and gaps["goal"]["ask_options"]
-    assert gaps["target"]["ask"] == "customer" and gaps["target"]["ask_type"] == "text"
+    # "not sure" who to aim for is an answer: kept open for Do all for me, never asked again (the owner, 1 Nov)
+    assert "target" in gaps and not gaps["target"].get("ask")
     assert {b["key"]: b for b in out["result"]["blockers"]}["channel"]["label"] == "No way for new customers to find you yet"
 
 

@@ -224,8 +224,8 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                 biz = await orch.rt.business.load(business_id) or {}
                 for path, value in adopted_fields(adopted or [], case_drafts or {}, today, data).items():
                     held = _get(data, path)
-                    if path in rejected or value in (None, "", [], {}) or (held not in (None, "", [], {}) and str(held).strip() == str(value).strip()):
-                        continue
+                    if path in rejected or value in (None, "", [], {}) or (held not in (None, "", [], {}) and (kind == "launch" or not _differs(held, value))):
+                        continue      # what the plan holds isn't brought back to approve again (the owner, 1 Nov: "I keep reapproving")
                     pending[path] = {"value": value, "source": source_of(path, value, biz, adopted or []), "at": today,
                                      **({"replaces": held} if held not in (None, "", [], {}) else {})}
                 if kind == "launch":
@@ -280,7 +280,7 @@ async def feed(orch, user: dict, business_id: str, goal: str, figures: dict[str,
                         if path == "market.acquisition_milestone_id" or path in rejected or value in (None, "", [], {}):
                             continue
                         held = _get(data, path)
-                        if held not in (None, "", [], {}) and not _differs(held, value):
+                        if held not in (None, "", [], {}) and (kind == "launch" or not _differs(held, value)):
                             continue      # already what the case holds
                         draft = {"value": value, "source": "suggested by the Agent", "at": today,
                                  **({"replaces": held} if held not in (None, "", [], {}) else {})}

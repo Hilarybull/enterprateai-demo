@@ -28,6 +28,7 @@ const inChat = (h) => {
   reviewInChat({ runId: h.run_id, message: h.ready_message || "" });
   return "/agent";
 };
+const TASKS = new Set(["create_invoice", "create_quotation", "create_business_plan", "prepare_proposal"]);      // drafted in the Agent Centre's chat
 const notStarted = (h) => Boolean(h) && (h.blocked === true || (!h.run_id && !h.subject_id && String(h.to || "/dashboard") === "/dashboard"));
 
 const STEP_ICON = {
@@ -181,6 +182,16 @@ export default function StartPage({ framed = false }) {
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
     if (known && !confirmed && await handOver(known)) return;
+    // A task (an invoice, a quotation, a plan) is started in the Agent Centre's chat, never on this page while it works (the
+    // owner, 1 Nov: "why is invoice from the landing page running here and not in the Agent Centre")
+    if (known && !confirmed && TASKS.has(known.goal_key) && known.business_id && known.authenticated !== false && !known.handoff) {
+      try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
+      useWorkspaceStore.getState().setWorkspaceId(known.business_id);
+      reviewInChat({ sessionId, message: "Picking up the task you started. One moment while I get it ready." });
+      trackGoal("dashboard_handoff_completed", { session_id: sessionId });
+      navigate("/agent", { replace: true });
+      return;
+    }
     setSettled(false);
     // The first result is worked out by fixed rules from the answers (no model): asked for alongside the task, and shown
     // the moment it is ready. The task carries on behind it; nothing waits for it.

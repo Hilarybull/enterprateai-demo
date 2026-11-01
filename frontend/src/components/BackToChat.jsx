@@ -15,7 +15,8 @@ export default function BackToChat() {
   if (!back) return null;
   return (
     <div className="mb-3 flex items-center gap-3" data-back-to-chat>
-      <a href={back.to} className="group flex items-center gap-1.5 text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300">
+      {/* a distinct button, the same as on an Agent draft (the owner, 1 Nov) */}
+      <a href={back.to} className="group flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-indigo-800 shadow-sm hover:bg-indigo-50 dark:border-indigo-700 dark:bg-slate-900 dark:text-indigo-200">
         <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
         Back to the conversation in {back.name}
       </a>

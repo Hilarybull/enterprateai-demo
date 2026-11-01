@@ -31,7 +31,7 @@ def test_the_chat_previews_asks_only_the_away_question_and_hands_off_free(world,
     env, store, client, who = world
     _signed_in(env, who, monkeypatch)
     s = _check(client)
-    assert s["value_line"].startswith("I'll check your biggest customer, cash, late payments and how much the business depends on you.")
+    assert s["value_line"].startswith("In a few minutes, see the risks")
     assert s["missing"] == ["key_person"]                                       # the one thing the records can't tell
     bubbles = [t for t in s.get("turns") or [] if t.get("role") == "assistant"]
     assert [t.get("next") for t in bubbles] == ["key_person"]                   # the bubble is the question really asked

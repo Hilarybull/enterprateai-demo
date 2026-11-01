@@ -403,7 +403,7 @@ class Orchestrator:
     async def check_start(self, actor: Actor, wf: WorkflowDefinition, ent: dict, essential: bool = False) -> GuardrailDecision:
         """Server-side checks before a workflow starts (AC-04). `essential`: handed over by the server
         from the homepage goal flow, which is carried out on any plan and paid for in AI Credits."""
-        essential = bool(essential and config.HOMEPAGE_TASKS_ON_ANY_PLAN)
+        essential = bool(essential and config.HOMEPAGE_TASKS_ON_ANY_PLAN and wf.capability not in config.PLAN_GATED_FROM_HOMEPAGE)
         if not actor.can_view:
             return GuardrailDecision(DECISION_BLOCKED, ["permission_denied"], "You don't have access to this business.")
         if not config.plan_allows(ent["plan"], wf.capability) and not essential:
@@ -899,10 +899,17 @@ class Orchestrator:
                 results = [await self.submit(replace(req, raw_input=p, part_of_message=True, request_id=new_id()), email=email) for p in parts]
                 return {"kind": "multi", "results": results, "message": f"I took that as {len(results)} requests."}
 
+        if req.raw_input and not req.requested_capability and answers.records_kind(req.raw_input):
+            # A question about the records ("how many invoices do I have?") is answered from them, never a task started
+            return await self._charged_answer(req, actor, {"kind": "answer", **answers.records_answer(answers.records_kind(req.raw_input), await self.visible_data(req.business_id))})
+        # Any other question goes to the answer path, which reads every module, never a task guessed from a word in it; a task
+        # made to answer exactly that question (an Offer Review) still runs
+        asked = bool(req.raw_input and not req.requested_capability and not req.params and intent.is_question(req.raw_input)
+                     and not intent.rule_capability(req.raw_input, self.supported_capabilities()))
         capability = {"proposal": "new_proposal"}.get(req.requested_capability, req.requested_capability)      # asked for by its old name
         if capability and capability not in WORKFLOWS and capability not in FUTURE:
             capability = None      # a requested capability is only a candidate (s5.1)
-        if not capability and req.raw_input:
+        if not capability and req.raw_input and not asked:
             capability = await intent.resolve_capability(req.raw_input, Classifier(), actor.user_id, self.supported_capabilities())
             # Live check: placed only by a broad rule ("receipts", "invoice"): the understanding layer may correct it, and
             # its choice is taken only when it is a registered task chosen with confidence.
@@ -915,7 +922,7 @@ class Orchestrator:
                         capability = u.intent
                 except Exception:      # noqa: BLE001 - the rule's choice stands
                     logger.warning("understanding failed for a request", exc_info=True)
-        if not capability and req.raw_input and not req.part_of_message:
+        if not capability and req.raw_input and not req.part_of_message and not asked:
             # QA H: where the rules can't place a request, the understanding layer may (rules, then a model only when
             # unsure). It chooses only from the registered workflows; a question or "unsupported" leaves it to the answer path.
             from app.modules.agent.understanding import understand
@@ -947,7 +954,7 @@ class Orchestrator:
                             data = {**data, "fx_rates": rates}
                 answer = answers.answer_question(req.raw_input, data, policy, self.rt.clock().date())
                 if answer:
-                    return {"kind": "answer", **answer}
+                    return await self._charged_answer(req, actor, {"kind": "answer", **answer})
             return {"kind": "assistant", "message": "Let me answer that from your business information."}
         wf = WORKFLOWS[capability]
         if req.source_channel not in wf.triggers and req.source_channel != "api":
@@ -1212,7 +1219,7 @@ class Orchestrator:
         chosen = str(p.get("plan_for") or p.get("idea_for") or "")
         if chosen == "new" and p.get("idea"):
             text = " ".join(str(p["idea"]).split())
-            return f"“{text[:60].rstrip()}{'…' if len(text) > 60 else ''}”"
+            return f"{text[:60].rstrip()}{'…' if len(text) > 60 else ''}"      # plain words, never a quoted label (the owner's rule)
         if p.get("subject_id") or chosen.startswith("launch:"):
             sid = p.get("subject_id") or chosen.split(":", 1)[1]
             try:
@@ -1251,6 +1258,19 @@ class Orchestrator:
         return {"kind": "needs_input", "message": "Happy to check an idea. Which one?", "fields": [
             {"key": "idea_for", "label": "Which idea?", "type": "choice", "required": True, "default": "business", "options": options},
             {"key": "idea", "label": "Describe the new idea in a sentence or two", "type": "textarea", "required": True, "show_if": {"idea_for": "new"}}]}
+
+    async def _charged_answer(self, req: AgentRequest, actor: Actor, reply: dict) -> dict:
+        """A question answered from the records in a chat costs what any chat reply costs (the owner, 1 Nov: "2 credits... it's
+        agentic"), taken only once the answer is ready, and never said in the reply. Too few credits: said, with Top up."""
+        if req.source_channel not in ("text", "voice"):
+            return reply
+        try:
+            async with self.rt.meter.charge(actor.user_id, "chat_message", key=f"chat:{req.request_id}"):
+                pass
+        except InsufficientCredits as e:
+            return {"kind": "blocked", "reason_codes": ["credits_exhausted"], "upgrade": True, "message": config.short_of(int(e.required or 2), int(e.available or 0)),
+                    "actions": [{"label": "Top up", "to": "/pricing"}]}
+        return reply
 
     async def _same_plan(self, req: AgentRequest) -> dict | None:
         """A business plan draft still in use for what this plan is about (the business, a launch plan, or a new idea), else None."""
@@ -1863,6 +1883,9 @@ class Orchestrator:
             raise Conflict("no_pending_question", "This task isn't waiting for an answer.")
         allowed = {f["key"] for f in run["pending_question"]["fields"]}
         clean = {k: v for k, v in (answers or {}).items() if k in allowed}      # only what was asked for
+        # the currency the items were written in ("food for Joe @$200"), kept with them, never the default instead (the owner, 1 Nov)
+        if "items" in allowed and clean and re.fullmatch(r"[A-Z]{3}", str((answers or {}).get("currency") or "")):
+            clean["currency"] = answers["currency"]
         if not clean:
             raise Conflict("no_matching_answer", "None of those answers match the question this task is asking.")
         # Understood, else answered (the owner, 24 Oct: "flexible and adaptive... else it should understand and respond

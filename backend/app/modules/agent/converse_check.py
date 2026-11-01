@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from app.modules.agent.converse import MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _figures_in, _parse, _said, in_conversation
+from app.modules.agent.converse import MAX_TURNS, MODEL_SECONDS, _BOTH, _MANNER, _figures_in, _parse, _said, in_conversation, OutOfCredits, paid_reply
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, topic: str, llm
         turns = [{"role": "owner" if h.get("role") == "user" else "agent", "text": str(h.get("content") or "")[:500]} for h in history if h.get("content")][-MAX_TURNS:]
     prompt = json.dumps({"CHECK": view(answers, result), "TURNS": turns, "MESSAGE": str(text)[:2000]}, ensure_ascii=False, default=str)
     try:
-        res = await asyncio.wait_for(llm.generate_text(system=_system(topic, fields), prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
+        res = await asyncio.wait_for(paid_reply(orch, user, lambda: llm.generate_text(system=_system(topic, fields), prompt=prompt, feature="agent_conversation", max_tokens=500)), MODEL_SECONDS)
+    except OutOfCredits:
+        raise
     except Exception:      # noqa: BLE001 - the scripted check answers instead
         logger.info("%s conversation: no model reply", topic, exc_info=True)
         return None

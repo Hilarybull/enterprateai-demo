@@ -18,7 +18,8 @@ def fmt_money(amount: Any, currency: str = "GBP") -> str:
     except (TypeError, ValueError):
         value = 0.0
     sym = _SYMBOLS.get(str(currency or "GBP").upper())
-    return f"{sym}{value:,.2f}" if sym else f"{value:,.2f} {str(currency).upper()}"
+    sign = "-" if value < 0 else ""      # "-£67.33", never "£-67.33"
+    return f"{sign}{sym}{abs(value):,.2f}" if sym else f"{value:,.2f} {str(currency).upper()}"
 
 
 # ── Shared look for every document the Agent sends ────────────────────────────

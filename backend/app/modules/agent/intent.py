@@ -27,6 +27,8 @@ _GOAL_RULES: list[tuple[str, re.Pattern]] = [
     # Live check: a reduction on an invoice already sent ("Smith and Sons should get 40 off INV-9").
     ("credit_note", re.compile(r"\b(?:get|give\s+\w+|take)\s+[£$€₦]?\d[\d,.]*\s+off\s+(?:INV-\S+|(?:the|their|that|this|his|her)\s+invoice)\b", re.I)),
     ("record_payment", re.compile(r"\b(?:record|log|add|enter|mark)\s+" + _ONE + r"payment\b|\bpayment (?:received )?from\b|\bmark\b.*\bas paid\b|\b(?:has|have) paid\b|\bpaid\s+(?:us\s+|me\s+)?(?:[£$€₦]|\d)"
+                                  # "mark laura paid", "Laura paid" (the owner, 1 Nov); never a question ("who paid?", "has Laura paid?")
+                                  r"|\bmark\b.{1,60}?\bpaid\b|^\s*(?!(?:who|what|which|when|how|did|has|have|is|are|was)\b)[A-Za-z][\w'.-]*(?:\s+[A-Za-z][\w'.-]*){0,3}\s+paid\s*[.!]?\s*$"
                                   # B8: "BrightTech paid INV-1131026", "INV-7 is settled", "money's in from Smith and Sons"
                                   r"|\bpaid\s+(?:for\s+|off\s+)?(?:INV-\S+|(?:the|their|that|this|my)\s+invoice)|\bINV-\S+\s+(?:is|was|has been|got)\s+(?:now\s+)?(?:paid|settled)\b"
                                   r"|\bmoney'?s?\s+(?:is\s+)?in\s+from\b"
@@ -156,6 +158,20 @@ def broad_rule(text: str, supported: list[str]) -> bool:
         return False
     first = next((pattern for c, pattern in _GOAL_RULES if c == cap and pattern.search(body)), None)
     return first is None or first.pattern.startswith(tuple(_BROAD_PATTERNS))
+
+
+# Asked, not told (the owner, 1 Nov: "how many invoices do I have" started an invoice; "it should answer any question thrown
+# its way"): a question goes to the answer, which reads every module; only a request to make, send or change something is a task
+_ASKED = re.compile(r"^\s*(?:what|why|how|when|where|who|whose|which|is|are|was|were|am|do|does|did|have|has|had|tell me|show me|list|any|can i|should i|could i)\b", re.I)
+_TOLD = re.compile(r"^\s*(?:can|could|would|will) you\b|\b(?:prepare|create|draft|write|send|remind|chase|generate|make|issue|record|log|add|save|update|edit|"
+                   r"change|correct|amend|delete|remove|rename|raise|bill|publish|unpublish|run|simulate|convert|refund|cancel|book|pay)\b", re.I)
+
+
+def is_question(text: str) -> bool:
+    """A message asking about the business ("how many invoices do I have?", "which customers owe me?"), never one asking for
+    something to be done ("can you send Joe a reminder?", "create an invoice")."""
+    body = str(text or "").strip()
+    return bool(body) and bool(_ASKED.search(body) or body.endswith("?")) and not _TOLD.search(body)
 
 
 def rule_capability(text: str, supported: list[str]) -> str | None:

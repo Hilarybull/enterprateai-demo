@@ -131,6 +131,51 @@ def _figures(case: dict | None) -> dict:
             "blockers": [b.get("label") for b in summary.get("blockers") or []][:3], "research": case.get("research")}
 
 
+CHAT_FEATURE = "chat_message"      # "Assistant chat" on the price list: 2 credits a reply
+
+
+class OutOfCredits(Exception):
+    """Too few credits for a written reply: said with Top up, nothing written and nothing charged."""
+
+    def __init__(self, needed: int, have: int):
+        super().__init__("out of credits")
+        self.needed, self.have = needed, have
+
+
+async def paid_reply(orch, user: dict, call):
+    """A reply the model writes in a signed-in chat, charged as one Assistant chat (the owner, 31 Oct: "every chat after
+    signup should cost 2 credits"): only when a reply comes back, never for a failure, a button or a scripted line. The
+    charge is never said in the reply (the sidebar balance and the Credits page show it)."""
+    import secrets
+    from app.modules.agent.services import InsufficientCredits
+    if getattr(getattr(orch, "rt", None), "meter", None) is None:
+        return await call()      # no meter here (a stand-in in tests): the reply as it is
+    try:
+        async with orch.rt.meter.charge(user["id"], CHAT_FEATURE, key=f"chat:{secrets.token_hex(8)}"):
+            res = await call()
+            if not str(getattr(res, "text", "") or "").strip():
+                raise RuntimeError("no reply written")      # released: nothing is charged for nothing
+    except InsufficientCredits as e:
+        raise OutOfCredits(int(e.required or 2), int(e.available or 0)) from e
+    return res
+
+
+def with_next_step(say: str, case: dict | None, actions: list[dict] | None = None) -> str:
+    """The reply ends by recommending what to do next, conversationally, and offering to do it (the owner, 31 Oct: "the agent
+    should suggest or recommend the next step conversationally", "we want to sell"): the case's own next action, unless the
+    reply already suggests one or asks something."""
+    if not case or re.search(r"(?:Next step:|I'd (?:start|suggest)|Want me to)", say) or str(say).rstrip().endswith("?"):
+        return say
+    nxt = str(((case.get("summary") or {}).get("next_action") or {}).get("title") or "").strip().rstrip(".")
+    if not nxt:
+        return say
+    # The offer as the "N things to do" reply makes it, only when its button is there to press
+    can = any(str(a.get("label") or "").strip().lower() in ("do all for me", "draft the rest", "go ahead") for a in actions or [])
+    # Persuasive and true (the owner, 31 Oct: "persuasive recommendations of what the user can do next", "we want to sell")
+    return (f"{say} I'd start with this: {nxt[:1].lower() + nxt[1:]}. Sorting it moves you closer to being ready."
+            + (" Or let me take it off your hands: I'll research it, draft it and you just approve. Say go ahead and I'll show you the price first." if can else ""))
+
+
 def open_steps(case: dict | None) -> list[str]:
     """The case's open next steps, by title, in its own order."""
     return [str(a.get("title")).strip() for a in (case or {}).get("actions") or [] if isinstance(a, dict) and a.get("status") == "open" and str(a.get("title") or "").strip()]
@@ -200,8 +245,11 @@ def grounded(change: dict, said: str) -> dict:
         if k in ("target_amount", *_ECONOMICS):
             ok = any(abs(v - f) <= max(1, v * 0.001) for f in _figures_in(t))
         elif k == "purpose":
-            words = {w for w in re.findall(r"[a-z]{3,}", str(v).lower()) if w not in _STOP}
-            ok = bool(words & set(re.findall(r"[a-z]{3,}", t)))
+            # the same word in any form: "equipment" is "equipments", "van" is "vans" (the owner, 31 Oct: "29000 for
+            # equipments" was asked what it's for)
+            stem = lambda w: re.sub(r"(?:ies|es|s|ing|ed)$", "", w) if len(w) > 3 else w      # noqa: E731
+            words = {stem(w) for w in re.findall(r"[a-z]{3,}", str(v).lower()) if w not in _STOP}
+            ok = bool(words & {stem(w) for w in re.findall(r"[a-z]{3,}", t)})
         elif k == "route_preference":
             ok = bool(re.search(_ROUTE_WORDS.get(v, r"$^"), t))
         elif k == "stage":
@@ -301,8 +349,15 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         return await _start_do_all(orch, user, business_id, case, asked, text, now)
     if asked and _no(text):
         return await _said(orch, user, business_id, text, "No problem, nothing was started or charged.", [], now)
+    from app.modules.agent.converse_launch import _FILL_REST, _fill_rest
+    researched = bool(case) and (case.get("research") or {}).get("state") in ("review", "adopted")
+    if case and not researched and _FILL_REST.search(str(text)):      # part of the paid Do all: before it has run, its price first
+        return await _ask_do_all(orch, user, business_id, case, data, text, now)
+    if case and not ASKS_OPTIONS.search(str(text)) and researched and (_FILL_REST.search(str(text)) or asks_help(text)):
+        # Research already paid for: the rest is drafted at once, free, never its price asked again (as a launch plan's)
+        return await _fill_rest(orch, user, business_id, case, data, text, now, {}, topic="funding")
     if case and asks_help(text) and not ASKS_OPTIONS.search(str(text)):
-        return await _ask_do_all(orch, user, business_id, case, data, text, now)      # its price, the chooser, then the yes
+        return await _ask_do_all(orch, user, business_id, case, data, text, now, go_now=bool(PRICED_YES.match(str(text))))      # its price, the chooser, then the yes
     if case and ASKS_OPTIONS.search(str(text)):
         # Which loans, grants or investors fit: the researched ones, each with where it was found; else said that research is
         # needed, with its price (the owner, 28 Oct: "got generic advice")
@@ -365,7 +420,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     prompt = json.dumps({"CASE": _figures(case), "RECORDS": records_of(data), "DRAFTS": draft_review.view(_rules.FUNDING, (case or {}).get("data") or {}) if case else [],
                          "WAITING": waiting, "TURNS": turns, "MESSAGE": str(text)[:2000]}, ensure_ascii=False, default=str)
     try:
-        res = await asyncio.wait_for(llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500), MODEL_SECONDS)
+        res = await asyncio.wait_for(paid_reply(orch, user, lambda: llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500)), MODEL_SECONDS)
+    except OutOfCredits:
+        raise
     except Exception:      # noqa: BLE001 - what was typed is still read, and only proposed
         logger.info("funding conversation: no model reply", exc_info=True)
         return await _typed_need(orch, user, business_id, case, text, now, data)
@@ -395,6 +452,10 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     elif dropped and _CLAIMS.search(say):
         say = "Tell me what you'd like to change and I'll show you the change before anything is saved."      # nothing was changed
     keep, actions, extra_cards = {}, [], []
+    if not change and case and not asking_which and not str(text).rstrip().endswith("?"):
+        # A one-line answer the model passed over ("I need it within 3 months", "It's a loan"): saved if the case doesn't hold it yet
+        held = (case.get("data") if isinstance(case.get("data"), dict) else case) or {}
+        change = {k: v for k, v in said_in_words(text, now.date()).items() if not held.get(k)}
     if change and (case or (change.get("target_amount") and change.get("purpose"))):
         doubt = _amount_doubt(change, case, str(text), data)
         if doubt:
@@ -444,7 +505,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             if kind == "open_case" and to:
                 actions.append({"label": "Open your funding case", "to": to})
             elif kind == "do_all" and to:
-                actions.append({"label": "Do all for me", "to": to})      # its price first, on the case page's own button
+                # asked here, its price first, then run here (the owner, 1 Nov: "bringing me to the checklist instead of doing the needful")
+                actions.append({"label": "Do all for me", "kind": "explain", "prompt": "Do it all for me"})
             elif kind == "reply" and str(b.get("label") or "").strip() and str(b.get("text") or "").strip() \
                     and not _BOTH.search(f"{b.get('label')} {b.get('text')}"):      # one funding case: never "keep both"
                 actions.append({"label": str(b["label"]).strip()[:40], "kind": "explain", "prompt": str(b["text"]).strip()[:300]})
@@ -454,14 +516,17 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if not actions:
         actions = suggested("funding", bool(case))
     if case and _ASKS_READY.search(str(text)):
-        got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result", "next"]      # the result, not words about it
+        got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result"]      # the result, not words about it
     cards = cards_for(got, not turns, bool(case), str(case["id"]) if case else None, before, after, bool(waiting)) + extra_cards
+    if case and not keep:
+        say = with_next_step(say, case, actions)
     out = await _said(orch, user, business_id, text, say, actions, now, keep=keep, cards=cards)
     return {**out, "changed": done}
 
 
 _APPLY = re.compile(r"^\s*(?:apply(?: it| that| the change| them)?|confirm|yes,? apply(?: it)?|go ahead and apply)\b[\s.!]*$", re.I)
 _CANCEL = re.compile(r"^\s*(?:cancel|no|nope|don'?t|leave it|never mind|not now|keep it as it is)\b", re.I)
+PRICED_YES = re.compile(r"^\s*yes,? do (?:it )?all for me[\s.!]*$", re.I)      # the button on an offer that already said its price
 _YES_LEAD = re.compile(r"^\s*(?:yes|yeah|yep|ok|okay|sure|go ahead|please do|do it)\b(?!.*\b(?:but|not|don'?t|no)\b)", re.I)
 # Said as done or started when it wasn't (the owner, 28 Oct: "I have started the research" with nothing running)
 _RESEARCH_CLAIM = re.compile(r"\b(?:let me (?:do|get|start) (?:that|it|this|on it)(?: for you)?(?: now)?|i(?:'ll| will) (?:start by |now )?(?:research|gather|look (?:up|into)|find)|"
@@ -645,15 +710,32 @@ async def _fields_applied(orch, svc, user: dict, business_id: str, case: dict, h
     if not saved:
         return await _said(orch, user, business_id, text, "I couldn't save that just now. Nothing was changed; please try again.", [], now)
     labels, was = held.get("labels") or {}, held.get("before") or {}
-    said = "; ".join(f"{labels.get(p, p)}: {_shown_value(was.get(p))} → {v}" if p in was else f"{labels.get(p, p)}: {v}" for p, v in fields.items())
+    said = "; ".join(f"{labels.get(p, p)}: {_shown_value(was.get(p))} → {v}" if was.get(p) not in (None, "", [], {}) else f"{labels.get(p, p)}: {v}" for p, v in fields.items())
     out = await _said(orch, user, business_id, text, f"Updated {said}.", [{"label": "Undo", "kind": "explain", "prompt": "Undo"}], now, keep={"last_change": undo})
     return {**out, "changed": ["updated"], "case_id": str(case["id"])}
+
+
+def said_in_words(text: str, today) -> dict:
+    """What the owner's own sentence says outright, read from the words themselves, so it's never asked again whatever the model
+    returned (the owner, 1 Nov: "why asking me what I already answered": "a loan, within 3 months", then "When do you need the money?")."""
+    from app.modules.agent import goals
+    t = str(text or "")
+    out: dict = {}
+    when = goals.end_of_month(t, today)
+    if when:
+        out["receipt_date"] = when
+    route = re.search(r"\b(loan|grant|equity|investors?)\b", t, re.I)
+    if route:
+        out["route_preference"] = {"investor": "equity", "investors": "equity"}.get(route.group(1).lower(), route.group(1).lower())
+    return out
 
 
 async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, change: dict, replace: bool, text: str, now: datetime, data: dict) -> dict:
     """The change the owner applied: made, checked, and said with the score when it moved."""
     from app.modules.agent import goals
     from app.modules.readiness import rules
+    if change:
+        change = {**said_in_words(text, now.date()), **change}
     if not change:
         return await _said(orch, user, business_id, text, "There's nothing to apply now. Tell me what you'd like to change.", [], now)
     # An update never switches the case to another currency (QA F2, 30 Oct: "₦5m grant for stock" on a UK business): asked
@@ -737,28 +819,50 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         currency = str(was.get("currency") or bz.currency_of(data) or "GBP")
         flat = {**{k: v for k, v in change.items() if k != "economics"}, **econ}
         olds = {**was, **(was.get("economics") or {})}
-        said = "; ".join(f"{_LABEL.get(k, k).lower()}: {_show(k, olds.get(k), currency)} → {_show(k, v, currency)}" for k, v in flat.items())
-        out = await _said(orch, user, business_id, text, f"Updated {said}.{extra}{line}", [{"label": "Undo", "kind": "explain", "prompt": "Undo"}], now,
-                          keep={"last_change": undo}, cards=cards)
-        return {**out, "changed": done, "case_id": str(case["id"])}
+        # A value given for the first time is said as given, never "Not set → A loan"; a changed one keeps its before and after
+        # (the owner, 1 Nov: "what do you mean not set?... how will the user know the next steps")
+        said = "; ".join(f"{_LABEL.get(k, k).lower()}: {_show(k, olds.get(k), currency)} → {_show(k, v, currency)}" for k, v in flat.items()
+                         if olds.get(k) not in (None, "", [], {}))
+        new = ", ".join(f"{_LABEL.get(k, k).lower()}: {_show(k, v, currency)}" for k, v in flat.items() if olds.get(k) in (None, "", [], {}))
+        opening = " ".join(x for x in ((f"Saved {new}." if new else ""), (f"Updated {said}." if said else "")) if x) + f"{extra}{line}"
     word = {"replaced": "replaced your funding need (the old one is in your history)", "updated": "updated your funding case",
             "created": "set up your funding case"}[done[0]]
     # "with 10 things to do": the first of them said, with Do all for me and the way to all of them (the owner, 30 Oct: "why
     # didn't it bring out the 10 things, with Do all for me?")
-    say, actions = f"Done. I've {word}.{line}", []
+    say, actions = (opening, []) if undo else (f"Done. I've {word}.{line}", [])
     try:
         from app.modules.readiness.service import service_for
         whole = await service_for(orch).get_subject(user["id"], business_id, rules.FUNDING, case["id"], user.get("email"))
         steps = open_steps(whole)
     except Exception:      # noqa: BLE001 - said without the list
         steps = []
+    # One question at a time, as a person asks it (the owner's QA, 31 Oct: the checklist pasted as one run-on sentence): the kind
+    # of funding, then when it's needed; once both are known, the next step in plain words
+    data_now = (whole or {}).get("data") if steps else {}
+    if not (data_now or {}).get("route_preference") or (data_now or {}).get("route_preference") == "unsure":
+        ask = "Are you thinking of a loan, a grant or investors?"
+        actions = [{"label": w, "kind": "explain", "prompt": p} for w, p in (("A loan", "It's a loan"), ("A grant", "It's a grant"), ("Investors", "Investors"))]
+    elif not (data_now or {}).get("receipt_date"):
+        ask = "When do you need the money?"
+        actions = [{"label": w, "kind": "explain", "prompt": f"I need it {w.lower()}"} for w in ("Within 3 months", "In 3 to 6 months", "In 6 to 12 months")]
+    else:
+        ask = ""
     if steps:
-        say += " First: " + "; ".join(t.rstrip(".") for t in steps[:3]) + (f"; and {len(steps) - 3} more." if len(steps) > 3 else ".")
-        cards = [*cards, {"type": "result", "case_id": str(case["id"])}, {"type": "steps", "case_id": str(case["id"])}]
-    say, actions = offer_things_left(say, {}, actions)
-    if steps:
+        cards = [*cards, {"type": "result", "case_id": str(case["id"])}]
+    if ask:
+        say = f"{say} {ask}"
+        # the answer buttons, then only the two ways forward: done for them, or by hand (the owner, 1 Nov: "a fill all", "and option
+        # to continue manually", "it's a lotta confusing options"); See all and Undo wait (typing "undo" still undoes)
+        actions = [*actions, {"label": "Fill all for me", "kind": "explain", "prompt": "Do it all for me"},
+                   {"label": "Continue manually", "to": f"/funding/{case['id']}?tab=answers"}]
+    else:
+        say = with_next_step(say, whole if steps else None, actions)
+        say, actions = offer_things_left(say, {}, actions)
+    if steps and not ask:
         actions = [*actions, {"label": f"See all {len(steps)}" if len(steps) > 1 else "See it", "to": f"/funding/{case['id']}?tab=overview"}]
-    out = await _said(orch, user, business_id, text, say, actions, now, cards=cards)
+    if undo and not ask:      # a change keeps its Undo, after the next step
+        actions = [*actions, {"label": "Undo", "kind": "explain", "prompt": "Undo"}]
+    out = await _said(orch, user, business_id, text, say, actions, now, cards=cards, keep={"last_change": undo} if undo else None)
     return {**out, "changed": done, "case_id": str(case["id"])}
 
 
@@ -812,9 +916,10 @@ def offer_things_left(say: str, got: dict, actions: list[dict], researched: bool
         say = f"{say} I can draft the rest that I can for you to approve.{(' ' + ask) if ask else ''}"
         chip = {"label": "Draft the rest", "kind": "explain", "prompt": "Fill the rest for me"}
     else:
-        say = f"{say} Want me to do them for you? Press Do all for me and I'll show the price first."
-        chip = {"label": "Do all for me", "kind": "explain", "prompt": "Do it all for me"}
-    if any(str(a.get("label") or "").strip().lower() in ("do all for me", "draft the rest") for a in actions):
+        say = (f"{say} Want me to take them off your hands? I'll research each one, draft it and you just approve, so you're ready "
+               "sooner. Say go ahead and I'll show you the price first.")
+        chip = {"label": "Go ahead", "kind": "explain", "prompt": "Do it all for me"}
+    if any(str(a.get("label") or "").strip().lower() in ("do all for me", "draft the rest", "go ahead") for a in actions):
         return say, actions
     return say, [*actions[:2], chip]
 
@@ -854,9 +959,9 @@ def cards_for(got: dict, first: bool, has_case: bool, case_id: str | None, befor
     if not has_case:
         return []
     asked = [s for s in (got.get("show") or []) if s in _SHOW] if isinstance(got.get("show"), list) else []
-    # The first useful answer should tell the owner what to do with the result, not only show a score.
-    # The chat UI turns this into a case card with the saved next action and a direct link.
-    want = (["records", "result", "next"] if first and not asked else []) + asked
+    # The first look: what was checked and the result. The next step is said in the reply's own words ("Next step: …"); the
+    # recommendation card comes only after a paid result's drafts are accepted (the owner, 31 Oct)
+    want = (["records", "result"] if first and not asked else []) + asked
     if "adopted" in (got.get("_done") or []):
         want.append("next")      # drafts accepted: what to do next, as the mockups end
     # Approvals waiting show only when asked for (the owner, 29 Oct: an invoice to Malachy under the launch plan's next steps)
@@ -892,7 +997,7 @@ async def approvals_waiting(orch, business_id: str) -> list[str]:
 
 # Two things the owner says that always mean the same (the owner's test, 27 Oct: "Help me complete it" was answered by asking
 # for milestones; "What's missing?" got prose with no card): the research and drafting, asked with its price first; the gaps card
-HELP = re.compile(r"\b(?:help me (?:complete|finish|fill|do) (?:it|this|them|the rest|everything)|complete it for me|do (?:it )?all for me|do it for me|"
+HELP = re.compile(r"\b(?:help me (?:become|get|be)\b.{0,30}\bready\b|help me (?:complete|finish|fill|do) (?:it|this|them|the rest|everything)|complete it for me|do (?:it )?all for me|do it for me|"
                   r"(?:get|do|find|gather|fill) (?:it )?(?:all|everything)(?: (?:for me|of it|requirements?|that'?s needed|needed))?|get (?:all|everything) (?:i|we) need|"
                   r"fill (?:it|them|the gaps) in for me|research (?:it|and draft)|prepare (?:the )?missing|research it for me|"
                   # "go ahead and get", "run it", "do the research" (the owner, 29 Oct)
@@ -977,7 +1082,7 @@ async def _session_for(orch, user: dict, business_id: str, case: dict, topic: st
 
 
 async def _ask_do_all(orch, user: dict, business_id: str, case: dict, data: dict, text: str, now: datetime, topic: str = "funding",
-                      keep: dict | None = None, only: list[str] | None = None) -> dict:
+                      keep: dict | None = None, only: list[str] | None = None, go_now: bool = False) -> dict:
     """ "Do all for me", asked in the conversation (the owner, 27 Oct): what it researches and its price, then "Shall I start?". """
     from app.modules.agent import goal_router
     to, noun = (f"/launch/{case['id']}", "launch plan") if topic == "launch" else (f"/funding/{case['id']}?tab=overview", "funding case")
@@ -1006,6 +1111,8 @@ async def _ask_do_all(orch, user: dict, business_id: str, case: dict, data: dict
             if only == OPTIONS_ONLY else None) or ("I'll research " + (", ".join(topics[:-1]) + " and " + topics[-1] if len(topics) > 1 else topics[0]) + f" for your {'plan' if topic == 'launch' else 'case'}, and draft what I can."
             if topics else f"I'll research what your {'plan' if topic == 'launch' else 'case'} still needs and draft what I can.")
     price = int(quote.get("max") or quote.get("cost") or 0)
+    if go_now:      # pressed on the offer that said its price: started, never asked again (the owner, 1 Nov: "why ask twice?")
+        return await _start_do_all(orch, user, business_id, case, {"session": sid, "price": price, **({"only": only} if only else {}), **({"fresh": True} if fresh else {})}, text, now, topic=topic, keep=keep)
     fixed = quote.get("variable") is False
     cost = ((f" It costs {price} credits." if fixed else f" Up to {price} credits, and you only pay for what I find.")
             + (f" You have {quote['balance']}." if isinstance(quote.get("balance"), int) else "") if price else " This one is free.")
@@ -1020,6 +1127,9 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
                         keep: dict | None = None) -> dict:
     """The yes: the research starts and carries on by itself; the owner is told it has, and where it will be."""
     from app.modules.agent import goal_router
+    if not asked.get("only") and not await goal_router.may_do_all(user["id"], "launch" if topic == "launch" else "need_funding"):
+        # The plan again at the very start, never "Started" on a plan that doesn't include it: its own answer instead (the owner, 1 Nov)
+        return await _ask_do_all(orch, user, business_id, case, await orch.rt.business.load(business_id) or {}, text, now, topic=topic, keep=keep)
 
     async def mark(on: bool, failed: str | None = None) -> None:
         # Shown on the Assistant tab as in progress until it ends (the owner's mockups, 27 Oct); one that didn't start or
@@ -1047,6 +1157,9 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
                 failed = ((out or {}).get("gate") or {}).get("message") or "The research didn't start. Nothing was charged."
             elif got.get("status") == "researching":
                 running = True      # the same research already running: its marker stays until it ends or ages out
+            elif not asked.get("only") and not got.get("error") and got.get("status") in ("review", "adopted"):
+                # Drafted once, all of it (the owner, 1 Nov: "I keep drafting the rest... why not draft once"): working until that's finished
+                await goal_router.filling(got.get("id") or (out or {}).get("run_id"))
             elif got.get("error") or got.get("status") not in ("review", "adopted"):
                 # Ended with nothing to show (timed out, nothing new found, failed): said with Retry, never a card spinning on
                 # (the owner, 29 Oct: "research funding options... just kept processing")
@@ -1062,8 +1175,6 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
             if not running:
                 await mark(False, failed)
     await mark(True)
-    to, noun = (f"/launch/{case['id']}?tab=answers", "launch plan") if topic == "launch" else (f"/funding/{case['id']}?tab=answers", "funding case")      # its Inputs: the form the drafts go in
-    form = f"See the {'Launch' if topic == 'launch' else 'Funding'} Readiness form"      # where its drafts go, one press away (29 Oct)
     try:
         task = asyncio.get_running_loop().create_task(go())
         _RUNNING.add(task)
@@ -1073,10 +1184,11 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
     if asked.get("only") == OPTIONS_ONLY:
         return await _said(orch, user, business_id, text,
                            "Searching for programmes, lenders and investors that fit your case. It takes a minute or two. I'll let you know as soon as they're ready for your review, each with its source.",
-                           [{"label": f"Open your {noun}", "to": to}], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"]), "options": True}])
+                           [], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"]), "options": True}])
     return await _said(orch, user, business_id, text,
                        f"Started. It takes a minute or two. I'll let you know as soon as the drafts are ready for your review on your {'plan' if topic == 'launch' else 'case'}'s form.",
-                       [{"label": form, "to": to}], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"])}])
+                       # nothing to open while it works: the progress card only, the form offered once the drafts are ready (the owner, 1 Nov)
+                       [], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"])}])
 
 
 _RUNNING: set = set()

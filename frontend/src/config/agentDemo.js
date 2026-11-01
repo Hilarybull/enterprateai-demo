@@ -5,7 +5,7 @@
 export const DEMO_VIDEO_URL = "";
 
 /** What "Try it yourself" puts in the Agent's field. */
-export const DEMO_REQUEST = "Invoice for Mark, $300";
+export const DEMO_REQUEST = "Invoice for Mark, £300";
 
 export const DEMO_SCENES = [
   { key: "tell", kind: "type", title: "Tell it the job", ms: 8000, text: DEMO_REQUEST,
@@ -14,7 +14,7 @@ export const DEMO_SCENES = [
     steps: ["Reading your request", "Found Mark in your customers", "Drafting invoice INV-1001"],
     caption: "The Agent reads your records and prepares the document." },
   { key: "approve", kind: "approve", title: "You approve", ms: 11000,
-    card: { reference: "INV-1001", customer: "Mark", amount: "$300.00", due: "Due in 14 days" },
+    card: { reference: "INV-1001", customer: "Mark", amount: "£300.00", due: "Due in 14 days" },
     caption: "Nothing is sent until you approve it." },
 ];
 

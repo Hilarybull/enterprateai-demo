@@ -506,7 +506,7 @@ export function useTaskFlow({ say, onChanged, onDetails, inline = false, onQuest
     }
     if (status === "succeeded") {
       return settle({ tone: "emerald", text: run.summary || "Done.", next: run.next_action || "",
-        runId: run.id, links: run.outcome?.links });
+        runId: run.id, links: run.outcome?.links, title: run.outcome?.plan?.title || undefined });
     }
     if (status === "cancelled") return settle({ tone: "slate", text: run.summary || "That task was cancelled.", runId: run.id });
     if (status === "failed") {

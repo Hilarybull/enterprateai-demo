@@ -149,6 +149,16 @@ async def context(orch, user: dict, business_id: str, kind: str, case_id: str | 
     extra = {"risk": converse_idea.concentration(data)}
     if kind == "idea":
         extra["idea"] = idea_card(data)
+    from app.modules.agent.research import fillable_fields
+    from app.modules.credits.catalogue import FEATURES
+    # For the chat's next step: what is still draftable, Do all for me's price, and whether the idea has been validated
+    # Only a run from before Do all drafted everything can still need finishing, and only until that's been done once
+    from app.modules.agent import goal_router as _gr
+    can_do_all = await _gr.may_do_all(user["id"], "need_funding" if kind == "funding" else "launch") if kind in ("funding", "launch") else True
+    ran = kind in ("funding", "launch") and can_do_all and case_id and not (data.get("agent_filled") or {}).get(str(case_id)) \
+        and (research.research_state(data, "need_funding" if kind == "funding" else "launch", **({"case_id": case_id, "answers": {}} if kind == "launch" else {})) or {}).get("state") in ("review", "adopted")
+    extra = {**extra, "can_do_all": can_do_all, "draft_fields": list(fillable_fields("need_funding" if kind == "funding" else "launch")) if ran else [], "do_all_price": (FEATURES.get(f"research_{kind}_readiness") or (None, None))[1],
+             "validated": any(isinstance(h, dict) for h in data.get("validation_history") or [])}
     return {**extra, "business": business_card(name, data, now), "revenue": revenue(data, now), "records": records_check(data, kind),
             "activity": activity(data, now), "approvals": {"count": len(approvals), "items": [
                 {k: a.get(k) for k in ("approval_id", "run_id", "kind", "title", "subtitle", "age")} for a in approvals[:3]]},
@@ -185,10 +195,35 @@ def price_check(data: dict, answers: dict) -> dict | None:
             + (" Customers may compare; say what makes yours worth more, or test a lower price." if where == "above" else " You may be able to charge more.")}
 
 
+def _with_validation_figures(answers: dict, data: dict) -> dict:
+    """The idea's empty figures from its latest Idea Validation, as that validation used them (the owner, 31 Oct: the snapshot
+    stayed "Not known" after the validation ran and was accepted). Never over the owner's own; marked as estimates."""
+    def _n(v):
+        try:
+            f = float(str(v).replace(",", ""))
+            return f if f > 0 else None
+        except (TypeError, ValueError):
+            return None
+    name = str(answers.get("description") or "").strip().lower()
+    history = [e for e in data.get("validation_history") or [] if isinstance(e, dict) and e.get("status") != "rejected" and isinstance(e.get("payload"), dict)]
+    same = [e for e in history if name and name in str((e["payload"].get("step1") or {}).get("idea_name") or e.get("title") or "").strip().lower()]
+    entry = (same or ([] if name else history) or [None])[0]
+    if not entry:
+        return answers
+    p = entry["payload"]
+    found = {"price": _n((p.get("step7") or {}).get("proposed_price")), "cost": _n((p.get("step8") or {}).get("variable_cost_per_unit")),
+             "fixed_costs": _n((p.get("step8") or {}).get("fixed_costs_monthly")), "capacity": _n((p.get("step9") or {}).get("capacity_per_month"))}
+    added = {k: v for k, v in found.items() if v is not None and answers.get(k) in (None, "")}
+    if not added:
+        return answers
+    return {**answers, **added, "_estimated": ",".join(sorted({*str(answers.get("_estimated") or "").split(","), *added} - {""}))}
+
+
 def idea_card(data: dict) -> dict:
     """The idea being tested: its answers, its viability result (the engine's), and what is known for each input."""
     from app.modules.agent import converse_idea, first_value
     answers = dict((((data.get("quick_check_answers") or {}).get("test_idea") or {}).get("answers")) or {})
+    answers = _with_validation_figures(answers, data)
     result = first_value.assess("test_idea", answers, data) if answers else None
     known = lambda *ks: any(str(answers.get(k) or "").strip() for k in ks)      # noqa: E731
     inputs = [{"key": "customer", "label": "Customer profile", "available": known("customer")},

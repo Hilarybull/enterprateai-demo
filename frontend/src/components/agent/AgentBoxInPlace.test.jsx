@@ -241,7 +241,7 @@ describe("the chat bubble does the same", () => {
     // No box with its own Send, Close or Discard: the question is a message, its answers are chips (the owner, 29 Oct)
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("group", { name: "A few details" })).toBeNull();
-    expect(await screen.findByText(/Which customer is it for\?/)).toBeTruthy();
+    expect(await screen.findByText(/Who is this quotation for, and what should it include\?$/)).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Frank" })); });
     expect(await screen.findByText(/What should it include\?/)).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Bookkeeping" })); });

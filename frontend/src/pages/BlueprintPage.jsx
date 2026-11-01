@@ -1,4 +1,5 @@
 import { currencySign } from "../lib/format";
+import { cameFrom } from "../lib/cameFrom";
 import { toast as appToast } from "../lib/toast";
 import { getSubject } from "../lib/readiness";
 import { refusalMessage } from "../lib/entitlement";
@@ -449,8 +450,9 @@ export default function BlueprintPage() {
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
-    // Business plans, proposals and sales letters are on Starter and above (the pricing PDF, 19 Oct 2026).
-    if ((docId === "business_plan" || docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
+    // Proposals and sales letters are on Starter and above (the pricing PDF, 19 Oct 2026). The business plan is on every plan,
+    // paid for in credits (the owner, 31 Oct): a free owner's plan opens here, never behind "Upgrade"
+    if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
   }
@@ -2923,6 +2925,11 @@ export default function BlueprintPage() {
       {/* Only on the open draft (the owner's QA, 23 Oct: the bar stayed on the plans list after the draft was closed) */}
       {reviewId && isModalOpen && (
         <div className="fixed inset-x-0 top-0 z-[80] flex flex-wrap items-center justify-center gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-[13px] text-indigo-900 shadow-sm" data-draft-review>
+          {/* The way back to the conversation it came from, always on the draft (the owner, 1 Nov) */}
+          <button type="button" onClick={() => { const back = cameFrom(); navigate(back?.to || "/agent"); }}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 shadow-sm hover:bg-indigo-100 sm:absolute sm:left-4" data-back-to-agent>
+            <span aria-hidden="true">←</span> {cameFrom()?.name ? `Back to ${cameFrom().name}` : "Back to the Agent"}
+          </button>
           <span className="font-semibold">Draft from the Agent · Needs your review</span>
           <button type="button" onClick={() => decideDraft("accept")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700">Accept</button>
           {/* Edit opens the draft in the editor (the owner's QA, 23 Oct: "clicked on Edit and nothing happened"); Accept or

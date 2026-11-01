@@ -38,18 +38,19 @@ export default function CookieBanner() {
   }
 
   return (
+    // The bar as it was, just shorter (the owner, 31 Oct): text, the two choices and the buttons side by side on wide screens
     <div style={{ zIndex: 35 }} className="pointer-events-auto fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-      <div className="mx-auto max-w-7xl px-6 py-5">
+      <div className="mx-auto flex max-w-7xl flex-col gap-2.5 px-6 py-3 lg:flex-row lg:items-center lg:gap-6">
 
-        <p className="text-[13px] leading-relaxed text-slate-700 dark:text-slate-300">
+        <p className="text-[13px] leading-snug text-slate-700 lg:max-w-xs dark:text-slate-300">
           We use cookies on this site to enhance your user experience. You can opt out of these using the settings below.{" "}
           <Link to="/legal/privacy" className="font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400">
             Privacy Policy
           </Link>.
         </p>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-2xl">
-          <div className="flex items-start gap-3">
+        <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="flex items-start gap-2.5">
             <input
               type="checkbox"
               checked
@@ -58,13 +59,13 @@ export default function CookieBanner() {
             />
             <div>
               <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Operational</p>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+              <p className="text-[12px] leading-snug text-slate-500 dark:text-slate-400">
                 These cookies cannot be opted out of as they are essential for the operation of this website.
               </p>
             </div>
           </div>
 
-          <div className="flex cursor-pointer items-start gap-3" onClick={() => setAnalytics(a => !a)}>
+          <div className="flex cursor-pointer items-start gap-2.5" onClick={() => setAnalytics(a => !a)}>
             <input
               type="checkbox"
               checked={analytics}
@@ -74,14 +75,14 @@ export default function CookieBanner() {
             />
             <div>
               <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Analytics and Marketing</p>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+              <p className="text-[12px] leading-snug text-slate-500 dark:text-slate-400">
                 These are cookies used by us to better understand how you are interacting with our website.
               </p>
             </div>
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-4">
+        <div className="flex shrink-0 flex-wrap items-center gap-4">
           <button
             onClick={savePreferences}
             className="text-[13px] font-medium text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400"

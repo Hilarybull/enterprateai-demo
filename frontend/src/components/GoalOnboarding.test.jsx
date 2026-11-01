@@ -564,9 +564,10 @@ describe("carrying on after sign-in", () => {
     fireEvent.change(screen.getByLabelText(/What is your business called?/), { target: { value: "Newcomer Studio" } });
     await click(screen.getByRole("button", { name: "Continue" }));
     expect(posts(/\/resume$/)[0].body).toEqual({ business_name: "Newcomer Studio" });
-    // Carried on in the Agent Centre's chat, never a dashboard pop-up (the owner, 30 Oct)
+    // Started in the Agent Centre's chat, never on this page while it works (the owner, 1 Nov)
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
-    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).runId).toBe("run-7");
+    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).sessionId).toBe("sess-1");
+    expect(posts(/\/prepare$/)).toEqual([]);
     expect(useWorkspaceStore.getState().workspaceId).toBe("biz-9");
     expect(localStorage.getItem("ea_task_session:anon")).toBeNull();
     expect(events()).toEqual([{ name: "dashboard_handoff_completed", session_id: "sess-1" }]);
@@ -649,11 +650,12 @@ describe("carrying on after sign-in", () => {
     expect(posts(/\/prepare$/).length).toBe(0);
   });
 
-  it("a task the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
+  it("a goal the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
     const refusal = { to: "/dashboard", capability: "new_proposal", blocked: true, upgrade: true, message: "Upgrade to use the Agent for this. New Proposal is included from the Starter plan." };
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/prepare$/.test(path) ? session({ authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal }) : {});
+    const goal = { goal_key: "cash_flow", goal_label: "Improve my cash flow" };      // a goal still prepared here; a task goes to the chat
+    answer = (path) => (/attach-user$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/resume$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? session({ ...goal, authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal }) : {});
     mount();
     const said = await screen.findByRole("alert");
     expect(said.textContent).toContain("I couldn't prepare that for you.");
@@ -672,15 +674,16 @@ describe("carrying on after sign-in", () => {
       : /\/prepare$/.test(path) ? session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } }) : {});
     mount();
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
-    expect(posts(/\/prepare$/).length).toBe(1);
+    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).sessionId).toBe("sess-1");      // tried again, in the chat
   });
 
   it("a failure keeps the task and offers another go; an expired task says so", async () => {
     let fail = true;
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /validation\/me/.test(path) ? { id: "biz-1" } : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/prepare$/.test(path) ? (fail ? session({ authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-1", problem: "That couldn't be prepared just now. Nothing was lost; try again." })
-        : session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7" } })) : {});
+    const goal = { goal_key: "cash_flow", goal_label: "Improve my cash flow" };      // a goal still prepared here
+    answer = (path) => (/attach-user$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /validation\/me/.test(path) ? { id: "biz-1" } : /\/resume$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? (fail ? session({ ...goal, authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-1", problem: "That couldn't be prepared just now. Nothing was lost; try again." })
+        : session({ ...goal, authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7" } })) : {});
     const view = mount();
     expect((await screen.findByRole("alert")).textContent).toContain("Nothing was lost");
     fail = false;

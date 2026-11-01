@@ -161,7 +161,8 @@ GOALS: list[dict[str, Any]] = [
      "questions": [_f("description", "What does the business do? (1 to 2 sentences)", "textarea", required=True), _f("customer", "Who is the customer?", "text"),
                    _f("problem", "What problem does it solve for them?", "textarea"),
                    # Who will read it, so it is written for them (QA F9, 30 Oct: "it doesn't ask who the plan is for")
-                   _f("purpose", "Who is the plan for?", "choice", options=[{"value": "investors", "label": "Investors"}, {"value": "a bank or lender", "label": "A bank or lender"},
+                   # required: the recap waits for its answer (the owner's QA, 31 Oct: the recap showed before it was answered)
+                   _f("purpose", "Who is the plan for?", "choice", required=True, options=[{"value": "investors", "label": "Investors"}, {"value": "a bank or lender", "label": "A bank or lender"},
                                                                          {"value": "a grant application", "label": "A grant application"}, {"value": "my own planning", "label": "My own planning"}])]},
     # Not a homepage shortcut (asked for in words, it still prepares a proposal).
     {"key": "prepare_proposal", "mode": "quick_task", "label": "Prepare Proposal", "outcome": "A proposal ready for your approval", "shortcut": False,
@@ -184,7 +185,7 @@ def _choice(key: str, label: str, options: list[tuple[str, str]], **extra: Any) 
 
 
 _CONVERSATIONS: dict[str, dict[str, Any]] = {
-    "need_funding": {"value": "A few quick questions, then you'll get a score out of 100 for how ready you are to ask for funding, and the first things to fix.", "questions": [
+    "need_funding": {"value": "Answer a few quick questions and get your free funding readiness score out of 100, plus the first things to fix before you ask any lender, investor or grant body.", "questions": [
         _money("amount", "How much funding do you think you need?", required=True, chips=_FUNDING_AMOUNTS, unsure=_NOT_SURE, q=1, noun="amount"),
         _f("use", "What do you need the money for?", "textarea", required=True, q=2, noun="purpose",
            chips=[{"value": v, "label": v} for v in ("Equipment", "Stock", "Hiring staff", "Marketing", "Working capital")]),
@@ -197,7 +198,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         # Where the business trades: read from what they say ("a car wash in Abuja"), never asked on its own.
         _f("where", "Where does the business trade?", "text", hidden=True, noun="place"),
     ]},
-    "test_idea": {"value": "A few quick questions, then you'll see whether the idea can make money, worked out from your own numbers.", "questions": [
+    "test_idea": {"value": "Answer a few quick questions and find out, free, whether your idea can make money, worked out from your own numbers before you spend on it.", "questions": [
         _f("description", "What is your product or service idea?", "textarea", required=True, q=1, noun="idea"),
         _f("customer", "Who is it for, and where?", "text", required=True, q=2, noun="customer"),
         # Where it will run: read from what they say ("a mobile car wash in Abuja"), never asked on its own.
@@ -211,7 +212,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
                 ("lois", "Letters of intent"), ("pilot", "A paid pilot"), ("paying", "Paying customers"), ("repeat", "Repeat customers")], required=True, q=6, noun="demand evidence"),
     ]},
     # The free Business Risk Check (the owner, 24 Oct: "Help me understand my business risks... implement it")
-    "business_risks": {"value": "I'll check your biggest customer, cash, late payments and how much the business depends on you. This uses your records; it isn't financial advice.", "questions": [
+    "business_risks": {"value": "In a few minutes, see the risks that could hurt your business most: your biggest customer, cash, late payments and how much it depends on you. Free, from your own records.", "questions": [
         _f("worry", "What worries you most about the business right now?", "textarea", unsure="Nothing in particular", q=1, noun="worry"),
         _choice("top_share", "How much of your income comes from your biggest customer?", [("under_20", "Less than a fifth"), ("20_50", "A fifth to a half"),
                 ("over_50", "More than half")], required=True, unsure=_NOT_SURE, q=2, noun="biggest customer"),
@@ -224,7 +225,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _money("cash_in_bank", "What's in the bank today?", hidden=True, noun="cash in the bank"),
         _money("monthly_costs", "What do you spend in a usual month, all regular costs together?", hidden=True, noun="monthly costs"),
     ]},
-    "launch": {"value": "A few quick questions, then you'll see how ready you are to launch and what to sort out first.", "questions": [
+    "launch": {"value": "Answer a few quick questions and get your free launch readiness score, plus exactly what to sort out first so your launch lands.", "questions": [
         _choice("kind", "What are you launching?", [("product", "A product"), ("service", "A service"), ("both", "Both")], required=True, q=1, noun="kind"),
         # What is launched, by name (the owner's QA, 23 Oct: required, and a placeholder is asked again)
         _f("sell", "What exactly are you launching?", "textarea", required=True, q=2, noun="description"),
@@ -239,7 +240,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _f("cost", "Cost per sale", "number", hidden=True, noun="cost"),
         _f("evidence", "What customer testing or demand evidence do you already have?", "textarea", required=True, q=6, noun="demand evidence", unsure="None yet", unsure_value="None yet"),
     ]},
-    "price_offer": {"value": "A few quick questions, then you'll see how much each sale earns you and whether your price works.", "questions": [
+    "price_offer": {"value": "Answer a few quick questions and see what each sale really earns you, and whether your price is leaving money on the table. Free.", "questions": [
         _f("sell", "What are you pricing?", "text", required=True, q=1, noun="what you are pricing"),
         _f("customer", "Who are you selling it to?", "text", required=True, unsure=_NOT_SURE, q=2, noun="customer"),
         _money("price", "What price are you considering or charging now?", required=True, unsure=_NOT_SURE, q=3, noun="price"),
@@ -248,7 +249,7 @@ _CONVERSATIONS: dict[str, dict[str, Any]] = {
         _choice("positioning", "How do you want to position it?", [("affordable", "Affordable"), ("mid", "Mid-market"), ("premium", "Premium"), (UNSURE, _NOT_SURE)], required=True, q=6, noun="positioning"),
     ]},
     # Winning more customers (the owner's brief, 25 Oct): what the records hold is read, never asked; the rest as buttons
-    "more_customers": {"value": "I'll look at who buys from you now, how new customers find you, and the first things to do. This uses your records; it doesn't promise customers.",
+    "more_customers": {"value": "Find out who buys from you, how new customers find you, and the first moves to win more. Free, from your own records.",
                        "questions": [
         _f("sell", "What do you sell?", "text", required=True, q=1, noun="what you sell"),
         _f("customer", "Who do you want more of? Your best kind of customer.", "text", required=True, unsure="I'm not sure", q=2, noun="customer"),
@@ -291,11 +292,17 @@ def value_of(goal_key: str) -> str:
     return str((_CONVERSATIONS.get(goal_key) or {}).get("value") or "")
 
 
-_CONVERSATIONS["create_invoice"] = {"value": "I'll prepare the invoice for you to approve. Nothing is sent until you say so.", "questions": _document_questions("invoice", "What is it for?")}
-_CONVERSATIONS["create_quotation"] = {"value": "I'll prepare the quotation for you to approve. Nothing is sent until you say so.", "questions": _document_questions("quotation", "What are you quoting for?")}
+_CONVERSATIONS["create_invoice"] = {"value": "I'll prepare a professional invoice in seconds for you to approve. Nothing is sent until you say so.", "questions": _document_questions("invoice", "What is it for?")}
+_CONVERSATIONS["create_quotation"] = {"value": "I'll prepare a professional quotation in seconds for you to approve. Nothing is sent until you say so.", "questions": _document_questions("quotation", "What are you quoting for?")}
 for _key, _talk in _CONVERSATIONS.items():
     _BY_KEY[_key]["questions"] = _talk["questions"]
     _BY_KEY[_key]["value"] = _talk["value"]
+
+# "Is it a good idea?", "will it work?", "is it worth it?": asking whether to do it is the idea check, never a launch plan made
+# unasked (the owner's QA, 31 Oct: "…coffee van… Is it a good idea?" made a launch plan)
+_ASKS_IF_GOOD = (r"\b(?:is (?:it|this|that) (?:a )?(?:good|great|bad|viable|sensible|smart) (?:idea|plan|business)|good idea|"
+                 r"worth (?:it|doing|starting|launching|trying)|will (?:it|this) (?:work|sell|make money)|is (?:it|this) viable|"
+                 r"should i (?:do|start|go for) (?:it|this))\b")
 
 # Free text that states an outcome rather than a document: which goal it means.
 _OUTCOMES: list[tuple[str, re.Pattern]] = [
@@ -313,7 +320,7 @@ _OUTCOMES: list[tuple[str, re.Pattern]] = [
         r"startup|start-up|venture|firm|clinic|bar|pub|takeaway|stall|van|trade|practice|hustle|thing)\b"
         r"|\b(?:thinking|thinkin|planning|looking)\s+(?:of|about|bout|to|on)\s+(?:starting|opening|setting\s+up|launching|start|open|set\s+up|launch)\b", re.I)),
     ("cash_flow", re.compile(r"\b(cash ?flow|cash position|running out of (cash|money)|paid (late|faster|on time)|late pay\w*)\b", re.I)),
-    ("test_idea", re.compile(r"\b((business |startup |new )idea|test (an?|my) idea|validat\w+)\b", re.I)),
+    ("test_idea", re.compile(r"\b((business |startup |new )idea|test (an?|my) idea|validat\w+|(?:i|we) (?:have|had|got|'ve got) an idea|my idea)\b|" + _ASKS_IF_GOOD, re.I)),
     ("business_risks", re.compile(r"\b(risks?|fragil\w*|what could go wrong|worried|worries|worry|vulnerab\w*)\b|\b(?:rely|relying|relies|depend\w*)\s+(?:on|upon)\b", re.I)),
     ("grow", re.compile(r"\b(grow\w*|scale (up|my|the)|expand\w*)\b", re.I)),
     ("create_business_plan", re.compile(r"\bbusiness plans?\b", re.I)),
@@ -392,8 +399,68 @@ def is_revenue(text: str, start: int, end: int) -> bool:
 _MONTHS_TITLE = r"(?i)(?:january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+\d{4})?"
 
 
+def _money_in(pattern: str, text: str) -> float | None:
+    m = re.search(pattern, text, re.I)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", "")) * _SCALE.get((m.group(2) or "").lower(), 1)
+    except (ValueError, IndexError):
+        return None
+
+
+def _said_outright(text: str, goal_key: str | None, out: dict) -> dict:
+    """What a landing page sentence says outright, for every flow, so it's never asked again (the owner, 1 Nov: "it should handle
+    properly across all flows from the landing page"). Only what's plainly there; what a model reads is added to this."""
+    wanted = {f["key"] for f in (_BY_KEY.get(goal_key or "") or {}).get("questions") or []}
+    add: dict = {}
+    money = r"[£$€₦]?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?"
+    if "traction" in wanted and re.search(r"\bno (?:traction|sales|revenue|customers)\b|\bjust an idea\b", text, re.I):
+        add["traction"] = "No traction yet"
+    if isinstance(out.get("use"), str):      # the date is its own answer: "a new van by June 2027" is the purpose "a new van"
+        add["use"] = re.sub(rf"\s+(?:by|before|within|in)\s+(?:(?:{_MONTHS})\b(?:\s+\d{{4}})?|(?:the next\s+)?(?:\d+\s+to\s+)?\d+\s+months?)\s*$", "", out["use"], flags=re.I).strip() or out["use"]
+    if "due_days" in wanted:
+        due = re.search(r"\b(?:due|payable|pay(?:ment)?)\s+(?:in|within)\s+(\d{1,3})\s+days?\b", text, re.I)
+        if due:
+            add["due_days"] = int(due.group(1))
+    if "quantity" in wanted and isinstance(out.get("item"), str):
+        many = re.match(r"(\d{1,5})\s+(.+)$", out["item"])
+        if many:
+            add["quantity"], add["item"] = int(many.group(1)), many.group(2)
+    if goal_key == "more_customers":
+        if "channel" in wanted and re.search(r"\b(?:use|using|through|via|from|find us|by)\b|word of mouth", text, re.I):
+            channel = choice_from_words("channel", text)
+            if channel:
+                add["channel"] = channel
+        wish = re.search(r"\b(\d{1,4})\s+(?:new\s+|more\s+)?(?:customers|clients)\b", text, re.I)
+        if "goal" in wanted and wish:
+            add["goal"] = choice_from_words("goal", wish.group(1))
+    if goal_key in ("more_customers", "price_offer") and "customer" in wanted and not out.get("customer"):
+        who = re.search(r"\b(?:sell(?:ing)? to|customers? (?:are|is)|aimed at|targeting)\s+([a-z][a-z ]{2,40}?)(?=\s+(?:in|at|for)\b|[,.;]|$)", text, re.I) \
+            or re.search(r",\s*([a-z][a-z ]{2,30}?)\s+in\s+[A-Z]", text) \
+            or re.search(r"\bfor\s+(?!my\b|our\b|the\b|a\b|an\b)([a-z][a-z ]{2,30}?)\s*[.!]?\s*$", text)
+        if who:
+            add["customer"] = who.group(1).strip()
+    if goal_key == "launch" and "price" in wanted:
+        price = _money_in(r"\b(?:at|for|charging|price(?:d at)?)\s+" + money.replace("[£$€₦]?", "[£$€₦]") + r"(?:\s+(?:a|per|each)\b.*)?", text)
+        if price is not None:
+            add["price"] = price
+    if goal_key == "business_risks":
+        cash = _money_in(money + r"\s+(?:in (?:the |my |our )?(?:bank|account)|cash)\b", text)
+        costs = _money_in(r"\bcosts?\b[^.,;\d£$€₦]{0,25}" + money + r"\s*(?:a|per|each)\s+month\b", text)
+        if cash is not None and "cash_in_bank" in wanted:
+            add["cash_in_bank"] = cash
+        if costs is not None and "monthly_costs" in wanted:
+            add["monthly_costs"] = costs
+        if cash is not None and costs and "runway" in wanted:
+            months = cash / costs
+            add["runway"] = "under_3" if months < 3 else "3_6" if months <= 6 else "over_6"
+    return {**out, **{k: v for k, v in add.items() if k in ("use", "item") or k not in out}}
+
+
 def extract(text: str, goal_key: str | None) -> dict[str, Any]:
-    out = _extract(text, goal_key)
+    text = re.sub(r"(?<![A-Za-z])N\s?(?=\d)", "₦", str(text or ""))      # "N5m", as owners type naira
+    out = _said_outright(text, goal_key, _extract(text, goal_key))
     if out.get("where") and isinstance(out.get("use"), str):
         # The place is its own answer: "buy two pressure washers and a second van for my car wash in Abuja" is the purpose
         # "buy two pressure washers and a second van".
@@ -444,6 +511,17 @@ def choice_from_words(key: str, text: str) -> str | None:
     """A risk question answered in plain words, not by picking a chip (the owner, 24 Oct: "it should be flexible and adaptive"):
     "about 30%", "most of it", "maybe 2 months", "mostly yes", "I have 3 staff"."""
     t = str(text or "").lower()
+    if key == "stage":
+        # "MVP", "a prototype", "in beta" (the owner, 30 Oct: "MVP" was not understood, then the chat moved on): the closest stage
+        if re.search(r"\b(?:growing|scaling|expanding|growth)\b", t):
+            return "growing"
+        if re.search(r"\b(?:mvp|prototype|beta|pilot(?:ing)?|pre[- ]?launch|pre[- ]?revenue|not (?:yet )?(?:trading|launched|selling)|building|developing|testing|no (?:sales|revenue|customers) yet)\b", t):
+            return "pre_revenue"
+        if re.search(r"\b(?:idea|concept|thinking about|planning|just starting)\b", t):
+            return "idea"
+        if re.search(r"\b(?:trading|selling|have (?:customers|sales|revenue)|making (?:sales|money)|up and running|operating|launched)\b", t):
+            return "trading"
+        return None
     if key == "channel":
         # "Instagram and referrals" (the owner, 25 Oct: several at once): each channel named, joined as the chips are
         if re.search(r"\b(?:no|none|don'?t have any|haven'?t got any|not yet)\b.{0,15}\b(?:customers?|clients?)\b|\bno customers\b", t):
@@ -800,6 +878,9 @@ def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, s
     if not original:
         return _no_match("", "empty")
     read = _typos_fixed(original)      # matched as meant; the owner's own words kept as their goal
+    # Asked for by name: "write a business plan for investors" is the plan, not a question about funding (the owner, 1 Nov)
+    if re.search(r"\b(?:write|draft|create|make|prepare|generate|do|need|want)\b.{0,30}\bbusiness plan\b", read, re.I) and "create_business_plan" in _BY_KEY and _valid_path(_BY_KEY["create_business_plan"], reg):
+        return _resolution(_BY_KEY["create_business_plan"], original, reg, 0.9, "task_rule:business_plan_draft", direct="business_plan_draft")
     outcomes = [k for k, pattern in _OUTCOMES if pattern.search(read) and _valid_path(_BY_KEY[k], reg)]
     # A document or task named outright is a direct task, unless the sentence is really about an outcome.
     named = intent.rule_capability(read, list(reg))
@@ -813,6 +894,8 @@ def resolve(*, text: str | None = None, key: str | None = None, reg: dict[str, s
                 "recommended_path": [reg[named]],
                 "provenance": {"registry": _PROVENANCE, "version": REGISTRY_VERSION, "rule": f"task_rule:{named}"}}
     specific = [k for k in outcomes if k != "grow"] or outcomes      # "grow" is the broadest: anything more specific wins
+    if "test_idea" in specific and "launch" in specific and re.search(_ASKS_IF_GOOD, read, re.I):
+        specific = ["test_idea"]      # asking whether it's a good idea, about a venture: the idea check (31 Oct)
     if len(specific) == 1:
         return _resolution(_BY_KEY[specific[0]], original, reg, 0.8, f"outcome_rule:{specific[0]}")
     if len(specific) > 1:
@@ -1180,11 +1263,35 @@ async def _settled(orch, run: dict | None, seconds: float = 3.0) -> dict | None:
 FIRST_READ_SECONDS = 1.2
 
 
+_PLAN_ASK = re.compile(r"^\s*(?:please\s+)?(?:can you\s+|could you\s+|i (?:want|need) (?:you )?to\s+)?(?:(?:write|create|draft|make|do|prepare|build|give me)\s+(?:me\s+)?)?"
+                       r"(?:a|an|my|the|our)?\s*(?:new\s+)?business\s+plan\b\s*(?:for\s+(?:my|our|a|an|the)?\s*|[·:,\-]\s*)?", re.I)
+
+
+def _plan_answers(got: dict, text: str) -> dict[str, Any]:
+    """The business plan's answers from the opening request, never the request itself (the owner's QA, 31 Oct: "Write a business
+    plan · coffee van business" kept as what the business does, and "coffee van business" as the customer): the command is
+    taken off, what is left is what the business does, and a customer that is only the business named again is dropped."""
+    out = dict(got or {})
+    m = _PLAN_ASK.match(str(text or ""))
+    rest = _tidy(str(text or "")[m.end():]) if m else ""
+    desc = str(out.get("description") or "")
+    if m and (not desc or _PLAN_ASK.match(desc)):
+        if len(rest) >= 3:
+            out["description"] = rest[:1].upper() + rest[1:]
+        else:
+            out.pop("description", None)      # only the command: what the business does is asked
+    if m and rest and str(out.get("customer") or "").strip().lower() in (rest.lower(), rest.lower().removeprefix("my ")):
+        out.pop("customer", None)
+    return out
+
+
 async def proposed_from(text: str, goal_key: str | None, owner_name: str | None = None) -> dict[str, Any]:
     """What the opening sentence gives, less placeholders (the owner's QA, 23 Oct: "launch readiness" read as selling
     "readiness"): those are asked instead, never prefilled."""
     from app.modules.readiness.service import _vague
     got = await _proposed_from(text, goal_key, owner_name=owner_name)
+    if goal_key == "create_business_plan":
+        return _plan_answers(got, text)
     if goal_key != "launch":
         return got
     return {k: v for k, v in got.items() if not (isinstance(v, str) and k in ("sell", "customer", "where")
@@ -1714,6 +1821,16 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
                 session["inputs"].pop(k, None)
                 session.setdefault("rejected", {})[k] = _LAUNCH_ASK_AGAIN[k]
                 continue
+            if k == "stage" and allowed[k]["type"] == "choice" and allowed[k].get("options"):
+                # A choice is kept only as one of its options (the owner, 30 Oct: "MVP" kept as the stage, so the chat said it
+                # didn't understand and moved on anyway): read from the words, else left to be asked again
+                from app.modules.agent import intake_turn as _it
+                offered = [o.get("value") for o in allowed[k]["options"]]
+                read = v if v in offered else (_it._option(allowed[k], v) or _it._offered(allowed[k], choice_from_words(k, str(v))))
+                if read not in offered:
+                    session["inputs"].pop(k, None)
+                    continue
+                v = read
             session.get("rejected", {}).pop(k, None)
             session["inputs"][k] = str(v).strip()[:2000]
     if picked_turn:
@@ -1993,6 +2110,10 @@ def launch_fields(a: dict, today: date | None = None) -> dict:
         out["offer"] = offer
     if econ:
         out["economics"] = econ
+    if out.get("audience"):
+        # Where the demand check reads who it is for, as the launch chat saves it: the landing page's answer counts towards the
+        # score too (the owner, 31 Oct: "especially when coming from the landing page having answered some questions")
+        out["customers"] = {"target_segment": out["audience"]}
     return out
 
 
@@ -2045,6 +2166,8 @@ async def edit_answers(store: SessionStore, session: dict, orch, user_id: str, c
             prov = {p: stamp for p in only}
         else:
             wanted = {**launch_fields(a, now.date()), "name": launch_title(a, now.date())}
+            # The plan's other details in these parts are kept: only the answers given are written over
+            wanted = {k: ({**(before.get(k) or {}), **v} if k in ("offer", "economics", "customers") and isinstance(v, dict) else v) for k, v in wanted.items()}
             only = {k: v for k, v in wanted.items() if before.get(k) != v}
             prov = None
         if only:

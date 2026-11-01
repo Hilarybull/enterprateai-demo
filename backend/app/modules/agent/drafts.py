@@ -77,6 +77,10 @@ def card(d: dict, document_title: str | None = None) -> dict:
     title = str(d.get("title") or "").strip()
     title = re.sub(rf"^{re.escape(word)}\s*(?:for|:|-)?\s*", "", title, flags=re.I).strip() if title else ""
     to = str(d.get("to") or "")
+    if d.get("kind") == "idea_validation" and d.get("ref"):
+        # Its result as it ran, with Accept, Modify and Reject: never the form to run again (the owner, 31 Oct: "why am I
+        # running the validation every time to get this… why not get me the result it already ran")
+        to = f"/validation?history_id={d['ref']}&history_type=v4_validation&view=results"
     if to and "review=" not in to:
         to = f"{to}{'&' if '?' in to else '?'}review={d['id']}"
     if not title and document_title:      # named by its own document when it has no title of its own

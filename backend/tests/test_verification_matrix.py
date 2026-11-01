@@ -160,7 +160,8 @@ def _drive(env, text):
 
 def _ledger_matches(env, client_get) -> bool:
     page = client_get("/businesses/A/agent/charges")
-    taken = sum(c for _, _, c in env.meter.charges) - sum(c for _, c, _, _ in getattr(env.meter, "refunds", []))
+    # Tasks' charges: a chat reply (2 credits) is on the Credits page, not on a task (the owner, 1 Nov)
+    taken = sum(c for _, f, c in env.meter.charges if f != "chat_message") - sum(c for _, c, _, _ in getattr(env.meter, "refunds", []))
     return page["total"] == taken
 
 

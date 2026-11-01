@@ -6,8 +6,8 @@ def test_things_to_do_shows_the_list_and_recommends_do_all():
     got = {}
     say, out = offer_things_left("Got it. Your launch score is now 0/100 so far, with 16 things to do.", got, [{"label": "Open your launch plan", "to": "/launch/p1"}])
     assert "result" in got["show"]
-    assert "Want me to do them for you?" in say
-    assert out[-1] == {"label": "Do all for me", "kind": "explain", "prompt": "Do it all for me"}
+    assert "Want me to take them off your hands?" in say
+    assert out[-1] == {"label": "Go ahead", "kind": "explain", "prompt": "Do it all for me"}      # "go ahead" (31 Oct)
     assert out[0]["label"] == "Open your launch plan"
 
 

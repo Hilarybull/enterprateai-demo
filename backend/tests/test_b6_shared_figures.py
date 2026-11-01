@@ -66,7 +66,7 @@ def test_a_planned_figure_answered_in_one_tool_is_used_by_the_next():
     assert "planned" in r["pending_question"]["question"]
     r = run(env.orch.provide_input(r["id"], OWNER, {"monthly_sales": 20, "capacity": 30}))
     assert r["status"] == "succeeded" and r["summary"].startswith("Planned figures")
-    assert planned.figures(env.businesses["A"]["data"])["monthly_sales"]["value"] == 20      # kept, labelled planned, for every other tool
+    assert planned.figures(env.businesses["A"]["data"], env.orch.rt.clock().date())["monthly_sales"]["value"] == 20      # kept, labelled planned, for every other tool
 
 
 def test_a_written_answer_is_given_the_adopted_figures_and_the_reviews_own_results(monkeypatch):

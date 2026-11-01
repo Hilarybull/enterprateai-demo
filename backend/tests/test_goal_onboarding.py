@@ -521,7 +521,8 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
                "problem": "month end takes too long", "purpose": "investors", "worry": "one big client", "top_share": "over_50", "runway": "3_6", "paid_on_time": "on_time", "key_person": "slows", "cash_in_bank": 400, "monthly_costs": 300, "item": "Consulting", "solution": "A website redesign",
                # the document questions (an invoice or a quotation asks these too)
                "customer_email": "frank@example.test", "quantity": 1, "vat_rate": 0, "due_days": 14}
-    for n, goal in enumerate(goals.GOALS):                                  # twelve tasks: well past Explorer's five a month, and still none refused
+    from app.modules.agent import config as _cfg
+    for n, goal in enumerate(g for g in goals.GOALS if g.get("start") not in _cfg.PLAN_GATED_FROM_HOMEPAGE):      # the business plan is Starter (31 Oct)
         g = client.post("/task-sessions", json={"key": goal["key"]}).json()
         assert "credit_badge" not in g["resolution"], goal["key"]
         client.post(f"/task-sessions/{g['id']}/inputs", json={"answers": {q["key"]: answers[q["key"]] for q in g["questions"]}})
@@ -550,13 +551,13 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     # A brand-new account is on the free plan too: its first task is carried out, and charged.
     who["user"] = None
     n = client.post("/task-sessions", json={"key": "create_business_plan", "entry_mode": "quick_task"}).json()
-    client.post(f"/task-sessions/{n['id']}/inputs", json={"answers": {"description": "Bookkeeping for small firms", "customer": "Small practices", "problem": "Month end takes a week"}})
+    client.post(f"/task-sessions/{n['id']}/inputs", json={"answers": {"description": "Bookkeeping for small firms", "customer": "Small practices", "problem": "Month end takes a week", "purpose": "investors"}})
     who["user"] = "brand.new@example.test"
     env.meter.balances["brand.new@example.test"] = 50                       # no plan set: Explorer
     client.post(f"/task-sessions/{n['id']}/attach-user")
     client.post(f"/task-sessions/{n['id']}/resume", json={"business_name": "Brand New Ltd"})
     first = client.post(f"/task-sessions/{n['id']}/prepare").json()
-    assert first["confirm"]["message"] == "I'll write your business plan. It costs 40 credits, and you have 50." and first["handoff"] is None      # its price first (P0.5c)
+    assert first["confirm"]["message"] == "I'll write your business plan, for investors. It costs 40 credits, and you have 50." and first["handoff"] is None      # its price first (P0.5c)
     first = client.post(f"/task-sessions/{n['id']}/prepare", json={"confirmed": True}).json()
     assert first["state"] == "awaiting_review" and first["handoff"]["run_id"], first["handoff"]
     done = client.get(f"/workflow-runs/{first['handoff']['run_id']}").json()["run"]

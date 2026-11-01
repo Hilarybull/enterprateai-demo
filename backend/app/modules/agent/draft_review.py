@@ -23,6 +23,10 @@ def _get(data: dict, path: str) -> Any:
 
 
 def _same(a: Any, b: Any) -> bool:
+    try:      # the same figure however it is written ("35" and 35.00): never approved twice (the owner, 1 Nov)
+        return abs(float(str(a).replace(",", "")) - float(str(b).replace(",", ""))) < 0.005
+    except (TypeError, ValueError):
+        pass
     return json.dumps(a, sort_keys=True, default=str) == json.dumps(b, sort_keys=True, default=str) or str(a if a is not None else "").strip() == str(b if b is not None else "").strip()
 
 

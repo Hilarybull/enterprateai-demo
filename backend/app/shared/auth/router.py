@@ -418,6 +418,11 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
     # Upsert user by email to keep user_id stable across auth methods.
     existing = await sb_select("users", filters=[("id", "eq", identity.email)], single=True)
     is_new_user = not existing
+    if not existing and payload.intent == "signin":
+        # Signing in, with no account for this email (a deleted one included): said, with the way to create one (the owner,
+        # 31 Oct: "deleted the account and I'm still able to sign in with Google instead of being told to create one")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail={"error": "NO_ACCOUNT", "message": "There's no EnterprateAI account for this Google email. Create an account to get started."})
     if not existing:
         await sb_insert(
             "users",
@@ -520,10 +525,9 @@ async def delete_my_account(payload: DeleteAccountRequest, user=Depends(get_curr
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Type your email address exactly to confirm.")
     if email in ("tech.support@enterprateai.com", "demo") or user.get("id") == "demo":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account can't be deleted from here.")
-    try:      # clear the one reference that doesn't follow the account
-        await sb_update("workspace_invitations", payload={"accepted_by_user_id": None}, filters=[("accepted_by_user_id", "eq", user["id"])])
-    except Exception:      # noqa: BLE001
-        pass
+    # Everything the account owns goes with it: workspaces and their data, credits, plan, documents (the owner, 31 Oct)
+    from app.shared.auth.purge import purge_account
+    await purge_account(user["id"], email)
     await sb_delete("users", filters=[("id", "eq", user["id"])])
     forget_user(user["id"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)

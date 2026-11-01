@@ -35,9 +35,8 @@ def test_some_found_is_charged_per_finding_and_the_rest_given_back():
     topics = len(r["topics"])
     found = len({x["topic"] for x in r["items"] if research.billable(x) and x.get("sources")})
     assert 0 < found < topics
-    per = research.per_finding(60, topics)
-    assert r["charged"] == min(60, found * per) and meter.balances[OWNER] == 200 - r["charged"]
-    assert meter.refunds and meter.refunds[0][1] == 60 - r["charged"]      # reserved the maximum, the rest given back at once
+    # Funding research is charged at its list price once anything is found (the owner, 28 Oct: FLAT_PRICE), never per finding
+    assert research.flat_price("need_funding") and r["charged"] == 60 and meter.balances[OWNER] == 200 - 60
 
 
 def test_the_maximum_is_the_price_list_s_and_never_exceeded():

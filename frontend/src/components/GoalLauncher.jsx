@@ -404,7 +404,7 @@ export function AgentGoalChat({ text }) {
 }
 
 // What the placeholder types out, one after another, while the field is empty and untouched.
-export const EXAMPLES = ["Create an invoice for Mark, $300", "Find grants for my bakery", "Draft a quote for 20 chairs", "Help me price my product"];
+export const EXAMPLES = ["Create an invoice for Mark, £300", "Find grants for my bakery", "Draft a quote for 20 chairs", "Help me price my product"];
 const STATIC_EXAMPLE = "For example: create an invoice for ABC Consulting, or I need more customers";
 // The Agent's steps as a visitor sees them. Ticked from the real task where there is one.
 export const AGENT_STEPS = [];

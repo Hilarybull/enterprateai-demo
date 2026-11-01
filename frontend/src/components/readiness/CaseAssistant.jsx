@@ -3,12 +3,15 @@
 // after, what to do next), and beside it the business, the score, recent activity and quick actions. Everything shown comes
 // from the case and the business's own records; nothing is invented, and nothing is used before the owner approves it.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../../api/client";
 import { noteCameFrom } from "../../lib/cameFrom";
-import { agentErrorMessage, approveAction, getChat, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
+import UkDateInput from "../UkDateInput";
+import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, questionOf, useFollowRuns, agentErrorMessage, approveAction, doesItFirst, getChat, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
 import { sectionCounts } from "../../lib/caseSteps";
-import { getPath, isReady } from "../../lib/readiness";
+import { attest, getPath, isReady, reviewDocument, saveForecast } from "../../lib/readiness";
+import { AddEvidence } from "./Evidence";
 import { useAuthStore } from "../../store/auth";
 import { PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "../agent/ChatActions";
 import { ActivitySheet, BreakdownSheet, ProfileSheet, StepsSheet } from "../agent/Sheets";
@@ -207,7 +210,9 @@ function ResultCard({ subject, steps, records, words, score, onOpen }) {
       {!ready && gaps.length > 0 && (
         <div className="mt-3 flex items-start gap-3 rounded-xl bg-blue-50 px-4 py-3 text-[13px] text-slate-700 dark:bg-brand-950/40 dark:text-slate-200">
           <span className="text-blue-600"><Glyph name="bulb" className="h-6 w-6" /></span>
-          <span><span className="block font-semibold text-blue-900 dark:text-blue-100">Your business shows potential, but there are some important gaps.</span>
+          {/* "Shows potential" only when something on record shows it (the owner's QA, 31 Oct: said with nothing found) */}
+          <span><span className="block font-semibold text-blue-900 dark:text-blue-100">{records.some((r) => r.available)
+            ? "Your business shows potential, but there are some important gaps." : "You're at the starting line, with a clear path forward."}</span>
             Closing the missing and incomplete areas raises your score. It shows how prepared you are, not whether {subject.kind === "launch_initiative" || subject.kind === "launch" || /launch/i.test(words.area || "") ? "the launch will succeed" : "funding will be given"}.</span>
         </div>
       )}
@@ -269,11 +274,11 @@ function ChooseCard({ subject, steps, price, onHelp, onSelf, busy, reuse = false
   );
 }
 
-function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStarted = false, drafts = 0, options = false, onDecideAll = null, onResults = null, onNext = null }) {
+function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, draftsOnly = false, justStarted = false, drafts = 0, options = false, onDecideAll = null, onResults = null, onNext = null }) {
   const [deciding, setDeciding] = useState("");
   const gaps = gapsOf(subject, steps).filter((g) => g.state !== "Completed");
   // Drafts waiting are the research done (the owner, 28 Oct: "9 drafts waiting" beside "Processing…")
-  const review = (ctx?.research?.state === "review" || drafts > 0) && !ctx?.working;
+  const review = ((!draftsOnly && ctx?.research?.state === "review") || drafts > 0) && !ctx?.working;      // funding and launch: its drafts, never a list of leftover findings
   const done = review || (ctx?.research?.state === "adopted" && !ctx?.working);      // drafts back win over an older failure (29 Oct)
   // Not running and nothing to show for it: said, with Retry, never a spinner for ever (the owner, 28 Oct)
   if (ctx && !ctx.working && !done && (ctx.failed || !justStarted)) {
@@ -347,7 +352,7 @@ function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, justStart
   );
 }
 
-function ScoreChangeCard({ subject, steps, before, after, words }) {
+function ScoreChangeCard({ subject, steps, before, after, words, current = true }) {
   const ready = subject.summary?.classification === "ready";
   const areas = gapsOf(subject, steps);
   const up = after - before;
@@ -371,13 +376,13 @@ function ScoreChangeCard({ subject, steps, before, after, words }) {
           <p className="text-[13px] text-slate-500">from {before}/100 to {after}/100</p>
         </div>
       </div>
-      {why.length > 0 && (
+      {current && why.length > 0 && (
         <ul className="mx-5 mb-4 space-y-1 rounded-xl bg-slate-50 px-4 py-3 text-[13px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200" data-score-why>
           <li className="font-semibold text-slate-900 dark:text-slate-100">Why it changed</li>
           {why.map((w) => <li key={w}>{w}</li>)}
         </ul>
       )}
-      <div className="px-5 pb-5">
+      {current && <div className="px-5 pb-5">
         <p className="mb-1 text-[13.5px] font-bold text-slate-900 dark:text-slate-100">Key areas ({areas.filter((a) => a.state === "Completed").length} of {areas.length} complete)</p>
         <ul className="divide-y divide-slate-100 dark:divide-slate-800">{areas.map((a) => (
           <li key={a.key} className="flex items-center justify-between gap-2 py-2 text-[13.5px] text-slate-700 dark:text-slate-200">
@@ -385,7 +390,7 @@ function ScoreChangeCard({ subject, steps, before, after, words }) {
             <Chip>{a.state === "Completed" ? "Completed" : "To do"}</Chip>
           </li>
         ))}</ul>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -411,27 +416,37 @@ function ReadyCard({ subject, score, words }) {
   );
 }
 
-function NextCard({ feature, ctx, onTab, send, score = null, name = "" }) {
+function NextCard({ feature, ctx, onTab, send, score = null, name = "", steps = [] }) {
   const navigate = useNavigate();
+  const canDraftMore = canDraftAny(steps, ctx?.draft_fields);
   const rows = [
+    ...(feature === "funding" && !["review", "adopted"].includes(ctx?.research?.state) && !ctx?.working
+      ? [{ key: "do_all", icon: "sparkles", tone: "bg-violet-50 text-violet-600", title: "Let me do it all for you",
+          ...(ctx?.can_do_all === false
+            ? { text: "Part of the Decision Engine plan: I research what's missing and draft it, and you just approve it.", cta: "See Decision Engine", go: () => navigate("/pricing") }
+            : { text: `I research what's missing and draft it for you to approve.${ctx?.do_all_price ? ` ${ctx.do_all_price} credits.` : ""}`, cta: "Do all for me", go: () => send("Yes, do it all for me") }), primary: true }] : []),
+    ...(feature === "funding" && ["review", "adopted"].includes(ctx?.research?.state) && !ctx?.working && canDraftMore
+      ? [{ key: "draft", icon: "sparkles", tone: "bg-violet-50 text-violet-600", title: "Let me draft what's left",
+          text: "Every field still empty, with estimates where your records have none, for you to approve. No extra charge.", cta: "Draft the rest", go: () => send("Fill the rest for me"), primary: true }] : []),
     ...(feature === "funding"
       // A plan draft already waiting is reviewed, never drafted again (QA, 30 Oct: "Draft your business plan" beside a draft
       // in Needs Approval)
       ? [(((ctx?.approvals?.items) || []).some((a) => /business plan/i.test(`${a.kind} ${a.title}`))
         ? { key: "plan", icon: "doc", tone: "bg-blue-50 text-blue-600", title: "Review your business plan draft", text: "It's waiting in Needs Approval for you to accept, edit or reject.", cta: "Review the plan", go: () => navigate("/agent?tab=needs_approval"), primary: true }
-        : { key: "plan", icon: "doc", tone: "bg-blue-50 text-blue-600", title: "Prepare your business plan", text: "A business plan made from your existing data.", cta: "Create business plan", go: () => send("Draft my business plan"), primary: true }),
+        : { key: "plan", icon: "doc", tone: "bg-blue-50 text-blue-600", title: "Prepare your business plan", text: "A business plan made from your existing data.", cta: "Create business plan", go: () => send("Draft my business plan"), primary: ["review", "adopted"].includes(ctx?.research?.state) }),
+         ...(["review", "adopted"].includes(ctx?.research?.state) ? [{ key: "left", icon: "pen", tone: "bg-amber-50 text-amber-600", title: "Fill in what's left", text: "See every item still open, and answer them here.", cta: "Show what's left", go: () => send("What's left?") }] : []),
          { key: "options", icon: "target", tone: "bg-emerald-50 text-emerald-600", title: "Find funding options", text: "Investors, grants and loans that match your case.", cta: "Find options", go: () => send("Research funding options for my case") }]      // real research, its price first (28 Oct); a quotation is never a funding step (QA, 30 Oct)
       // What fits where the plan stands (the owner, 28 Oct: "you can't be recommending these steps at 0%"): the plan first while
       // it is thin, testing it once it holds together, the launch decision only when it is close to ready
       : [...(!(Number(score) >= 60) ? [{ key: "complete", icon: "pen", tone: "bg-amber-50 text-amber-600", title: "Complete your launch plan",
             text: "What you're launching, its price, who it's for and when. Your score rises as you fill them in.", cta: "Fill in the gaps", go: () => onTab?.("answers"), primary: true }] : []),
          // Research already done: what is still blank is drafted next, never the research offered again (the owner, 29 Oct)
-         ...(!(Number(score) >= 40) ? [["review", "adopted"].includes(ctx?.research?.state)
-           ? { key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me draft what's left",
-               text: "I'll draft every field still blank, with estimates where your records have none, for you to approve.", cta: "Draft the rest", go: () => send("Fill the rest for me") }
-           : { key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me prepare it for you",
+         ...(!(Number(score) >= 40) && !["review", "adopted"].includes(ctx?.research?.state) ? [{ key: "help", icon: "sparkles", tone: "bg-blue-50 text-blue-600", title: "Let me prepare it for you",
                text: "I'll research and draft what's missing, for you to approve.", cta: "Help me complete it", go: () => send("Help me complete it") }] : []),
-         ...(Number(score) >= 40 ? [{ key: "market", icon: "layers", tone: "bg-blue-50 text-blue-600", title: "Test it on the Marketplace", text: "List the service so customers can request quotations.", cta: "List on the Marketplace", go: () => send("Help me list this service on the Marketplace"), primary: Number(score) >= 60 }] : []),
+         // Once it's drafted, the Agent hands on to what comes next (the owner, 1 Nov: "hands off, recommend other features")
+         ...(!ctx?.validated && ["review", "adopted"].includes(ctx?.research?.state) ? [{ key: "validate", icon: "target", tone: "bg-emerald-50 text-emerald-600", title: "Validate this product", text: "See whether people will pay for it before you spend more.", cta: "Validate it", go: () => send(`Run the idea validation for ${name || "this product"}`) }] : []),
+         ...(["review", "adopted"].includes(ctx?.research?.state) ? [{ key: "plan", icon: "doc", tone: "bg-blue-50 text-blue-600", title: "Write its business plan", text: "A business plan for this product, from what's on your plan.", cta: "Create business plan", go: () => send(`Draft a business plan for ${name || "this product"}`) }] : []),
+         ...(Number(score) >= 40 || ["review", "adopted"].includes(ctx?.research?.state) ? [{ key: "market", icon: "layers", tone: "bg-blue-50 text-blue-600", title: "Test it on the Marketplace", text: "List the service so customers can request quotations.", cta: "List on the Marketplace", go: () => send("Help me list this service on the Marketplace"), primary: Number(score) >= 60 }] : []),
          ...(Number(score) >= 60 ? [{ key: "decide", icon: "pen", tone: "bg-violet-50 text-violet-600", title: "Decide how to launch", text: "Launch now, test first or wait, from where your plan stands.", cta: "Help me decide",
             go: () => send(`Should I launch ${name || "this"} now, test it first or wait?`) }] : [])]),
   ];
@@ -536,8 +551,8 @@ export function ApprovalsCard({ ctx, onDone, onReview = null, onEdit = null }) {
 
 const TAG = { "External research": "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-200", "Existing business data": "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200",
   "AI-assisted draft": "bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-200" };
-const tagOf = (src) => (/research|web|market|search|source/i.test(String(src || "")) ? "External research" : /record|invoice|customer|profile|catalogue|your /i.test(String(src || "")) ? "Existing business data" : "AI-assisted draft");
-const sameValue = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "") || String(a ?? "").trim() === String(b ?? "").trim();
+const tagOf = (src) => (/estimate|suggested/i.test(String(src || "")) ? "AI-assisted draft" : /research|web|market|search|source/i.test(String(src || "")) ? "External research" : /record|invoice|customer|profile|catalogue|your /i.test(String(src || "")) ? "Existing business data" : "AI-assisted draft");
+const sameValue = (a, b) => (a !== null && a !== undefined && a !== "" && b !== null && b !== undefined && b !== "" && Math.abs(Number(String(a).replace(/,/g, "")) - Number(String(b).replace(/,/g, ""))) < 0.005) || JSON.stringify(a ?? "") === JSON.stringify(b ?? "") || String(a ?? "").trim() === String(b ?? "").trim();
 // A field the checklist doesn't name, in words ("market.size" is "Market size"), never its path
 const words = (path) => String(path).split(".").pop().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 /** The drafts still waiting, each with its field's label and section. */
@@ -838,19 +853,21 @@ function IdeaChooseCard({ price, onStart, onSelf, busy, reuse = false }) {
     <div className={`${BOX} p-5`} data-card="choose">
       <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">Choose how to continue</p>
       <div role="radiogroup" aria-label="How to continue" className="mt-3 flex flex-col gap-3 sm:flex-row">
-        <Option id="help" title="Research & Prepare" text={`I'll research comparable services, pricing and demand, then prepare updated assumptions for your review.${reuse ? " Free: it reuses your last research." : price ? ` Up to ${price} credits.` : ""}`} />
+        {/* The Idea Validation itself: the run that answers margin, break-even and demand (the owner, 31 Oct: "start should just
+            run the idea validation") */}
+        <Option id="help" title="Run the idea validation" text="I'll fill in the Idea Validation form from your idea and records, estimate what's missing, and give you its full result to accept, modify or reject." />
         <Option id="self" title="Enter information myself" text="I'll take you through the inputs and you enter them yourself." />
       </div>
-      <p className="mt-4 text-[13.5px] font-bold text-slate-900 dark:text-slate-100">Research workstreams</p>
-      <ul className="mt-1 divide-y divide-slate-100 dark:divide-slate-800">{["Comparable services", "Competitor pricing", "Market demand", "Pricing assumptions", "Sales assumptions"].map((w) => (
+      <p className="mt-4 text-[13.5px] font-bold text-slate-900 dark:text-slate-100">What it works out</p>
+      <ul className="mt-1 divide-y divide-slate-100 dark:divide-slate-800">{["Margin per sale", "Break-even sales", "Market demand", "Risks", "Next steps"].map((w) => (
         <li key={w} className="flex items-center justify-between py-2 text-[13.5px] text-slate-700 dark:text-slate-200"><span className="flex items-center gap-2"><span className="h-4 w-4 rounded-full border-2 border-slate-300" />{w}</span><span className="text-[12.5px] text-slate-400">Pending</span></li>
       ))}</ul>
-      <Info>All research findings are shown to you for approval before they change anything. You're charged only when it finishes; if it fails or times out, nothing is taken.</Info>
+      <Info>Its result waits for you to accept, modify or reject. Any price is said first, and you're charged only when it finishes.</Info>
       {/* Both ways as buttons of their own: one press, nothing to pick first (the owner, 29 Oct: "the enter by yourself on the idea
           validation is still not working fine") */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy} onClick={onStart} className={`rounded-lg px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${pick === "help" ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-brand-600 text-brand-700 hover:bg-brand-50"}`} data-idea-start>
-          {`Start${reuse ? " · free" : price ? ` · up to ${price} credits` : ""}`}
+          Run the idea validation
         </button>
         <button type="button" disabled={busy} onClick={onSelf} className={`rounded-lg px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${pick === "self" ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"}`} data-idea-self>
           Enter it myself
@@ -881,7 +898,8 @@ function IdeaFormCard({ businessId, idea, currency, onSaved, say, onBack = null 
     try {
       await post({ ...known, ...next });
       const line = `Updated ${moved.map(([k, label], i) => `${i ? label.toLowerCase() : label}: ${shown(k, was[k])} → ${shown(k, next[k])}`).join("; ")}.`;
-      setState({ busy: false, done: { line, was }, problem: "" });
+      // said once, in the chat with its next step; the card keeps only Undo (the owner, 31 Oct: the update was shown twice)
+      setState({ busy: false, done: { line: say ? "Saved." : line, was }, problem: "" });
       say?.(line);
       onSaved?.();
     } catch (e) { setState({ busy: false, done: null, problem: agentErrorMessage(e, "Those details couldn't be saved just now.") }); }
@@ -922,19 +940,207 @@ function IdeaFormCard({ businessId, idea, currency, onSaved, say, onBack = null 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button type="button" disabled={state.busy} onClick={save} className="rounded-lg bg-brand-600 px-4 py-2 text-[13.5px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60" data-idea-save>Save</button>
         {/* Changed my mind: back to the choice, to have it filled in instead (the owner, 30 Oct) */}
-        {onBack && <button type="button" disabled={state.busy} onClick={onBack} className="rounded-lg border border-slate-300 px-4 py-2 text-[13.5px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200" data-idea-back>Back to the options</button>}
+        {onBack && <button type="button" disabled={state.busy} onClick={() => { setState({ busy: false, done: { line: "Closed. Pick how to continue below." }, problem: "" }); onBack(); }} className="rounded-lg border border-slate-300 px-4 py-2 text-[13.5px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200" data-idea-back>Back to the options</button>}
       </div>
     </div>
   );
 }
 
-// Where a finished idea research goes: its findings in the Research tab, its result on the Assessment tab
 // Then the idea validation, the main flow, one press away (the owner, 30 Oct: "fill these first, then run the idea validation")
 const VALIDATE_NEXT = [{ label: "Run the idea validation", prompt: "Run the idea validation" }];
-const ideaDone = (run) => [{ label: "Review findings", to: `/check/idea?tab=research${run ? `&review=${encodeURIComponent(run)}` : ""}` },
-  { label: "See your result", to: "/check/idea?tab=assessment" }];
 
-const ONCE = new Set(["findings", "choose", "next", "research_again", "progress"]);
+const ONCE = new Set(["findings", "choose", "next", "research_again", "progress", "pending"]);
+
+// What's left, in the chat, to fill in right here (the owner, 1 Nov: "it should provide the pendings for filling on the chat"): a
+// single answer is typed in its box and saved on the case; a forecast, a table or evidence opens where it's done.
+const NOT_TYPED = /forecast|use_of_funds|milestone|evidence|responsibilities|gaps|risks|confirm|economics$|^economics\b|no_gaps|no_known_risks/i;
+// Offered only for what's really on the list and the Agent can write: never a button that answers "I can't" (the owner, 1 Nov)
+const DRAFT_FIELD_OF = { "team.no_gaps": "team.gaps", no_known_risks: "risks" };
+const fieldOfStep = (st) => { try { return new URLSearchParams(String(st?.to || "").split("?")[1] || "").get("field"); } catch { return null; } };
+export function canDraftAny(steps, fields) {
+  const can = new Set(fields || []);
+  return (steps || []).some((st) => { const f = fieldOfStep(st); return f && !st.drafted && can.has(DRAFT_FIELD_OF[f] || f); });
+}
+const BOXED = "min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-[14px] outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-900";
+const SAVE = "rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50";
+// A step done here, in the chat (the owner, 1 Nov: "why are they taking me away from the chat?"): the months on spending lines, a
+// milestone's missing details, a simple forecast, or a press to confirm. Null when it needs its own page (evidence, a long list).
+function PendingInline({ st, data, typed, setTyped, done, onField, subject, subjectId, businessId, feature, onSaved, otherwise }) {
+  const [problem, setProblem] = useState("");
+  const val = (k) => typed[`${st.key}:${k}`] || "";
+  const set = (k, v) => setTyped((t) => ({ ...t, [`${st.key}:${k}`]: v }));
+  const attempt = async (fn) => { setProblem(""); try { await fn(); done(); onSaved?.(); } catch { setProblem("That didn't save just now. Please try again."); } };
+  const oops = problem && <p role="alert" className="mt-1 w-full text-[12.5px] font-semibold text-rose-600">{problem}</p>;
+  if (st.attest) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(() => attest(businessId, feature, subjectId, { code: st.attest.code, passed: true, rationale: st.attest.rationale }))}>Confirm</button>{oops}</div>;
+  if (st.confirmGoal && onField) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(async () => onField("timing_confirmed", true))}>Confirm</button>{oops}</div>;
+  if (/tab=evidence/.test(String(st.to || "")) && subject && !st.attest) {
+    return <div className="mt-2"><AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={feature === "funding" ? "C4.A" : undefined} onAdded={() => { done(); onSaved?.(); }} onCancel={() => {}} /></div>;
+  }
+  if (st.review) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(async () => { for (const key of st.review) await reviewDocument(businessId, subjectId, key, { reviewed: true }); })}>Mark reviewed</button>{oops}</div>;
+  const uid = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const boxes = (fields, submit, extra = null) => {
+    const ready = fields.every(([k]) => val(k).trim());
+    return (
+      <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(async () => submit(Object.fromEntries(fields.map(([k]) => [k, val(k).trim()])))); }}>
+        {fields.map(([k, label, kind]) => (kind === "date" ? <UkDateInput key={k} aria-label={label} value={val(k)} onChange={(v) => set(k, v)} className={BOXED} />
+          : <input key={k} aria-label={label} placeholder={label} value={val(k)} onChange={(e) => set(k, e.target.value)} className={BOXED} />))}
+        <button type="submit" disabled={!ready} className={SAVE}>Save</button>{extra}{oops}
+      </form>
+    );
+  };
+  const none = (label, path) => <button type="button" onClick={() => attempt(async () => onField(path, true))} className="rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">{label}</button>;
+  const rowsAt = (path) => { const v = getPath(data || {}, path); return Array.isArray(v) ? v : []; };
+  const oneBox = (path, id, key, label) => boxes([["v", label]], ({ v }) => onField(path, rowsAt(path).map((r, i) => (String(r.id || i) === id ? { ...r, [key]: v } : r))));
+  if (onField) {
+    if (st.key === "team.who") return boxes([["delivers", "Who delivers the plan"], ["wins", "Who wins customers"]], ({ delivers, wins }) => onField("team.responsibilities", [{ id: uid(), area: "Delivering the plan", owner: delivers }, { id: uid(), area: "Winning customers", owner: wins }]));
+    if (st.key === "team.gaps") return boxes([["gap", "What could slow delivery"], ["action", "What you'll do about it"]], (r) => onField("team.gaps", [{ id: uid(), ...r }]), none("There are none", "team.no_gaps"));
+    if (st.key === "risks") return boxes([["risk", "A risk you know of"], ["action", "What you'll do about it"]], (r) => onField("risks", [{ id: uid(), ...r }]), none("There are none", "no_known_risks"));
+    if (st.key.startsWith("team.owner.")) return oneBox("team.responsibilities", st.key.slice(11), "owner", "Who owns it");
+    if (st.key.startsWith("team.gap.")) return oneBox("team.gaps", st.key.slice(9), "action", "What you'll do about it");
+    if (st.key.startsWith("risk.")) return oneBox("risks", st.key.slice(5), "action", "What you'll do about it");
+    if (st.key === "goal.milestone") return boxes([["outcome", "What the funding achieves"], ["measure", "How you'll measure it"], ["target", "The target"], ["due_date", "Due date", "date"]], (r) => { const id = uid(); onField("milestones", [{ id, ...r }]); onField("purpose_milestone_id", id); });
+    if (st.key === "uof") return boxes([["purpose", "What it pays for"], ["amount", "How much"]], ({ purpose, amount }) => onField("use_of_funds", [{ id: uid(), category: "Other", purpose, amount: amount.replace(/[^0-9.]/g, "") }]));
+    if (st.key === "uof.total") {
+      const lines = rowsAt("use_of_funds");
+      return boxes(lines.map((r, i) => [String(r.id || i), `${r.purpose || r.category || "Line"}: ${r.amount ?? ""}`]), (got) => onField("use_of_funds", lines.map((r, i) => ({ ...r, amount: got[String(r.id || i)].replace(/[^0-9.]/g, "") }))));
+    }
+    if (st.key === "uof.purpose") {
+      const lines = rowsAt("use_of_funds");
+      const open = lines.filter((r) => [null, undefined, ""].includes(r.purpose) && [null, undefined, ""].includes(r.rationale));
+      return boxes(open.map((r, i) => [String(r.id || i), `What ${r.category || "this line"} pays for`]), (got) => onField("use_of_funds", lines.map((r, i) => (got[String(r.id || i)] ? { ...r, purpose: got[String(r.id || i)] } : r))));
+    }
+    if (st.key === "economics") {
+      const words = { price: "Your price per sale", direct_cost: "Your direct cost per sale", fixed_costs_monthly: "Your fixed costs each month" };
+      const open = Object.keys(words).filter((k) => [null, undefined, ""].includes(getPath(data || {}, `economics.${k}`)));
+      return boxes(open.map((k) => [k, words[k]]), (got) => onField("economics", { ...(data?.economics || {}), ...Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.replace(/[^0-9.]/g, "")])) }));
+    }
+    if (st.key === "goal.link" || st.key === "market.milestone") {
+      const path = st.key === "goal.link" ? "purpose_milestone_id" : "market.acquisition_milestone_id";
+      const list = rowsAt("milestones");
+      if (list.length) {
+        return (
+          <div className="mt-2 flex flex-wrap gap-2">{list.map((m) => <button key={m.id} type="button" className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50" onClick={() => attempt(async () => onField(path, m.id))}>{m.outcome || "This milestone"}</button>)}{oops}</div>
+        );
+      }
+    }
+  }
+  if (st.key === "uof.period" && onField) {
+    const rows = Array.isArray(data?.use_of_funds) ? data.use_of_funds : [];
+    const open = rows.filter((r) => !/^\d{4}-\d{2}/.test(String(r.period || "")));
+    const ready = open.length > 0 && open.every((r) => val(r.id));
+    return (
+      <form className="mt-2 space-y-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(async () => onField("use_of_funds", rows.map((r) => (val(r.id) ? { ...r, period: val(r.id) } : r)))); }}>
+        {open.map((r) => <label key={r.id} className="flex flex-wrap items-center gap-2 text-[13px] text-slate-600 dark:text-slate-300"><span className="min-w-0 flex-1">{r.purpose || r.category || "Spending line"}</span>
+          <input type="month" aria-label={`Month for ${r.purpose || r.category || "this line"}`} value={val(r.id)} onChange={(e) => set(r.id, e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-[14px] dark:border-slate-700 dark:bg-slate-900" /></label>)}
+        <button type="submit" disabled={!ready} className={SAVE}>Save</button>{oops}
+      </form>
+    );
+  }
+  if (st.key === "goal.milestone.measure" && onField) {
+    const rows = Array.isArray(data?.milestones) ? data.milestones : [];
+    const lineLinked = (Array.isArray(data?.use_of_funds) ? data.use_of_funds : []).map((a) => a.milestone_id).find(Boolean);
+    const mine = rows.find((m) => m.id === (data?.purpose_milestone_id || lineLinked));
+    if (!mine) return otherwise;
+    const lacks = [["measure", "How you'll measure it"], ["target", "The target"], ["due_date", "Due date"]].filter(([k]) => [null, undefined, ""].includes(mine[k]));
+    const ready = lacks.length > 0 && lacks.every(([k]) => val(k).trim());
+    return (
+      <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(async () => onField("milestones", rows.map((m) => (m.id === mine.id ? { ...m, ...Object.fromEntries(lacks.map(([k]) => [k, val(k).trim()])) } : m)))); }}>
+        {lacks.map(([k, label]) => (k === "due_date" ? <UkDateInput key={k} aria-label={label} value={val(k)} onChange={(v) => set(k, v)} className={BOXED} />
+          : <input key={k} aria-label={label} placeholder={label} value={val(k)} onChange={(e) => set(k, e.target.value)} className={BOXED} />))}
+        <button type="submit" disabled={!ready} className={SAVE}>Save</button>{oops}
+      </form>
+    );
+  }
+  if (["forecast", "forecast.opening", "forecast.months", "forecast.short"].includes(st.key) && subjectId) {
+    const n = (k) => val(k).replace(/[^0-9.]/g, "");
+    const had = subject?.forecast?.data || null;
+    const ready = n("cash") !== "" && n("in") !== "" && n("out") !== "";
+    const save = () => {
+      const start = new Date();
+      const months = Array.from({ length: 12 }, (_, i) => { const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+        const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        const old = (had?.months || []).find((m) => m.month === month) || {};
+        return { ...old, month, receipts: old.receipts || n("in"), payments: old.payments || n("out"), basis: old.basis || "forecast" }; });
+      const kept = (had?.months || []).filter((m) => !months.some((x) => x.month === m.month));
+      return saveForecast(businessId, feature, subjectId, { ...(had || {}), currency: had?.currency || data?.currency, start_month: had?.start_month || months[0].month, opening_cash: had?.opening_cash || n("cash"),
+        months: [...kept, ...months].sort((a, b) => String(a.month).localeCompare(String(b.month))) }, subject?.forecast?.revision ?? null);
+    };
+    return (
+      <form className="mt-2 space-y-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(save); }}>
+        <p className="text-[12.5px] text-slate-500">Three figures make a simple 12-month forecast. You can change any month later.</p>
+        <div className="flex flex-wrap gap-2">
+          <input inputMode="decimal" aria-label="Cash you have now" placeholder="Cash you have now" value={val("cash")} onChange={(e) => set("cash", e.target.value)} className={BOXED} />
+          <input inputMode="decimal" aria-label="Money in each month" placeholder="Money in each month" value={val("in")} onChange={(e) => set("in", e.target.value)} className={BOXED} />
+          <input inputMode="decimal" aria-label="Money out each month" placeholder="Money out each month" value={val("out")} onChange={(e) => set("out", e.target.value)} className={BOXED} />
+        </div>
+        <button type="submit" disabled={!ready} className={SAVE}>Save forecast</button>{oops}
+      </form>
+    );
+  }
+  return otherwise;
+}
+
+function PendingCard({ steps, onField, onOpen, onReview, onDraft, draftFields = [], data, subject, subjectId, businessId, feature, onSaved, sections = [] }) {
+  const boxRef = useRef(null);
+  const [myself, setMyself] = useState(false);
+  const [typed, setTyped] = useState({});
+  const [saved, setSaved] = useState([]);
+  const fieldOf = (st) => { try { return new URLSearchParams(String(st.to || "").split("?")[1] || "").get("field"); } catch { return null; } };
+  const left = (steps || []).filter((st) => !saved.includes(st.key) && !st.drafted);
+  const answered = (sections || []).reduce((t, x) => ({ done: t.done + (Number(x.answered) || 0), total: t.total + (Number(x.total) || 0) }), { done: 0, total: 0 });
+  const approved = Object.values(data?.provenance || {}).filter((x) => /accepted by you/i.test(String(x?.source || ""))).length;
+  const waitingNow = Object.keys(data?.agent_drafts || {}).length;
+  if (waitingNow > 0) {
+    return (
+      <div className={`${BOX} p-5`} data-card="pending" data-pending-review>
+        <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">{waitingNow} draft{waitingNow === 1 ? "" : "s"} ready for you to approve</p>
+        <p className="text-[13px] text-slate-500">Approve them first. Anything still left after that, I'll ask you here.</p>
+        <button type="button" onClick={onReview} className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-brand-700">Review drafts ({waitingNow})</button>
+      </div>
+    );
+  }
+  return (
+    <div ref={boxRef} className={`${BOX} p-5`} data-card="pending">
+      <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">{left.length ? `What's left (${left.length})` : "Nothing left to fill in"}</p>
+      {/* What's been done so far, from the case as it is now (the owner, 1 Nov: "are you not tracking and approving these things") */}
+      {(answered.total > 0 || approved > 0 || waitingNow > 0) && (
+        <p className="mt-1 text-[13.5px] font-medium text-emerald-800 dark:text-emerald-300" data-pending-done>
+          {[answered.total > 0 && `Done so far: ${answered.done} of ${answered.total} answers on your ${feature === "launch" ? "plan" : "case"}`,
+            approved > 0 && `${approved} from drafts you approved`, waitingNow > 0 && `${waitingNow} draft${waitingNow === 1 ? "" : "s"} waiting for you`].filter(Boolean).join(". ")}.
+        </p>
+      )}
+      {left.length > 0 && <p className="text-[13px] text-slate-500">{canDraftAny(left, draftFields) ? "Answer here and I'll save it to your " + (feature === "launch" ? "plan" : "case") + ". A rough answer is fine; you can change it later." : "These only you can do: your own figures, proof or sign-off. I've drafted everything else."}</p>}
+      {/* Done for them, or by hand: both always offered (the owner, 1 Nov: "what if the user wants to answer manually") */}
+      {left.length > 0 && canDraftAny(left, draftFields) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {onDraft && !myself && <button type="button" onClick={onDraft} className="rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-bold text-white hover:bg-brand-700" data-pending-draft>Draft the rest for me</button>}
+          {!myself && <button type="button" onClick={() => { setMyself(true); boxRef.current?.querySelector("input, textarea, select")?.focus?.(); }} className="rounded-lg border border-brand-600 px-4 py-2 text-[13px] font-semibold text-brand-700 hover:bg-brand-50" data-pending-manual>Fill it in myself</button>}
+          {myself && <p className="text-[13.5px] font-medium text-slate-700 dark:text-slate-200" data-pending-myself>Go ahead: fill in each one below and press Save. It stays right here.</p>}
+        </div>
+      )}
+      <ul className="mt-3 space-y-3">{left.map((st) => {
+        const field = fieldOf(st);
+        const canType = onField && field && !st.drafted && !NOT_TYPED.test(`${field} ${st.key}`);
+        const value = typed[st.key] || "";
+        const save = () => { if (!value.trim()) return; onField(field, value.trim()); setSaved((x) => [...x, st.key]); };
+        const open = <button type="button" onClick={() => (st.drafted ? onReview() : onOpen(st.to || `/${feature === "launch" ? "launch" : "funding"}/${subjectId}?tab=answers`))} className="mt-2 rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{st.cta || "Open"}</button>;
+        return (
+          <li key={st.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700" data-pending={st.key}>
+            <p className="text-[14.5px] font-semibold text-slate-900 dark:text-slate-50">{st.title}</p>
+            {st.why && <p className="text-[13px] text-slate-500">{st.why}</p>}
+            {canType ? (
+              <form className="mt-2 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); save(); }}>
+                {/date/i.test(field) ? <UkDateInput aria-label={st.title} value={value} onChange={(v) => setTyped((t) => ({ ...t, [st.key]: v }))} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-[14px] dark:border-slate-700 dark:bg-slate-900" />
+                  : <input aria-label={st.title} value={value} onChange={(e) => setTyped((t) => ({ ...t, [st.key]: e.target.value }))} className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-[14px] outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-900" />}
+                <button type="submit" disabled={!value.trim()} className="rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Save</button>
+              </form>
+            ) : st.drafted ? open : <PendingInline st={st} data={data} typed={typed} setTyped={setTyped} done={() => setSaved((x) => [...x, st.key])} onField={onField} subject={subject} subjectId={subjectId} businessId={businessId} feature={feature} onSaved={onSaved} otherwise={open} />}
+          </li>
+        );
+      })}</ul>
+    </div>
+  );
+}
 
 // A new search instead of the reused one, its own price said first (the owner, 28 Oct)
 function ResearchAgainCard({ businessId, answers, busy, onStart }) {
@@ -1064,13 +1270,23 @@ function WorkspaceCard({ ctx, onSheet }) {
   );
 }
 
+// A case's title is saved cut short ("...and set up the…"): on the card it's shown whole, from what the case says it's for (the owner, 1 Nov)
+export function fullTitle(title, purpose) {
+  const t = String(title || "");
+  if (!t.endsWith("…") || !purpose) return t;
+  const stem = t.slice(0, -1);
+  const tail = stem.slice(-16);
+  const at = String(purpose).indexOf(tail);
+  return at < 0 ? t : `${stem}${String(purpose).slice(at + tail.length).replace(/\.\s*$/, "")}`;
+}
+
 function ScoreSide({ subject, score, words, onTab, before = null }) {
   const sm = subject.summary || {};
   const n = score === null || score === undefined ? null : pct(score);
   return (
     <div className={`${BOX} p-5`} data-side="score">
       <div className="flex items-center justify-between"><p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">{words.score}</p><button type="button" className={LINK} onClick={() => onTab("overview")}>View checklist →</button></div>
-      <p className="mt-1 truncate text-[12.5px] text-slate-500">{subject.title}</p>
+      <p className="mt-1 break-words text-[12.5px] text-slate-500" data-case-title>{fullTitle(subject.title, subject.data?.purpose)}</p>
       <div className="mt-2 flex items-center gap-3">
         <p className="text-[30px] font-bold tabular-nums text-slate-900 dark:text-slate-50">{n ?? "?"}<span className="text-[16px] font-semibold text-slate-500">/100</span></p>
         {sm.classification && <span className={`rounded-md px-2 py-0.5 text-[12.5px] font-semibold ${isReady({ ...sm, score: score ?? sm.score }) ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{isReady({ ...sm, score: score ?? sm.score }) ? words.ready : "Not ready yet"}</span>}
@@ -1134,14 +1350,18 @@ const AGENT_DRAFTS = { "C2.A": "the price, delivery terms and customer promise",
 // Only the owner's own word: never a field the Agent can draft or fetch (the owner, 29 Oct)
 const OWNER_DOES = { "C1.B": "confirm you've reviewed the evidence", "C3.A": "confirm the cash forecast", "C3.B": "list your setup and running costs in the forecast",
   "C6.A": "confirm which permits apply" };
-export function launchLeft(subject) {
+export function launchLeft(subject, ctx = null) {
   const open = (subject?.actions || []).filter((a) => a.status === "open");
   if (!open.length) return null;
   const losing = open.find((a) => /contribution of -/i.test(a.why || ""));
   const codes = new Set(open.flatMap((a) => [a.code, ...(a.also || [])]));
   if (losing) codes.add("C2.B");
   if (open.some((a) => a.criterion === "C6")) codes.add("C6.B");      // the permit's blocker counts as its check
-  const mine = [...new Set(Object.entries(AGENT_DRAFTS).filter(([c]) => codes.has(c)).map(([, w]) => w))];
+  const data = subject?.data || {};
+  const blank = (p) => [null, undefined, ""].includes(getPath(data, p)) && !(p in (data.agent_drafts || {})) && !(data.rejected_drafts || []).includes(p);
+  // Offered only when something can still be drafted (the owner, 1 Nov: "I keep drafting the rest... why not draft once")
+  const canDraft = (ctx?.draft_fields || []).some(blank);
+  const mine = canDraft ? [...new Set(Object.entries(AGENT_DRAFTS).filter(([c]) => codes.has(c)).map(([, w]) => w))] : [];
   const yours = [...new Set(Object.entries(OWNER_DOES).filter(([c]) => codes.has(c)).map(([, w]) => w))];
   const ask = losing ? `Right now each sale loses money: ${tidy(losing.why).replace(/\.$/, "")}. I'll draft a price and cost that work, or tell me your real cost.` : "";
   const list = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
@@ -1296,7 +1516,7 @@ export function SideCards({ businessId, feature, subject, score, ctx, words = WO
               <button type="button" onClick={() => send("Research it for me")} className="flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Run market research</button>
             </div>
           </div>
-        ) : <QuickSide onTab={onTab} />}
+        ) : onTab ? <QuickSide onTab={onTab} /> : null}
       {sheet === "profile" && <ProfileSheet business={ctx?.business} businessId={businessId} onClose={closeSheet} />}
       {sheet === "activity" && <ActivitySheet businessId={businessId} first={ctx?.activity || []} onClose={closeSheet} />}
       {sheet === "breakdown" && <BreakdownSheet subject={subject} score={score} onClose={closeSheet} />}
@@ -1349,7 +1569,14 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const leftOpen = drafts.filter((d) => !decided.some((x) => x.d.path === d.path)).length;
   useEffect(() => {
     if (!reviewing || leftOpen > 0 || !decided.length) return undefined;
-    const t = setTimeout(() => { setReviewing(false); setDecided([]); }, 4000);
+    const t = setTimeout(() => {
+      if (feature !== "idea" && decided.some((x) => x.kind === "approved") && !adopted.current) {
+        adopted.current = { before: score === null || score === undefined ? null : Math.round(score), saw: false, saving: true };
+        setRechecking(true);
+        setAdoptTick((x) => x + 1);
+      }
+      setReviewing(false); setDecided([]);
+    }, 4000);
     return () => clearTimeout(t);
   }, [reviewing, leftOpen, decided.length]);      // eslint-disable-line react-hooks/exhaustive-deps
   // The "drafts waiting" bar, put away for these drafts only: a new or changed draft brings it back
@@ -1359,27 +1586,63 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const hideDrafts = () => { setHiddenFor(draftsKey); try { localStorage.setItem(hideKey, draftsKey); } catch { /* hidden for this visit */ } };
   const firstField = useRef(null);
   const input = useRef(null);
+  const ctxRead = useRef(initialCtx ? Date.now() : 0);      // when the latest context was asked for
   const adopted = useRef(null);      // { before, saw }: the drafts were approved, waiting for the check to finish
   const [rechecking, setRechecking] = useState(false);      // the spinner under "running your check again…"
   const confirming = useRef(null);      // a task whose price was just said, waiting for Start or Not now
+  // Another task's question asked here ("What should this invoice include?"): the next message answers it, never starts the
+  // task again (the owner, 31 Oct: the invoice asked the same question after every answer)
+  const asked = useRef(null);
   const [adoptTick, setAdoptTick] = useState(0);      // starts the wait (and its fallback) the moment drafts are approved
   const [ownResearch, setOwnResearch] = useState(false);
   const [details, setDetails] = useState(false);      // the side column as a sheet, below 1280px
+  // The conversation full screen, one press, Esc or the backdrop to come back (the owner, 31 Oct: "there should be a
+  // maximizing button for the chat")
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    if (!wide) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setWide(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [wide]);
   // What its buttons do, said here in this conversation (the owner, 27 Oct: "you're not supposed to give me a CTA to leave the chat")
   const act = useMemo(() => chatActions(businessId), [businessId]);
   const [editing, setEditing] = useState(null);
   const fileRef = useRef(null);
+  useFollowRuns(messages, (fn) => setMessages((prev) => { const next = fn(prev || []); saveChat(businessId, chatId, next).catch(() => {}); return next; }));
   const push = (...said) => setMessages((prev) => { const next = [...(prev || []), ...said]; saveChat(businessId, chatId, next).catch(() => {}); return next; });
   // What is left, said in the chat with its steps and buttons (the owner, 30 Oct: "for next action or clear the pendings"):
   // the drafts still waiting first, then the plan's own next steps
   const showNext = () => {
-    const left = feature === "launch" ? launchLeft(subject) : null;
+    const left = feature === "launch" ? launchLeft(subject, ctx) : null;
     const waitingNow = waitingDrafts(subject).length;
     const first = waitingNow ? `First, review the ${waitingNow} draft${waitingNow === 1 ? "" : "s"} still waiting: approving them clears them from your list and raises your score.` : "";
     push({ role: "assistant", at: new Date().toISOString(), cards: [{ type: "steps", case_id: subject.id }],
       prompts: [...(waitingNow ? [] : left?.prompts || [])],
       content: [first || "Here's what's left on your plan, most important first.", waitingNow ? "" : left?.text || ""].filter(Boolean).join(" ") });
     if (waitingNow) setReviewing(true);
+  };
+  // The drafts when there are any, else the findings in the chat, never another tab (the owner, 28 Oct), and never nothing (1 Nov:
+  // "clicked on review findings and nothing")
+  // A funding or launch Do all puts what it finds into drafts: once they're decided, its leftover questions are never shown as blank
+  // findings (the owner, 1 Nov: "why empty, you answered and approved these before"); the idea's research and a search for funding
+  // options are reviewed in that list
+  const usedFindings = (out) => {
+    const at = out?.assessment?.score ?? null;
+    onChanged?.();
+    loadCtx();
+    push({ role: "assistant", at: new Date().toISOString(), content: `I've used what you accepted.${typeof at === "number" ? ` You're at ${Math.round(at)}/100.` : ""} Next step: answer what's left below, or pick one of the recommended actions.`,
+      cards: feature === "idea" ? [{ type: "next", case_id: subject.id }] : [{ type: "pending", case_id: subject.id }, { type: "next", case_id: subject.id }] });
+  };
+  const openReview = () => {
+    if (waitingDrafts(subject).length) { setReviewing(true); return; }
+    const lastRun = [...(messages || [])].reverse().flatMap((m) => m.cards || []).find((c) => c.type === "progress");
+    if (ctx?.research?.findings && (feature === "idea" || lastRun?.options)) {
+      push({ role: "assistant", at: new Date().toISOString(), content: "Here's what the research found. Accept, edit or reject each finding.", cards: [{ type: "findings" }] });
+      return;
+    }
+    push({ role: "assistant", at: new Date().toISOString(), content: "There's nothing waiting for your review: you've dealt with all the drafts. Next step: answer what's left below, or let me draft it.",
+      cards: [{ type: "pending", case_id: subject.id }, { type: "next", case_id: subject.id }] });
   };
   const mine = (content) => ({ role: "user", content, at: new Date().toISOString() });
   const startEdit = (item) => {
@@ -1396,7 +1659,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const runScenario = async (kind, label) => { push(mine(label)); setBusy(true); try { push(await act.scenario(kind, { onWaiting: () => push(SLOW()) })); } finally { setBusy(false); } };
   const attachFile = async (file) => { if (!file) return; push(mine(`Attached ${file.name}`)); setBusy(true); try { push(await act.attach(file)); } finally { setBusy(false); loadCtx(); } };
 
-  const loadCtx = useCallback(() => apiRequest(`/businesses/${businessId}/agent/assistant-context?kind=${feature}&case_id=${subject.id}`, "GET").then(setCtx, () => setCtx((c) => c || {})), [businessId, feature, subject.id]);
+  const loadCtx = useCallback(() => { const asked = Date.now(); return apiRequest(`/businesses/${businessId}/agent/assistant-context?kind=${feature}&case_id=${subject.id}`, "GET").then((c) => { ctxRead.current = asked; setCtx(c); }, () => setCtx((c) => c || {})); }, [businessId, feature, subject.id]);
   const given = useRef({ ctx: Boolean(initialCtx), chat: Boolean(initialMessages) });
   useEffect(() => { if (loading) return; if (given.current.ctx) { given.current.ctx = false; return; } loadCtx(); }, [loadCtx, loading]);
   useEffect(() => {
@@ -1419,6 +1682,59 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   }, [businessId, chatId]);
   // "Do all for me" working: checked again every few seconds until it ends, then the case is read again
   const waiting = Boolean(ctx?.working) || (messages || []).some((m) => (m.cards || []).some((c) => c.type === "progress")) && ctx?.research?.state !== "review" && ctx?.research?.state !== "adopted" && !ctx?.failed;
+  // The score moved with no reply (saved on a card, on Inputs, a check run again): said here, so the chat and the side card always
+  // agree, and the side card's "previous" is the score the chat last gave (the owner, 1 Nov: "the scores are not matching")
+  useEffect(() => {
+    if (!messages?.length || feature === "idea" || typeof score !== "number" || checking || rechecking || adopted.current || busy) return;
+    if (["pending", "saving"].includes(saveState?.state)) return;
+    const said = [...messages].reverse().flatMap((m) => m.cards || []).find((c) => c.type === "score_change");
+    if (!said || !Number.isFinite(Number(said.after))) return;
+    const before = Math.round(Number(said.after));
+    const after = Math.round(score);
+    if (before === after) return;
+    keep([...messages, { role: "assistant", at: new Date().toISOString(), cards: [{ type: "score_change", case_id: subject.id, before, after }],
+      content: `Your score is now ${after}/100, ${after > before ? "up" : "down"} from ${before}.${(steps || []).length ? " Next step: carry on with what's left, or ask me what's next." : ""}` }]);
+  }, [score, checking, rechecking, busy, saveState?.state, messages?.length]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Do all for me finished: said here once, with its next step, never only the card changing above (the owner, 1 Nov: "update
+  // and respond after processing"); the progress message is marked so a reload never says it twice
+  useEffect(() => {
+    if (!messages?.length || !ctx || ctx.working || feature === "idea") return;
+    const at = messages.map((m, i) => ((m.cards || []).some((c) => c.type === "progress") ? i : -1)).reduce((x, y) => Math.max(x, y), -1);
+    const started = at >= 0 ? messages[at] : null;
+    if (started && ctxRead.current <= (Date.parse(started.at || "") || 0)) return;      // the owner, 1 Nov: "why are you saying done when you're still processing"
+    // Never said twice, even if the mark on the progress message was lost; a run already dealt with isn't announced as "nothing found"
+    // (the owner, 1 Nov: "Nothing new was found... nothing was charged", twice, after a paid run)
+    const untrue = (m) => m.role === "assistant" && /^Done\. Nothing new was found for your (?:funding case|launch plan)/.test(m.content || "");
+    if (messages.some(untrue)) {
+      keep([...messages.filter((m) => !untrue(m)), { role: "assistant", at: new Date().toISOString(), content: "Here's what's left on your case. Answer what you can here, or let me draft the rest for you to approve.", cards: [{ type: "pending", case_id: subject.id }, { type: "next", case_id: subject.id }] }]);
+      return;
+    }
+    if (!started || started.announced || messages.slice(at + 1).some((m) => m.role === "assistant" && /^Done\./.test(m.content || "")) || Date.now() - (Date.parse(started.at || "") || 0) > 3 * 3600000) return;
+    const n = drafts.length;
+    const found = ctx.research?.findings || 0;
+    const noun = feature === "launch" ? "launch plan" : "funding case";
+    let said = null;
+    if (ctx.failed) said = { content: `${String(ctx.failed).replace(/\.?$/, ".")} Next step: press Retry on the card above when you're ready.` };
+    else if (n) said = { content: `Done. I've drafted ${n} thing${n === 1 ? "" : "s"} for your ${noun} from your records and research, and they're open below. Next step: check them and press Approve all; your score goes up when you do.` };
+    else if (ctx.research?.state === "review" && found && (started.cards || []).some((c) => c.options)) said = { content: `Done. I found ${found} thing${found === 1 ? "" : "s"} for your ${noun}. Next step: review ${found === 1 ? "it" : "them"} and accept what's right.`,
+      links: [{ label: "Review findings", to: `/${feature === "launch" ? "launch" : "funding"}/${subject.id}?review=1` }] };
+    else if (ctx.research?.state === "review") said = { content: `Done. There's nothing new to approve on your ${noun}. Next step: answer what's left below, or let me draft it.`, cards: [{ type: "pending", case_id: subject.id }] };
+    if (!said) return;
+    const next = messages.map((m, i) => (i === at ? { ...m, announced: true } : m));
+    keep([...next, { role: "assistant", at: new Date().toISOString(), ...said }]);
+    if (n) setReviewing(true);
+  }, [ctx, drafts.length, messages?.length]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // A validation started here whose reply never arrived (the page was left while it ran): followed now, its result posted (31 Oct)
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current || feature !== "idea" || !messages?.length) return;
+    resumed.current = true;
+    const last = messages[messages.length - 1];
+    if (last?.role === "user" && /^\s*(?:yes[, ]+)?start the idea validation/i.test(last.content || "")) {
+      keep([...messages, { role: "assistant", at: new Date().toISOString(), content: "Your idea validation is running. I'll put its result here as soon as it's ready.",
+        wait: { kind: "idea_validation", history_id: "latest", since: last.at || new Date(Date.now() - 600000).toISOString() } }]);
+    }
+  }, [messages]);      // eslint-disable-line react-hooks/exhaustive-deps
   // An idea validation still running: checked here until it ends, its result then said in this chat with its buttons (the
   // owner, 30 Oct: "already showing CTA for form when it's still running")
   const pending = (messages || []).findIndex((m) => m.wait && !m.wait.done);
@@ -1456,12 +1772,18 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     let t;
     const stage = (c) => JSON.stringify([Boolean(c?.working), c?.research?.state, c?.research?.run_id, c?.failed]);
     let last = stage(ctx);
+    let misses = 0;
     const tick = async () => {
       const c = await apiRequest(`/businesses/${businessId}/agent/assistant-context?kind=${feature}&case_id=${subject.id}`, "GET").catch(() => null);
       if (!live) return;
       if (c) {
+        misses = 0;
         setCtx(c);
         if (stage(c) !== last) { last = stage(c); onChanged?.(); }
+      } else if (++misses >= 5) {
+        // Never a spinner for ever on a status it can't read (the owner, 1 Nov: "it's just spinning"): said, with Retry
+        setCtx((x) => ({ ...(x || {}), working: false, failed: "I lost touch with that run, so it may not have finished. Nothing is charged unless it finds something. Press Retry to run it again." }));
+        return;
       }
       t = setTimeout(tick, 8000);
     };
@@ -1504,6 +1826,14 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (!a) return undefined;
     if (checking) { a.saw = true; return undefined; }
     if (["pending", "saving"].includes(saveState?.state)) a.saving = true;      // this approval's own save, never an older error
+    if (a.signing) return undefined;      // the sign-off is on its way: one score message, after it
+    if (a.saving && !a.signed && !a.signing && saveState?.state === "saved" && feature !== "idea") {
+      a.signing = true;
+      apiRequest(`/businesses/${businessId}/cases/${subject.id}/sign-off`, "POST", { kind: feature === "launch" ? "launch" : "funding" }, { timeoutMs: 60000 })
+        .then((detail) => onChanged?.(detail?.id ? detail : undefined), () => onChanged?.())
+        .finally(() => { a.signing = false; a.signed = true; a.saw = true; loadCtx(); setAdoptTick((x) => x + 1); });
+      return undefined;
+    }
     const failed = a.saving && ["error", "conflict"].includes(saveState?.state);
     if (failed) {
       // The save didn't go through: said plainly with what to do, never "running the check" for ever (the owner, 30 Oct:
@@ -1522,11 +1852,16 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       const cards = [...(after !== null && a.before !== null && after !== a.before ? [{ type: "score_change", case_id: subject.id, before: a.before, after }] : []),
         { type: "next", case_id: subject.id }];      // approvals waiting only when asked for (the owner, 29 Oct)
       cards.forEach((c, i) => fresh.current.add(`${(messages || []).length}:${i}`));
-      const left = feature === "launch" ? launchLeft(subject) : null;      // what's left, by who does it, and the next question
-      keep([...(messages || []), { role: "assistant", at: new Date().toISOString(), cards: left ? [...cards.filter((c) => c.type !== "next"), { type: "steps", case_id: subject.id }] : cards,
-        ...(left?.prompts?.length ? { prompts: left.prompts } : {}),
+      const left = feature === "launch" ? launchLeft(subject, ctx) : null;      // what's left, by who does it, and the next question
+      // Funding not researched yet: offered, with its price (the owner, 1 Nov: "Should I help you to become more funding ready?")
+      const offer = feature === "funding" && !["review", "adopted"].includes(ctx?.research?.state) && !ctx?.working && after !== null;
+      if (feature === "funding" && !offer && (steps || []).length) cards.unshift({ type: "pending", case_id: subject.id });
+      keep([...(messages || []), { role: "assistant", at: new Date().toISOString(), cards: left ? [...cards.filter((c) => c.type !== "next"), { type: "steps", case_id: subject.id }, ...(left.prompts?.length ? [] : [{ type: "next", case_id: subject.id }])] : cards,
+        ...(left?.prompts?.length ? { prompts: left.prompts } : offer && ctx?.can_do_all !== false ? { prompts: [{ label: "Do all for me", prompt: "Yes, do it all for me" }] } : {}),
+        ...(offer && ctx?.can_do_all === false ? { links: [{ label: "See Decision Engine", to: "/pricing" }] } : {}),
         content: (after === null ? "I've saved everything to your case. Run the check when you're ready to see your score." : `I've run your ${words.area} check again. You're at ${after}/100.`)
-          + (left?.text ? ` ${left.text}` : "") }]);
+          + (left?.text ? ` ${left.text}` : "")
+          + (offer ? ` Should I help you become more funding ready? I'll research what's missing and draft it for you to approve.${ctx?.can_do_all === false ? " That's part of the Decision Engine plan. You can also keep filling it in yourself: ask me what's left." : ctx?.do_all_price ? ` It costs ${ctx.do_all_price} credits.` : ""}` : "") }]);
     };
     if (a.saw) { finish(); return undefined; }
     const t = setTimeout(finish, 30000);      // never waiting for ever: said once the save is done
@@ -1534,6 +1869,14 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   }, [checking, score, saveState?.state, adoptTick]);      // eslint-disable-line react-hooks/exhaustive-deps
   // One draft approved or rejected on its own: saved like Approve all, only that field, so the score moves for it alone
   const allDrafts = () => subject.data?.agent_drafts || {};
+  // The owner's approval is the sign-off: the date counts as final, and the milestones approved are what the money and winning
+  // customers are linked to, so the score moves on approval (the owner, 1 Nov: "my score should be coming up well after the do all")
+  const afterApproved = (path, value) => {
+    if (path === "receipt_date") onField("timing_confirmed", true);
+    const first = path === "milestones" && Array.isArray(value) ? value.find((m) => m?.id)?.id : null;
+    if (first && !subject.data?.purpose_milestone_id) onField("purpose_milestone_id", first);
+    if (first && !getPath(subject.data || {}, "market.acquisition_milestone_id")) onField("market.acquisition_milestone_id", first);
+  };
   const decideOne = (d, kind) => {
     if (!onField) return;
     const before = getPath(subject.data || {}, d.path);
@@ -1541,6 +1884,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       let v = d.path in edits ? edits[d.path] : d.draft.value;
       if (typeof d.draft.value === "number") v = Number(v) || d.draft.value;
       onField(d.path, v);
+      afterApproved(d.path, v);
     } else onField("rejected_drafts", [...new Set([...(subject.data?.rejected_drafts || []), d.path])]);
     onField("agent_drafts", Object.fromEntries(Object.entries(allDrafts()).filter(([p]) => p !== d.path)));
     setDecided((x) => [...x.filter((y) => y.d.path !== d.path), { kind, d, before }]);
@@ -1561,6 +1905,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       let v = d.path in edits ? edits[d.path] : d.draft.value;
       if (typeof d.draft.value === "number") v = Number(v) || d.draft.value;
       onField(d.path, v);
+      afterApproved(d.path, v);
     });
     const left = Object.fromEntries(Object.entries(subject.data?.agent_drafts || {}).filter(([p]) => !rest.some((d) => d.path === p) && !decided.some((x) => x.d.path === p)));
     onField("agent_drafts", left);
@@ -1568,7 +1913,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     setRechecking(true);
     setAdoptTick((x) => x + 1);
     keep([...(messages || []), { role: "user", content: "That looks right. Adopt it.", at: new Date().toISOString() },
-      { role: "assistant", content: `Done. I've added ${n} draft${n === 1 ? "" : "s"} to your case and I'm running your ${words.area} check again…`, at: new Date().toISOString(),
+      { role: "assistant", content: `I've added ${n} draft${n === 1 ? "" : "s"} to your ${feature === "launch" ? "plan" : "case"}. Running your ${words.area} check again…`, at: new Date().toISOString(),
         cards: [{ type: "rechecking", case_id: subject.id }] }]);
     setEdits({});
     setDecided([]);
@@ -1609,11 +1954,12 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
         // from 28 Oct" (the owner, 28 Oct)
         const day = typeof r.repeat === "string" ? new Date(r.repeat).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "earlier";
         keep([...base, asked, { role: "assistant", at: new Date().toISOString(), content: `This is the research from ${day}: nothing it depends on has changed since, so I didn't search again and nothing was charged.`,
-          links: ideaDone(r.run), prompts: VALIDATE_NEXT, cards: [{ type: "research_again", case_id: "idea" }] }]);
+          prompts: VALIDATE_NEXT, cards: [{ type: "findings", case_id: "idea" }, { type: "research_again", case_id: "idea" }] }]);
       } else if (!r?.problem && r?.completed) {
         // One line and where to go, here on this page (the owner, 30 Oct: never Agent tasks)
         keep([...base, asked, { role: "assistant", at: new Date().toISOString(), content: r.message || "Done. Your findings are in the Research tab for you to accept or reject.",
-          links: ideaDone(r.run), prompts: VALIDATE_NEXT }]);
+          // what it found, here in the chat, and the validation next: the way off the page comes with its result (31 Oct)
+          prompts: VALIDATE_NEXT, cards: [{ type: "findings", case_id: "idea" }] }]);
       } else if (r?.problem) {
         keep([...base, asked, { role: "assistant", at: new Date().toISOString(), content: r.problem }]);
       }
@@ -1670,6 +2016,11 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     // The conversation carries on: the review steps aside, never left in its way (the owner, 28 Oct: "why is the review
     // enrich card blocking my current chat"); the drafts still waiting keep their small bar
     if (reviewing) { setReviewing(false); setDecided([]); }
+    if (/^\s*(?:what'?s|what is)\s+(?:left|pending|remaining)\b|^\s*(?:show|list)(?: me)?\s+(?:what'?s left|(?:the |my )?pendings?)\b|^\s*fill in what'?s left\b/i.test(t) && feature !== "idea") {
+      setText("");
+      push({ role: "user", content: t, at: new Date().toISOString() }, { role: "assistant", at: new Date().toISOString(), content: "Here's what's left. Answer what you can here, or let me draft the rest for you to approve.", cards: [{ type: "pending", case_id: subject.id }] });
+      return;
+    }
     if (editing) {
       const item = editing;
       setEditing(null);
@@ -1694,20 +2045,30 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     try {
       // A price just said: Start, "go ahead" or "yes" starts it, anything else leaves it (the owner, 30 Oct: "it should add a
       // go ahead or start button"; "go ahead" became "I couldn't write an answer")
-      const priced = confirming.current;
+      const fresh_ask = !YES.test(t) && NEW_REQUEST.test(t);      // a new request leaves what was waiting and is answered itself
+      const askedHere = before[before.length - 2];
+      const priced = fresh_ask ? null : confirming.current || askedHere?.confirm || null;
       confirming.current = null;
       if (priced && !YES.test(t)) {
         keep([...before, { role: "assistant", at: new Date().toISOString(), content: "No problem, nothing was started or charged." }]);
         return;
       }
+      const task = !priced && !fresh_ask ? asked.current || askedHere?.task || null : null;
+      asked.current = null;
+      const q = task ? questionOf(task.fields, task.params) : null;
+      const field = q?.field || null;
+      const answer = q?.options.find((o) => o.label === t)?.value ?? t;
       const res = priced
         ? await submitAgentRequest({ businessId, capability: priced.capability, params: priced.params || {}, sourceChannel: "ui_action", background: true, confirmed: true })
+        : task && field
+        ? await submitAgentRequest({ businessId, capability: task.capability, params: { ...(task.params || {}), [field.key]: answer }, sourceChannel: "ui_action", background: true })
         : await submitAgentRequest({ businessId, text: t, page: feature === "idea" ? "idea" : feature === "launch" ? "launch" : "funding",
           ...(feature === "launch" && subject.id !== "launch-home" ? { caseId: subject.id } : {}) });
       if (res?.elsewhere) {
         // Another module's: taken to its own page and conversation, never kept in this thread (the owner, 27 Oct)
         keep(messages || []);
-        navigate(`${res.elsewhere}${res.elsewhere.includes("?") ? "&" : "?"}message=${encodeURIComponent(t)}`);
+        const key = res.elsewhere.startsWith("/agent") ? "chat" : "message";      // the Agent Centre takes it as "chat"
+        navigate(`${res.elsewhere}${res.elsewhere.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(t)}`);
         return;
       }
       const acts = res?.actions || [];
@@ -1726,8 +2087,16 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
         reply.cards = [{ type: "result", case_id: subject.id }, { type: "steps", case_id: subject.id }];
         reply.prompts = [];
       }
+      (res?.offers || []).forEach((o) => { if (o.to) reply.links.push({ label: o.label, to: o.to }); else reply.prompts.push({ label: o.label, prompt: o.label }); });
+      if (res?.kind === "needs_input" && res.capability && (res.fields || []).length) {
+        asked.current = { capability: res.capability, params: res.params || {}, fields: res.fields };      // the next message answers it
+        // The question itself, with its choices (the owner, 1 Nov: "One quick question so it fits" with no question)
+        const next = questionOf(res.fields, res.params);
+        if (next) { reply.content = `${reply.content} ${next.label}`; reply.prompts = next.prompts; reply.task = asked.current; }
+      }
       if (res?.kind === "needs_confirmation" && res.capability) {
         confirming.current = res;      // the price is in the sentence; Start or Not now below it
+        reply.confirm = { capability: res.capability, params: res.params || {} };
         reply.prompts = [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }];
       }
       if (subject.id === "launch-home" && res?.case_id) {
@@ -1739,6 +2108,10 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
         navigate(`/launch/${res.case_id}?tab=assistant`);
         return;
       }
+      if (res?.kind === "workflow" && res.run?.id && !res.run.pending_question && ["queued", "running"].includes(res.run.status)) {
+        reply.follow = { run_id: res.run.id };      // said here when it ends
+        reply.content = "Started. I'll tell you here as soon as it's ready.";
+      }
       reply.cards.forEach((c, i) => fresh.current.add(`${before.length}:${i}`));
       keep([...before, reply]);
       // Read again after every turn (the owner, 27 Oct: the idea's inputs and score stayed "Not found" until a reload): what
@@ -1748,8 +2121,8 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       loadCtx();
       try { window.dispatchEvent(new CustomEvent("ea:credits:refresh")); } catch { /* the balance is read on the next page */ }      // a research start uses credits
     } catch (e) {
-      setProblem(agentErrorMessage(e));
-      keep(before);
+      // Said in the conversation, never only a line under it (the owner, 1 Nov: "no response")
+      keep([...before, { role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(e, "That didn't go through. Nothing was charged; please try again.") }]);
     } finally {
       setBusy(false);
     }
@@ -1772,17 +2145,15 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (c.type === "preview") return <PreviewCard key={key} businessId={businessId} item={c.item} preview={c.preview} go={navigate} onEdit={startEdit}
       onDone={(m) => { sayDone(m); loadCtx(); }} />;
     if (c.type === "segments") return <SegmentsCard key={key} businessId={businessId} onDone={(m) => push({ role: "assistant", at: new Date().toISOString(), content: m })} onChanges={() => setText("For the customer segments, please change ")} />;
-    if (c.type === "choose" && feature === "idea") return <IdeaChooseCard key={key} reuse={Boolean(c.reuse)} price={c.price || ctx?.research?.max} busy={busy || researching || ownResearch} onStart={startResearch} onSelf={() => openIdeaForm("I'll enter it myself")} />;      // in the chat, never another tab (the owner, 29 Oct)
+    if (c.type === "choose" && feature === "idea") return <IdeaChooseCard key={key} reuse={Boolean(c.reuse)} price={c.price || ctx?.research?.max} busy={busy || researching || ownResearch} onStart={() => send("Run the idea validation")} onSelf={() => openIdeaForm("I'll enter it myself")} />;      // in the chat, never another tab (the owner, 29 Oct)
     if (c.type === "next" && feature === "idea") return <IdeaNextCard key={key} businessId={businessId} idea={idea} send={send} onTab={onTab} />;
     if (c.type === "records") return records.length ? <RecordsCard key={key} records={records} live={live} words={words} /> : null;
     if (c.type === "result") return <ResultCard key={key} subject={subject} steps={steps} records={records} words={words} score={typeof c.score === "number" ? c.score : score} onOpen={(k) => send(`What's needed for ${(subject.sections || []).find((x) => x.key === k)?.title || "this"}?`)} />;
     if (c.type === "choose") return <ChooseCard key={key} subject={subject} steps={steps} price={c.price} reuse={Boolean(c.reuse)} options={Boolean(c.options)} topics={c.topics || []} fixed={Boolean(c.fixed)} busy={busy} onHelp={() => send("Yes, start")} onSelf={() => onTab("answers")} />;
     if (c.type === "progress") return <ProgressCard key={key} options={Boolean(c.options)} onDecideAll={feature === "idea" ? decideAll : null}
       onResults={feature === "idea" ? () => send("Run the idea validation and fill the form") : null}
-      onNext={feature === "idea" ? null : showNext} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={() => (drafts.length ? setReviewing(true)
-        // The findings in the chat, for review, never another tab (the owner, 28 Oct: "Review findings" opened the Assessment tab)
-        : push({ role: "assistant", at: new Date().toISOString(), content: "Here's what the research found. Accept, edit or reject each finding.", cards: [{ type: "findings" }] }))}
-      onRetry={() => send("Help me complete it")} justStarted={live} drafts={drafts.length} />;
+      onNext={feature === "idea" ? null : showNext} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={openReview}
+      onRetry={() => send("Help me complete it")} draftsOnly={feature !== "idea" && !c.options} justStarted={live} drafts={drafts.length} />;
     // What is left on the plan, as the Checklist lists it, each with its own button, in the chat (the owner, 30 Oct:
     // "recommend these on the chat, lay users don't even know")
     // Funding options found by the research, one card each: name, amount, fit, link (QA, 30 Oct: one long block of text)
@@ -1807,6 +2178,10 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       <div key={key} role="status" className={`${BOX} flex items-center gap-3 p-4 text-[14px] text-slate-700 dark:text-slate-200`} data-card="rechecking">
         <Spinner className="h-4 w-4" />{saveState?.state === "saving" || saveState?.state === "pending" ? "Saving your answers…" : "Running your check…"}
       </div>) : null;
+    if (c.type === "pending" || (c.type === "steps" && (steps || []).length > 0)) return (
+      <PendingCard key={key} steps={steps} sections={subject.sections} onField={onField} data={subject.data} subject={subject} subjectId={subject.id} businessId={businessId} feature={feature} onSaved={() => { loadCtx(); onChanged?.({ recheck: true }); }} onReview={() => setReviewing(true)} onOpen={(to) => { const here = String(to || "").split("?")[0] === `/${feature === "launch" ? "launch" : "funding"}/${subject.id}`; if (here && tabOf(to) && onTab) onTab(tabOf(to)); else { noteCameFrom(null, to); navigate(to); } }}
+        draftFields={ctx?.draft_fields || []} onDraft={() => send("Fill the rest for me")} />
+    );
     if (c.type === "steps") return (
       <div key={key} className={`${BOX} p-5`} data-card="steps">
         <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">Your next steps</p>
@@ -1816,16 +2191,17 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
           <button type="button" onClick={() => onTab?.("overview")} className={`mt-3 ${LINK}`}>See all on the Checklist →</button>)}
       </div>
     );
-    if (c.type === "findings") return <div key={key} className={`${BOX} p-4`} data-card="findings"><SavedResearch businessId={businessId} goal={feature === "idea" ? "test_idea" : feature === "launch" ? "launch" : "need_funding"} /></div>;
+    if (c.type === "findings") return <div key={key} className={`${BOX} p-4`} data-card="findings"><SavedResearch businessId={businessId} goal={feature === "idea" ? "test_idea" : feature === "launch" ? "launch" : "need_funding"} onUsed={usedFindings} /></div>;
     if (c.type === "approvals") return <ApprovalsCard key={key} ctx={ctx} onDone={loadCtx} onReview={reviewItem} onEdit={startEdit} />;
-    if (c.type === "score_change") return <ScoreChangeCard key={key} subject={subject} steps={steps} before={c.before} after={c.after} words={words} />;
+    if (c.type === "score_change") return <ScoreChangeCard key={key} subject={subject} steps={steps} before={c.before} after={c.after} words={words} current={c === lastChange} />;
     if (c.type === "next") return (<div key={key} className="space-y-3">
       {subject.summary?.classification === "ready" && feature !== "idea" && <ReadyCard subject={subject} score={score} words={words} />}
-      <NextCard feature={feature} ctx={ctx} onTab={onTab} send={send} score={score} name={subject.data?.name || subject.title} /></div>);
+      <NextCard steps={steps} feature={feature} ctx={ctx} onTab={onTab} send={send} score={score} name={subject.data?.name || subject.title} /></div>);
     return null;
   };
   const ready = !loading && messages !== null && ctx !== null;
   const list = ready ? messages : [];
+  const shownCards = (i) => cardsToShow(list, i, Boolean(ctx?.working));
   // The score beside the conversation once the conversation has given it (the mockups: not while the records are checked)
   const seen = (...types) => list.some((m) => (m.cards || []).some((c) => types.includes(c.type)));
   // A review block is drawn once, at its newest: asking again never stacks copies in the chat (the owner, 28 Oct)
@@ -1870,7 +2246,15 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   // As tall as the screen allows, the messages scrolling inside it, so the box to type in is always in view (the owner,
   // 27 Oct: "the typing box, action is not in view"); on a wide screen it stays put while the side column scrolls
   const conversation = (
-      <section aria-label="Conversation" className={`${BOX} flex h-full min-h-0 min-w-0 flex-col`}>
+      <>
+      {wide && <div className="fixed inset-0 z-[55] bg-slate-900/50" onClick={() => setWide(false)} aria-hidden="true" data-chat-backdrop />}
+      <section aria-label="Conversation" className={`${BOX} flex min-h-0 min-w-0 flex-col ${wide ? "fixed inset-0 z-[60] rounded-none sm:inset-4 sm:rounded-2xl shadow-2xl" : "relative h-full"}`} data-chat-wide={wide || undefined}>
+        <button type="button" onClick={() => setWide((w) => !w)} aria-label={wide ? "Minimise the chat" : "Expand the chat"} title={wide ? "Minimise (Esc)" : "Expand"}
+          className="absolute right-3 top-3 z-10 rounded-lg border border-slate-200 bg-white/90 p-1.5 text-slate-500 shadow-sm hover:text-brand-700 dark:border-slate-700 dark:bg-slate-900/90" data-chat-expand>
+          {wide
+            ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+            : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>}
+        </button>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5" aria-live="polite">
           {!ready && (
             // Nothing is shown until the business and the conversation are both read: never a result that then changes
@@ -1907,18 +2291,24 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
               </span>
             </div>
           ) : (
-            <div className="space-y-3">
+            // A reply's cards first, then its words and the next question under them (the owner, 1 Nov: "should be after the card",
+            // "same with other responses that comes with card")
+            <div className={`flex gap-3 ${shownCards(i).length ? "flex-col-reverse" : "flex-col"}`}>
+              {/* Recommended next actions come after the reply's words (the owner, 1 Nov) */}
+              {shownCards(i).some((c) => AFTER_WORDS.has(c.type)) && <div className="space-y-3">{shownCards(i).map((c, j) => (!AFTER_WORDS.has(c.type) || (ONCE.has(c.type) && newest[c.type] !== i) ? null
+                : <div key={j} className="md:pl-[3.25rem]">{card(c, `${i}:${j}`, fresh.current.has(`${i}:${j}`), i === list.length - 1)}</div>))}</div>}
               <div className="flex items-start gap-3">
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
                 <div className="min-w-0">
                   <p className="whitespace-pre-line rounded-2xl bg-slate-100 px-4 py-3 text-[15px] text-slate-800 dark:bg-slate-800 dark:text-slate-100">{m.content}</p>
                   {m.at && <span className="mt-1 block text-[11.5px] text-slate-500">{clock(m.at)}</span>}
+                  {m.follow && !m.follow.done && <span className="mt-2 flex items-center gap-2 text-[12.5px] text-brand-700" data-run-following><Spinner className="h-3.5 w-3.5" />Working on it…</span>}
                   {m.wait && !m.wait.done && <span className="mt-2 flex items-center gap-2 text-[12.5px] text-brand-700" data-validation-running><Spinner className="h-3.5 w-3.5" />Validating your idea…</span>}
-                  {stay(m.links).length > 0 && <div className="mt-2 flex flex-wrap gap-2">{stay(m.links).map((l) => <button key={l.label + l.to} type="button" onClick={() => { const sameCase = String(l.to || "").split("?")[0] === (feature === "idea" ? "/check/idea" : `/${feature === "launch" ? "launch" : "funding"}/${subject.id}`); if (sameCase && opensReview(l.to)) setReviewing(true); else if (sameCase && tabOf(l.to) && onTab) onTab(tabOf(l.to)); else { noteCameFrom(null, l.to); navigate(l.to); } }} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</button>)}</div>}
+                  {stay(m.links).length > 0 && <div className="mt-2 flex flex-wrap gap-2">{stay(m.links).map((l) => <button key={l.label + l.to} type="button" onClick={() => { const sameCase = String(l.to || "").split("?")[0] === (feature === "idea" ? "/check/idea" : `/${feature === "launch" ? "launch" : "funding"}/${subject.id}`); if (sameCase && opensReview(l.to)) openReview(); else if (sameCase && tabOf(l.to) && onTab) onTab(tabOf(l.to)); else { noteCameFrom(null, l.to); navigate(l.to); } }} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</button>)}</div>}
                 </div>
               </div>
-              {(m.cards || []).map((c, j) => (ONCE.has(c.type) && newest[c.type] !== i ? null
-                : <div key={j} className="md:pl-[3.25rem]">{card(c, `${i}:${j}`, fresh.current.has(`${i}:${j}`), i === list.length - 1)}</div>))}
+              {shownCards(i).some((c) => !AFTER_WORDS.has(c.type)) && <div className="space-y-3">{shownCards(i).map((c, j) => (AFTER_WORDS.has(c.type) || (ONCE.has(c.type) && newest[c.type] !== i) ? null
+                : <div key={j} className="md:pl-[3.25rem]">{card(c, `${i}:${j}`, fresh.current.has(`${i}:${j}`), i === list.length - 1)}</div>))}</div>}
             </div>
           )}</Fragment>)}
           {busy && <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-50"><Spark /></span><span className="inline-flex items-center gap-2 text-[13px] text-slate-500"><Spinner />Thinking…</span></div>}
@@ -1936,7 +2326,9 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
           <button type="button" onClick={() => setDetails(true)} data-details-button
             className="shrink-0 rounded-full border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 xl:hidden dark:border-slate-700 dark:text-slate-200">Details</button>
           {lastPrompts.length > 0 && !busy && (
-          <div className="no-scrollbar flex min-w-0 gap-2 overflow-x-auto sm:flex-wrap">{lastPrompts.map((p) => <button key={p.label} type="button" onClick={() => send(p.prompt)} className="shrink-0 whitespace-nowrap rounded-full border border-brand-300 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{p.label}</button>)}</div>
+          <div className="no-scrollbar flex min-w-0 gap-2 overflow-x-auto sm:flex-wrap">{doesItFirst(lastPrompts).map((p) => <button key={p.label} type="button" onClick={() => send(p.prompt)} data-does-it={DOES_IT.test(p.label) || undefined}
+            className={DOES_IT.test(p.label) ? "shrink-0 whitespace-nowrap rounded-full bg-brand-600 px-4 py-1.5 text-[13px] font-bold text-white shadow-sm hover:bg-brand-700"
+              : "shrink-0 whitespace-nowrap rounded-full border border-brand-300 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"}>{p.label}</button>)}</div>
           )}
         </div>
         <form className="m-4 mt-1 flex shrink-0 items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 dark:border-slate-700" onSubmit={(e) => { e.preventDefault(); send(text); }}>
@@ -1952,6 +2344,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
           </button>
         </form>
       </section>
+      </>
   );
 
   const openIdeaForm = (said = "Add idea details") => { push(mine(said), { role: "assistant", at: new Date().toISOString(), content: "Here's what I have for your idea. Change what's wrong or missing, then save.", cards: [{ type: "idea_form", case_id: "idea" }] }); };
@@ -1959,7 +2352,9 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     onIdeaForm={feature === "idea" ? openIdeaForm : null} />;
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_25rem]" data-case-assistant>
-      {conversation}
+      {/* Expanded: drawn on the page itself, over everything, never inside a frame that would hold it (31 Oct: "it should
+          cover the screen"); a placeholder keeps the grid's place */}
+      {wide ? <>{createPortal(conversation, document.body)}<div className={`${BOX} h-full`} aria-hidden="true" /></> : conversation}
       <aside className="hidden min-h-0 min-w-0 space-y-4 overflow-y-auto pr-0.5 xl:block" aria-label="Your business">
         {ctx && !loading ? side : [160, 120, 140].map((h, i) => <div key={i} className={`${BOX} animate-pulse`} style={{ height: h }} />)}</aside>
       {details && (

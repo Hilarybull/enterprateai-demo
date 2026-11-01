@@ -7,9 +7,10 @@ from app.modules.credits import service as credits
 from app.modules.plans import capabilities as cap
 
 
-def test_the_business_plan_generator_is_starter_and_above():
-    assert cap.min_plan_for("business_plan_draft") == "starter_insight"
-    assert not cap.plan_allows("explorer", "business_plan_draft")
+def test_the_business_plan_generator_is_on_every_plan_for_its_credits():
+    # The owner, 31 Oct: "business plan, idea validation is free depending on the credits"
+    assert cap.min_plan_for("business_plan_draft") == "explorer"
+    assert cap.plan_allows("explorer", "business_plan_draft")
     assert cap.plan_allows("explorer", "idea_validation")      # Basic Idea Validation stays on Explorer
 
 

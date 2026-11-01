@@ -1371,3 +1371,18 @@
 
 
 
+
+/* Create account (the owner, 31 Oct): the left panel ends level with the form card beside it, its content spread to fill it.
+   The right column keeps 90px under its card for the "private and secure" line, so the left stops there too.
+   Two columns only: stacked on narrow screens, each keeps its own height. Sign in is unchanged. */
+@media (min-width: 1024px) {
+  .lg-page-signup .lg-grid {
+    align-items: stretch;
+  }
+  .lg-page-signup .lg-left {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    margin-bottom: 90px;
+  }
+}

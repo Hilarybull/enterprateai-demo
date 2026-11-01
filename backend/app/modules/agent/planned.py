@@ -56,10 +56,10 @@ def figures(data: dict, today=None) -> dict[str, dict]:
     return out
 
 
-def monthly(data: dict) -> dict:
+def monthly(data: dict, today=None) -> dict:
     """What a planned month looks like: revenue (price × sales a month) and costs (fixed costs + cost per sale × sales),
     each only when its figures are known. `sources`: where each figure came from, said with the answer."""
-    f = figures(data)
+    f = figures(data, today)
     v = {k: x["value"] for k, x in f.items()}
     out: dict[str, Any] = {"figures": v, "sources": {k: x["source"] + (f" ({x['at']})" if x.get("at") else "") + f", {x['basis']}" for k, x in f.items()},
                            "basis": {k: x["basis"] for k, x in f.items()}}

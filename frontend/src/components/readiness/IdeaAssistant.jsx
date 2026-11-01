@@ -40,8 +40,8 @@ export default function IdeaAssistant({ businessId, onTab }) {
     // The same research as before, shown again: said, never passed off as a new search (the owner, 28 Oct)
     return run.repeat ? { repeat: run.created_at || true, run: run.id }
       : { completed: true, run: run.id, message: run.findings
-        ? `Done. I found ${run.findings} thing${run.findings === 1 ? "" : "s"} for your idea${run.charged ? ` (${run.charged} credits)` : ""}. They're in the Research tab for you to accept or reject; your result updates as you accept them.`
-        : "Done. Nothing new turned up with a checked source, so nothing was charged. What I worked out is in the Research tab to review." };
+        ? `Done. I found ${run.findings} thing${run.findings === 1 ? "" : "s"} for your idea${run.charged ? ` (${run.charged} credits)` : ""}. Here's what I found: accept or reject each one below, and your result updates as you do. Then run the idea validation for its full result.`
+        : "Done. Nothing new turned up with a checked source, so nothing was charged. Here's what I worked out from your figures, below. Next, run the idea validation for its full result." };
   };
   // Until both are read, the chat's own loading state: never a first result that the real one then replaces
   const subject = ideaSubject(idea || {});

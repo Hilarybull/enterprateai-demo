@@ -600,7 +600,7 @@ export default function AgentCentrePage() {
         <div className="min-w-0">
           <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">Agent Centre</p>
           <h1 className="mt-1 text-[28px] font-extrabold leading-tight text-slate-950 dark:text-slate-50 sm:text-[34px]">Your EnterprateAI Agent</h1>
-          <p className="mt-1 text-[16px] text-slate-600 dark:text-slate-400 max-sm:hidden">Tell it the job. It works on your business data and asks before anything is sent or saved.</p>
+          <p className="mt-1 text-[16px] text-slate-600 dark:text-slate-400 max-sm:hidden">Tell me what you need. I work from your business data, and nothing is sent or saved without your go-ahead.</p>
         </div>
         {/* On a phone Tasks and Agent settings share the row (the owner, 28 Oct) */}
         <div className="flex shrink-0 gap-2 max-sm:w-full">

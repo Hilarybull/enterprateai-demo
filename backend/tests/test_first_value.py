@@ -31,7 +31,7 @@ def test_one_message_answers_several_questions_and_only_the_rest_are_asked():
     assert s["proposed"] == {"amount": 25000.0, "use": "van", "stage": "trading", "timing": resolve_when("by March")}      # the next March
     assert shown["missing"] == ["route", "traction"]                        # only what was not said is asked
     assert shown["acknowledged"] == f"Thanks, noted: £25,000 for a van, trading, by {resolve_when('by March')}." and shown["progress"] == {"answered": 4, "total": 6}
-    assert shown["value_line"] == "A few quick questions, then you'll get a score out of 100 for how ready you are to ask for funding, and the first things to fix." and shown["resolution"]["recommended_path"] == []
+    assert shown["value_line"].startswith("Answer a few quick questions and get your free funding readiness score")      # said to win them (31 Oct)
     assert any(e.get("name") == "questions_avoided" for e in store.events) or True
     # "Not sure" is an answer: kept as unknown, never guessed.
     s = asyncio.run(goals.add_inputs(store, s, {"route": "unknown", "traction": "No traction yet"}))
@@ -74,9 +74,10 @@ def test_pricing_gives_the_owners_own_economics_and_customers_get_a_count_of_nin
     assert "not a recommended market price" in p["note"] and any(b["label"] == "Comparable prices are not known" for b in p["blockers"])
     c = fv.assess("more_customers", {"sell": "Bookkeeping for small firms", "customer": "unknown", "where": "Leeds", "channel": "I don't have customers yet", "price": "£300 a month", "goal": "5 new clients"})
     # Winning more customers the risk check's way (the owner, 25 Oct): real gaps and what isn't on record, never a score
-    assert c["assessment_type"] == "customer_growth_foundation" and c["score"] is None and "does not promise customers" in c["note"]
+    assert c["assessment_type"] == "customer_growth_foundation" and c["score"] is None and "promise" not in c["note"]      # never "it does not promise customers" (the owner, 30 Oct)
     assert {b["label"] for b in c["blockers"]} >= {"Not listed on the Marketplace", "No way for new customers to find you yet"}
-    assert [x["ask"] for x in c["not_on_record"]] == ["customer"]
+    # "not sure" is an answer: kept open, never asked again (the owner, 1 Nov: "you even asked me here... why repeat")
+    assert [x["key"] for x in c["not_on_record"]] == ["target"] and not any(x.get("ask") for x in c["not_on_record"])
     launch = fv.assess("launch", {"kind": "service", "sell": "Mobile car wash", "stage": "testing", "customer": "Busy drivers", "where": "Abuja", "evidence": "None yet"})
     assert [x["weight"] for x in launch["criteria"]] == [15, 15, 20, 15, 10, 10, 10, 5] and launch["premium_next_action"]["label"].startswith("Resolve my ")
     assert fv.assess("create_invoice", {}) is None                           # a document has no assessment
@@ -89,8 +90,8 @@ def test_it_needs_no_model_and_the_premium_step_checks_the_plan_before_credits()
     loaded = {m for m in set(sys.modules) - before if any(w in m for w in ("anthropic", "openai", "httpx", "market_research"))}
     assert loaded == set() and r["score"] is not None                       # nothing that calls a model or the network was needed
     gate = fv.premium_gate(r, entitled=False, credits=50)
-    assert gate["allowed"] is False and gate["reason"] == "plan" and gate["message"].endswith("plan.") and gate["primary"]["label"] == "See plans"      # 50 credits do not unlock it
-    assert gate["primary"]["label"] == "See plans" and [x["label"] for x in gate["secondary"]] == ["Continue with free tools", "Save for later"]
+    assert gate["allowed"] is False and gate["reason"] == "plan" and "part of the Starter plan" in gate["message"] and "Fill in the gaps here" in gate["message"] and gate["primary"]["label"] == "Upgrade to Starter"      # 50 credits do not unlock it
+    assert gate["primary"]["label"] == "Upgrade to Starter" and [x["label"] for x in gate["secondary"]] == ["Continue with free tools", "Save for later"]
     assert fv.premium_gate(r, entitled=True, credits=0)["reason"] == "credits" and fv.premium_gate(r, entitled=True, credits=10)["allowed"] is True
     for text in [r["headline"], r["premium_next_action"]["label"], gate["message"], *r["strengths"], *[b["label"] for b in r["blockers"]]]:
         assert not any(name in text for name in ("Funding Pack Draft", "Scenario Help", "Funding case", "funding_readiness")) and "\u2014" not in text and "\u2013" not in text

@@ -160,24 +160,40 @@ const VALIDATION_DEFAULTS_KEY = "ea_validation_stage_defaults";
 const V4_DRAFT_KEY = "ea_v4_draft";
 const FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "yearly", "custom"];
 
+// A draft and its defaults belong to one account's one workspace (the owner, 31 Oct: another workspace's idea, "A mobile App
+// for Building Design", in a new workspace's form): kept under that pair, the old shared copies removed and never read
+function scoped(key) {
+  const who = String(useAuthStore.getState().email || "").toLowerCase();
+  const ws = String(useWorkspaceStore.getState().workspaceId || "");
+  return who && ws ? `${key}:${who}:${ws}` : null;
+}
+function dropShared() {
+  try { window.localStorage.removeItem(V4_DRAFT_KEY); window.localStorage.removeItem(VALIDATION_DEFAULTS_KEY); } catch { /* nothing kept */ }
+}
 function loadV4Draft() {
+  dropShared();
   try {
-    const raw = window.localStorage.getItem(V4_DRAFT_KEY);
+    const key = scoped(V4_DRAFT_KEY);
+    const raw = key && window.localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch { return null; }
 }
 function saveV4Draft(form, step, journey) {
-  try { window.localStorage.setItem(V4_DRAFT_KEY, JSON.stringify({ form, step, journey })); } catch {}
+  const key = scoped(V4_DRAFT_KEY);
+  try { if (key) window.localStorage.setItem(key, JSON.stringify({ form, step, journey })); } catch {}
 }
 function clearV4Draft() {
-  try { window.localStorage.removeItem(V4_DRAFT_KEY); } catch {}
+  const key = scoped(V4_DRAFT_KEY);
+  try { if (key) window.localStorage.removeItem(key); } catch {}
 }
 
 function loadValidationStageDefaults() {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(VALIDATION_DEFAULTS_KEY);
+    dropShared();
+    const key = scoped(VALIDATION_DEFAULTS_KEY);
+    const raw = key && window.localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -499,6 +515,16 @@ export default function ValidationWizardPage() {
   const [v4Journey, setV4Journey] = useState(null); // always start at selection screen
   const [v4Step, setV4Step] = useState(0); // always start at step 0
   const [v4Form, setV4Form] = useState(_v4Draft?.form ?? {});
+  // Another workspace chosen: its own draft, never the last one's left on screen (31 Oct)
+  const draftFor = useRef(storedWorkspaceId);
+  useEffect(() => {
+    if (draftFor.current === storedWorkspaceId) return;
+    const was = draftFor.current;
+    draftFor.current = storedWorkspaceId;
+    // only a real switch from one workspace to another: never when the workspace is first known, which wiped the answers a
+    // validation had just loaded (the owner, 31 Oct: the Agent's validation opened as an empty form)
+    if (was && storedWorkspaceId) setV4Form(loadV4Draft()?.form ?? {});
+  }, [storedWorkspaceId]);
   const [v4Error, setV4Error] = useState(null);
   const v4ErrorRef = useRef(null);
   const [v4Saving, setV4Saving] = useState(false);
@@ -1102,23 +1128,28 @@ export default function ValidationWizardPage() {
   const [agentFilled, setAgentFilled] = useState(null);
   const v4FormRef = useRef(v4Form);
   v4FormRef.current = v4Form;
+  const openedForEntry = useRef(Boolean(requestedHistoryId));      // opened on a saved validation: never refilled from the chat (31 Oct)
   useEffect(() => {
-    if (!activeWorkspaceId || requestedHistoryId) return undefined;
+    if (!activeWorkspaceId || requestedHistoryId || openedForEntry.current) return undefined;
     let gone = false;
+    // Said while it loads, when it takes more than a moment (the owner, 31 Oct: "at least let me know you're loading it")
+    const slow = setTimeout(() => { if (!gone) setAgentFilled((x) => x || { loading: true }); }, 400);
     (async () => {
       try {
         const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
         const drafted = ws?.data?.agent_validation_form;
-        if (gone || !drafted?.form || !drafted.run_id || alreadyApplied(drafted.run_id)) return;
+        if (gone || !drafted?.form || !drafted.run_id || alreadyApplied(drafted.run_id)) { if (!gone) setAgentFilled((x) => (x?.loading ? null : x)); return; }
         const { form: next, filled } = fillEmpty(v4FormRef.current, drafted.form);
         if (filled) setV4Form(next);
         markApplied(drafted.run_id);
         setAgentFilled({ filled, idea: drafted.idea || "" });
       } catch {
-        /* the form opens as it was */
+        if (!gone) setAgentFilled((x) => (x?.loading ? null : x));      /* the form opens as it was */
+      } finally {
+        clearTimeout(slow);
       }
     })();
-    return () => { gone = true; };
+    return () => { gone = true; clearTimeout(slow); };
   }, [activeWorkspaceId, requestedHistoryId]);
 
   const isProductPath = form.pathway === "product_service_idea";
@@ -1295,8 +1326,11 @@ export default function ValidationWizardPage() {
       // "Open the validation results" (view=results) goes to its results dashboard instead (the owner, 26 Oct)
       const toResults = searchParams.get("view") === "results";
       // Gone to the results: the address is never tidied here after, which brought the owner back to this page (26 Oct)
-      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, !toResults, !toResults))
-        .finally(() => window.location.pathname.endsWith("/validation") && setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); next.delete("view"); return next; }, { replace: true }));
+      // a validation that has run opens on its result, Modify one press away; one not yet run opens its form (the owner, 31 Oct:
+      // "open and load the specific validation")
+      // "See your validation results": its result; "Open the form" and Modify: its filled form, on its first step (31 Oct)
+      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, !toResults, true))
+        .finally(() => window.location.pathname.endsWith("/validation") && setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); next.delete("view"); next.delete("edit"); return next; }, { replace: true }));
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry
       (async () => {
@@ -1455,7 +1489,8 @@ export default function ValidationWizardPage() {
       alternatives: String(form?.problem?.alternatives || "").trim(),
     };
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(VALIDATION_DEFAULTS_KEY, JSON.stringify(payload));
+      const defaultsKey = scoped(VALIDATION_DEFAULTS_KEY);
+      if (defaultsKey) window.localStorage.setItem(defaultsKey, JSON.stringify(payload));
     }
   }, [
     form?.context?.business_name,
@@ -3721,6 +3756,11 @@ export default function ValidationWizardPage() {
 
               {v4Error && <div ref={v4ErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
               {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
+              {agentFilled?.loading && (
+                <div role="status" data-agent-filling className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                  <Spinner size={14} /> Filling the form from your Agent chat…
+                </div>
+              )}
               {agentFilled && agentFilled.filled > 0 && (
                 <div data-agent-filled className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
                   Filled from your Agent chat{agentFilled.idea ? ` about ${agentFilled.idea}` : ""}. Check each answer and change anything that isn't right before you run the validation.
@@ -3868,6 +3908,11 @@ export default function ValidationWizardPage() {
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  {/* A result the Agent already worked out, waiting to be accepted: its results one press away, never only the form
+                                      (the owner, 31 Oct: the free plan's validation by the Agent "is not showing") */}
+                                  {entry.status !== "accepted" && entry.status !== "rejected" && (entry.source === "agent" || entry.score != null) && (
+                                    <Button size="sm" onClick={() => editHistoryEntry(entry, false, false)} data-see-results>See results</Button>
+                                  )}
                                   <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
                                     {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
                                   </Button>
@@ -4679,6 +4724,11 @@ export default function ValidationWizardPage() {
                                 </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                {/* A result the Agent already worked out, waiting to be accepted: its results one press away, never only the form
+                                    (the owner, 31 Oct: the free plan's validation by the Agent "is not showing") */}
+                                {entry.status !== "accepted" && entry.status !== "rejected" && (entry.source === "agent" || entry.score != null) && (
+                                  <Button size="sm" onClick={() => editHistoryEntry(entry, false, false)} data-see-results>See results</Button>
+                                )}
                                 <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
                                   {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
                                 </Button>

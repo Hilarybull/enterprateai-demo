@@ -63,6 +63,17 @@ LIST_FIELDS = {
 FEATURE = {rules.FUNDING: "funding", rules.LAUNCH: "launch"}
 
 
+def _channels_in_words(value):
+    """A check's channel answer as the owner reads it: never its codes (the owner, 1 Nov: "walk_in,ads,marketplace")."""
+    from app.modules.agent.first_value import CHANNELS
+    parts = [p.strip() for p in str(value or "").split(",") if p.strip()]
+    if not parts or not all(p in CHANNELS for p in parts):
+        return value
+    words = [CHANNELS[p] for p in parts]
+    said = words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+    return said[:1].upper() + said[1:]
+
+
 class Denied(Exception):
     """No access to this business."""
 
@@ -687,7 +698,7 @@ class ReadinessService:
             others = {k: ((data.get("quick_check_answers") or {}).get(k) or {}).get("answers") or {} for k in ("launch", "more_customers", "price_offer", "test_idea")}
             for g in ("launch", "more_customers", "price_offer", "test_idea"):
                 take("market.location", others[g].get("where"), f"your {g.replace('_', ' ')} check")
-                take("market.acquisition_approach", others[g].get("channel") or others[g].get("route"), f"your {g.replace('_', ' ')} check")
+                take("market.acquisition_approach", _channels_in_words(others[g].get("channel") or others[g].get("route")), f"your {g.replace('_', ' ')} check")
             here = (latest or {}).get("context") or {}
             take("market.location", ", ".join(x for x in (here.get("place"), here.get("country")) if x), research)
             channels_found = next((x.get("value") for r in sorted(runs, key=lambda r: str(r.get("created_at") or ""), reverse=True)
@@ -857,7 +868,9 @@ class ReadinessService:
         was = case.get("provenance") or {}
         stale = [p for p in ("market.acquisition_owner", "team.responsibilities", "market.target_segment", "market.differentiation",
                              "market.location", "market.acquisition_approach", "market.acquisition_cost", "traction.summary", "purpose")
-                 if isinstance(was.get(p), dict) and str(was[p].get("value")) == str(engine.get(case, p)) and not self._still_fits(p, engine.get(case, p), data)]
+                 if isinstance(was.get(p), dict) and str(was[p].get("value")) == str(engine.get(case, p)) and not self._still_fits(p, engine.get(case, p), data)
+                 # What the owner approved stays, whatever its wording (the owner, 1 Nov: fields "I just approved" came back empty)
+                 and "accepted by you" not in str(was[p].get("source") or "")]
         from app.modules.agent import research as _rs
         # "No acquisition channels are described in the available information" (the owner's QA, 21 Oct): a non-answer the
         # Agent wrote is not an answer; cleared, so it is drafted again.
@@ -2265,6 +2278,15 @@ class ReadinessService:
             data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
             data["last_person_revision"] = int(row["revision"]) + 1
         saved = await self._patch_data(row, ctx, apply, "Replaced with a new funding need.")
+
+        # The research and drafting done belong to the old need, in History: the new need starts its own, never reusing them
+        # (the owner, 1 Nov: "each funding for a different purpose is replacing and updating the current")
+        def _new_need(d: dict) -> None:
+            (d.get("agent_filled") or {}).pop(str(subject_id), None)
+            for r in (d.get("research_runs") or {}).values():
+                if isinstance(r, dict) and r.get("goal") == "need_funding":
+                    r["replaced_need"] = True
+        await self.business.mutate(business_id, _new_need)
         return await self._detail(saved, ctx)
 
     async def keep_previous(self, user_id: str, business_id: str, subject_id: str, item: str, keep: bool, email: str | None = None, need: int = 0) -> dict:
@@ -2933,7 +2955,9 @@ class ReadinessService:
         """Fingerprints of what the user provided. Documents prepared here are outputs, not
         inputs: preparing one never makes a result stale. A document counts once the user
         attaches their own or records a review."""
-        subject = {k: v for k, v in snapshot["subject"].items() if k not in ("provenance", "pinned", "archived_from", "editors", "documents", "created_by")}
+        subject = {k: v for k, v in snapshot["subject"].items() if k not in ("provenance", "pinned", "archived_from", "editors", "documents", "created_by",
+                                                                      # waiting drafts and bookkeeping change no answer (the owner, 1 Nov: "out of date" after only a draft)
+                                                                      "agent_drafts", "rejected_drafts", "last_person_revision", "filled_from_records")}
         documents = {k: {x: v.get(x) for x in ("evidence_id", "reviewed", "facts_fingerprint")}
                      for k, v in (snapshot["subject"].get("documents") or {}).items() if isinstance(v, dict) and (v.get("reviewed") or v.get("evidence_id"))}
         if documents:
@@ -3055,7 +3079,8 @@ class ReadinessService:
         if latest and latest["id"] != run["id"]:
             return {"status": "stale", "reason": "A newer check has been run.", "as_of": as_of, "superseded": True}
         now_hashes = self._hashes(await self._snapshot(row, ctx))
-        was = data.get("hashes") or {}
+        # Worked out again from the check's own snapshot, so results saved before a rule changed are read by today's rule
+        was = self._hashes(data["snapshot"]) if data.get("snapshot") else data.get("hashes") or {}
         if now_hashes["all"] != was.get("all"):
             what = ("The checklist changed." if now_hashes["profile"] != was.get("profile") else "Evidence changed." if now_hashes["evidence"] != was.get("evidence")
                     else "The forecast changed." if now_hashes["forecast"] != was.get("forecast") else "The details changed.")
@@ -3537,6 +3562,14 @@ class ReadinessService:
         current = latest and latest.get("status") == "succeeded" and int((latest.get("data") or {}).get("subject_revision") or 0) >= int(row.get("revision") or 0)
         done = latest if current else await self._latest(row, succeeded_only=True)
         result = (done["data"] or {}).get("result") if done else None
+        if result and result.get("score") is None and (done["data"] or {}).get("snapshot"):
+            # A check saved before what was partly filled in counted (31 Oct) still showed 0 (the owner, 1 Nov: "you already have
+            # some info...why 0?"): its points so far from the same answers, by today's rules
+            try:
+                again = engine.assess(done.get("kind") or row.get("kind"), done["data"]["snapshot"], rules.get_profile(done["data"]["profile"]), ctx["today"])
+                result = {**result, "known_points": again.get("known_points", result.get("known_points"))}
+            except Exception:      # noqa: BLE001 - the saved figure stands
+                pass
         async def no_check() -> dict:
             return {"status": None, "reason": None}
         fresh, listed = await asyncio.gather(self._freshness(done, row, ctx, newest=done) if done else no_check(),

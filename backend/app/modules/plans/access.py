@@ -40,6 +40,14 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
     if isinstance(sub, BaseException):
         sub = None
 
+    lapsed = None
+    if sub and sub.get("status") in ("past_due", "unpaid") and sub.get("plan_key") not in (None, "", "explorer"):
+        lapsed = {"lapsed_plan_key": sub.get("plan_key"), "lapsed_at": sub.get("current_period_end")}      # Stripe said the payment failed: said too
+    if sub and sub.get("status") in ("active", "trial") and _lapsed(sub):
+        # The paid period ended and no renewal came (the owner, 31 Oct: two months on without payment, no expiry, no notice):
+        # Explorer until it is renewed, and said so; their records and work are kept
+        lapsed = {"lapsed_plan_key": sub.get("plan_key"), "lapsed_at": sub.get("current_period_end")}
+        sub = None
     if sub and sub.get("status") in ("active", "trial"):
         return SubscriptionOut(
             plan_key=sub["plan_key"],
@@ -68,7 +76,27 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
         except Exception:
             pass
 
-    return SubscriptionOut(plan_key="explorer", billing_period="monthly", status="active")
+    return SubscriptionOut(plan_key="explorer", billing_period="monthly", status="active", **(lapsed or {}))
+
+
+# Days after the paid period ends before the plan lapses: time for a late renewal (or its webhook) to arrive
+LAPSE_GRACE_DAYS = 3
+
+
+def _lapsed(sub: dict, now: datetime | None = None) -> bool:
+    """A paid subscription whose period ended more than the grace days ago with no renewal recorded. A row with no period
+    end (set up by hand, a grant) never lapses here."""
+    from datetime import timedelta
+    end = str(sub.get("current_period_end") or "").strip()
+    if not end or not sub.get("plan_key") or sub.get("plan_key") == "explorer":
+        return False
+    try:
+        ends = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if ends.tzinfo is None:
+        ends = ends.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) > ends + timedelta(days=LAPSE_GRACE_DAYS)
 
 
 async def has_paid_access(user_id: str) -> bool:

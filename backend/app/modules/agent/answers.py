@@ -54,6 +54,55 @@ def _requests_answer(data: dict) -> dict:
             "actions": [{"label": "Open requests", "to": "/operations?tab=Sales"}]}
 
 
+# "How many invoices do I have?", "list my quotes", "what customers have I got": a question about the records, answered from
+# them, never a new invoice started (the owner, 1 Nov: "it can't answer simple questions")
+# Only asking how many or which there are: "what if I lose my biggest client" and "which customers owe me" are other questions
+_ASKS = re.compile(r"^\s*(?:how many\b|list\b|count\b|show(?: me)?\b|(?:what|which)\b.*\b(?:do|have)\s+i\b|do i have\b|have i (?:got|sent|made|raised)\b)", re.I)
+_DOING = re.compile(r"\b(?:create|make|draft|raise|write|prepare|generate|send|new)\b(?! (?:have|did))", re.I)
+_KINDS = [("invoices", re.compile(r"\binvoices?\b", re.I)), ("quotes", re.compile(r"\bquot(?:e|es|ation|ations)\b", re.I)),
+          ("customers", re.compile(r"\b(?:customers?|clients?)\b", re.I))]
+
+
+def records_kind(text: str) -> str | None:
+    """The records a question is about, when it asks about them rather than for something new."""
+    t = str(text or "")
+    if topic_of(t) or not _ASKS.search(t) or _DOING.search(re.sub(r"^\s*(?:have i|what have i)\s+(?:sent|made|raised)\b", "", t, flags=re.I)):
+        return None
+    return next((k for k, rx in _KINDS if rx.search(t)), None)
+
+
+def records_answer(kind: str, data: dict) -> dict:
+    cur = bz.currency_of(data)
+    fin = data.get("financials") or {}
+    if kind == "customers":
+        names = [c.get("name") for c in ((data.get("catalogue") or {}).get("customers") or []) if isinstance(c, dict) and c.get("name")]
+        if not names:
+            return {"topic": "records", "message": "You have no customers on record yet. Add one in your Catalogue, or start a quotation and I'll add the customer for you.",
+                    "evidence": [], "actions": [{"label": "Open your customers", "to": "/catalogue?tab=customers"}], "source": "Based on your Catalogue."}
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        return {"topic": "records", "message": f"You have {len(names)} customer{'s' if len(names) != 1 else ''} on record: {shown}.",
+                "evidence": [], "actions": [{"label": "Open your customers", "to": "/catalogue?tab=customers"}], "source": "Based on your Catalogue."}
+    docs = [d for d in (fin.get("invoices") if kind == "invoices" else bz.quotes_of(data)) or [] if isinstance(d, dict) and not d.get("archived")]
+    word, page = ("invoice", "/operations?tab=Sales&sub=Invoices") if kind == "invoices" else ("quotation", "/operations?tab=Sales&sub=Quotations")
+    if not docs:
+        return {"topic": "records", "message": f"You have no {word}s yet. Ask me to draft one whenever you're ready.", "evidence": [],
+                "actions": [{"label": f"Draft a {word}", "kind": "explain", "prompt": f"Create a {word}"}], "source": "Based on your records."}
+    total = sum(bz.invoice_total(d) for d in docs if bz.doc_currency(d, cur) == cur)
+    message = f"You have {len(docs)} {word}{'s' if len(docs) != 1 else ''}, {fmt_money(total, cur)} in all."
+    if kind == "invoices":
+        unpaid = [d for d in docs if bz.invoice_outstanding(d) > 0 and bz.doc_currency(d, cur) == cur]
+        if unpaid:
+            message += f" {len(unpaid)} {'is' if len(unpaid) == 1 else 'are'} unpaid, {fmt_money(sum(bz.invoice_outstanding(d) for d in unpaid), cur)} still to come in."
+        else:
+            message += " All of them are paid."
+    latest = sorted(docs, key=lambda d: str(d.get("created_at") or d.get("issue_date") or d.get("date") or ""), reverse=True)[:3]
+    lines = [f"{d.get('reference') or d.get('number') or word.capitalize()} for {d.get('customer_name') or 'a customer'}, "
+             f"{fmt_money(bz.invoice_total(d), bz.doc_currency(d, cur))}" for d in latest]
+    if lines:
+        message += " The latest: " + "; ".join(lines) + "."
+    return {"topic": "records", "message": message, "evidence": [], "actions": [{"label": f"Open your {word}s", "to": page}], "source": "Based on your records."}
+
+
 def topic_of(text: str) -> str | None:
     return next((key for key, pattern in _TOPICS if pattern.search(text or "")), None)
 

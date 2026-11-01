@@ -7,6 +7,7 @@
       "add_catalogue_item",
       "add_customer",
       "add_vendor",
+      "business_plan_draft",
       "enquiry_to_quote",
       "idea_validation",
       "marketplace_offering",
@@ -21,7 +22,6 @@
       "update_record"
     ],
     "starter_insight": [
-      "business_plan_draft",
       "capacity_check",
       "credit_note",
       "expansion_scenario",
