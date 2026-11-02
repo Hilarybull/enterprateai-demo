@@ -48,3 +48,22 @@ it("signed out on the landing page, the one confirmation is still there", async 
   expect(document.querySelector("[data-summary]")).toBeTruthy();
   expect(calls.find((c) => /\/inputs$/.test(c.path))).toBeUndefined();
 });
+
+it("funding is set up in the chat: currency kept, no page of its own", async () => {
+  useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+  localStorage.setItem("ea_token", "tok-1");
+  const made = session({ next: "prepare", authenticated: true, business_id: "b1", proposed: {} });
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, "");
+    calls.push({ path, method: init.method || "GET", body: typeof init.body === "string" ? JSON.parse(init.body) : null });
+    const out = init.method !== "POST" ? {} : /task-sessions$/.test(path) ? session() : /\/inputs$/.test(path) ? session({ next: "identity", proposed: {} })
+      : /\/resume$/.test(path) ? { ...made, currency_question: { shown: "NGN", workspace: "GBP" } } : /\/currency$/.test(path) ? made
+        : /\/prepare$/.test(path) ? { ...made, next: "handoff", handoff: { to: "/funding/c1?tab=results", subject_id: "c1" } } : made;
+    return new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  await say();
+  await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+  expect(calls.find((c) => /\/currency$/.test(c.path))?.body).toEqual({ choice: "keep" });
+  expect(calls.some((c) => /\/prepare$/.test(c.path))).toBe(true);
+  expect(calls.filter((c) => /\/prepare$/.test(c.path)).length).toBe(1);
+});

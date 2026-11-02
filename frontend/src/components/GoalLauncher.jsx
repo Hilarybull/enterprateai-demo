@@ -255,11 +255,24 @@ export function useGoalFlow({ inApp = false } = {}) {
     try { localStorage.removeItem(sessionKey); } catch { /* ignore */ }
     putTaskInAddress("");
   }, [sessionKey, inApp]);
+  const [opening, setOpening] = useState("");      // a funding case or launch plan being set up, in the chat
+  const openingFor = useRef("");
   /** Straight on, for someone signed in; or to the sign-in page for someone who says they have an account.
    *  The address is never put in a link: only where to come back to. */
   const carryOn = useCallback(() => {
     const next = startPath(session.id);
     markCardSignIn(session.id);
+    if (here && OPENS_A_CASE[session.goal_key]) {
+      // Funding and launch are set up here in the chat, never on a page of their own (the owner, 2 Nov: "this is old")
+      if (openingFor.current === session.id) return "";
+      openingFor.current = session.id;
+      setOpening(OPENS_A_CASE[session.goal_key]);
+      openCase(session.id).then((out) => {
+        if (out?.choose) { openingFor.current = ""; setSession({ ...out.choose, questions: out.choose.questions || [] }); return; }      // Replace or update: asked here
+        navigate(out?.to || next, { replace: true });
+      }).catch(() => navigate(next, { replace: true })).finally(() => setOpening(""));
+      return "";
+    }
     if (here) { markStraightOn(session.id); navigate(next); return ""; }
     navigate(`/login?next=${encodeURIComponent(next)}`);
     return "";
@@ -347,7 +360,7 @@ export function useGoalFlow({ inApp = false } = {}) {
     }
   }, [session?.id, keep, retryOnce, navigate]);
   return { offer, session, busy, pending, resuming, problem, failed, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
-    newPassword, passwordHold, setPassword, skipPassword, attachUser, go: navigate };
+    newPassword, passwordHold, setPassword, skipPassword, attachUser, go: navigate, opening };
 }
 
 /** The launcher on its own: it runs its own flow and shows the task card beneath it. */
@@ -364,6 +377,23 @@ const RECAP_OK = { need_funding: "Looks right, check my readiness", launch: "Loo
 const REGION_CURRENCY = { NG: "NGN", GB: "GBP", US: "USD", GH: "GHS", KE: "KES", IE: "EUR", DE: "EUR", FR: "EUR", ES: "EUR", IT: "EUR", NL: "EUR" };
 const ZONE_CURRENCY = { "Africa/Lagos": "NGN", "Europe/London": "GBP", "Africa/Accra": "GHS", "Africa/Nairobi": "KES" };
 /** Signed in: the workspace, so the server uses its own currency (a kept "GBP" default never reaches a naira workspace). */
+const OPENS_A_CASE = { need_funding: "Opening your funding case…", launch: "Opening your launch plan…" };
+
+/** Everything said: the case made and opened on its Assistant tab, the currency they typed kept. { to }, or { choose } when
+ *  the workspace already has a different need, or nothing when only the task's own page can carry on. */
+async function openCase(id) {
+  const path = `/task-sessions/${id}`;
+  await apiRequest(`${path}/attach-user`, "POST", { confirm: true }, { timeoutMs: 20000 });
+  let now = await apiRequest(`${path}/resume`, "POST", chatWorkspace(), { timeoutMs: 30000 });
+  if (now?.missing?.length) return null;
+  if (now?.currency_question) now = await apiRequest(`${path}/currency`, "POST", { choice: "keep" }, { timeoutMs: 20000 });      // they typed it: never asked again
+  const done = await apiRequest(`${path}/prepare`, "POST", { confirmed: false }, { timeoutMs: 120000 });
+  if (done?.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
+  if (done?.next === "choose" && done.choose) return { choose: done };
+  const to = String(done?.handoff?.to || "");
+  return done?.handoff?.subject_id && /^\/(funding|launch)\//.test(to) ? { to: `${to.split("?")[0]}?tab=assistant` } : null;
+}
+
 function chatWorkspace() {
   try {
     const ws = useWorkspaceStore.getState();
@@ -1013,6 +1043,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   }, [here, step, carryOn, newPassword, recapDone]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!session) return null;
+  if (flow.opening) return <p className="flex items-center gap-2 text-[14px] text-slate-500" role="status" data-opening-case><span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />{flow.opening}</p>;
   if (here && (step === "identity" || step === "prepare") && !newPassword && (recapDone || (!risky && !(session?.summary || []).some((r) => r.key !== "currency")))) return null;      // signed in, recap confirmed: on to the task
 
   function submitQuestion(nextValue = draftValue, typed = nextValue === draftValue) {
