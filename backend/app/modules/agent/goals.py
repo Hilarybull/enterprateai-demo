@@ -2509,9 +2509,9 @@ def _case_title(a: dict) -> str:
     return (f"{amount} for {use}" if amount and use else amount or (use[:1].upper() + use[1:] if use else "Funding case"))[:120]
 
 
-def _told(a: dict) -> str:
+def _told(a: dict, sign: str = "£") -> str:
     """What was said, with the visitor's own words quoted as they wrote them, never bent into a sentence."""
-    amount = _shown({"type": "number", "prefix": "£"}, a["amount"]) if isinstance(a.get("amount"), (int, float)) else ""
+    amount = _shown({"type": "number", "prefix": sign}, a["amount"]) if isinstance(a.get("amount"), (int, float)) else ""
     use = f'"{str(a["use"]).strip().rstrip(".")}"' if a.get("use") else ""
     return f"{amount} to fund: {use}" if amount and use else amount or (f"to fund: {use}" if use else "")
 
@@ -2693,7 +2693,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     stamp = f"From your funding chat, {now.day} {now.strftime('%b')}"
                     chat_prov = {p: stamp for p in ("target_amount", "currency", "purpose", "receipt_date", "route_preference", "stage", "traction.summary",
                                                      "traction.customers", "traction.monthly_revenue", "market.location", "jurisdiction") if _get(wanted, p) not in (None, "")}
-                    title, told = need_title(wanted), _told(a)
+                    title, told = need_title(wanted), _told(a, SIGNS.get(money or "", "£"))
                 else:
                     # Every answer in its own field, a date chip as a real date ("In 1 to 3 months": the end of the third
                     # month; "Not decided yet": no date), never the chip's words, which the plan refuses as a date.

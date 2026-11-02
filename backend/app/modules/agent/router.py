@@ -1025,7 +1025,13 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             except Exception:      # noqa: BLE001 - no access or no module: an ordinary message
                 subjects = None
             if subjects is not None:
-                return _result(readiness_answer.answer(body.text, kind, subjects))
+                said = readiness_answer.answer(body.text, kind, subjects)
+                if body.page and said.get("case_id"):
+                    # Already on its page, with no model to answer (the owner, 2 Nov: "your next steps are on its page", nothing to press):
+                    # the result and what's left, here in the chat
+                    said = {**said, "message": str(said.get("message") or "").replace(" Your next steps are on its page.", " Next step: start with what's left below."),
+                            "cards": [{"type": "result", "case_id": said["case_id"]}, {"type": "steps", "case_id": said["case_id"]}]}
+                return _result(said)
     try:
         res = await get_orchestrator().submit(AgentRequest(
             requesting_actor_id=user["id"], business_id=body.business_id, source_channel=body.source_channel,

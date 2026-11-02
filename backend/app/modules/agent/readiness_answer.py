@@ -129,7 +129,7 @@ def answer(text: str, kind: str, subjects: list[dict]) -> dict:
             offers.append({"label": f"See all {noun}s", "to": base})
         elif kind == "launch":
             offers.append(new_button)      # several launch plans; one funding case
-        return {"kind": "answer", "conversational": False, "message": message, "offers": offers[:3]}
+        return {"kind": "answer", "conversational": False, "message": message, "offers": offers[:3], "case_id": str(pick["id"])}
     if not subjects:
         return {"kind": "answer", "conversational": False, "message": f"You don't have a {noun} yet. I can set one up and check it, for free.",
                 "offers": [new_button, {"label": "Not now", "dismiss": True}]}

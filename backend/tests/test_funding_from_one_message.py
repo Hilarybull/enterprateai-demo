@@ -26,3 +26,8 @@ def test_nothing_changes_when_no_currency_was_typed(world):  # noqa: F811
     env, store, client, who = world
     s = client.post("/task-sessions", json={"text": "I need funding: 50000 for stock, a loan, in 3 to 6 months.", "entry_mode": "free_text", "currency": "GBP"}).json()
     assert s["currency"] == "GBP"
+
+
+def test_the_set_up_message_says_the_currency_they_typed():
+    assert goals._told({"amount": 10000000, "use": "stock"}, "₦").startswith("₦10,000,000")
+    assert goals._told({"amount": 50000, "use": "stock"}).startswith("£50,000")

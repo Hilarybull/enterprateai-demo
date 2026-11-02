@@ -17,7 +17,7 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async (url, init = {}) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
     calls.push(path);
-    const out = /readiness-question/.test(path) ? { kind: "funding", converse: true } : /first-value/.test(path) ? {} : /\/prepare$/.test(path) ? { ...SESSION, handoff: { to: "/funding/c1?tab=assistant", subject_id: "c1" } } : /task-sessions/.test(path) ? SESSION : {};
+    const out = /readiness-question/.test(path) ? { kind: "funding", converse: true } : /first-value/.test(path) ? {} : /\/prepare$/.test(path) ? { ...SESSION, first_value: true, handoff: { to: "/funding/c1?tab=results", subject_id: "c1" } } : /task-sessions/.test(path) ? SESSION : {};
     return new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
   });
 });

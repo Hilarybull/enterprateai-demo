@@ -584,3 +584,12 @@ async def service_for_case(env, cid, patch):
     svc = service_for(env.orch)
     row = await svc.store.get("subjects", cid)
     await svc.store.update("subjects", cid, {"data": {**row["data"], **patch}})
+
+
+def test_with_no_model_a_question_on_the_case_page_shows_what_is_left_here(talk, monkeypatch):
+    """The owner, 2 Nov: "your next steps are on its page" while on that page, with nothing to press."""
+    env, ask, model, cid = talk
+    monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: None)
+    out = ask("How ready am I for funding?", page="funding", case_id=str(cid))
+    assert "on its page" not in out["message"] and "Next step:" in out["message"], out["message"]
+    assert {"result", "steps"} <= {c["type"] for c in out["cards"]}
