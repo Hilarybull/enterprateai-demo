@@ -241,7 +241,7 @@ describe("the task card", () => {
     expect(within(card()).getByText("What you told me")).toBeTruthy();
     expect([...card().querySelectorAll("[data-said-chip]")].map((c) => c.textContent)).toEqual(["£50,000", "Trading"]);
     const checkpoint = card().querySelector("[data-checkpoint]");
-    expect(checkpoint.querySelector("[data-retention]").textContent).toBe("Kept for 7 days, and picked up as soon as you're in.");
+    expect(checkpoint.querySelector("[data-retention]").textContent).toBe("Kept for 7 days. The code picks it up.");
     expect(localStorage.getItem("ea_task_session:anon")).toBe("sess-1");
     // The name first, then the email, each asked in turn.
     const name = within(checkpoint).getByLabelText("Your name");

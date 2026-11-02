@@ -899,6 +899,8 @@ class Orchestrator:
                 results = [await self.submit(replace(req, raw_input=p, part_of_message=True, request_id=new_id()), email=email) for p in parts]
                 return {"kind": "multi", "results": results, "message": f"I took that as {len(results)} requests."}
 
+        if req.raw_input and not req.requested_capability and answers.names_asked(req.raw_input):
+            return await self._charged_answer(req, actor, {"kind": "answer", **answers.named_records_answer(answers.names_asked(req.raw_input), await self.visible_data(req.business_id, actor))})
         if req.raw_input and not req.requested_capability and answers.records_kind(req.raw_input):
             # A question about the records ("how many invoices do I have?") is answered from them, never a task started
             return await self._charged_answer(req, actor, {"kind": "answer", **answers.records_answer(answers.records_kind(req.raw_input), await self.visible_data(req.business_id))})

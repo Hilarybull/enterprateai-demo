@@ -2207,6 +2207,9 @@ class ReadinessService:
 
     # What belonged to the funding need being replaced: kept, but not counted, until the owner says it still applies.
     PREVIOUS_NEED_FIELDS = ("market", "traction", "use_of_funds", "milestones", "purpose_milestone_id", "timing_confirmed")
+    # The business's facts, not the old need's: copied to History with it, and they stay on the case (New-User Test F2: Business
+    # went from 9 of 9 to 2 of 9 and Traction to 0 of 4). What the new need says of them wins.
+    CARRIED_OVER = ("market", "traction")
 
     async def replace_need(self, user_id: str, business_id: str, subject_id: str, changes: dict, email: str | None = None,
                            provenance: dict | None = None, summary: str = "", previous_title: str | None = None) -> dict:
@@ -2266,13 +2269,15 @@ class ReadinessService:
 
         def apply(data: dict) -> None:
             for k in aside:
-                data.pop(k, None)
+                if k not in self.CARRIED_OVER:
+                    data.pop(k, None)
             data.pop("documents", None)
+            data.pop("receipt_date", None)      # the old need's date is never the new one's: said with it, or asked
             merged = _deep_merge(data, given)
             data.clear()
             data.update(merged)
             data["previous_needs"] = [previous] + list(before.get("previous_needs") or [])[:9]
-            prov = {p: v for p, v in (before.get("provenance") or {}).items() if p.split(".")[0] not in given and p.split(".")[0] not in aside}
+            prov = {p: v for p, v in (before.get("provenance") or {}).items() if p.split(".")[0] in self.CARRIED_OVER or (p.split(".")[0] not in given and p.split(".")[0] not in aside)}
             prov.update(_said_where(provenance, data))
             data["provenance"] = prov
             data["editors"] = sorted(set(before.get("editors") or []) | {user_id})
@@ -2719,6 +2724,9 @@ class ReadinessService:
             data.update({"drafted_by": "Agent", "confirmed_at": None, "confirmed_by": None})      # a draft: confirmed when the owner saves it
         else:
             data.update({"confirmed_at": ctx["today"].isoformat(), "confirmed_by": ctx["actor"].email or user_id})
+            was = (existing or {}).get("data") or {}
+            if data.get("drafted_by") == "Agent" and any(data.get(k) != was.get(k) for k in ("months", "opening_cash")):
+                data.pop("drafted_by")      # the owner's own figures now, no longer the Agent's estimate
         if existing:
             if revision is None or int(revision) != int(existing["revision"]):
                 raise Conflict("stale_revision", "The forecast changed while you were editing. Your figures are kept here so you can compare and apply them again.",
@@ -3602,6 +3610,8 @@ class ReadinessService:
         except Exception:      # noqa: BLE001
             ready_at = None
         out["not_ready_why"] = engine.why_not_ready(result, ready_at)
+        out["estimated_areas"] = (result or {}).get("estimated_areas") or []
+        out["unfinished_areas"] = (result or {}).get("unfinished_areas") or []
         if row["kind"] == rules.FUNDING:
             out.update({"case_id": row["id"], "coverage": (result or {}).get("coverage") if result else None, "route": data.get("route"),
                         "lifecycle_status": row.get("status"), "pack": _pack_of(row, result)})

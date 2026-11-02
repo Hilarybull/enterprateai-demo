@@ -8,6 +8,7 @@ are answered conversationally by the Business Assistant.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from typing import Any
@@ -61,6 +62,31 @@ _ASKS = re.compile(r"^\s*(?:how many\b|list\b|count\b|show(?: me)?\b|(?:what|whi
 _DOING = re.compile(r"\b(?:create|make|draft|raise|write|prepare|generate|send|new)\b(?! (?:have|did))", re.I)
 _KINDS = [("invoices", re.compile(r"\binvoices?\b", re.I)), ("quotes", re.compile(r"\bquot(?:e|es|ation|ations)\b", re.I)),
           ("customers", re.compile(r"\b(?:customers?|clients?)\b", re.I))]
+
+
+_NAMED = re.compile(r"^\s*(?:do (?:you|i|we) have|have (?:you|i|we) got|is there|are there|can you find|find|look up|search(?: for)?)\b.*?\b(?:records?|mention|anything)\s+(?:of|on|about|for|called|named)\s+(.{2,200}?)\s*[?.!]*$", re.I)
+_MY_OWN = re.compile(r"^(?:my|our|the|all|any|your)\b|\b(?:customers?|clients?|invoices?|quot(?:e|es|ation|ations)|business|records?)\s*$", re.I)
+
+
+def names_asked(text: str) -> list[str]:
+    """The named things in "do you have any record of ORCHID-7731 or Mrs Tate?"; none for "any record of my customers"."""
+    m = _NAMED.search(str(text or ""))
+    if not m or _MY_OWN.search(m.group(1).strip()):
+        return []
+    return [p.strip(" \"'") for p in re.split(r",|\band\b|\bor\b", m.group(1)) if p.strip(" \"'")][:6]
+
+
+def named_records_answer(names: list[str], data: dict) -> dict:
+    """Each name looked for in the workspace's own customers, products, suppliers, invoices and quotations, and said as found or not."""
+    fin, cat = data.get("financials") or {}, data.get("catalogue") or {}
+    where = {"customers": cat.get("customers"), "products": cat.get("products"), "suppliers": cat.get("vendors"), "invoices": fin.get("invoices"), "quotations": bz.quotes_of(data)}
+    found, missing = [], []
+    for name in names:
+        hit = next((k for k, rows in where.items() if name.lower() in json.dumps(rows or [], default=str, ensure_ascii=False).lower()), None)
+        (found.append(f"{name} (in your {hit})") if hit else missing.append(name))
+    said = [f"I found {', '.join(found)}." if found else "", f"I can't find {', '.join(missing)} in your customers, products, suppliers, invoices or quotations." if missing else ""]
+    return {"topic": "records", "message": " ".join(x for x in said if x) + " Next step: tell me what you'd like to do with it, or add it to your records.", "evidence": [],
+            "actions": [{"label": "Open your catalogue", "to": "/catalogue"}], "source": "Based on your records."}
 
 
 def records_kind(text: str) -> str | None:

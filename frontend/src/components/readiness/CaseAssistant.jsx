@@ -8,7 +8,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../../api/client";
 import { noteCameFrom } from "../../lib/cameFrom";
 import UkDateInput from "../UkDateInput";
-import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, questionOf, useFollowRuns, agentErrorMessage, approveAction, doesItFirst, getChat, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
+import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, questionOf, useFollowRuns, agentErrorMessage, approveAction, continueConversation, doesItFirst, getChat, getConversation, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
 import { sectionCounts } from "../../lib/caseSteps";
 import { attest, getPath, isReady, reviewDocument, saveForecast } from "../../lib/readiness";
 import { AddEvidence } from "./Evidence";
@@ -304,6 +304,7 @@ function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, draftsOnl
             </div>
           </div>
           {!done && <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full w-1/3 animate-pulse rounded-full bg-brand-600" /></div>}
+          {!done && <p className="mt-2 text-[12.5px] text-slate-500" data-research-eta>{options ? "This usually takes about 2 minutes." : "This usually takes 2 to 3 minutes."} You can carry on while I work, and I'll say here when it's done.</p>}
           <ul className="mt-3 space-y-2">{(options ? [] : gaps.length ? gaps : gapsOf(subject, steps)).slice(0, 6).map((g) => (
             <li key={g.key} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-[13.5px] dark:border-slate-700">
               <span className="flex min-w-0 flex-1 items-center gap-3 font-semibold text-slate-800 dark:text-slate-100"><span className="shrink-0 text-slate-600"><Glyph name={SECTION_ICON[g.key]} /></span><span className="min-w-0">{g.title}</span></span>
@@ -653,7 +654,7 @@ function RowsEdit({ value, onChange, label }) {
   );
 }
 
-function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, firstField, currency, target, decided = [], onDecide, onUndo }) {
+function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, firstField, currency, target, decided = [], onDecide, onUndo, forecast = null }) {
   const [more, setMore] = useState(false);      // the phone's ⋯ menu
   const [rowsOpen, setRowsOpen] = useState({});      // list drafts being edited in place
   const boxes = useRef({});
@@ -668,6 +669,12 @@ function ReviewScreen({ drafts, edits, setEdits, onApproveAll, onRequest, busy, 
       <div>
         <p className="text-[18px] font-bold text-slate-900 dark:text-slate-50">Review enriched information</p>
         <p className="text-[13.5px] text-slate-500">Review and refine what I prepared. Approve it to update your case.</p>
+        {forecast?.drafted_by === "Agent" && !forecast?.confirmed_at && (
+          <div data-review-forecast>
+            <ForecastSeen forecast={forecast} currency={currency} />
+            <p className="mt-1 text-[12.5px] text-slate-500">Approve all confirms this forecast too. To change it, open Inputs first.</p>
+          </div>
+        )}
         <p className="mt-1 text-[13px] font-semibold text-slate-700 dark:text-slate-200" data-drafts-left>{open.length} draft{open.length === 1 ? "" : "s"} waiting</p>
       </div>
       <div className="grid grid-cols-1 gap-4">
@@ -953,13 +960,67 @@ const ONCE = new Set(["findings", "choose", "next", "research_again", "progress"
 
 // What's left, in the chat, to fill in right here (the owner, 1 Nov: "it should provide the pendings for filling on the chat"): a
 // single answer is typed in its box and saved on the case; a forecast, a table or evidence opens where it's done.
-const NOT_TYPED = /forecast|use_of_funds|milestone|evidence|responsibilities|gaps|risks|confirm|economics$|^economics\b|no_gaps|no_known_risks/i;
+const NOT_TYPED = /dependencies|prerequisites|dry_run|forecast|use_of_funds|milestone|evidence|responsibilities|gaps|risks|confirm|economics$|^economics\b|no_gaps|no_known_risks/i;
 // Offered only for what's really on the list and the Agent can write: never a button that answers "I can't" (the owner, 1 Nov)
 const DRAFT_FIELD_OF = { "team.no_gaps": "team.gaps", no_known_risks: "risks" };
 const fieldOfStep = (st) => { try { return new URLSearchParams(String(st?.to || "").split("?")[1] || "").get("field"); } catch { return null; } };
 export function canDraftAny(steps, fields) {
   const can = new Set(fields || []);
   return (steps || []).some((st) => { const f = fieldOfStep(st); return f && !st.drafted && can.has(DRAFT_FIELD_OF[f] || f); });
+}
+// A confirmation always shows what it confirms (the owner, 1 Nov: "how can you confirm what you can't view, see")
+const SEEN = "mt-2 space-y-2 rounded-xl bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200";
+const DEMAND_OF = { "funding:C4.B": "C4.A", "launch:C1.B": "C1.A" };
+function ForecastSeen({ forecast, currency }) {
+  const f = forecast || {};
+  const months = (f.months || []).filter((m) => m && (m.receipts || m.payments));
+  const cur = f.currency || currency;
+  const same = (k) => new Set(months.map((m) => String(m[k] ?? ""))).size === 1;
+  const notes = (f.assumptions || []).filter((a) => a?.text);
+  return (
+    <div className={SEEN} data-forecast-seen>
+      <p className="font-semibold text-slate-900 dark:text-slate-50">{months.length}-month cash forecast{f.drafted_by === "Agent" ? " (my estimate)" : ""}</p>
+      {f.opening_cash !== undefined && f.opening_cash !== null && f.opening_cash !== "" && <p>Cash at the start: {money(f.opening_cash, cur)}</p>}
+      {months.length > 0 && same("receipts") && same("payments")
+        ? <p>Every month, from {months[0].month} to {months[months.length - 1].month}: {money(months[0].receipts, cur)} in, {money(months[0].payments, cur)} out.</p>
+        : <ul className="max-h-40 overflow-y-auto">{months.map((m) => <li key={m.month}>{m.month}: {money(m.receipts || 0, cur)} in, {money(m.payments || 0, cur)} out</li>)}</ul>}
+      {notes.length > 0 && <p className="text-[12.5px] text-slate-500">Based on: {notes[0].text}.</p>}
+    </div>
+  );
+}
+function ConfirmSeen({ st, subject, data, feature }) {
+  const code = st.attest?.code;
+  const cur = data?.currency || subject?.forecast?.data?.currency;
+  const check = DEMAND_OF[`${feature}:${code}`];
+  if (check) {
+    const items = (subject?.evidence || []).filter((e) => (e.links || []).some((l) => l.check === check));
+    return (
+      <ul className={SEEN} data-confirm-seen>{items.map((e) => (
+        <li key={e.id}>
+          <p className="font-semibold text-slate-900 dark:text-slate-50">{e.title}{e.effective_date ? `, ${String(e.effective_date).slice(0, 10)}` : ""}</p>
+          {e.claim && <p>{e.claim}</p>}
+          {/^https?:/.test(String(e.source?.reference || "")) && <a href={e.source.reference} target="_blank" rel="noreferrer" className="font-semibold text-brand-700 hover:underline">Read the source</a>}
+          {e.type === "research" && <p className="text-[12.5px] text-slate-500">This is market research, not proof from your own customers.</p>}
+        </li>))}</ul>
+    );
+  }
+  if (code === "C5.B" || code === "C2.B") {
+    const rows = code === "C5.B" ? [["Price per sale", "economics.price"], ["Direct cost per sale", "economics.direct_cost"], ["Fixed costs each month", "economics.fixed_costs_monthly"]]
+      : [["Price per unit", "economics.price_per_unit"], ["Cost to deliver one", "economics.variable_cost_per_unit"], ["Fixed costs each month", "economics.fixed_costs_monthly"]];
+    const [price, cost, fixed] = rows.map(([, p]) => Number(String(getPath(data || {}, p) ?? "").replace(/,/g, "")));
+    const each = price - cost;
+    return (
+      <div className={SEEN} data-confirm-seen>
+        {rows.map(([label, p]) => <p key={p}>{label}: {getPath(data || {}, p) ? money(getPath(data, p), cur) : "Not set"}</p>)}
+        {each > 0 && fixed > 0 && <p className="font-semibold text-slate-900 dark:text-slate-50">You make {money(each, cur)} on each sale, so you break even at about {Math.ceil(fixed / each)} sales a month.</p>}
+      </div>
+    );
+  }
+  if (code === "C6.A") {
+    const list = Array.isArray(data?.prerequisites) ? data.prerequisites : [];
+    return <ul className={SEEN} data-confirm-seen>{list.map((x, i) => <li key={x.id || i}>{x.name}{String(x.applicable) === "no" ? " (doesn't apply)" : x.critical ? " (required before launch)" : ""}</li>)}</ul>;
+  }
+  return null;
 }
 const BOXED = "min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-[14px] outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-900";
 const SAVE = "rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50";
@@ -969,14 +1030,89 @@ function PendingInline({ st, data, typed, setTyped, done, onField, subject, subj
   const [problem, setProblem] = useState("");
   const val = (k) => typed[`${st.key}:${k}`] || "";
   const set = (k, v) => setTyped((t) => ({ ...t, [`${st.key}:${k}`]: v }));
+  const rowsAt = (path) => { const v = getPath(data || {}, path); return Array.isArray(v) ? v : []; };
   const attempt = async (fn) => { setProblem(""); try { await fn(); done(); onSaved?.(); } catch { setProblem("That didn't save just now. Please try again."); } };
   const oops = problem && <p role="alert" className="mt-1 w-full text-[12.5px] font-semibold text-rose-600">{problem}</p>;
-  if (st.attest) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(() => attest(businessId, feature, subjectId, { code: st.attest.code, passed: true, rationale: st.attest.rationale }))}>Confirm</button>{oops}</div>;
+  if (st.attest) {
+    const check = DEMAND_OF[`${feature}:${st.attest.code}`];
+    const items = check ? (subject?.evidence || []).filter((e) => (e.links || []).some((l) => l.check === check)) : [];
+    if (check && !items.length) return <p className="mt-2 text-[13px] text-slate-500">There's no evidence to confirm yet. Add it first.</p>;
+    // Never claims more than it is: research is confirmed as research
+    const rationale = items.length && items.every((e) => e.type === "research") ? "Reviewed by the owner: market research that applies to this offer, not evidence from their own customers." : st.attest.rationale;
+    return (
+      <div>
+        <ConfirmSeen st={st} subject={subject} data={data} feature={feature} />
+        <button type="button" className={`${SAVE} mt-2`} onClick={() => attempt(() => attest(businessId, feature, subjectId, { code: st.attest.code, passed: true, rationale }))}>{check ? "I've read it, and it applies" : "These are right"}</button>{oops}
+      </div>
+    );
+  }
+  if (st.key === "forecast.confirm" && subject?.forecast?.data) {
+    const fc = subject.forecast;
+    return (
+      <div>
+        <ForecastSeen forecast={fc.data} currency={data?.currency} />
+        <button type="button" className={`${SAVE} mt-2`} onClick={() => attempt(() => saveForecast(businessId, feature, subjectId, { ...fc.data, opening_cash_as_of: fc.data.opening_cash_as_of || new Date().toISOString().slice(0, 10) }, fc.revision))}>This forecast is right</button>{oops}
+      </div>
+    );
+  }
   if (st.confirmGoal && onField) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(async () => onField("timing_confirmed", true))}>Confirm</button>{oops}</div>;
   if (/tab=evidence/.test(String(st.to || "")) && subject && !st.attest) {
     return <div className="mt-2"><AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={feature === "funding" ? "C4.A" : undefined} onAdded={() => { done(); onSaved?.(); }} onCancel={() => {}} /></div>;
   }
-  if (st.review) return <div className="mt-2"><button type="button" className={SAVE} onClick={() => attempt(async () => { for (const key of st.review) await reviewDocument(businessId, subjectId, key, { reviewed: true }); })}>Mark reviewed</button>{oops}</div>;
+  const fieldHere = fieldOfStep(st) || "";
+  const SELECT = "rounded-lg border border-slate-200 px-3 py-2 text-[14px] dark:border-slate-700 dark:bg-slate-900";
+  // Lists answered line by line, never a single box (a list can't hold a sentence)
+  if (onField && /delivery\.dependencies/.test(`${fieldHere} ${st.why || ""}`) || (onField && /depends on/i.test(st.title || "") && feature === "launch")) {
+    const rows = rowsAt("delivery.dependencies");
+    const open = rows.filter((r) => String(r.available) !== "yes" || [null, undefined, ""].includes(r.contingency));
+    const ready = open.length > 0 && open.every((r) => val(`${r.id}:available`) && (val(`${r.id}:contingency`).trim() || r.contingency));
+    if (open.length) {
+      return (
+        <form className="mt-2 space-y-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(async () => onField("delivery", { ...(data?.delivery || {}), dependencies: rows.map((r) => (open.includes(r) ? { ...r, available: val(`${r.id}:available`), contingency: val(`${r.id}:contingency`).trim() || r.contingency } : r)) })); }}>
+          {open.map((r) => (
+            <div key={r.id} className="flex flex-wrap items-center gap-2">
+              <span className="w-full text-[13.5px] font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+              <select aria-label={`Will ${r.name} be available by launch?`} value={val(`${r.id}:available`)} onChange={(e) => set(`${r.id}:available`, e.target.value)} className={SELECT}>
+                <option value="">Available by launch?</option><option value="yes">Yes</option><option value="no">No</option>
+              </select>
+              {[null, undefined, ""].includes(r.contingency) && <input aria-label={`Backup for ${r.name}`} placeholder="Your backup if it falls through" value={val(`${r.id}:contingency`)} onChange={(e) => set(`${r.id}:contingency`, e.target.value)} className={BOXED} />}
+            </div>
+          ))}
+          <button type="submit" disabled={!ready} className={SAVE}>Save</button>{oops}
+        </form>
+      );
+    }
+  }
+  if (onField && /operations\.dry_run/.test(fieldHere)) {
+    const ready = val("date") && val("outcome");
+    return (
+      <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (ready) attempt(async () => onField("operations", { ...(data?.operations || {}), dry_run: { ...(data?.operations?.dry_run || {}), date: val("date"), outcome: val("outcome") } })); }}>
+        <UkDateInput aria-label="Test run date" value={val("date")} onChange={(v) => set("date", v)} className={BOXED} />
+        <select aria-label="How did it go?" value={val("outcome")} onChange={(e) => set("outcome", e.target.value)} className={SELECT}>
+          <option value="">How did it go?</option><option value="passed">Worked end to end</option><option value="failed">A critical step failed</option>
+        </select>
+        <button type="submit" disabled={!ready} className={SAVE}>Save</button>{oops}
+      </form>
+    );
+  }
+  if (onField && /prerequisites/.test(fieldHere) && rowsAt("prerequisites").length) {
+    const rows = rowsAt("prerequisites");
+    const open = rows.filter((r) => String(r.applicable) !== "no" && r.status !== "completed");
+    if (open.length) {
+      return (
+        <ul className="mt-2 space-y-2">{open.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 text-[13.5px] text-slate-800 dark:text-slate-100">
+            <span className="min-w-0 flex-1">{r.name}</span>
+            <button type="button" className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50" onClick={() => onField("prerequisites", rows.map((x) => (x === r ? { ...x, status: "completed" } : x)))}>I have this</button>
+            <button type="button" className="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200" onClick={() => onField("prerequisites", rows.map((x) => (x === r ? { ...x, applicable: "no" } : x)))}>Doesn't apply</button>
+          </li>))}{oops && <li>{oops}</li>}</ul>
+      );
+    }
+  }
+  if (st.review) return <div className="mt-2">
+    {st.review.includes("forecast") && subject?.forecast?.data && <ForecastSeen forecast={subject.forecast.data} currency={data?.currency} />}
+    {st.review.includes("use_of_funds_schedule") && Array.isArray(data?.use_of_funds) && <ul className={SEEN} data-confirm-seen>{data.use_of_funds.map((r, i) => <li key={r.id || i}>{r.purpose || r.category}: {money(r.amount, data?.currency)}{r.period ? `, ${r.period}` : ""}</li>)}</ul>}
+    <button type="button" className={`${SAVE} mt-2`} onClick={() => attempt(async () => { for (const key of st.review) await reviewDocument(businessId, subjectId, key, { reviewed: true }); })}>Mark reviewed</button>{oops}</div>;
   const uid = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const boxes = (fields, submit, extra = null) => {
     const ready = fields.every(([k]) => val(k).trim());
@@ -989,7 +1125,6 @@ function PendingInline({ st, data, typed, setTyped, done, onField, subject, subj
     );
   };
   const none = (label, path) => <button type="button" onClick={() => attempt(async () => onField(path, true))} className="rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">{label}</button>;
-  const rowsAt = (path) => { const v = getPath(data || {}, path); return Array.isArray(v) ? v : []; };
   const oneBox = (path, id, key, label) => boxes([["v", label]], ({ v }) => onField(path, rowsAt(path).map((r, i) => (String(r.id || i) === id ? { ...r, [key]: v } : r))));
   if (onField) {
     if (st.key === "team.who") return boxes([["delivers", "Who delivers the plan"], ["wins", "Who wins customers"]], ({ delivers, wins }) => onField("team.responsibilities", [{ id: uid(), area: "Delivering the plan", owner: delivers }, { id: uid(), area: "Winning customers", owner: wins }]));
@@ -1676,6 +1811,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
       const all = c?.messages || [];
       const kept = ownTopic(all, feature);
       setMessages(kept);
+      if (!getConversation(businessId).length) continueConversation(businessId, kept);
       if (kept.length !== all.length || kept.some((m, i) => m !== all[i])) saveChat(businessId, chatId, kept).catch(() => {});      // put right once, for good
     }, () => live && setMessages([]));
     return () => { live = false; };
@@ -2153,7 +2289,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (c.type === "progress") return <ProgressCard key={key} options={Boolean(c.options)} onDecideAll={feature === "idea" ? decideAll : null}
       onResults={feature === "idea" ? () => send("Run the idea validation and fill the form") : null}
       onNext={feature === "idea" ? null : showNext} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={openReview}
-      onRetry={() => send("Help me complete it")} draftsOnly={feature !== "idea" && !c.options} justStarted={live} drafts={drafts.length} />;
+      onRetry={() => send(c.options ? "Search for funding options again" : "Help me complete it")} draftsOnly={feature !== "idea" && !c.options} justStarted={live} drafts={drafts.length} />;
     // What is left on the plan, as the Checklist lists it, each with its own button, in the chat (the owner, 30 Oct:
     // "recommend these on the chat, lay users don't even know")
     // Funding options found by the research, one card each: name, amount, fit, link (QA, 30 Oct: one long block of text)
@@ -2214,7 +2350,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
   const reviewBlock = (
     <>
       {reviewing && (drafts.length > 0 || decided.length > 0) && onField && (
-        <ReviewScreen drafts={drafts} edits={edits} setEdits={setEdits} onApproveAll={approveAll} onRequest={requestChanges} busy={busy} firstField={firstField}
+        <ReviewScreen forecast={subject.forecast?.data || null} drafts={drafts} edits={edits} setEdits={setEdits} onApproveAll={approveAll} onRequest={requestChanges} busy={busy} firstField={firstField}
           currency={subject.data?.currency || ctx?.revenue?.currency} target={subject.data?.target_amount}
           decided={decided} onDecide={decideOne} onUndo={undoOne} />
       )}

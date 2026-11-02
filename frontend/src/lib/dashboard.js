@@ -1,4 +1,5 @@
 import { apiRequest } from "../api/client";
+import { onBrowserCleared } from "./browserData";
 
 // Adaptive Dashboard (PRD-AD-001). One composed view per business: context, financial
 // summary, priority insights, the Agent summary, approvals, freshness and entitlement.
@@ -42,21 +43,18 @@ export const PATHWAY_LABEL = { startup: "Startup pathway", small_business: "Smal
 export const STAGE_LABEL = { idea: "Idea", pre_launch: "Pre-launch", startup: "Startup", operating: "Operating", growth: "Growth" };
 export const PRIORITY_LABEL = { 1: "Needs attention", 2: "Time-sensitive", 3: "Your goal", 4: "Next step", 5: "Insight" };
 
-// The last composition for a business, kept for this browser tab only. On the next visit it
+// The last composition for a business, held in memory for this tab only, never written to the browser. On the next visit it
 // is shown at once (marked "Updating…") while the fresh one loads, so the page never has to
 // guess a stage. A QA preview of another stage is never remembered.
-const lastKey = (businessId) => `ea:dashboard:last:${businessId}`;
+const lastDashboards = new Map();
+onBrowserCleared(() => lastDashboards.clear());
 export function rememberDashboard(businessId, dashboard) {
-  try {
-    if (businessId && dashboard?.enabled && !dashboard.context?.preview) sessionStorage.setItem(lastKey(businessId), JSON.stringify(dashboard));
-  } catch { /* storage full or unavailable: the page simply shows its skeleton next time */ }
+  if (businessId && dashboard?.enabled && !dashboard.context?.preview) lastDashboards.set(businessId, JSON.parse(JSON.stringify(dashboard)));
 }
 export function recallDashboard(businessId) {
-  try {
-    const d = JSON.parse(sessionStorage.getItem(lastKey(businessId)) || "null");
-    return d?.enabled && d.business_id === businessId ? d : null;
-  } catch { return null; }
+  const d = lastDashboards.get(businessId);
+  return d?.enabled && d.business_id === businessId ? JSON.parse(JSON.stringify(d)) : null;
 }
 export function forgetDashboard(businessId) {
-  try { sessionStorage.removeItem(lastKey(businessId)); } catch { /* nothing to forget */ }
+  lastDashboards.delete(businessId);
 }

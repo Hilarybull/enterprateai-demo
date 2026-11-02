@@ -20,6 +20,8 @@ vi.mock("../lib/agent", () => ({
   questionOf: (fields) => { const f = (fields || [])[0]; return f ? { field: f, label: f.label, options: [], prompts: [] } : null; },
   doesItFirst: (list) => list,
   getChat: vi.fn(async () => ({ messages: [] })),
+  getConversation: vi.fn(() => []),
+  continueConversation: vi.fn(),
   saveChat: vi.fn(async () => ({})),
   agentErrorMessage: (_e, fallback) => fallback,
   replyText: (r) => r?.message || "",

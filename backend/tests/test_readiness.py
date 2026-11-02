@@ -115,7 +115,8 @@ def test_at01_all_criteria_met_and_gates_pass_is_ready_with_forecast_labels():
     assert a["execution_status"] == "succeeded"
     assert [c["score"] for c in r["criteria"]] == [100] * 8, [(c["code"], [(x["state"], x["reason"]) for x in c["checks"]]) for c in r["criteria"] if c["score"] != 100]
     assert all(g["state"] == "passed" for g in r["gates"]), r["gates"]
-    assert (r["score"], r["score_display"], r["classification"], r["coverage"]) == (100.0, 100, "ready", 100)
+    assert r["unfinished_areas"]      # every criterion met, with some answers still blank: never 100 (New-User Test F1)
+    assert (r["score"], r["score_display"], r["classification"], r["coverage"]) == (99.0, 99, "ready", 100)
     assert r["headline"] == "Prepared for initial equity discussions against this checklist."
     assert r["data_basis"]["label"] == "forecast" and "assumptions" in r["data_basis"]["note"]      # forecast labels stay visible
     assert r["confidence"]["level"] == "medium"                                                    # complete and current, but self-attested
@@ -620,7 +621,8 @@ def test_lt01_everything_in_place_is_ready_and_nothing_launches_by_itself():
     r = a["result"]
     assert [c["score"] for c in r["criteria"]] == [100] * 8, [(c["code"], [(x["code"], x["state"], x["reason"]) for x in c["checks"]]) for c in r["criteria"] if c["score"] != 100]
     assert all(g["state"] == "passed" for g in r["gates"]), [(g["code"], g["state"], g["reason"]) for g in r["gates"]]
-    assert (r["score"], r["classification"], r["coverage"], r["gate_completeness"]) == (100.0, "ready", 100, 100)
+    assert r["unfinished_areas"]      # never 100 with answers still blank (New-User Test F1)
+    assert (r["score"], r["classification"], r["coverage"], r["gate_completeness"]) == (99.0, "ready", 100, 100)
     assert r["headline"] == "Prepared for the defined launch scope against this checklist."
     item = run(svc.get_subject(OWNER, "A", L, lid))
     assert item["status"] == "preparing" and "actual_launch" not in item["data"]              # ready is not launched

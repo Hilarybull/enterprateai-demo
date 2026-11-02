@@ -43,7 +43,7 @@ export function stripStatus(score, toDo) {
   if (typeof score !== "number") return "Not checked yet";
   const n = Number.isInteger(score) ? score : Number(score.toFixed(1));
   const things = Number(toDo) || 0;
-  return `${n}/100${things ? ` · ${things} ${things === 1 ? "thing" : "things"} to do` : " · Nothing left to do"}`;
+  return `${n}/100${things ? ` · ${things} ${things === 1 ? "thing" : "things"} to do` : n >= 100 ? " · Nothing left to do" : ""}`;
 }
 
 /** A pinned item as a strip: { id, kind, title, score, to_do, open, again, answers }. */

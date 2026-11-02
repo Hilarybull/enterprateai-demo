@@ -577,6 +577,9 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
   // A launch plan's page, and the customer plan (the owner, 26 Oct): what to do next as cards
   const asCards = (embedded && kindOfResult(result) === "launch") || result?.assessment_type === "customer_growth_foundation";
   const [gate, setGate] = useState(false);      // the premium step was chosen: its gate, shown after the value and never before it
+  const gateBox = useRef(null);
+  // Brought to where they are looking: below the screen it looked like nothing happened (New-User Test F9)
+  useEffect(() => { if (gate) gateBox.current?.scrollIntoView?.({ block: "center", behavior: "smooth" }); }, [gate]);
   const [saved, setSaved] = useState(false);
   const [served, setServed] = useState(initialServed);   // the server's answer to the premium step: a gate, a cost to confirm, or the research it did
   const [working, setWorking] = useState(false);      // QA PF8: the premium step is running (about 15 seconds): one press, never two
@@ -715,7 +718,7 @@ export default function FirstValueCard({ result: given, onDismiss = null, onCont
       {!embedded && <PackLine result={result} locked={!hasFundingPack(subscription, platformGrants)} businessId={workspaceId} onCreate={act} />}
 
       {gate && g && !g.allowed ? (
-        <div role="status" data-fv-gate className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-[13px] text-amber-950">
+        <div ref={gateBox} role="status" data-fv-gate className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-[13px] text-amber-950">
           <p>{g.message}</p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button type="button" onClick={() => { trackGoal("premium_upgrade_clicked", { where: "app" }); navigate(g.primary.to); }} className="rounded-xl bg-brand-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700">{g.primary.label}</button>

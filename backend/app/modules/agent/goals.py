@@ -2080,12 +2080,21 @@ def end_of_month(said: Any, today: date | None = None) -> str | None:
         month = [x.lower() for x in calendar.month_name].index(m.group(1).lower())
         year = int(m.group(2))
     else:
-        n = re.search(r"\b(?:within|in)\s+(?:\d+\s+to\s+)?(\d+|a|one)\s+months?\b", text, re.I)
+        n = re.search(r"\b(?:(?:within|in)\s+(?:\d+\s*(?:to|-|–)\s*)?|\d+\s*(?:to|-|–)\s*)(\d+|a|one)\s+months?\b", text, re.I)
         if not n:
             return None
         ahead = today.month - 1 + (1 if n.group(1).lower() in ("a", "one") else int(n.group(1)))
         year, month = today.year + ahead // 12, ahead % 12 + 1
     return f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+
+
+def human_date(day: Any) -> str:
+    """2027-05-31 as "31 May 2027"."""
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return str(day)
+    return f"{d.day} {d.strftime('%b %Y')}"
 
 
 def _num_or_none(v: Any) -> float | None:
@@ -2712,7 +2721,9 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                     if how == "replace":
                         made = await svc.replace_need(user_id, session["business_id"], sid, {**payload, "title": title, **({"use_of_funds": lines} if lines else {})},
                                                       email, provenance=chat_prov, summary=need_summary(before))
-                        did = f'I replaced "{before.get("title") or "your funding case"}" with this funding need. The previous version is in History'
+                        said_when = (made.get("data") or {}).get("receipt_date") if isinstance(made, dict) else None
+                        did = (f'I replaced "{before.get("title") or "your funding case"}" with this funding need. The previous version is in History, and your business details carried over. '
+                               + (f"I've set the date you expect the money to {human_date(said_when)}: tell me if that's wrong" if said_when else "It has no date yet: tell me when you expect the money"))
                     elif how == "update":
                         changed = {d["path"].split(".")[0] for d in case_diff(before, wanted)}
                         only = {k: v for k, v in payload.items() if k in changed}

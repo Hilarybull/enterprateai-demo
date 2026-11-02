@@ -1,3 +1,4 @@
+import { onBrowserCleared } from "./browserData";
 import { useEffect, useRef } from "react";
 import { apiRequest, apiRequestCached } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -20,9 +21,10 @@ function announce(promise) {
 
 // ── The conversation with the Agent ──────────────────────────────────────────
 // One conversation per business and per signed-in user, shared by the chat bubble and the
-// Agent box, kept for the browser session and sent with every message so a follow-up has its
-// context. It never crosses businesses: the business id is part of the key.
+// Agent box, held in memory for this tab and sent with every message so a follow-up has its context; a reload reads it back
+// from the server. Never written to browser storage. It never crosses businesses: the business id is part of the key.
 const memoryConversations = new Map();
+onBrowserCleared(() => memoryConversations.clear());
 function conversationKey(businessId) {
   let who = "me";
   try { who = useAuthStore.getState().email || "me"; } catch { /* signed-out or not loaded */ }
@@ -30,18 +32,12 @@ function conversationKey(businessId) {
 }
 export function getConversation(businessId) {
   if (!businessId) return [];
-  const key = conversationKey(businessId);
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (Array.isArray(stored)) return stored;
-  } catch { /* storage unavailable: the in-memory copy is used */ }
-  return memoryConversations.get(key) || [];
+  return memoryConversations.get(conversationKey(businessId)) || [];
 }
 function setConversation(businessId, turns) {
   const key = conversationKey(businessId);
   const kept = turns.slice(-20);
   memoryConversations.set(key, kept);
-  try { sessionStorage.setItem(key, JSON.stringify(kept)); } catch { /* fine without it */ }
 }
 /** An earlier conversation, opened again: what the Agent is told was said, so it carries on from there (27 Oct). */
 export function continueConversation(businessId, messages) {
@@ -52,7 +48,6 @@ export function clearConversation(businessId) {
   if (!businessId) return;
   const key = conversationKey(businessId);
   memoryConversations.delete(key);
-  try { sessionStorage.removeItem(key); } catch { /* fine without it */ }
 }
 
 

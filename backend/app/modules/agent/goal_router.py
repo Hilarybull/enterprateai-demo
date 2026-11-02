@@ -189,6 +189,18 @@ def _mine(session: dict, user: dict) -> None:
         raise HTTPException(status_code=403, detail="This task belongs to another account.")
 
 
+def _may_attach(session: dict, user: dict, confirm: bool = False) -> None:
+    """Answers given signed out are not this account's because it signed in on the same browser (New-User Test S2): only the
+    emailed code proves that (see session_verify), or the person says yes. A task they started signed in is theirs already."""
+    _mine(session, user)
+    if session.get("user_id") or session.get("started_by") == user["id"]:
+        return
+    if session.get("started_by"):
+        raise HTTPException(status_code=403, detail="This task belongs to another account.")
+    if not confirm:
+        raise HTTPException(status_code=409, detail={"code": "confirm_attach", "message": "These answers were given before signing in."})
+
+
 @router.get("/goal-suggestions")
 async def goal_suggestions():
     """What the homepage may offer right now: only suggestions with a registered path behind them."""
@@ -208,6 +220,10 @@ async def start_session(body: StartIn, request: Request):
     _allow(request)
     currency = body.currency
     user, biz = None, None
+    try:
+        started_by = await get_optional_user(request)
+    except Exception:      # noqa: BLE001 - a bad token: started signed out
+        started_by = None
     if body.business_id:
         # Signed in: the workspace's own currency, never what the browser had kept (the owner's QA, 20 Oct: £ chips on a
         # naira workspace put £250,000 on the case). Signed out, the visitor's country's, as the page sends it.
@@ -220,6 +236,9 @@ async def start_session(body: StartIn, request: Request):
         except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
             user, biz = None, None
     session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency)
+    if started_by:
+        session["started_by"] = started_by["id"]
+        await get_store().put(session)
     if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan", "business_risks", "more_customers"):
         try:
             session = await _from_records(session, user, body.business_id, biz)
@@ -1855,17 +1874,21 @@ async def refresh_draft_sender(business_id: str, body: SenderRefreshIn, user=Dep
     return {"updated": done, "message": f"Updated the sender on {len(done)} draft{'s' if len(done) != 1 else ''}." if done else "Nothing to update."}
 
 
+class AttachIn(BaseModel):
+    confirm: bool = False      # "Yes, use these answers"
+
+
 @router.post("/task-sessions/{session_id}/attach-user")
-async def attach_user(session_id: str, user=Depends(get_current_user)):
+async def attach_user(session_id: str, body: AttachIn | None = None, user=Depends(get_current_user)):
     session = await _session(session_id)
-    _mine(session, user)
+    _may_attach(session, user, bool(body and body.confirm))
     return goals.public(await goals.attach(get_store(), session, user["id"]))
 
 
 @router.post("/task-sessions/{session_id}/resume")
 async def resume_session(session_id: str, body: ResumeIn | None = None, user=Depends(get_current_user)):
     session = await _session(session_id)
-    _mine(session, user)
+    _may_attach(session, user)
     if not session.get("user_id"):
         session = await goals.attach(get_store(), session, user["id"])
     try:
@@ -1933,6 +1956,7 @@ async def session_risk_check(session_id: str, body: RiskCheckIn, user=Depends(ge
     _mine(session, user)
     if session.get("goal_key") not in goals.FREE_CHECKS:      # the risk check, and winning more customers (25 Oct)
         raise HTTPException(status_code=409, detail="This isn't a free check.")
+    _may_attach(session, user)
     if not session.get("user_id"):
         session = await goals.attach(get_store(), session, user["id"])
     if body.answers:

@@ -81,7 +81,8 @@ def test_funding_one_do_all_one_approve_all(world, monkeypatch):  # noqa: F811
     assert after["data"]["market"]["differentiation"] == "An answer for market.differentiation here"      # what was approved stays
     assert after["forecast"]["data"]["confirmed_at"] and after["data"]["timing_confirmed"]
     score = after["summary"]["score"]
-    assert score >= 85 and score > before, (score, _open(after))
+    assert 50 <= score <= 70 and score > before, (score, _open(after))      # it comes up, and estimates count for half (New-User Test L1)
+    assert after["summary"]["estimated_areas"] and after["summary"]["classification"] != "ready"
     assert "C4.B" in _open(after) and "C3.A" not in _open(after) and "C5.B" not in _open(after)      # only the owner can confirm the proof fits their customers
     assert env.businesses["A"]["data"]["agent_filled"][str(cid)] is True      # never offered again
 
@@ -93,7 +94,8 @@ def test_launch_one_do_all_one_approve_all(world, monkeypatch):  # noqa: F811
     svc = service_for(goal_router.get_orchestrator())
     plan = asyncio.run(svc.create_subject(OWNER, "A", rules.LAUNCH, {"name": "Sock making"}, None))
     drafts, after = _do_all_then_approve_all(env, svc, rules.LAUNCH, "launch", plan["id"], monkeypatch)
-    assert after["summary"]["score"] >= 75, (after["summary"]["score"], _open(after))
+    assert 45 <= after["summary"]["score"] <= 65, (after["summary"]["score"], _open(after))      # never 78/100 from approving estimates alone (New-User Test L1)
+    assert after["summary"]["estimated_areas"] and after["summary"]["classification"] != "ready"
     assert after["data"]["control"]["milestones"][0]["outcome"] == "First sale" and after["forecast"]["data"]["confirmed_at"]
     assert all(p["status"] == "not_completed" for p in after["data"]["prerequisites"])      # never said to be done for them
     assert {"C1.A", "C5.B"} <= _open(after)      # real demand proof and a real test run stay the owner's
@@ -140,7 +142,7 @@ def test_a_funding_run_for_one_need_never_comes_back_for_the_next(world, monkeyp
     go(svc.replace_need(OWNER, "A", cid, {"target_amount": 2000, "purpose": "a new site", "route_preference": "loan"}, None))
     row = go(svc.store.get("subjects", cid))
     assert float(row["data"]["target_amount"]) == 2000 and row["data"]["previous_needs"]      # the same case, the old need in History
-    assert not row["data"].get("use_of_funds") and not (row["data"].get("market") or {}).get("differentiation")      # set aside with the old need
+    assert not row["data"].get("use_of_funds") and (row["data"].get("market") or {}).get("differentiation")      # the lines go with the old need; the business facts carry over (New-User Test F2)
     assert str(cid) not in (env.businesses["A"]["data"].get("agent_filled") or {})      # a new need: drafted afresh
     # Approving now never brings the old need's research back
     go(sign_off.sign_off(orch, USER, "A", "funding", cid))

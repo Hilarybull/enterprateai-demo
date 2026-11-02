@@ -9,6 +9,8 @@ from typing import Any
 from app.modules.agent import business as bz
 
 WORKING_MINUTES = 10      # "Do all for me" still working: shown as in progress for at most this long
+SEARCH_MINUTES = 3      # the funding options search alone (New-User Test F4: 5 minutes, then a failure)
+GAVE_UP = "The search took too long, so I stopped waiting for it. Nothing is charged unless it finds something. Press Retry to run the same search again."
 STARTED = datetime.now(timezone.utc)      # a run marked before this server started was stopped by the restart
 INTERRUPTED = "The research stopped because the server restarted. Please try again."
 
@@ -123,13 +125,15 @@ def failed(data: dict, case_id: str) -> str | None:
     m = bz._moment(w.get("at"))
     if not w.get("failed") and m and m < STARTED:
         return INTERRUPTED      # never a card spinning for a run that no longer exists (the owner, 29 Oct)
+    if not w.get("failed") and w.get("search") and m and datetime.now(timezone.utc) - m > timedelta(minutes=SEARCH_MINUTES):
+        return GAVE_UP
     return w.get("failed") or None
 
 
 def working(data: dict, case_id: str, now: datetime) -> bool:
-    at = ((data.get("agent_working") or {}).get(str(case_id)) or {}).get("at")
-    m = bz._moment(at)
-    return bool(m and m >= STARTED and now - m <= timedelta(minutes=WORKING_MINUTES))
+    w = (data.get("agent_working") or {}).get(str(case_id)) or {}
+    m = bz._moment(w.get("at"))
+    return bool(m and m >= STARTED and now - m <= timedelta(minutes=SEARCH_MINUTES if w.get("search") else WORKING_MINUTES))
 
 
 async def context(orch, user: dict, business_id: str, kind: str, case_id: str | None = None, name: str | None = None) -> dict:

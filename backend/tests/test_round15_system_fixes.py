@@ -217,7 +217,8 @@ def test_a_replaced_need_names_its_things_to_do_with_do_all_for_me(talk):
     assert "; " not in out["message"] and "First:" not in out["message"]      # never the checklist as one sentence
     assert "When do you need the money?" in out["message"] or "I'd start with this:" in out["message"]
     labels = [a["label"] for a in out["actions"]]
-    assert any(l.startswith("See ") for l in labels)
+    # The old date went with the old need (New-User Test F2): the date is asked, its answers as buttons; otherwise See all
+    assert "When do you need the money?" in out["message"] or any(l.startswith("See ") for l in labels)
     assert "result" in {c["type"] for c in out["cards"]}
 
 

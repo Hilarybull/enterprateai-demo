@@ -576,3 +576,48 @@ it("while drafts wait, the only thing offered is approving them: no list, no Dra
   expect(card.querySelector('[data-pending="market.diff"]')).toBeNull();
   expect(screen.queryByRole("button", { name: /Draft the rest/ })).toBeNull();
 });
+
+it("a confirmation shows what it confirms, and there is none without it (the owner, 1 Nov: \"how can you confirm what you can't view\")", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] }, draft_fields: [] }));
+  const steps = [{ key: "check.C4.B", title: "Confirm your evidence", attest: { code: "C4.B", rationale: "From our own customers." }, to: "/funding/c1?tab=evidence" },
+    { key: "confirm.C5.B", title: "Confirm your price and costs", attest: { code: "C5.B", rationale: "Reviewed." }, to: "/funding/c1?tab=answers" },
+    { key: "forecast.confirm", title: "Check the forecast", to: "/funding/c1?tab=answers&field=forecast" }];
+  const data = { ...subject.data, currency: "GBP", economics: { price: "60", direct_cost: "10", fixed_costs_monthly: "500" } };
+  const evidence = [{ id: "e1", title: "Market report", type: "research", claim: "Demand is growing.", effective_date: "2026-10-01", source: { reference: "https://example.test/r" }, links: [{ check: "C4.A" }] }];
+  const forecast = { data: { drafted_by: "Agent", opening_cash: "500", currency: "GBP", months: [{ month: "2026-11", receipts: "900", payments: "500" }, { month: "2026-12", receipts: "900", payments: "500" }] }, revision: 1 };
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data, evidence, forecast }} steps={steps} score={40} onTab={() => {}} onField={vi.fn()} /></MemoryRouter>);
+  await screen.findByText("Acme Innovations");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector('[data-card="pending"]'); if (!c) throw new Error("no card"); return c; });
+  const ev = card.querySelector('[data-pending="check.C4.B"]');
+  expect(ev.textContent).toContain("Demand is growing.");
+  expect(ev.textContent).toContain("not proof from your own customers");
+  expect(within(ev).getByRole("link", { name: "Read the source" }).getAttribute("href")).toBe("https://example.test/r");
+  const econ = card.querySelector('[data-pending="confirm.C5.B"]').textContent;
+  expect(econ).toContain("break even at about 10 sales a month");
+  const fc = card.querySelector('[data-pending="forecast.confirm"]').textContent;
+  expect(fc).toContain("Cash at the start");
+  expect(fc).toContain("in,");
+});
+
+it("a launch's lists are answered line by line in the chat, never one box (the owner, 1 Nov)", async () => {
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] }, draft_fields: [] }));
+  const onField = vi.fn();
+  const data = { name: "Food cart", delivery: { dependencies: [{ id: "d1", name: "Cart builder" }] }, operations: {}, prerequisites: [{ id: "p1", name: "Trading permit", applicable: "yes", critical: true, status: "not_completed" }] };
+  const steps = [{ key: "check.C4.B", title: "List who and what the launch depends on", to: "/launch/c1?tab=answers&field=delivery.dependencies" },
+    { key: "check.C5.B", title: "Record one test order, end to end", to: "/launch/c1?tab=answers&field=operations.dry_run.date" },
+    { key: "check.C6.B", title: "Complete what must be in place", to: "/launch/c1?tab=answers&field=prerequisites" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="launch" subject={{ ...subject, kind: "launch_initiative", data }} steps={steps} score={40} onTab={() => {}} onField={onField} /></MemoryRouter>);
+  await screen.findAllByText("Food cart");
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector('[data-card="pending"]'); if (!c) throw new Error("no card"); return c; });
+  fireEvent.change(card.querySelector('[aria-label="Will Cart builder be available by launch?"]'), { target: { value: "yes" } });
+  fireEvent.change(card.querySelector('[aria-label="Backup for Cart builder"]'), { target: { value: "A second builder" } });
+  fireEvent.click(within(card.querySelector('[data-pending="check.C4.B"]')).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(onField).toHaveBeenCalledWith("delivery", { dependencies: [{ id: "d1", name: "Cart builder", available: "yes", contingency: "A second builder" }] }));
+  expect(card.querySelector('[aria-label="How did it go?"]')).toBeTruthy();
+  fireEvent.click(within(card).getByRole("button", { name: "I have this" }));
+  expect(onField).toHaveBeenCalledWith("prerequisites", [{ id: "p1", name: "Trading permit", applicable: "yes", critical: true, status: "completed" }]);
+});

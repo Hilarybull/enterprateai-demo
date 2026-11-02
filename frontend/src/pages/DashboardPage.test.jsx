@@ -6,7 +6,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import DashboardPage from "./DashboardPage";
 import { DashboardSkeleton } from "../components/dashboard/AdaptiveInsights";
-import { recallDashboard, rememberDashboard } from "../lib/dashboard";
+import { forgetDashboard, recallDashboard, rememberDashboard } from "../lib/dashboard";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 
@@ -38,7 +38,7 @@ function mockApi({ fail = false } = {}) {
 const mount = () => render(<MemoryRouter initialEntries={["/dashboard"]}><DashboardPage /></MemoryRouter>);
 
 beforeEach(() => {
-  sessionStorage.clear();
+  sessionStorage.clear(); forgetDashboard("ws1"); forgetDashboard("other");
   useAuthStore.setState({ token: "t", email: "a@b.test", hydrated: true });
   release = undefined;
   useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "Alchemy Test", currency: "GBP", workspaceChecks: 0, workspaceCheckedOnce: true });

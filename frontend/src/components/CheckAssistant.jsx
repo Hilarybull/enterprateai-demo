@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { DOES_IT, NEW_REQUEST, questionOf, useFollowRuns, agentErrorMessage, doesItFirst, getChat, replyText, saveChat, submitAgentRequest } from "../lib/agent";
+import { DOES_IT, NEW_REQUEST, questionOf, useFollowRuns, agentErrorMessage, continueConversation, doesItFirst, getChat, getConversation, replyText, saveChat, submitAgentRequest } from "../lib/agent";
 import { apiRequest } from "../api/client";
 import { premiumFlow } from "./ResearchReview";
 import { creditCopy } from "../lib/creditCopy";
@@ -151,7 +151,11 @@ export default function CheckAssistant({ businessId, topic, said: handed = "" })
   useFollowRuns(messages, (fn) => setMessages((prev) => { const next = fn(prev || []); saveChat(businessId, chatId, next).catch(() => {}); return next; }));
   useEffect(() => {
     let live = true;
-    getChat(businessId, chatId).then((c) => { if (live) setMessages(c?.messages || []); }).catch(() => { if (live) setMessages([]); });
+    getChat(businessId, chatId).then((c) => {
+      if (!live) return;
+      setMessages(c?.messages || []);
+      if (!getConversation(businessId).length) continueConversation(businessId, c?.messages || []);
+    }).catch(() => { if (live) setMessages([]); });
     return () => { live = false; };
   }, [businessId, chatId]);
   useEffect(() => { end.current?.scrollIntoView?.({ block: "end" }); }, [messages?.length, busy]);

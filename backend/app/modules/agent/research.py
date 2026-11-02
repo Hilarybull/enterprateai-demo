@@ -1614,7 +1614,7 @@ def fillable_fields(goal: str) -> dict[str, str]:
         for f in section["fields"]:
             if f["key"] in out or f.get("when") or f.get("type") not in ("text", "textarea", "money", "number", "date"):
                 continue
-            out[f["key"]] = f"{f.get('label') or f['key']}" + (", as YYYY-MM-DD, after FACTS.today" if f.get("type") == "date" else "")
+            out[f["key"]] = f"{f.get('label') or f['key']}" + (", as YYYY-MM-DD, after FACTS.today" if f.get("type") == "date" else ", in a few words" if f.get("type") == "text" else "")
     if goal == "need_funding":
         out["use_of_funds"] = ("A list of {purpose, amount, category, period}: what the money pays for, amounts as whole numbers adding up to exactly "
                                "FACTS.plan.target_amount, category one of Operations, Equipment, Reserve or Other, period as YYYY-MM")

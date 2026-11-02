@@ -161,6 +161,9 @@ def world(monkeypatch):
     monkeypatch.setattr(goal_router, "get_orchestrator", lambda: env.orch)
     monkeypatch.setattr(goal_router, "_store", store)
     goal_router._STARTS.clear()
+    # These journeys are about what comes after the answers are accepted; the question itself is in test_two_accounts_same_browser.py
+    real_may_attach = goal_router._may_attach
+    monkeypatch.setattr(goal_router, "_may_attach", lambda session, user, confirm=False: real_may_attach(session, user, True))
     who = {"user": None}
 
     def current():

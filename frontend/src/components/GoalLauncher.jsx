@@ -337,8 +337,12 @@ export function useGoalFlow({ inApp = false } = {}) {
     if (!session?.id || attached.current === session.id) return false;
     attached.current = session.id;
     try { keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/attach-user`, "POST", {}, { timeoutMs: 15000 }))); return true; }
-    catch { attached.current = ""; return false; }
-  }, [session?.id, keep, retryOnce]);
+    catch (e) {
+      attached.current = "";
+      if (e?.status === 409 && e?.data?.detail?.code === "confirm_attach") navigate(startPath(session.id));      // answers from before signing in: asked there first
+      return false;
+    }
+  }, [session?.id, keep, retryOnce, navigate]);
   return { offer, session, busy, pending, resuming, problem, failed, begin, answer, startOver, carryOn, here, closed, setClosed, sendCode, verifyCode, withGoogle,
     newPassword, passwordHold, setPassword, skipPassword, attachUser, go: navigate };
 }
@@ -1441,7 +1445,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                   </div>
                 )}
               </div>
-              {!here && <p className="mt-1.5 text-[11px] text-slate-500" data-retention>Kept for {session.retention_days} days, and picked up as soon as you're in.</p>}
+              {!here && <p className="mt-1.5 text-[11px] text-slate-500" data-retention>Kept for {session.retention_days} days. The code picks it up.</p>}
             </div>
           )}
         </div>

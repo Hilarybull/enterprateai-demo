@@ -194,3 +194,26 @@ def test_a_receipt_is_its_own_task_never_the_launch_chat(talk):
     ask("I want to launch pot selling")      # the launch chat is open
     out = ask("i need a new receipt")
     assert "launch plan" not in str(out.get("message")).lower() and "attach" not in str(out.get("message")).lower()
+
+
+def test_one_message_with_everything_makes_the_plan_without_asking_again(talk):
+    """New-User Test L2: name, price, place and date in one message took three more turns."""
+    env, ask, model = talk[:3]
+    said = "New plan: Annual boiler cover plan for landlords, £180 a year, in Leeds, launching 1 March 2027"
+    model.replies.append({"say": "I've set that up.", "plan": "new", "change": {"name": "Annual boiler cover plan", "audience": "landlords", "geography": "Leeds",
+                                                                              "price": 180, "target_date": "2027-03-01"}})
+    out = ask(said, page="launch")
+    assert "What are you launching" not in out["message"] and model.prompts      # the model read it all, not the name question
+    plan = _plans(env)[0]["data"]
+    assert plan["name"] == "Annual boiler cover plan" and plan["geography"] == "Leeds" and plan["target_date"] == "2027-03-01"
+    assert plan["offer"]["price"] == 180
+
+
+def test_a_change_and_go_ahead_in_one_message_saves_it_and_shows_the_price(talk):
+    """New-User Test L4: "It costs about £60... Go ahead": saved, and the promised price never came."""
+    env, ask, model = talk[:3]
+    pid = _make_plan(env)
+    model.replies.append({"say": "Saved.", "plan": str(pid), "change": {"cost": 60}})
+    out = ask("It costs about £60 to deliver each one. Go ahead", page="launch")
+    assert _plans(env)[0]["data"]["economics"]["variable_cost_per_unit"] == 60
+    assert "credits" in out["message"].lower() or "shall i start" in out["message"].lower(), out["message"]

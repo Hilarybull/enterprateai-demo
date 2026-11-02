@@ -1272,7 +1272,9 @@ function SubjectDetail({ businessId, feature, subjectId }) {
               // Nothing left to do: said, never a blank Overview (G5, 23 Oct)
               <Panel>
                 <p className="text-sm font-semibold text-slate-800 dark:text-slate-100" data-nothing-left>
-                  {checking ? "Checking…" : sm.classification === "ready" ? (feature === "launch" ? "Nothing left to do. You're ready to launch." : "Nothing left to do. You're ready to approach funders.")
+                  {checking ? "Checking…" : sm.unfinished_areas?.length ? `Still to finish: ${sm.unfinished_areas.join(", ")}. Add these in the Checklist.`
+                    : sm.estimated_areas?.length ? `Some answers are still my estimates (${sm.estimated_areas.join(", ")}). They count for half until you change them or add your own evidence.`
+                    : sm.classification === "ready" ? (feature === "launch" ? "Nothing left to do. You're ready to launch." : "Nothing left to do. You're ready to approach funders.")
                     : sm.freshness === "stale" ? "Your steps are done. Run the check again to see your score." : "No steps left from this check."}
                 </p>
                 {!checking && sm.freshness === "stale" && editable && <Btn className="mt-2" onClick={() => check()} data-check-again>Run the check again</Btn>}

@@ -216,8 +216,10 @@ def clean_change(change: Any) -> dict:
     out: dict = {}
     if not isinstance(change, dict):
         return out
-    for k, n in (("name", 80), ("audience", 300), ("geography", 120)):
-        v = " ".join(str(change.get(k) or "").split())[:n]
+    for k, n in (("name", 160), ("audience", 300), ("geography", 120)):
+        v = " ".join(str(change.get(k) or "").split())
+        if len(v) > n:
+            v = v[:n].rsplit(" ", 1)[0]      # never cut mid-word ("landlords in Lee")
         if v:
             out[k] = v
     day = str(change.get("target_date") or "").strip()[:10]
@@ -234,6 +236,10 @@ _STOP = {"the", "a", "an", "for", "to", "of", "and", "my", "our", "it", "is", "i
          "people", "who", "service", "product"}
 
 
+_COST_WORD = re.compile(r"\b(?:costs?|costing|deliver\w*|make|making|buy\w*|spend\w*|suppl\w*|materials?|ingredients?|wages?|fees?|per (?:unit|sale|job|one))\b")
+_GO_AHEAD = re.compile(r"\b(?:go ahead|do (?:it )?all|get started|start (?:it|the research)|proceed)\b", re.I)
+
+
 def grounded(change: dict, said: str) -> dict:
     """Only what the owner said: a figure in their words, a name, audience or place sharing their words, a time they named."""
     t = str(said or "").lower()
@@ -242,6 +248,8 @@ def grounded(change: dict, said: str) -> dict:
     for k, v in change.items():
         if k in ("price", "cost"):
             ok = any(abs(v - f) <= max(1, v * 0.001) for f in _figures_in(t))
+            if k == "cost":      # "10 enquiries" is not a £10 delivery cost
+                ok = ok and bool(_COST_WORD.search(t))
         elif k == "target_date":
             ok = bool(re.search(r"\b(?:\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|month|week|year|soon|quarter|christmas|easter|summer|spring|autumn|winter)", t))
         else:
@@ -380,7 +388,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     # 30 Oct: "a new plan" and Start a launch plan looped on the plan list and never made one)
     from app.modules.readiness.service import _vague
     said_name = _typed_change(text, now).get("name")
-    if on_page and _NEW_PLAN.search(str(text)) and (not said_name or _vague(said_name) or _NO_NAME.fullmatch(said_name)):
+    rich = bool(re.search(r"\d", str(text)))      # a price or a date with it: it says more than "a new plan", so all of it is read first
+    if on_page and _NEW_PLAN.search(str(text)) and not rich and (not said_name or _vague(said_name) or _NO_NAME.fullmatch(said_name)):
         return await _said(orch, user, business_id, text, "What are you launching? A few words is enough, for example \"window cleaning for offices\".",
                            [], now, topic=TOPIC, keep={"new_plan": True})
     forced = None
@@ -396,10 +405,16 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     prompt = json.dumps({"PLANS": view, "ON": on, "DRAFTS": draft_review.view(rules.LAUNCH, (by_id[on].get("data") or {})) if on else [], "WAITING": waiting, "research": _research.research_state(data, "launch") if plans else None, "TURNS": turns,
                          "MESSAGE": str(text)[:2000]}, ensure_ascii=False, default=str)
     got = forced
-    if got is None and not no_model:
+    new_plan_said = bool(on_page and _NEW_PLAN.search(str(text)) and rich)
+    if (got is None or rich) and not no_model:      # the name answered with more in the same message: the model reads all of it
         try:
             res = await asyncio.wait_for(paid_reply(orch, user, lambda: llm.generate_text(system=_SYSTEM, prompt=prompt, feature="agent_conversation", max_tokens=500)), MODEL_SECONDS)
-            got = _parse(getattr(res, "text", "") or "")
+            read = _parse(getattr(res, "text", "") or "")
+            if read and forced:
+                read = {**read, "plan": "new", "change": {**(forced.get("change") or {}), **(read.get("change") if isinstance(read.get("change"), dict) else {})}}
+            got = read or got
+            if got and new_plan_said and (got.get("change") or {}).get("name"):
+                got["plan"] = "new"
         except OutOfCredits:
             raise
         except Exception:      # noqa: BLE001 - what was typed is still read below
@@ -439,6 +454,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             made = await svc.create_subject(user["id"], business_id, rules.LAUNCH, payload, user.get("email"), provenance=stamp)
             plan = {"id": made["id"], "title": payload["name"]}
             done.append("created")
+            if any(str(p.get("title") or (p.get("data") or {}).get("name") or "").strip().lower() == str(payload["name"]).strip().lower() for p in plans):
+                say = f"{say} You already have a plan called {payload['name']}, so rename one to tell them apart."
         elif change and plan:
             row = await svc.store.get("subjects", plan["id"])
             await svc.update_subject(user["id"], business_id, rules.LAUNCH, plan["id"], row["revision"], _fields(change, (row or {}).get("data") or {}),
@@ -469,6 +486,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             if isinstance(s.get("score"), (int, float)):
                 left, after = s.get("open_actions"), s["score"]
             if isinstance(after, (int, float)) and not (isinstance(before, (int, float)) and round(before) == round(after)):      # only when it moved
+                from app.modules.agent.converse import _NO_OTHER_SCORE
+                say = _NO_OTHER_SCORE.sub("", say).strip()      # one score in a reply
                 say += f" Your launch score is now {round(s['score'])}/100{' so far' if s.get('score_partial') else ''}" + (
                     f", with {left} thing{'s' if left != 1 else ''} to do." if isinstance(left, int) and left else ".")
         except Exception:      # noqa: BLE001
@@ -477,6 +496,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     from app.modules.agent.converse import _RESEARCH_CLAIM, _PRICE_SAID
     if not done and re.search(r"\bi(?:'ll| will)\s+(?:attach|add|update|save|upload|record)\b|\bi(?:'ve| have)\s+(?:attached|added|updated|saved|uploaded|recorded)\b", say, re.I):
         say = "Nothing has been attached or changed yet. Attach a file with the paperclip below, or tell me what to change, and I'll show you the change."
+    if plan and done and _GO_AHEAD.search(str(text)):
+        return await _ask_do_all(orch, user, business_id, plan, data, text, now, topic=TOPIC, keep=keep)      # saved, and now what else they asked for
     if plan and not done and (got.get("do_all") or _RESEARCH_CLAIM.search(say) or _PRICE_SAID.search(say)):
         # Research only starts with its price said and Start pressed (the owner, 28 Oct: "Let me do that for you now", nothing started)
         return await _ask_do_all(orch, user, business_id, plan, data, text, now, topic=TOPIC, keep=keep)
@@ -514,7 +535,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             from app.modules.readiness import engine as _en
             can = not (data.get("agent_filled") or {}).get(str(pid)) and any(_en.blank(_en.get(held, k)) and k not in (held.get("agent_drafts") or {}) and k not in (held.get("rejected_drafts") or []) for k in _rs.fillable_fields("launch"))
             if can or not researched:
-                say, actions = offer_things_left(say, got, actions, researched, launch_ask(held) if researched else "")
+                say, actions = offer_things_left(say, got, actions, researched, launch_ask(held) if researched else "", turns=turns)
     if plan and _ASKS_READY.search(str(text)):
         got["show"] = [*(got.get("show") if isinstance(got.get("show"), list) else []), "result"]      # the result, never only words
     if not actions:

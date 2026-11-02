@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -209,6 +210,34 @@ def score_criterion(checks: list[dict]) -> tuple[str, int | None]:
     return ("met", 100) if passed == 2 else ("partially_met", 50) if passed == 1 else ("unmet", 0)
 
 
+# An area answered with the Agent's estimates counts for half until the owner changes them or adds evidence of their own
+# (New-User Test L1: approving 24 estimates took a launch from 4 to 78/100, with nothing checked).
+ESTIMATE_COUNTS_FOR = Decimal("0.5")
+_ESTIMATE = re.compile(r"estimate", re.I)
+
+
+def _estimated_share(profile: dict, criterion: dict, snapshot: dict) -> Decimal:
+    """How much of this criterion's area rests on estimates the Agent drafted (0 to 1). What the owner typed or changed, and
+    the owner's own evidence linked to the criterion (research isn't), don't."""
+    section = next((s for s in profile["sections"] if s["key"] == criterion["section"]), None)
+    if not section:
+        return Decimal(0)
+    subject, forecast = snapshot["subject"], snapshot.get("forecast")
+    for part in ("A", "B"):
+        if any(e.get("type") != "research" for e in linked(snapshot, f"{criterion['code']}.{part}")):
+            return Decimal(0)
+    prov = subject.get("provenance") or {}
+    fields = [f for f in section["fields"] if not f.get("when") or all(subject.get(k) == v for k, v in f["when"].items())]
+    answered = [f["key"] for f in fields if not blank(get(subject, f["key"]))]
+    estimated = sum(1 for k in answered if isinstance(prov.get(k), dict) and _ESTIMATE.search(str(prov[k].get("source") or ""))
+                    and prov[k].get("value") == get(subject, k))
+    total = len(answered)
+    if section.get("forecast") and forecast and (forecast.get("months") or not blank(forecast.get("opening_cash"))):
+        total += 1
+        estimated += 1 if forecast.get("drafted_by") == "Agent" else 0
+    return Decimal(estimated) / Decimal(total) if total else Decimal(0)
+
+
 # The thresholds a shown score must never seem to cross: 59.5 is shown as 59, never "60" beside "Not ready" (and 74.5 as
 # 74 beside "Preparation gaps remain"). Classification always compares the unrounded score.
 _NEVER_ROUNDED_UP_TO = (60, 75, 80)
@@ -246,6 +275,8 @@ def why_not_ready(result: dict | None, ready_at: float | None = None) -> str | N
         first = str(unknown[0].get("label") or "").rstrip(".")
         return (f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add, starting with: {first[:1].lower() + first[1:]}." if first
                 else f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add.")
+    if result.get("estimated_areas"):
+        return "Some answers are still my estimates. They count for half until you change them or add your own evidence."
     if result.get("classification") == "conditionally_ready" and ready_at is not None:
         return f"Just under the {ready_at:g} needed to be ready."
     return None
@@ -255,18 +286,19 @@ def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     """Order matters: a confirmed failed gate gives not_ready even when other evidence is
     unknown; otherwise anything unknown gives insufficient_evidence; otherwise the score decides.
     Thresholds are evaluated on the unrounded score. The display shows that same score."""
+    counted = lambda c: Decimal(1) - Decimal(str(c.get("estimated") or 0)) * (Decimal(1) - ESTIMATE_COUNTS_FOR)      # noqa: E731
     known = [c for c in criteria if c["score"] is not None]
     coverage = sum(c["weight"] for c in known)
     all_known = len(known) == len(criteria)
     gates_known = all(g["state"] != UNKNOWN for g in gates)
-    known_points = sum(Decimal(c["score"]) * c["weight"] / Decimal(100) for c in known)
+    known_points = sum(Decimal(c["score"]) * c["weight"] * counted(c) / Decimal(100) for c in known)
     score = known_points if all_known and (gates_known or not profile["score_needs_gates"]) else None
     # The score so far, from what the owner has answered (the owner, 26 Oct: "i told you score based on the user answers",
     # "why 0"): each criterion's share of its checks passed, so a criterion with one check still open counts what passed.
     # The same as the full score once everything is known.
     # ... and a check partly filled in counts the share given (31 Oct)
     credit = lambda ch: Decimal(1) if ch.get("state") == PASSED else Decimal(str(ch.get("filled") or 0))      # noqa: E731
-    answered = sum(Decimal(c["weight"]) * sum((credit(ch) for ch in c.get("checks") or []), Decimal(0)) / Decimal(max(1, len(c.get("checks") or [])))
+    answered = sum(Decimal(c["weight"]) * counted(c) * sum((credit(ch) for ch in c.get("checks") or []), Decimal(0)) / Decimal(max(1, len(c.get("checks") or [])))
                    for c in criteria if c["score"] is None)
     known_points = known_points + answered
     t = profile["thresholds"]
@@ -290,16 +322,23 @@ def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     }
 
 
-def _assemble(profile: dict, subject_type: str, results: dict[str, dict], gate_results: dict[str, dict], extras: dict) -> dict:
+def _assemble(profile: dict, subject_type: str, results: dict[str, dict], gate_results: dict[str, dict], extras: dict, snapshot: dict | None = None) -> dict:
     criteria = []
     for c in profile["criteria"]:
         checks = [{"code": ch["code"], "label": ch["label"], "kind": ch["kind"], "how_to": ch["missing"], **results[ch["code"]]} for ch in c["checks"]]
         state, score = score_criterion(checks)
+        share = _estimated_share(profile, c, snapshot) if snapshot else Decimal(0)
         criteria.append({"code": c["code"], "title": c["title"], "weight": c["weight"], "state": state, "score": score, "applicable": True,
-                         "section": c["section"], "tool": c["tool"], "checks": checks})
+                         "section": c["section"], "tool": c["tool"], "checks": checks, **({"estimated": float(share)} if share else {})})
     gates = [{"code": g["code"], "label": g["label"], "criterion": g["criterion"], "severity": g.get("severity", "critical"),
               "remedy": g["remedy"], **gate_results[g["code"]]} for g in profile["gates"]]
     summary = classify(profile, criteria, gates)
+    # Never 100 with an area unfinished (New-User Test F1: 100/100 and "Nothing left to do" with Traction at 3 of 4)
+    unfinished = [s["title"] for s in section_progress(profile, snapshot["subject"], snapshot.get("forecast")) if s["answered"] < s["total"]] if snapshot else []
+    if unfinished and summary["score"] is not None and summary["score"] >= 100:
+        summary.update({"score": 99.0, "score_display": 99, "known_points": 99.0})
+    summary["unfinished_areas"] = unfinished
+    summary["estimated_areas"] = [c["title"] for c in criteria if c.get("estimated")]
 
     # Gaps become actions: confirmed failed gates first, then missing mandatory evidence, then other gaps.
     weights = {c["code"]: c["weight"] for c in criteria}
@@ -468,7 +507,7 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     elif not blank(s.get("receipt_date")) and receipt is None:
         r["C1.A"] = g["G1"] = _res(FAILED, "The intended receipt date is not a valid date.", trigger={"receipt_date": s.get("receipt_date")})
     elif target is None or not currency or receipt is None:
-        gone = [n for n, v in (("target amount", target), ("currency", currency or None), ("intended receipt date", receipt)) if v is None]
+        gone = [n for n, v in (("target amount", target), ("currency", currency or None), ("date you expect the money", receipt)) if v is None]
         # The action asks only for what is missing: an amount already given is not asked for again.
         ask = [w for w, v in (("the amount you want to raise", target), ("its currency" if target is None else "the currency", currency or None),
                               ("when you expect to receive it" if target is None else "when you expect to receive the funding", receipt)) if v is None]
@@ -707,7 +746,7 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
         "limitations": [fc.MONTHLY_LABEL, "Forecast figures are assumptions, however well evidenced.",
                         "Ownership and team information describes preparation. It is not a legal verification."],
         "_conflict": bool(conflicts or raised), "_uncorroborated": uncorroborated,
-    })
+    }, snapshot)
 
 
 # ══ Launch Readiness ══════════════════════════════════════════════════════════
@@ -1012,11 +1051,18 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         "limitations": [fc.MONTHLY_LABEL, "Forecast figures are assumptions, however well evidenced.",
                         "The prerequisites are the ones you recorded. This check does not claim the list is complete and does not certify compliance."],
         "_due": due, "_conflict": False, "_uncorroborated": uncorroborated,
-    })
+    }, snapshot)
 
 
 def assess(subject_type: str, snapshot: dict, profile: dict, today: date) -> dict:
-    return assess_funding(snapshot, profile, today) if subject_type == rules.FUNDING else assess_launch(snapshot, profile, today)
+    if subject_type != rules.FUNDING:
+        return assess_launch(snapshot, profile, today)
+    out = assess_funding(snapshot, profile, today)
+    # No loan or grant checklist yet: nothing in the result or its report reads as equity (New-User Test F7)
+    if str((snapshot.get("subject") or {}).get("route_preference") or "").lower() in ("loan", "grant"):
+        out["profile_title"] = "General funding checks"
+        out["headline"] = str(out.get("headline") or "").replace("initial equity discussions", "initial funding discussions")
+    return out
 
 
 # ── section progress (kept separate from readiness) ───────────────────────────

@@ -1,4 +1,4 @@
-import { useSignedIn } from "../store/auth";
+import { useAuthStore, useSignedIn } from "../store/auth";
 import { premiumFlow } from "../components/ResearchReview";
 import { resultHome } from "../lib/resultHome";
 import FirstValueCard, { fetchFirstValue, forgetFirstValue, rememberFirstValue } from "../components/FirstValueCard";
@@ -149,6 +149,7 @@ export default function StartPage({ framed = false }) {
   const [name, setName] = useState("");
   const [workspace, setWorkspace] = useState(false);
   const [result, setResult] = useState(null);      // the free first result, for a covered goal
+  const signedInAs = useAuthStore((st) => st.email);
   const began = useRef(false);
   const signedIn = useSignedIn();
   const asking = useRef(false);      // the Replace or Update question is up: a late quick result never covers it
@@ -306,12 +307,12 @@ export default function StartPage({ framed = false }) {
     }
   }, [framed, handOver, navigate, prepare, sessionId, wanted]);
 
-  const begin = useCallback(async () => {
+  const begin = useCallback(async (confirm = false) => {
     setStage("loading");
     setProblem("");
     try {
       // Never a step that waits on forever: 15 seconds, then "Try again".
-      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", {}, { timeoutMs: 15000 });
+      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", confirm === true ? { confirm: true } : {}, { timeoutMs: 15000 });
       setSession(attached);
       if (TALKED.has(attached.goal_key) && attached.business_id && await handOver(attached)) return undefined;
       // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.
@@ -336,6 +337,12 @@ export default function StartPage({ framed = false }) {
       setStage("name");
     } catch (e) {
       if (e?.status === 404) return setStage("gone");
+      // Answers given before signing in: shown, and only used if this person says they're theirs (never on signing in alone)
+      if (e?.status === 409 && e?.data?.detail?.code === "confirm_attach") {
+        setSession(await apiRequest(`/task-sessions/${sessionId}`, "GET").catch(() => null));
+        setStage("claim");
+        return undefined;
+      }
       setProblem(e?.status === 403 ? "This task was started from another account." : "Your task couldn't be picked up just now. Nothing was lost.");
       setStage("problem");
     }
@@ -373,6 +380,22 @@ export default function StartPage({ framed = false }) {
       {/* The result is its own card, across the full width of the page (one column on a phone, two from 768px). */}
       <div className={stage === "result" && result ? "w-full"
         : "mx-auto w-full max-w-[560px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900"} role="region" aria-label="Your task">
+        {stage === "claim" && (
+          <div data-claim-answers>
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100">Are these your answers?</p>
+            <p className="mt-1 text-[14px] text-slate-600 dark:text-slate-300">These were given on this browser before signing in. I'll only add them to {signedInAs || "your account"} if they're yours.</p>
+            {(session?.summary || []).length > 0 && (
+              <ul className="mt-3 space-y-1 rounded-xl bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
+                {session.summary.filter((r) => r.key !== "currency").map((r) => <li key={r.key}><span className="font-semibold">{r.label}:</span> {r.value}</li>)}
+              </ul>
+            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" onClick={() => begin(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Yes, use these answers</button>
+              <button type="button" onClick={() => { try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ } navigate("/dashboard", { replace: true }); }}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200">No, they're not mine</button>
+            </div>
+          </div>
+        )}
         {stage === "currency" && session?.currency_question && (
           <CurrencyChoice q={session.currency_question} sessionId={sessionId} onSettled={(next) => { setSession(next); prepare(next); }} />
         )}
@@ -385,7 +408,7 @@ export default function StartPage({ framed = false }) {
             <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" />Opening the Agent Centre…
           </p>
         )}
-        {stage !== "gone" && stage !== "result" && !(TALKED.has(session?.goal_key) && stage === "loading") && (
+        {stage !== "gone" && stage !== "result" && stage !== "claim" && !(TALKED.has(session?.goal_key) && stage === "loading") && (
           <>
             <p className="text-[11px] font-bold uppercase tracking-widest text-brand-600" data-working-on>{WORKING_ON[session?.goal_key] || "Working on your task"}</p>
             {goal && <p className="mt-0.5 text-lg font-bold text-slate-900 dark:text-slate-100" data-goal-kept>{goal}</p>}

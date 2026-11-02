@@ -752,7 +752,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const ready = waiting !== null && (given === undefined || ctx !== null);
   // Said once (the owner, 28 Oct: the greeting and approvals came again at the bottom, with a new time, on every visit): while
   // nothing it says has changed it keeps the time it was first said, so it stays where it was; a change is a new greeting
-  const sig = `${n}|${risk ? `${risk.customer}:${risk.share}` : ""}`;
+  const sig = `${n}|${risk ? risk.share : ""}`;      // never a customer's name: this goes in the browser
   const greet = useRef(null);
   if (ready && greet.current === null) {
     let seen = null;

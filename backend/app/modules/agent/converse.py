@@ -345,7 +345,14 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
         from app.modules.agent import research as _research
         case = {**case, "research": _research.research_state(data, "need_funding")}
     asked = mine.get("pending_do_all")
+    if case and _SEARCH_AGAIN.match(str(text).strip()):
+        return await _ask_do_all(orch, user, business_id, case, data, text, now, only=OPTIONS_ONLY, go_now=True)      # the same search, never another offer
+    if case and _SETTLE_MINE.match(str(text).strip()) or case and _SETTLE_RECORDS.match(str(text).strip()):
+        return await _settle_figures(orch, user, business_id, case, data, text, now)
     if asked and case and (_yes(text) or _YES_LEAD.match(str(text))):
+        held = await _ask_to_settle(orch, user, business_id, case, data, text, now)      # never drafted over a question not answered
+        if held:
+            return held
         return await _start_do_all(orch, user, business_id, case, asked, text, now)
     if asked and _no(text):
         return await _said(orch, user, business_id, text, "No problem, nothing was started or charged.", [], now)
@@ -491,9 +498,12 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if not done and not keep and _UPDATE_CLAIM.search(say):
         say = "Nothing has been changed yet. Tell me what you'd like to change and I'll show you the change before anything is saved."
     got["_done"] = done
+    if case and done and not keep and re.search(r"\b(?:go ahead|do (?:it )?all|get started|start (?:it|the research)|proceed)\b", str(text), re.I):
+        return await _ask_do_all(orch, user, business_id, case, data, text, now)      # saved, and now what else they asked for (New-User Test L4)
     before, after = ((case or {}).get("summary") or {}).get("score"), None
     if "checked" in done:
         after, line = await _score_now(user, business_id, before)
+        say = _NO_OTHER_SCORE.sub("", say).strip() if line else say
         say += line      # only when it moved (the owner, 27 Oct: not "Your score is now 73/100" after every reply)
 
     if got.get("do_all") and case and not done and not keep:
@@ -512,7 +522,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
                 actions.append({"label": str(b["label"]).strip()[:40], "kind": "explain", "prompt": str(b["text"]).strip()[:300]})
         actions = with_do_all(actions, bool(case) and not done)
     if case and not keep:
-        say, actions = offer_things_left(say, got, actions)
+        say, actions = offer_things_left(say, got, actions, turns=turns)
     if not actions:
         actions = suggested("funding", bool(case))
     if case and _ASKS_READY.search(str(text)):
@@ -602,6 +612,9 @@ async def _score_now(user: dict, business_id: str, before: Any) -> tuple[Any, st
     left = s.get("open_actions")
     return after, (f" Your score is now {round(after)}/100{' so far' if s.get('score_partial') else ''}"
                    + (f", with {left} thing{'s' if left != 1 else ''} to do." if isinstance(left, int) and left else "."))
+
+
+_NO_OTHER_SCORE = re.compile(r"[^.!?\n]*\b\d{1,3}/100\b[^.!?\n]*[.!?]?\s*")
 
 
 async def _typed_need(orch, user: dict, business_id: str, case: dict | None, text: str, now: datetime, data: dict) -> dict | None:
@@ -905,7 +918,7 @@ def with_do_all(actions: list[dict], has_case: bool) -> list[dict]:
 _THINGS_LEFT = re.compile(r"\bwith \d+ things? to do\b", re.I)
 
 
-def offer_things_left(say: str, got: dict, actions: list[dict], researched: bool = False, ask: str = "") -> tuple[str, list[dict]]:
+def offer_things_left(say: str, got: dict, actions: list[dict], researched: bool = False, ask: str = "", turns: list | None = None) -> tuple[str, list[dict]]:
     """A reply that says "N things to do" shows them and recommends doing them (the owner, 29 Oct: "Your launch score is now
     0/100 so far, with 16 things to do" with nothing to see or press; they had to type "do all for me"). Once the research has
     run, the rest is drafted, never the research offered again, and the one thing it needs from the owner is asked."""
@@ -916,8 +929,10 @@ def offer_things_left(say: str, got: dict, actions: list[dict], researched: bool
         say = f"{say} I can draft the rest that I can for you to approve.{(' ' + ask) if ask else ''}"
         chip = {"label": "Draft the rest", "kind": "explain", "prompt": "Fill the rest for me"}
     else:
-        say = (f"{say} Want me to take them off your hands? I'll research each one, draft it and you just approve, so you're ready "
-               "sooner. Say go ahead and I'll show you the price first.")
+        # Said once in a conversation; the button stays (New-User Test L8)
+        if not any("off your hands" in str(t.get("text") or "") for t in (turns or [])):
+            say = (f"{say} Want me to take them off your hands? I'll research each one, draft it and you just approve, so you're ready "
+                   "sooner. Say go ahead and I'll show you the price first.")
         chip = {"label": "Go ahead", "kind": "explain", "prompt": "Do it all for me"}
     if any(str(a.get("label") or "").strip().lower() in ("do all for me", "draft the rest", "go ahead") for a in actions):
         return say, actions
@@ -1081,10 +1096,73 @@ async def _session_for(orch, user: dict, business_id: str, case: dict, topic: st
     return session["id"]
 
 
+# What the owner said against what their records say (New-User Test F3: the Agent asked which was right, then drafted from the
+# records without waiting). Asked before anything is researched or drafted; once answered, not asked again for this case.
+_SEARCH_AGAIN = re.compile(r"^search for funding options again\b", re.I)
+_SETTLE_MINE = re.compile(r"^(?:use )?what i (?:said|told you)\b|^my figures? (?:is|are) right\b", re.I)
+_SETTLE_RECORDS = re.compile(r"^use (?:my|the) records\b|^(?:my|the) records? (?:is|are) right\b", re.I)
+
+
+def figures_to_settle(case: dict, data: dict) -> list[dict]:
+    """Each thing the case says differently from the records, until the owner has said which is right."""
+    from app.modules.agent import figures
+    d = (case or {}).get("data") or {}
+    if (data.get("records_settled") or {}).get(str(case.get("id"))):
+        return []
+    f, t, out = figures.of(data), d.get("traction") or {}, []
+    near = lambda a, b: abs(float(a) - float(b)) <= 0.1 * max(abs(float(b)), 1)      # noqa: E731
+    if isinstance(t.get("customers"), (int, float)) and f.get("clients") and not near(t["customers"], f["clients"]):
+        out.append({"path": "traction.customers", "what": "paying customers", "said": t["customers"], "records": f["clients"]})
+    if isinstance(t.get("monthly_revenue"), (int, float)) and f.get("revenue_monthly") and not near(t["monthly_revenue"], f["revenue_monthly"]):
+        out.append({"path": "traction.monthly_revenue", "what": "revenue a month", "said": t["monthly_revenue"], "records": f["revenue_monthly"], "money": True})
+    place, city = str((d.get("market") or {}).get("location") or "").strip(), str((data.get("workspace_profile") or {}).get("city") or "").strip()
+    if place and city and place.lower() not in city.lower() and city.lower() not in place.lower():
+        out.append({"path": "market.location", "what": "where you trade", "said": place, "records": city})
+    return out
+
+
+async def _ask_to_settle(orch, user: dict, business_id: str, case: dict, data: dict, text: str, now: datetime) -> dict | None:
+    held = figures_to_settle(case, data)
+    if not held:
+        return None
+    from app.modules.agent import research
+    ccy = (case.get("data") or {}).get("currency") or research.task_currency(data)
+    shown = lambda h, k: research.money(h[k], ccy) if h.get("money") else str(h[k])      # noqa: E731
+    lines = "; ".join(f"{h['what']}: you said {shown(h, 'said')}, your records show {shown(h, 'records')}" for h in held)
+    return await _said(orch, user, business_id, text, f"Before I draft anything, I need one answer. These don't match: {lines}. Which should I use? Next step: choose one below.",
+                       [{"label": "Use what I said", "kind": "explain", "prompt": "Use what I said"}, {"label": "Use my records", "kind": "explain", "prompt": "Use my records"}], now)
+
+
+async def _settle_figures(orch, user: dict, business_id: str, case: dict, data: dict, text: str, now: datetime) -> dict:
+    """The answer: kept for this case, the records' figures put on it if those are the right ones, then on to what was asked."""
+    held = figures_to_settle(case, data)
+    if _SETTLE_RECORDS.match(str(text).strip()) and held:
+        from app.modules.readiness import rules as _rules
+        from app.modules.readiness.service import service_for
+        svc = service_for(orch)
+        row = await svc.store.get("subjects", case["id"])
+        was = (row or {}).get("data") or {}
+        patch: dict = {}
+        for h in held:
+            top, key = h["path"].split(".")
+            patch.setdefault(top, dict(was.get(top) or {}))[key] = h["records"]
+        await svc.update_subject(user["id"], business_id, _rules.FUNDING, case["id"], row["revision"], patch, user.get("email"))
+
+    def mark(d: dict) -> None:
+        d.setdefault("records_settled", {})[str(case["id"])] = True
+    await orch.rt.business.mutate(business_id, mark)
+    data = await orch.rt.business.load(business_id) or data
+    return await _ask_do_all(orch, user, business_id, case, data, text, now)
+
+
 async def _ask_do_all(orch, user: dict, business_id: str, case: dict, data: dict, text: str, now: datetime, topic: str = "funding",
                       keep: dict | None = None, only: list[str] | None = None, go_now: bool = False) -> dict:
     """ "Do all for me", asked in the conversation (the owner, 27 Oct): what it researches and its price, then "Shall I start?". """
     from app.modules.agent import goal_router
+    if topic == "funding" and not only:
+        held = await _ask_to_settle(orch, user, business_id, case, data, text, now)
+        if held:
+            return held
     to, noun = (f"/launch/{case['id']}", "launch plan") if topic == "launch" else (f"/funding/{case['id']}?tab=overview", "funding case")
     said = lambda *a, **k: _said(*a, topic=topic, keep=keep, **k)      # noqa: E731
     sid = (data.get("chat_sessions") or {}).get(str(case["id"])) or await _session_for(orch, user, business_id, case, topic, now)
@@ -1137,7 +1215,7 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
         def _m(d: dict) -> None:
             w = d.setdefault("agent_working", {})
             if on:
-                w[str(case["id"])] = {"at": now.isoformat(), "topic": topic}
+                w[str(case["id"])] = {"at": now.isoformat(), "topic": topic, **({"search": True} if asked.get("only") else {})}
             elif failed:
                 w[str(case["id"])] = {"failed": failed[:300], "ended": datetime.now(timezone.utc).isoformat(), "topic": topic}
             else:

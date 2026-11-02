@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { apiRequest, apiRequestCached, clearSessionCache, sessionGet } from "../api/client";
 import { useWorkspaceStore } from "./workspace";
 import { firstNameOf } from "../lib/greeting";
+import { claimBrowser, clearOnSignOut, sweepOldData } from "../lib/browserData";
+
+sweepOldData();
 
 // Signing in with Google where there's no account (the server's 404, said in words, never "HTTP 404: …"; 31 Oct)
 const noAccountError = (msg) => /NO_ACCOUNT|no EnterprateAI account/i.test(String(msg || ""));
@@ -170,6 +173,8 @@ export const useAuthStore = create((set, get) => ({
         localStorage.removeItem("ea_email");
         clearSessionCache();
         clearDemoTourState();
+        useWorkspaceStore.getState().resetForUser(null);
+        clearOnSignOut();
         set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, connecting: false });
       };
 
@@ -197,6 +202,7 @@ export const useAuthStore = create((set, get) => ({
       }
 
       const [restrictions, grants, sub] = await rest;
+      if (claimBrowser(me?.email ?? email)) useWorkspaceStore.getState().resetForUser(me?.email ?? email);      // another account signed in, in another tab
       set({
         token,
         email: me?.email ?? email,
@@ -267,6 +273,7 @@ export const useAuthStore = create((set, get) => ({
       const tokenRes = await apiRequest("/auth/login", "POST", { email, password });
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+      claimBrowser(email);
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       clearDemoTourState();
@@ -302,6 +309,7 @@ export const useAuthStore = create((set, get) => ({
   /** Signed in by a verified email code (a task saved from the homepage): the same state a password or Google sign-in leaves. */
   tokenLogin: async (token, email) => {
     if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+    claimBrowser(email);
     localStorage.setItem("ea_token", token);
     if (email) localStorage.setItem("ea_email", email);
     clearDemoTourState();
@@ -345,6 +353,7 @@ export const useAuthStore = create((set, get) => ({
         fetchPlatformGrants(),
         fetchSubscription(),
       ]).then(async ([me, restrictions, grants, sub]) => {
+        claimBrowser(me?.email);
         if (me?.email) localStorage.setItem("ea_email", me.email);
         if (me?.email && me.email !== "demo") clearDemoTourState();
         if (me?.email) useWorkspaceStore.getState().resetForUser(me.email);
@@ -375,6 +384,7 @@ export const useAuthStore = create((set, get) => ({
     clearSessionCache();
     clearDemoTourState();
     useWorkspaceStore.getState().resetForUser(null);
+    clearOnSignOut();
     set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, connecting: false, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB, creditBalance: null, creditInfo: null });
   }
 }));
