@@ -734,7 +734,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   // The recap before the hand-off (the owner's brief, 20 Oct): "Here's what I'll use", then [Looks right] or [Change something].
   const [recapOk, setRecapOk] = useState(false);
   const [changingRecap, setChangingRecap] = useState(false);
-  const recapDone = recapOk || Boolean(session?.verification?.sent);
+  const recapDone = recapOk || Boolean(session?.verification?.sent) || (here && FREE_CHECK_GO[session?.goal_key] === undefined);      // signed in: never a recap, straight on (the owner, 2 Nov)
   // The risk check moves on only when [Check my risks] is pressed (R-7, R-8, 24 Oct): never by itself after the last answer
   // The free checks (the risk check, winning more customers): one press, never a list to confirm, the result in one request
   const risky = FREE_CHECK_GO[session?.goal_key] !== undefined;
@@ -844,7 +844,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const straightOn = useRef("");
   useEffect(() => {
     const rows = session?.summary || [];
-    const all = !risky && rows.length > 0 && rows.every((r) => r.from_records || r.key === "currency");
+    // ... and signed in, what they said is used as said, with no "Here's what I've got" to confirm (the owner, 2 Nov: "I already recapped")
+    const all = !risky && rows.length > 0 && (here || rows.every((r) => r.from_records || r.key === "currency"));
     if (!session?.id || session?.next !== "questions" || currentQuestion || !questions.length || !all || busy || editing.size || straightOn.current === session.id) return;
     straightOn.current = session.id;
     answer(Object.fromEntries(questions.filter((q) => values[q.key] !== "" && values[q.key] != null).map((q) => [q.key, values[q.key]])), true);
@@ -1296,7 +1297,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
               )}
             </div>
           )}
-          {step === "questions" && !currentQuestion && questions.length > 0 && !risky && (
+          {step === "questions" && !currentQuestion && questions.length > 0 && !risky && !here && (
             <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3" data-summary>
               <p className="text-[13px] font-semibold text-slate-900">Here's what I've got:</p>
               <ul className="mt-1.5 space-y-0.5">

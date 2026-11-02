@@ -621,3 +621,27 @@ it("a launch's lists are answered line by line in the chat, never one box (the o
   fireEvent.click(within(card).getByRole("button", { name: "I have this" }));
   expect(onField).toHaveBeenCalledWith("prerequisites", [{ id: "p1", name: "Trading permit", applicable: "yes", critical: true, status: "completed" }]);
 });
+
+it("setup and running commitments are answered in the chat, never by leaving it (the owner, 2 Nov: \"they are taking me away\")", async () => {
+  const sent = [];
+  apiRequest.mockImplementation(async (path, method, body) => { if (method === "PUT" || method === "POST") sent.push({ path, body }); return { business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "adopted" }, working: false, approvals: { count: 0, items: [] }, draft_fields: [] }; });
+  const onField = vi.fn();
+  const forecast = { data: { start_month: "2026-12", currency: "NGN", months: [{ month: "2026-12", receipts: "900", payments: "500" }] }, revision: 3 };
+  const steps = [{ key: "check.C3.B", title: "List your setup and running commitments, or confirm there are none", to: "/launch/c1?tab=answers" }];
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="launch" subject={{ ...subject, kind: "launch_initiative", data: { name: "Food cart" }, forecast }} steps={steps} score={40} onTab={() => {}} onField={onField} /></MemoryRouter>);
+  await screen.findByLabelText("Message");
+  await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What's left?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  const card = await waitFor(() => { const c = document.querySelector('[data-card="pending"]'); if (!c) throw new Error("no card"); return c; });
+  expect(within(card).queryByRole("button", { name: "Check it" })).toBeNull();
+  fireEvent.change(within(card).getByLabelText("What it's for"), { target: { value: "Rent" } });
+  fireEvent.change(card.querySelector('[aria-label="Amount"]'), { target: { value: "50,000" } });
+  fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(sent.some((c) => /forecast/.test(c.path))).toBe(true));
+  const saved = sent.find((c) => /forecast/.test(c.path));
+  expect(JSON.stringify(saved)).toContain("Rent");
+  expect(JSON.stringify(saved)).toContain("50000");
+  expect(JSON.stringify(saved)).toContain("assumption");
+  expect(JSON.stringify(saved)).toContain("2026-12");
+});

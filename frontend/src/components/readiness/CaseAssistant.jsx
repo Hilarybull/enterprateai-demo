@@ -1028,6 +1028,7 @@ const SAVE = "rounded-lg bg-brand-600 px-4 py-2 text-[13px] font-semibold text-w
 // milestone's missing details, a simple forecast, or a press to confirm. Null when it needs its own page (evidence, a long list).
 function PendingInline({ st, data, typed, setTyped, done, onField, subject, subjectId, businessId, feature, onSaved, otherwise }) {
   const [problem, setProblem] = useState("");
+  const [costs, setCosts] = useState([{ label: "", amount: "", month: subject?.forecast?.data?.start_month || "" }]);
   const val = (k) => typed[`${st.key}:${k}`] || "";
   const set = (k, v) => setTyped((t) => ({ ...t, [`${st.key}:${k}`]: v }));
   const rowsAt = (path) => { const v = getPath(data || {}, path); return Array.isArray(v) ? v : []; };
@@ -1061,6 +1062,31 @@ function PendingInline({ st, data, typed, setTyped, done, onField, subject, subj
   }
   const fieldHere = fieldOfStep(st) || "";
   const SELECT = "rounded-lg border border-slate-200 px-3 py-2 text-[14px] dark:border-slate-700 dark:bg-slate-900";
+  // Setup and running commitments, answered here in the chat (the owner, 2 Nov: "they are taking me away"), or none
+  if (/commitments/i.test(st.title || "") && subject?.forecast?.data) {
+    const fc = subject.forecast;
+    const save = (changes) => attempt(() => saveForecast(businessId, feature, subjectId, { ...fc.data, opening_cash_as_of: fc.data.opening_cash_as_of || new Date().toISOString().slice(0, 10), ...changes }, fc.revision));
+    const put = (i, k, v) => setCosts((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
+    const filled = costs.filter((r) => r.label.trim() || r.amount.trim());
+    const ready = filled.length > 0 && filled.every((r) => r.label.trim() && Number(r.amount.replace(/,/g, "")) > 0 && r.month);
+    return (
+      <form className="mt-2 space-y-2" onSubmit={(e) => { e.preventDefault(); if (ready) save({ no_commitments: false, commitments: [...(fc.data.commitments || []), ...filled.map((r) => ({ label: r.label.trim(), amount: r.amount.replace(/,/g, ""), month: r.month, kind: "operating", basis: "assumption" }))] }); }}>
+        {costs.map((r, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-2">
+            <input aria-label="What it's for" placeholder="What it's for, such as rent" value={r.label} onChange={(e) => put(i, "label", e.target.value)} className={BOXED} />
+            <input aria-label="Amount" inputMode="decimal" placeholder="Amount" value={r.amount} onChange={(e) => put(i, "amount", e.target.value)} className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-[14px] outline-none focus:border-brand-500 dark:border-slate-700 dark:bg-slate-900" />
+            <input aria-label="Month" type="month" value={r.month} onChange={(e) => put(i, "month", e.target.value)} className={SELECT} />
+          </div>
+        ))}
+        <p className="text-[12.5px] text-slate-500">Saved as your estimate. Add proof later if you have it.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="submit" disabled={!ready} className={SAVE}>Save</button>
+          <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200" onClick={() => setCosts((rows) => [...rows, { label: "", amount: "", month: rows[0]?.month || "" }])}>Add another</button>
+          <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200" onClick={() => save({ commitments: [], no_commitments: true })}>There are none</button>
+        </div>{oops}
+      </form>
+    );
+  }
   // Lists answered line by line, never a single box (a list can't hold a sentence)
   if (onField && /delivery\.dependencies/.test(`${fieldHere} ${st.why || ""}`) || (onField && /depends on/i.test(st.title || "") && feature === "launch")) {
     const rows = rowsAt("delivery.dependencies");
