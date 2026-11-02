@@ -619,3 +619,13 @@ def test_replace_it_with_nothing_asked_is_left_to_the_conversation(talk):
     model.replies += [{"say": "What would you like to replace?"}]
     out = ask("Replace it", page="funding")
     assert out["message"] == "What would you like to replace?" or "replace" in out["message"].lower()
+
+
+def test_a_funding_message_in_the_agent_centre_opens_its_case_even_if_nothing_changed(talk):
+    """The owner, 3 Nov: "why didn't it switch to funding on detecting funding?" """
+    env, ask, model, cid = talk
+    model.replies += [{"say": "You're at 40/100 so far."}]
+    out = ask("How ready am I for funding?")
+    assert out["handover"] == f"/funding/{cid}?tab=assistant" and out["case_id"] == str(cid)
+    model.replies += [{"say": "You're at 40/100 so far."}]
+    assert "handover" not in ask("How ready am I for funding?", page="funding")      # already on its page

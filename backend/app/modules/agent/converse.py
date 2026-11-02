@@ -1276,7 +1276,7 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
                            "Searching for programmes, lenders and investors that fit your case. It takes a minute or two. I'll let you know as soon as they're ready for your review, each with its source.",
                            [], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"]), "options": True}])
     return await _said(orch, user, business_id, text,
-                       f"Started. It takes a minute or two. I'll let you know as soon as the drafts are ready for your review on your {'plan' if topic == 'launch' else 'case'}'s form.",
+                       f"Started. It takes a minute or two. I'll let you know as soon as the drafts are ready for your review, right here in this chat.",
                        # nothing to open while it works: the progress card only, the form offered once the drafts are ready (the owner, 1 Nov)
                        [], now, topic=topic, keep=keep, cards=[{"type": "progress", "case_id": str(case["id"])}])
 

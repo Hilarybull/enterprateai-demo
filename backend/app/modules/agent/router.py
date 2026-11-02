@@ -971,6 +971,14 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 # A written reply is 2 credits (the owner, 31 Oct): too few, said with Top up; nothing written, nothing charged
                 return {"kind": "blocked", "reason_codes": ["credits_exhausted"], "upgrade": True, "message": agent_config.short_of(e.needed, e.have),
                         "actions": [{"label": "Top up", "to": "/pricing"}]}
+            if talked and not body.page and topic in ("funding", "launch") and not talked.get("case_id"):
+                # Nothing changed on it: still its conversation, on its own page (the owner, 3 Nov: "why didn't it switch to funding")
+                try:
+                    opened = await asyncio.wait_for(_case_to_open(user, body.business_id, topic), 4.0)
+                    if opened:
+                        talked = {**talked, "case_id": str(opened)}
+                except Exception:      # noqa: BLE001 - slow or several plans: answered here
+                    logger.info("no case to hand over to for %s", body.business_id, exc_info=True)
             if talked and not body.page and topic in ("funding", "launch") and talked.get("case_id"):
                 # Asked in the Agent Centre: carried on on its own page, with this exchange (the owner, 31 Oct: "it should have just
                 # opened the funding flow… and handed over the request well")
