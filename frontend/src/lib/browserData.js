@@ -17,6 +17,15 @@ export function cameFromCard(sessionId) {
   try { return Boolean(sessionId) && sessionStorage.getItem(CARD) === String(sessionId); } catch { return false; }
 }
 
+/** Signed in, every answer given in the chat: the task is started, never handed back to the chat to begin again (a loop, 2 Nov). */
+const STRAIGHT = "ea_task_straight_on";
+export function markStraightOn(sessionId) {
+  try { sessionStorage.setItem(STRAIGHT, String(sessionId)); } catch { /* the hand-over happens instead */ }
+}
+export function goesStraightOn(sessionId) {
+  try { return Boolean(sessionId) && sessionStorage.getItem(STRAIGHT) === String(sessionId); } catch { return false; }
+}
+
 const cleared = new Set();
 /** Data held in memory goes at the same moment (a chat, the last dashboard). */
 export function onBrowserCleared(fn) { cleared.add(fn); }

@@ -1,4 +1,4 @@
-import { markCardSignIn } from "../lib/browserData";
+import { markCardSignIn, markStraightOn } from "../lib/browserData";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
@@ -260,7 +260,7 @@ export function useGoalFlow({ inApp = false } = {}) {
   const carryOn = useCallback(() => {
     const next = startPath(session.id);
     markCardSignIn(session.id);
-    if (here) { navigate(next); return ""; }
+    if (here) { markStraightOn(session.id); navigate(next); return ""; }
     navigate(`/login?next=${encodeURIComponent(next)}`);
     return "";
   }, [here, navigate, session]);

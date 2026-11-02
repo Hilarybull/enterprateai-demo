@@ -1,4 +1,4 @@
-import { cameFromCard } from "../lib/browserData";
+import { cameFromCard, goesStraightOn } from "../lib/browserData";
 import { useAuthStore, useSignedIn } from "../store/auth";
 import { premiumFlow } from "../components/ResearchReview";
 import { resultHome } from "../lib/resultHome";
@@ -171,7 +171,7 @@ export default function StartPage({ framed = false }) {
   // prepared here as before. True when it was handed over.
   const handOver = useCallback(async (known) => {
     const words = known ? carriedText(known) : "";
-    if (!words || !known?.business_id) return false;
+    if (!words || !known?.business_id || goesStraightOn(sessionId)) return false;      // already answered in the chat: started here, never back to it
     const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
     const to = asked?.converse ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
     if (!to) return false;
