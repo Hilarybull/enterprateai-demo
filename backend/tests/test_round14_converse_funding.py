@@ -593,3 +593,29 @@ def test_with_no_model_a_question_on_the_case_page_shows_what_is_left_here(talk,
     out = ask("How ready am I for funding?", page="funding", case_id=str(cid))
     assert "on its page" not in out["message"] and "Next step:" in out["message"], out["message"]
     assert {"result", "steps"} <= {c["type"] for c in out["cards"]}
+
+
+SAID_NEED = "I need funding: ₦10m for stock, a loan, within 3 months. The business is just an idea, no traction yet."
+ASKED = "Should this new need replace the £25,000 one (the old one stays in your history), or is it just an update to it?"
+
+
+def test_replace_it_answers_the_question_even_if_it_could_not_be_remembered(talk):
+    """The owner, 2 Nov: asked "replace or update?", then "I'm not sure what you'd like replaced"."""
+    env, ask, model, cid = talk
+    model.replies += [{"say": ASKED}, {"say": "MODEL REACHED"}]
+    ask(SAID_NEED)
+    env.businesses["A"]["data"].pop("agent_conversations", None)      # a save that never landed
+    history = [{"role": "user", "content": SAID_NEED}, {"role": "assistant", "content": ASKED}]
+    out = ask("Replace it", history=history)
+    assert "MODEL REACHED" not in out["message"] and out["changed"][:1] == ["replaced"], out["message"]
+    data = _case(env, cid)
+    assert float(data["target_amount"]) == 10000000 and data["currency"] == "NGN" and data["purpose"] == "stock" and data["route_preference"] == "loan"
+    assert data["receipt_date"], "within 3 months is the date, never asked again"
+    assert "When do you need the money" not in out["message"]
+
+
+def test_replace_it_with_nothing_asked_is_left_to_the_conversation(talk):
+    env, ask, model, cid = talk
+    model.replies += [{"say": "What would you like to replace?"}]
+    out = ask("Replace it", page="funding")
+    assert out["message"] == "What would you like to replace?" or "replace" in out["message"].lower()

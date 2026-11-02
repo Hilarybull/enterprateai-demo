@@ -782,11 +782,14 @@ async def stripe_webhook(request: Request):
         )
         from app.core.supabase import sb_update
         if rows:
+            # A cancel set for the end of the period: Stripe says canceled_at at once and stays "active". What was paid for
+            # stays theirs until it really ends, when Stripe sends subscription.deleted
+            ended = etype == "customer.subscription.deleted" or new_status == "canceled"
             updates: dict = {
-                "status": "cancelled" if (new_status == "canceled" or cancel_at) else new_status,
+                "status": "cancelled" if ended else new_status,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            if cancel_at:
+            if ended and cancel_at:
                 updates["cancelled_at"] = datetime.fromtimestamp(cancel_at, tz=timezone.utc).isoformat()
             # Sync billing period on renewal / update
             ps = sub_obj.get("current_period_start") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_start", None)
@@ -852,6 +855,17 @@ async def agent_tasks_by_plan() -> dict:
 
 
 # ── Authenticated: get current subscription ───────────────────────────────────
+
+@router.post("/billing-portal")
+async def billing_portal(user=Depends(get_current_user)) -> dict:
+    """Stripe's own page for cancelling, changing the card and seeing invoices. Their own subscription only."""
+    row = await sb_select("user_subscriptions", filters=[("user_id", "eq", user["id"])], single=True)
+    customer = (row or {}).get("stripe_customer_id")
+    if not customer:
+        raise HTTPException(status_code=404, detail="There's no paid subscription to manage on this account.")
+    session = _stripe_client().billing_portal.sessions.create({"customer": customer, "return_url": f"{_frontend_url()}/account"})
+    return {"url": session.url}
+
 
 @router.get("/my", response_model=SubscriptionOut)
 async def get_my_subscription(user=Depends(get_current_user)) -> SubscriptionOut:

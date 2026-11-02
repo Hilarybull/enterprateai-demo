@@ -274,6 +274,11 @@ def need_in(text: str, data: dict | None = None) -> dict:
     if not figures or figures[-1] <= 0:
         return {}
     out: dict = {"target_amount": figures[-1]}
+    from app.modules.agent import goals as _goals
+    said_when = re.search(r"\b(?:in|within)\s+\d+(?:\s*(?:to|-|–)\s*\d+)?\s+months?\b", t, re.I)
+    when_said = _goals.end_of_month(said_when.group(0), datetime.now(timezone.utc).date()) if said_when else None
+    if when_said:
+        out["receipt_date"] = when_said      # "within 3 months", "in 3 to 6 months", as every other reading of the need
     sign = re.search(r"[$£€₦]|\b(naira|pounds?|dollars?|euros?|ngn|gbp|usd|eur)\b", t, re.I)
     if sign:
         w = sign.group(0).lower()
@@ -388,6 +393,10 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     # A change is shown with Apply and Cancel and made only on Apply (the owner, 27 Oct: "the agent must not say I'll update
     # your case unless it actually updates it"); "replace or update?" is answered with its buttons
     held, which = mine.get("pending_change"), mine.get("pending_which")
+    # "Replace it" answers the question just asked, whether or not it could be remembered (a database timeout must never lose
+    # it; the owner, 2 Nov: the Agent asked, then "I'm not sure what you'd like replaced")
+    if not which and case and _WHICH_ANSWER.match(str(text)) and any(t.get("role") != "owner" and _asks_which(t.get("text") or "") for t in turns[-2:]):
+        which = {"change": None}
     if mine.get("last_change") and _UNDO.match(str(text)):
         return await _undone(orch, svc, user, business_id, mine["last_change"], text, now)
     if held and held.get("fields") and (_APPLY.match(str(text)) or _yes(text)):
@@ -1032,6 +1041,9 @@ def asks_help(text: str) -> bool:
 _YES = re.compile(r"^\s*(?:yes|yeah|yep|ok|okay|sure|go ahead|go on|do it|start(?: it)?(?: do all for me)?|proceed|please do|let'?s do it|go for it)\b[\s.!,]*(?:start|please)?[\s.!]*$", re.I)
 _CORRECTION = re.compile(r"^\s*(?:(?:ok(?:ay)?|actually|no|sorry)[,\s]+)*(?:make it|change it|change that|change the|update it|update that|update the|set it to|let'?s make it|let'?s say)\b", re.I)
 _BOTH = re.compile(r"\b(?:keep both|both options|both needs|separately|alongside|second case)\b", re.I)
+
+
+_WHICH_ANSWER = re.compile(r"^\s*(?:please\s+)?(?:replace|update)(?:\s+(?:it|that|this|the (?:old|current) one))?\s*[.!]?\s*$", re.I)
 
 
 def _asks_which(say: str) -> bool:

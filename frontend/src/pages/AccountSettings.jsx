@@ -276,6 +276,14 @@ export function PlanSection() {
   const navigate = useNavigate();
   useEffect(() => { if (!info) apiRequest("/credits/balance", "GET").then((d) => d && setCreditInfo(d)).catch(() => {}); }, [info, setCreditInfo]);
   const free = (subscription.plan_key || "explorer") === "explorer";
+  const [opening, setOpening] = useState(false);
+  const [problem, setProblem] = useState("");
+  const manage = async () => {
+    setOpening(true);
+    setProblem("");
+    try { window.location.assign((await apiRequest("/plans/billing-portal", "POST")).url); }
+    catch (e) { setOpening(false); setProblem(e?.status === 404 ? "There's no paid subscription to manage on this account." : "That couldn't open just now. Please try again."); }
+  };
   const renews = subscription.current_period_end || subscription.renews_at || info?.next_reset_at || info?.resets_at;
   const when = renews ? new Date(renews).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null;
   return (
@@ -287,7 +295,11 @@ export function PlanSection() {
       </dl>
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className={primary} onClick={() => navigate("/pricing")}>{free ? "Upgrade" : "Change plan"}</button>
+        {(subscription.subscribed_plan_key || subscription.plan_key || "explorer") !== "explorer" && (
+          <button type="button" className={outline} disabled={opening} onClick={manage} data-manage-subscription>{opening ? "Opening…" : "Manage or cancel subscription"}</button>
+        )}
         <button type="button" className={outline} onClick={() => navigate("/credits")}>Credit history</button>
+        {problem && <p role="alert" className="w-full text-[13px] font-semibold text-rose-600">{problem}</p>}
       </div>
     </Section>
   );

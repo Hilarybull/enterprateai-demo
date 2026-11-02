@@ -478,7 +478,8 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     // A guided chat (funding, launch, customers, risks, an idea): carried on here in the panel, as in the Agent Centre (the
     // owner, 27 Oct: "all these agentic flows need to be conversational... a conversation panel")
     if (single?.kind === "check") {
-      setMessages((prev) => [...prev, { role: "assistant", content: "", check: { said: single.said || "", goal: single.goal_key, at: Date.now() } }]);
+      // One open card for a goal: asking again replaces it, never the same question twice on screen (the owner, 3 Nov)
+      setMessages((prev) => [...prev.filter((m) => !(m.check && m.check.goal === single.goal_key)), { role: "assistant", content: "", check: { said: single.said || "", goal: single.goal_key, at: Date.now() } }]);
       return undefined;
     }
     if (single?.kind === "needs_input") {
