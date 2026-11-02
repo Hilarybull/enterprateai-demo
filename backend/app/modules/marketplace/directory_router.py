@@ -191,7 +191,8 @@ def _via(invite: str = Query(default="", max_length=200), access: str = Query(de
 async def claim_lookup(body: LookupIn, request: Request, user=Depends(get_optional_user)):
     """Find and claim your business: an exact name with its company number or website. Limited per caller."""
     _on()
-    client = f"user:{user['id']}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
+    from app.shared.limits import client_ip
+    client = f"user:{user['id']}" if user else f"ip:{client_ip(request)}"
     return await _run(get_service().find_to_claim(name=body.name, company_number=body.company_number or "", website=body.website or "", client=client))
 
 

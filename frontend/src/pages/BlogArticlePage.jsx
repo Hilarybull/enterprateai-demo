@@ -1,3 +1,4 @@
+import { safeHtml } from "../lib/safeHtml";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -99,7 +100,7 @@ export default function BlogArticlePage() {
           {/* Content */}
           <div
             className="mt-10 max-w-none text-slate-700 leading-relaxed [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:text-slate-900 [&_h1]:mt-8 [&_h1]:mb-4 [&_h2]:text-2xl [&_h2]:font-bold [&_h2]:text-slate-900 [&_h2]:mt-8 [&_h2]:mb-4 [&_h3]:text-xl [&_h3]:font-bold [&_h3]:text-slate-900 [&_h3]:mt-6 [&_h3]:mb-3 [&_p]:mb-5 [&_p]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:mb-5 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:mb-5 [&_li]:mb-2 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_blockquote]:my-6 [&_img]:rounded-xl [&_img]:max-w-full [&_img]:my-6 [&_code]:bg-slate-100 [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm [&_pre]:bg-slate-900 [&_pre]:text-slate-100 [&_pre]:rounded-xl [&_pre]:p-4 [&_pre]:overflow-x-auto [&_pre]:my-6 [&_strong]:font-semibold [&_strong]:text-slate-900"
-            dangerouslySetInnerHTML={{ __html: article.content || "<p>No content yet.</p>" }}
+            dangerouslySetInnerHTML={{ __html: safeHtml(article.content || "<p>No content yet.</p>") }}
           />
 
           {/* Tags */}

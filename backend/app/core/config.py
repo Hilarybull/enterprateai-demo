@@ -74,6 +74,17 @@ class Settings(BaseSettings):
     marketplace_moderators: str = Field(default="", validation_alias=AliasChoices("MARKETPLACE_MODERATORS",))
     # Funding and launch scenarios (FR10 / LR10). Off = the checks work and scenarios say they are unavailable.
     readiness_scenarios_enabled: bool = Field(default=True, validation_alias=AliasChoices("READINESS_SCENARIOS_ENABLED",))
+    # Sign-in and limits. REDIS_URL shares attempt counts and signed-out tokens between processes and across restarts.
+    redis_url: str | None = Field(default=None, validation_alias=AliasChoices("REDIS_URL",))
+    client_ip_header: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_IP_HEADER",))      # overrides the host's own (see limits.client_ip)
+    demo_login_enabled: bool = Field(default=True, validation_alias=AliasChoices("DEMO_LOGIN_ENABLED",))      # the public demo tour
+    cors_strict: bool = Field(default=False, validation_alias=AliasChoices("CORS_STRICT",))      # production: only CORS_ORIGINS may call the API
+    sentry_dsn: str | None = Field(default=None, validation_alias=AliasChoices("SENTRY_DSN",))
+    # AI calls: how many at once in this process, how long one may wait for its turn, how long one may run, and an optional daily ceiling (0 = none)
+    ai_max_concurrent: int = Field(default=30, validation_alias=AliasChoices("AI_MAX_CONCURRENT",))
+    ai_queue_seconds: float = Field(default=60.0, validation_alias=AliasChoices("AI_QUEUE_SECONDS",))
+    ai_http_seconds: float = Field(default=600.0, validation_alias=AliasChoices("AI_HTTP_SECONDS",))
+    ai_daily_call_limit: int = Field(default=0, validation_alias=AliasChoices("AI_DAILY_CALL_LIMIT",))
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     backend_url: str | None = Field(default=None, validation_alias=AliasChoices("BACKEND_URL", "API_URL"))

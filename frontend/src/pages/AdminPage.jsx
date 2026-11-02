@@ -1,3 +1,4 @@
+import { safeHtml } from "../lib/safeHtml";
 import UkDateInput from "../components/UkDateInput";
 import ResearchDiagnostics from "../components/admin/ResearchDiagnostics";
 import { createPortal } from "react-dom";
@@ -4421,7 +4422,7 @@ function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
             {f.excerpt && <p className="mt-3 text-base text-slate-500 leading-relaxed">{f.excerpt}</p>}
             <div
               className="mt-6 text-sm text-slate-700 leading-relaxed [&_h2]:text-xl [&_h2]:font-bold [&_h2]:text-slate-900 [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-4 [&_li]:mb-1.5 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_img]:rounded-xl [&_img]:max-w-full [&_strong]:font-semibold"
-              dangerouslySetInnerHTML={{ __html: f.content || "<p class='text-slate-400'>No content yet.</p>" }}
+              dangerouslySetInnerHTML={{ __html: safeHtml(f.content || "<p class='text-slate-400'>No content yet.</p>") }}
             />
           </div>
         )}

@@ -7,12 +7,13 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from app.shared import limits
 from app.core.config import get_settings
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
 from app.shared.auth.schemas import ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, GoogleAuthRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SetPasswordRequest, TokenResponse, UpdateProfileRequest, UserPublic
-from app.shared.auth.security import create_access_token, hash_password, verify_password
+from app.shared.auth.security import create_access_token, decode_token, hash_password, verify_password
 from app.shared.auth.deps import forget_user, get_current_user
 from app.shared.email.resend import send_password_reset_email, send_password_otp_email, send_email_verification_email
 
@@ -22,6 +23,22 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 DEMO_USER_ID = "demo@enterprate.ai"
 DEMO_USER_EMAIL = "demo@enterprate.ai"
 DEMO_USER_PASSWORD = "enterprateai-demo-access"
+
+# Attempts: (how many, in how many seconds). Wrong passwords are counted for the address and account together, so someone
+# guessing from elsewhere can't lock the real owner out, with a higher ceiling on each alone for guessing that moves around.
+LOGIN_PAIR, LOGIN_EMAIL, LOGIN_IP = (10, 900), (50, 900), (200, 900)
+RESET_ASK_EMAIL, RESET_ASK_IP = (3, 3600), (20, 3600)
+RESET_TRY_IP = (20, 900)
+OTP_TRY = (5, 600)
+OTP_SEND = (5, 3600)
+REGISTER_IP = (20, 3600)
+DEMO_IP = (30, 3600)
+TOO_MANY = "Too many attempts. Please wait a few minutes and try again."
+
+
+def _within(key: str, rule: tuple[int, int]) -> None:
+    if not limits.hit(key, *rule):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=TOO_MANY)
 
 
 async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | None, ref_code: str | None) -> None:
@@ -88,7 +105,8 @@ async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | No
 
 
 @router.post("/register", response_model=UserPublic)
-async def register(payload: RegisterRequest) -> UserPublic:
+async def register(payload: RegisterRequest, request: Request) -> UserPublic:
+    _within(f"register:{limits.client_ip(request)}", REGISTER_IP)
     settings = get_settings()
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
@@ -193,10 +211,17 @@ async def verify_email(token: str) -> dict:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest) -> TokenResponse:
-    user = await sb_select("users", filters=[("id", "eq", payload.email.lower())], single=True)
+async def login(payload: LoginRequest, request: Request) -> TokenResponse:
+    email, ip = payload.email.lower(), limits.client_ip(request)
+    pair = f"login:{email}:{ip}"
+    if limits.over(pair, *LOGIN_PAIR) or limits.over(f"login:{email}", *LOGIN_EMAIL) or limits.over(f"login-ip:{ip}", *LOGIN_IP):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=TOO_MANY)
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
     if not user or not verify_password(payload.password, user["password_hash"]):
+        for key, rule in ((pair, LOGIN_PAIR), (f"login:{email}", LOGIN_EMAIL), (f"login-ip:{ip}", LOGIN_IP)):
+            limits.note(key, rule[1])
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    limits.clear(pair)
     if user.get("email_verified") is False:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email not verified. Please check your inbox and click the verification link.")
     if user.get("is_blocked"):
@@ -206,8 +231,11 @@ async def login(payload: LoginRequest) -> TokenResponse:
 
 
 @router.post("/demo", response_model=TokenResponse)
-async def demo_login() -> TokenResponse:
+async def demo_login(request: Request) -> TokenResponse:
     settings = get_settings()
+    if not settings.demo_login_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The demo isn't available here.")
+    _within(f"demo:{limits.client_ip(request)}", DEMO_IP)
     user = await _ensure_demo_user(
         email=(settings.demo_email or DEMO_USER_EMAIL).lower().strip(),
         password=(settings.demo_password or DEMO_USER_PASSWORD),
@@ -488,6 +516,19 @@ async def update_profile(payload: UpdateProfileRequest, user=Depends(get_current
 _EXPORT_HIDDEN = ("password", "hash", "token", "otp", "secret", "google_sub")
 
 
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def logout(request: Request) -> Response:
+    """Ends this sign-in on the server too, so a copy of its token stops working. Always succeeds: signing out is never refused."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            claims = decode_token(auth.split(" ", 1)[1].strip())
+            limits.revoke(claims.get("jti"), float(claims.get("exp") or 0))
+        except Exception:      # noqa: BLE001 - already invalid
+            pass
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/me/sign-out-others")
 async def sign_out_other_devices(user=Depends(get_current_user)) -> dict:
     """Every other sign-in stops working. This device gets a fresh one and stays signed in."""
@@ -561,6 +602,7 @@ _OTP_EXPIRY_MINUTES = 10
 @router.post("/me/send-password-otp", status_code=status.HTTP_200_OK)
 async def send_password_otp(user=Depends(get_current_user)) -> dict:
     """Send a 6-digit OTP to the user's email to verify identity before changing password."""
+    _within(f"otp-send:{user['id']}", OTP_SEND)
     otp = str(secrets.randbelow(900000) + 100000)  # 100000–999999
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=_OTP_EXPIRY_MINUTES)).isoformat()
     await sb_update(
@@ -581,9 +623,10 @@ async def change_password_with_otp(payload: dict, user=Depends(get_current_user)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="otp_code and new_password are required.")
     if len(new_password) < 8:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters.")
+    _within(f"otp-try:{user['id']}", OTP_TRY)
     stored_otp = user.get("reset_token")
     expires_str = user.get("reset_token_expires_at")
-    if not stored_otp or stored_otp != otp_code:
+    if not stored_otp or not secrets.compare_digest(str(stored_otp), otp_code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code.")
     if expires_str:
         expires_at = datetime.fromisoformat(expires_str)
@@ -603,8 +646,11 @@ _RESET_TOKEN_EXPIRY_MINUTES = 60
 
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
-async def forgot_password(payload: ForgotPasswordRequest) -> dict:
+async def forgot_password(payload: ForgotPasswordRequest, request: Request) -> dict:
     settings = get_settings()
+    _within(f"reset-ask-ip:{limits.client_ip(request)}", RESET_ASK_IP)
+    if not limits.hit(f"reset-ask:{payload.email.lower()}", *RESET_ASK_EMAIL):
+        return {"detail": "If that email is registered, a reset link has been sent."}      # the same answer: no inbox flooded, nothing revealed
     user = await sb_select("users", filters=[("id", "eq", payload.email.lower())], single=True)
     # Always return success to avoid email enumeration
     if not user:
@@ -628,7 +674,12 @@ async def forgot_password(payload: ForgotPasswordRequest) -> dict:
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-async def reset_password(payload: ResetPasswordRequest) -> Response:
+async def reset_password(payload: ResetPasswordRequest, request: Request) -> Response:
+    _within(f"reset-try:{limits.client_ip(request)}", RESET_TRY_IP)
+    # A reset link's token is long. The 6-digit change-password code shares that column and is never accepted here, signed out:
+    # it could be guessed
+    if len(str(payload.token or "")) < 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link.")
     user = await sb_select("users", filters=[("reset_token", "eq", payload.token)], single=True)
     if not user or not user.get("reset_token_expires_at"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link.")
@@ -648,6 +699,12 @@ async def reset_password(payload: ResetPasswordRequest) -> Response:
             "reset_token_expires_at": None,
         },
     )
+    # A reset ends every older sign-in: it may be why they reset it
+    try:
+        await sb_update("users", filters=[("id", "eq", user["id"])], payload={"sessions_valid_after": datetime.now(timezone.utc).replace(microsecond=0).isoformat()})
+    except Exception:      # noqa: BLE001 - the password is changed; only a database without this column gets here
+        logger.warning("reset: older sign-ins could not be ended", exc_info=True)
+    forget_user(user["id"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

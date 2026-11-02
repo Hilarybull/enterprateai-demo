@@ -1,3 +1,4 @@
+import { safeHtml } from "../lib/safeHtml";
 import { formatCurrency } from "../lib/format";
 import { refusalMessage } from "../lib/entitlement";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -461,7 +462,7 @@ export default function BusinessPlanPage() {
                       {(previewData.extracted?.unique_value_proposition || previewData.extracted?.description || previewData.extracted?.business_description) && (
                         <div
                           className="mt-1.5 text-xs text-slate-600 line-clamp-3"
-                          dangerouslySetInnerHTML={{ __html: markdownToHtml(previewData.extracted.unique_value_proposition || previewData.extracted.description || previewData.extracted.business_description) }}
+                          dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(previewData.extracted.unique_value_proposition || previewData.extracted.description || previewData.extracted.business_description)) }}
                         />
                       )}
                     </div>
@@ -657,7 +658,7 @@ export default function BusinessPlanPage() {
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-600">Key Assumptions</div>
                       <ul className="space-y-0.5 pl-3 list-disc text-xs text-slate-700 marker:text-amber-400">
                         {aMap.key_assumptions.slice(0, 4).map((a, i) => (
-                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: markdownToHtml(String(a)) }} />
+                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(String(a))) }} />
                         ))}
                       </ul>
                     </div>
@@ -669,7 +670,7 @@ export default function BusinessPlanPage() {
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-600">Main Risks</div>
                       <ul className="space-y-0.5 pl-3 list-disc text-xs text-slate-700 marker:text-rose-400">
                         {aMap.main_risks.slice(0, 3).map((r, i) => (
-                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: markdownToHtml(String(r)) }} />
+                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(String(r))) }} />
                         ))}
                       </ul>
                     </div>

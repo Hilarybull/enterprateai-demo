@@ -1,3 +1,4 @@
+import { markCardSignIn } from "../lib/browserData";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
@@ -258,6 +259,7 @@ export function useGoalFlow({ inApp = false } = {}) {
    *  The address is never put in a link: only where to come back to. */
   const carryOn = useCallback(() => {
     const next = startPath(session.id);
+    markCardSignIn(session.id);
     if (here) { navigate(next); return ""; }
     navigate(`/login?next=${encodeURIComponent(next)}`);
     return "";
@@ -328,6 +330,7 @@ export function useGoalFlow({ inApp = false } = {}) {
   const skipPassword = useCallback(() => { passwordHold.current = false; setNewPassword(false); navigate(startPath(session.id)); }, [navigate, session]);
   /** Google: signed in with the Google account, then on to the task. */
   const withGoogle = useCallback(async (credential) => {
+    markCardSignIn(session.id);
     await useAuthStore.getState().googleLogin(credential);
     if (useAuthStore.getState().token) navigate(startPath(session.id));
   }, [navigate, session]);
@@ -339,7 +342,7 @@ export function useGoalFlow({ inApp = false } = {}) {
     try { keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/attach-user`, "POST", {}, { timeoutMs: 15000 }))); return true; }
     catch (e) {
       attached.current = "";
-      if (e?.status === 409 && e?.data?.detail?.code === "confirm_attach") navigate(startPath(session.id));      // answers from before signing in: asked there first
+      if (e?.status === 409 && e?.data?.detail?.code === "confirm_attach") { markCardSignIn(session.id); navigate(startPath(session.id)); }      // the card on screen is theirs: carried on there
       return false;
     }
   }, [session?.id, keep, retryOnce, navigate]);

@@ -379,6 +379,7 @@ export const useAuthStore = create((set, get) => ({
   setProfile: ({ name, picture, authProvider, hasPassword }) => set({ name, picture, authProvider, hasPassword: hasPassword ?? false }),
 
   logout: () => {
+    if (localStorage.getItem("ea_token")) { try { apiRequest("/auth/logout", "POST")?.catch?.(() => {}); } catch { /* signed out here regardless */ } }
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
     clearSessionCache();

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
@@ -25,7 +26,7 @@ def create_access_token(subject: str, extra: Dict[str, Any] | None = None) -> st
     settings = get_settings()
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.jwt_access_token_exp_minutes)
-    payload: Dict[str, Any] = {"sub": subject, "iat": int(now.timestamp()), "exp": int(expire.timestamp())}
+    payload: Dict[str, Any] = {"sub": subject, "iat": int(now.timestamp()), "exp": int(expire.timestamp()), "jti": uuid.uuid4().hex}      # jti: so this one sign-in can be ended
     if extra:
         payload.update(extra)
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)

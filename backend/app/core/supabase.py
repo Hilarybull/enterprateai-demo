@@ -5,6 +5,7 @@ import contextlib
 import contextvars
 import copy
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -66,7 +67,7 @@ def _is_retriable(exc: BaseException) -> bool:
 # The pool is deliberately small and fixed. Opening dozens of connections at once makes
 # the database gateway refuse new ones for a while, so when every connection is busy a
 # query waits its turn (a fraction of a second) instead of opening another.
-_POOL_SIZE = 10          # connections kept open, and the most queries in flight at once
+_POOL_SIZE = max(1, int(os.environ.get("SUPABASE_POOL_SIZE") or 10))          # connections kept open, and the most queries in flight at once
 _POOL_WAIT = 15.0        # seconds a query waits for a free connection before using a one-off
 _POOL_IDLE_MAX = 240.0   # seconds; a connection left idle longer is assumed closed by the server
 # Oldest on the left, most recently used on the right. Requests take from the right, so

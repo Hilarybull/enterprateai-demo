@@ -317,7 +317,8 @@ async def record_listing_view(
     payload: ProfileViewRequest,
     _user=Depends(get_optional_user),
 ) -> dict:
-    forwarded = request.headers.get("x-forwarded-for")
+    from app.shared.limits import client_ip
+    forwarded = client_ip(request)
     client_ip = (forwarded.split(",")[0].strip() if forwarded else None) or (request.client.host if request.client else None)
     return await record_profile_view(
         workspace_id=workspace_id,

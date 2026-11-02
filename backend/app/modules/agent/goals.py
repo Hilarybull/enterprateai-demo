@@ -784,7 +784,7 @@ def _funding_facts(text: str) -> dict[str, Any]:
              if re.search(pattern, text, re.I)]
     if len(route) == 1:      # two routes named: they have not chosen, so it is asked
         out["route"] = route[0]
-    when = re.search(rf"\b(by|before|in|within|next)\s+((?:the\s+)?(?:end of\s+)?(?:{_MONTHS}|q[1-4]|\d+\s+(?:days?|weeks?|months?|years?)|month|quarter|year|summer|autumn|winter|spring|christmas)(?:\s+\d{{4}})?)\b", text, re.I)
+    when = re.search(rf"\b(by|before|in|within|next)\s+((?:the\s+)?(?:end of\s+)?(?:{_MONTHS}|q[1-4]|\d+(?:\s*(?:to|-|–)\s*\d+)?\s+(?:days?|weeks?|months?|years?)|month|quarter|year|summer|autumn|winter|spring|christmas)(?:\s+\d{{4}})?)\b", text, re.I)
     if when:
         said = f"{when.group(1).lower()} {when.group(2)}"
         from app.modules.agent.intake_turn import resolve_when
@@ -1451,6 +1451,10 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
                "handoff": None, "events": [], "created_at": now.isoformat(), "updated_at": now.isoformat(),
                "expires_at": (now + timedelta(days=SESSION_DAYS)).isoformat()}
     _take_currency(session)
+    # The currency they typed wins over the workspace's or the page's ("₦10m" read as £10,000,000 on a pounds workspace, 2 Nov)
+    typed = said_currency(session) if text else None
+    if typed in SIGNS and not session.get("currency"):
+        session["currency"] = session["said_currency"] = typed
     if not session.get("currency") and str(currency or "").upper() in SIGNS:
         # The browser's hint: the workspace's currency when signed in, else the visitor's country's; never £ by default.
         session["currency"] = str(currency).upper()

@@ -2,6 +2,7 @@
 // work and show the result in the chat, not send the user to another page"). Shared by the Agent Centre's chat and the
 // funding, launch and idea Assistants. Only "Open full …" and "View full simulation" leave the chat; anything that sends,
 // saves or shares still waits for the owner's approval.
+import { safeHtml } from "../../lib/safeHtml";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../api/client";
 import { agentErrorMessage, approveAction, approveWithoutSending, rejectAction } from "../../lib/agent";
@@ -140,7 +141,7 @@ export function PreviewCard({ businessId, item, preview: given, onEdit, onDone, 
       {p.text && (
         // The document as it reads on its own page (the owner, 27 Oct: "shows raw HTML and markdown"): the same converter
         <div className="ea-doc ea-doc-inline mt-3 max-h-80 overflow-y-auto rounded-xl bg-slate-50 p-4 text-slate-700 dark:bg-slate-800 dark:text-slate-200" data-preview-text
-          dangerouslySetInnerHTML={{ __html: markdownToHtml(p.text) }} />
+          dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(p.text)) }} />
       )}
       {!p.found && preview && (
         // Never a dead end (the owner, 30 Oct: a business plan made, its card with no way to it): its own page, one press away

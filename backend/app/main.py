@@ -4,6 +4,7 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import os
 import urllib3.util.retry
 
 # GLOBAL MONKEYPATCH: pytrends uses 'method_whitelist' which was renamed to 'allowed_methods' 
@@ -62,9 +63,35 @@ from app.shared.utils.errors import CatchAllErrors
 logger = logging.getLogger(__name__)
 
 
+_WEAK_SECRETS = {"", "CHANGE_ME", "changeme", "secret"}
+
+
+def _check_signing_secret(settings) -> None:
+    """With the default signing secret anyone can forge a sign-in for any account. Production refuses to start on it;
+    a hosted deployment not marked as production says so loudly, as it may be one that's simply missing the setting."""
+    weak = settings.jwt_secret_key in _WEAK_SECRETS or len(settings.jwt_secret_key) < 16
+    if weak and settings.environment == "production":
+        raise RuntimeError("JWT_SECRET_KEY must be set to a long random value before production can start.")
+    if weak and any(os.environ.get(k) for k in ("RENDER", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID")):
+        logger.critical("JWT_SECRET_KEY is not set on this deployment: anyone can forge a sign-in. Set it now.")
+
+
+def _start_error_reporting(settings) -> None:
+    if not settings.sentry_dsn:
+        return
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(dsn=settings.sentry_dsn, environment=settings.environment, send_default_pii=False, traces_sample_rate=0)
+    except Exception:      # noqa: BLE001 - never a reason not to start
+        logger.warning("Error reporting could not start", exc_info=True)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.environment)
+    _check_signing_secret(settings)
+    _start_error_reporting(settings)
     if settings.environment == "development":
         logger.info(
             "Config loaded env=%s cors_origins=%s supabase_enabled=%s",
@@ -100,13 +127,24 @@ def create_app() -> FastAPI:
         # Allow any localhost port in dev and Render preview domains as a safe fallback.
         cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
     else:
-        # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains.
+        # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains,
+        # until CORS_STRICT says CORS_ORIGINS is the full list of this deployment's sites.
         cors_kwargs = dict(
-            allow_origins=["*"],
+            allow_origins=settings.cors_origins if settings.cors_strict and settings.cors_origins else ["*"],
             allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    @app.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        if settings.environment == "production":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return response
+
     @app.middleware("http")
     async def one_read_per_request(request, call_next):
         # A page load asks for the same rows several times over; each is fetched once.

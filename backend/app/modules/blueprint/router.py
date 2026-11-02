@@ -478,7 +478,8 @@ async def blueprint_quotation_respond(
     from app.modules.marketplace.service import ask_about_quote, respond_to_quote
     if payload.action == "question":
         return await ask_about_quote(token=token, viewer_email=viewer_email, message=payload.message or "")
-    forwarded = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    from app.shared.limits import client_ip
+    forwarded = client_ip(request)
     return await respond_to_quote(
         token=token, viewer_email=viewer_email, action=payload.action,
         signer_name=payload.signer_name, accepted_terms=payload.accepted_terms, reason=payload.reason,

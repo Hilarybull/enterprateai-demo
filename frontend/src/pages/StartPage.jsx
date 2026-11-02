@@ -1,3 +1,4 @@
+import { cameFromCard } from "../lib/browserData";
 import { useAuthStore, useSignedIn } from "../store/auth";
 import { premiumFlow } from "../components/ResearchReview";
 import { resultHome } from "../lib/resultHome";
@@ -312,7 +313,7 @@ export default function StartPage({ framed = false }) {
     setProblem("");
     try {
       // Never a step that waits on forever: 15 seconds, then "Try again".
-      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", confirm === true ? { confirm: true } : {}, { timeoutMs: 15000 });
+      const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", confirm === true || cameFromCard(sessionId) ? { confirm: true } : {}, { timeoutMs: 15000 });
       setSession(attached);
       if (TALKED.has(attached.goal_key) && attached.business_id && await handOver(attached)) return undefined;
       // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.

@@ -141,6 +141,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const go = useInRouterContext() ? useNavigate() : (to) => window.location.assign(to);      // eslint-disable-line react-hooks/rules-of-hooks
   useEffect(() => { try { localStorage.removeItem("ea_panel_open"); } catch { /* nothing kept */ } }, []);
   const [loading, setLoading] = useState(false);
+  const [handingTo, setHandingTo] = useState("");      // handing over to a funding case or launch plan: what's being opened
   const [input, setInput] = useState("");
   // The conversation so far in this business is picked up again (it is shared with the Agent box).
   // The last conversation, brought back on every load (the owner's QA, 27 Oct); the others are in History
@@ -467,9 +468,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       const at = new Date().toISOString();
       const reply = { role: "assistant", at, content: replyText(single), ...(single.cards ? { cards: single.cards } : {}),
         prompts: (single.actions || []).filter((a) => a.prompt).map((a) => ({ label: a.label, prompt: a.prompt })) };
-      setMessages((prev) => [...prev, { role: "assistant", at, content: "I've set that up. Taking you to it now so we can carry on there." }]);
+      setHandingTo(single.handover.startsWith("/launch") ? "Opening your launch plan…" : "Opening your funding case…");      // working, never a message that sits there (the owner, 2 Nov)
       getChat(businessId, id).then((c) => c?.messages || [], () => []).then((had) => saveChat(businessId, id, [...had, { role: "user", at, content: single.asked || "" }, reply]))
-        .catch(() => null).finally(() => go(single.handover));
+        .catch(() => null).finally(() => { setHandingTo(""); go(single.handover); });
       return undefined;
     }
     const run = single?.kind === "workflow" && !((single.runs || []).length > 1) ? single.run : null;
@@ -898,9 +899,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             {cardsToShow(shown, index).some((c) => !AFTER_WORDS.has(c.type)) && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => (AFTER_WORDS.has(c.type) ? null : <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>))}</div>}
           </div>
         )))}
-        {loading || working ? (
+        {loading || working || handingTo ? (
           <div className="flex items-center gap-4"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
-            <span className="text-[14px] text-slate-500">{working && !loading ? "Working on it…" : "Thinking…"}</span></div>
+            <span className="text-[14px] text-slate-500">{handingTo || (working && !loading ? "Working on it…" : "Thinking…")}</span></div>
         ) : null}
         {flow.element}
       </div>

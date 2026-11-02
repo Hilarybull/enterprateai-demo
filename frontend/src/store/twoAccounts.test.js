@@ -82,3 +82,18 @@ describe("two accounts on one browser", () => {
     expect(localStorage.getItem("ea_chat_fresh:biz-b")).toBe("now");
   });
 });
+
+describe("answers from the card they signed in from", () => {
+  it("carry on with no question, in that tab only, and go on sign-out", async () => {
+    const { cameFromCard, markCardSignIn } = await import("../lib/browserData");
+    expect(cameFromCard("s1")).toBe(false);      // left on a shared browser: still asked
+    markCardSignIn("s1");
+    expect(cameFromCard("s1")).toBe(true);
+    expect(cameFromCard("s2")).toBe(false);
+    localStorage.setItem("ea_browser_owner", "a@x.test");
+    await useAuthStore.getState().login("b@x.test", "password");      // signing in keeps it
+    expect(cameFromCard("s1")).toBe(true);
+    useAuthStore.getState().logout();
+    expect(cameFromCard("s1")).toBe(false);
+  });
+});

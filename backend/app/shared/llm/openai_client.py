@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+import weakref
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
@@ -11,6 +15,38 @@ from app.shared.llm.usage import record_ai_usage
 _NO_TEMPERATURE: set[str] = set()      # Claude models that refused a temperature in this process
 
 logger = logging.getLogger(__name__)
+
+_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_today = {"day": 0, "calls": 0}
+
+
+class AIBusy(RuntimeError):
+    """Too many AI calls at once, or today's ceiling reached. Fails like any other model failure: nothing is charged."""
+
+
+@asynccontextmanager
+async def ai_slot():
+    settings = get_settings()
+    day = int(time.time() // 86400)
+    if _today["day"] != day:
+        _today.update(day=day, calls=0)
+    if settings.ai_daily_call_limit and _today["calls"] >= settings.ai_daily_call_limit:
+        logger.error("AI daily call limit of %s reached", settings.ai_daily_call_limit)
+        raise AIBusy("The AI daily limit has been reached.")
+    _today["calls"] += 1
+    loop = asyncio.get_running_loop()
+    slots = _slots.get(loop)
+    if slots is None:
+        slots = _slots[loop] = asyncio.Semaphore(max(1, settings.ai_max_concurrent))
+    try:
+        await asyncio.wait_for(slots.acquire(), settings.ai_queue_seconds)
+    except asyncio.TimeoutError as e:
+        logger.warning("AI calls are at capacity: one gave up waiting after %ss", settings.ai_queue_seconds)
+        raise AIBusy("The AI service is busy.") from e
+    try:
+        yield
+    finally:
+        slots.release()
 
 
 @dataclass(frozen=True)
@@ -52,7 +88,7 @@ class OpenAIResponsesClient(LLMClient):
             ],
         }
 
-        async with httpx.AsyncClient(timeout=900) as client:
+        async with ai_slot(), httpx.AsyncClient(timeout=self._settings.ai_http_seconds) as client:
             try:
                 resp = await client.post("https://api.openai.com/v1/responses", json=payload, headers=headers)
                 resp.raise_for_status()
@@ -143,7 +179,7 @@ class AnthropicMessagesClient(LLMClient):
         if temperature is not None and self._settings.claude_model not in _NO_TEMPERATURE:
             payload["temperature"] = temperature
 
-        async with httpx.AsyncClient(timeout=900) as client:
+        async with ai_slot(), httpx.AsyncClient(timeout=self._settings.ai_http_seconds) as client:
             try:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 if resp.status_code == 400 and "temperature" in payload and "temperature" in resp.text:
@@ -216,7 +252,7 @@ class GeminiGenerateClient(LLMClient):
             "generationConfig": {"temperature": 0.5 if temperature is None else temperature, "maxOutputTokens": max_tokens or 8000},
         }
 
-        async with httpx.AsyncClient(timeout=900) as client:
+        async with ai_slot(), httpx.AsyncClient(timeout=self._settings.ai_http_seconds) as client:
             try:
                 resp = await client.post(url, params={"key": self._settings.gemini_api_key}, json=payload)
                 resp.raise_for_status()

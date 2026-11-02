@@ -150,7 +150,19 @@ FETCH_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleW
 async def fetch_page(client, url: str) -> dict:
     """{"ok", "url", "text", "title", "publisher", "published"}. Never raises: a page that can't be read is not a source."""
     try:
-        resp = await client.get(url, follow_redirects=True, timeout=FETCH_SECONDS, headers=FETCH_HEADERS)
+        from urllib.parse import urljoin
+        from app.shared.net import blocked_url
+        at = url
+        for _hop in range(6):
+            if await blocked_url(at):
+                return {"ok": False, "url": url, "reason": "blocked"}
+            resp = await client.get(at, follow_redirects=False, timeout=FETCH_SECONDS, headers=FETCH_HEADERS)
+            where = resp.headers.get("location") if resp.status_code in (301, 302, 303, 307, 308) else None
+            if not where:
+                break
+            at = urljoin(at, where)
+        else:
+            return {"ok": False, "url": url, "reason": "too many redirects"}
         if resp.status_code != 200 or "html" not in resp.headers.get("content-type", "text/html") and "text" not in resp.headers.get("content-type", ""):
             return {"ok": False, "url": url, "reason": f"HTTP {resp.status_code}"}
         raw = resp.text[:PAGE_BYTES]

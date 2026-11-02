@@ -1,3 +1,4 @@
+import { safeHtml } from "../lib/safeHtml";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Button from "./Button";
 import Card from "./Card";
@@ -648,7 +649,7 @@ export default function DocumentEditor({
           {showPaginated ? (
             <div
               className="h-full min-h-0 overflow-auto rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950"
-              dangerouslySetInnerHTML={{ __html: paginatedHtml }}
+              dangerouslySetInnerHTML={{ __html: safeHtml(paginatedHtml) }}
             />
           ) : (
             <div

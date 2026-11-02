@@ -1,3 +1,4 @@
+import { safeHtml, safeStyles } from "../lib/safeHtml";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { alertDialog } from "../lib/dialog";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -512,7 +513,7 @@ export default function SharedBlueprintPage() {
               ref={documentRef}
               className={`mt-8 rounded-[28px] border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.06)] ${isQuotationAcceptance ? "mx-auto mt-4 max-w-[960px] px-4 py-6 sm:px-10 sm:py-10" : isFullHtml ? "px-2 py-2 sm:px-6 sm:py-6" : "px-5 py-6 sm:px-8"}`}
             >
-              {isFullHtml ? <div dangerouslySetInnerHTML={{ __html: styleHtml }} /> : null}
+              {isFullHtml ? <div dangerouslySetInnerHTML={{ __html: safeStyles(styleHtml) }} /> : null}
               {!isFullHtml ? (
                 <style>{`
                   .shared-doc { max-width: 860px; margin: 0 auto; }
@@ -532,7 +533,7 @@ export default function SharedBlueprintPage() {
                 .shared-doc .page-break { height: 1px; margin: 26px 0; background: #e5e7eb; }
               `}</style>
             ) : null}
-            <div className={isFullHtml ? "shared-native-doc" : "shared-doc"} dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+            <div className={isFullHtml ? "shared-native-doc" : "shared-doc"} dangerouslySetInnerHTML={{ __html: safeHtml(bodyHtml) }} />
           </div>
         ) : (
             <div className="mt-8 rounded-[28px] border border-slate-200 bg-white px-5 py-6 text-center text-sm text-slate-600 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
