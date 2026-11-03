@@ -57,6 +57,34 @@ def _is_retriable(exc: BaseException) -> bool:
     return False
 
 
+# A database that keeps failing is given room to recover: after this many failed queries in a row, queries fail at once for
+# a few seconds instead of each waiting out its timeouts and retries (2 Nov: a stall turned into a pile-up and stayed down).
+_BREAK_AFTER = 8
+_BREAK_FOR = 15.0
+_down = {"fails": 0, "until": 0.0}
+_down_lock = threading.Lock()
+
+
+def is_database_down(exc: BaseException) -> bool:
+    """The database or its API refusing because it is overloaded: PGRST002 (no schema cache), 57014 (statement timeout)."""
+    text = str(exc)
+    return "PGRST002" in text or "57014" in text
+
+
+def _note_failed() -> None:
+    with _down_lock:
+        _down["fails"] += 1
+        if _down["fails"] >= _BREAK_AFTER:
+            _down["until"] = time.monotonic() + _BREAK_FOR
+            logger.warning("Supabase has failed %s times in a row; holding queries for %.0fs", _down["fails"], _BREAK_FOR)
+
+
+def _note_worked() -> None:
+    if _down["fails"]:
+        with _down_lock:
+            _down.update(fails=0, until=0.0)
+
+
 # ── Connection reuse ─────────────────────────────────────────────────────────
 # Building a full Supabase client and opening its TLS connection costs well over a
 # second, against a few hundred milliseconds for a query on a connection that is already
@@ -147,6 +175,8 @@ def _take_idle(older_than: float, limit: int) -> list[SyncPostgrestClient]:
 
 def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int = 3, base_delay: float = 1.0):
     """Run fn(client) on a pooled client, retrying transient connection errors."""
+    if time.monotonic() < _down["until"]:
+        raise httpx.ConnectTimeout("The database is recovering.")      # said as any other "couldn't reach the database"
     # One of the pool's turns. If none comes free in time, carry on with a one-off
     # connection rather than fail the request.
     have_slot = _slots.acquire(timeout=_POOL_WAIT)
@@ -163,6 +193,8 @@ def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int 
                 if not _is_retriable(exc):
                     # The query was rejected; the connection itself is fine.
                     _give_back(client) if have_slot else _close(client)
+                    if is_database_down(exc):
+                        _note_failed()
                     raise
                 _close(client)
                 last_exc = exc
@@ -177,7 +209,9 @@ def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int 
                     time.sleep(base_delay * attempt)
                 continue
             _give_back(client) if have_slot else _close(client)
+            _note_worked()
             return result
+        _note_failed()
         raise last_exc  # type: ignore[misc]
     finally:
         if have_slot:

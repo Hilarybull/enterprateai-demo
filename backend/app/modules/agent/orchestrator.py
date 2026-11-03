@@ -2797,8 +2797,9 @@ class Orchestrator:
         """Scheduler: wake workflows whose wait has elapsed (due dates, daily payment checks)."""
         try:
             candidates = await self.rt.store.stalled_candidates()
-            await self.release_stalled(candidates)
-            await self.auto_retry(await self.rt.store.stalled_candidates())
+            moved = await self.release_stalled(candidates)
+            # Read again only when that changed something: up to 200 whole runs, every five minutes (3 Nov)
+            await self.auto_retry(await self.rt.store.stalled_candidates() if moved else candidates)
         except Exception:      # noqa: BLE001 - the watchdog never stops the scheduler
             logger.exception("agent watchdog failed")
         woken = 0

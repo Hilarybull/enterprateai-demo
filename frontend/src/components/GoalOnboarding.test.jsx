@@ -313,7 +313,7 @@ describe("the task card", () => {
       const save = () => within(card()).getByRole("button", { name: "Save and continue" });
       fireEvent.change(pw, { target: { value: "short" } });
       await click(save());
-      expect(within(card()).getByRole("alert").textContent).toBe("Use at least 8 characters.");
+      expect(within(card()).getByRole("alert").textContent).toBe("Use at least 10 characters. A short phrase works well.");
       fireEvent.change(pw, { target: { value: "correct horse 1" } });
       await click(save());
       expect(posts(/\/auth\/me\/set-password$/).pop().body).toEqual({ new_password: "correct horse 1" });

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
+import { humanCheck } from "../lib/turnstile";
 import UkDateInput, { ukDate } from "./UkDateInput";
 import SaidLine from "./SaidLine";
 import { MoneyInput } from "./readiness/Fields";
@@ -214,13 +215,13 @@ export function useGoalFlow({ inApp = false } = {}) {
         if (asked?.converse) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }      // the one general chat
         if (asked?.kind) { navigate(`/dashboard?ask=${encodeURIComponent(said)}`); return true; }
       }
-      keep(await retryOnce(() => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws })));
+      keep(await retryOnce(async () => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws }, here ? undefined : await humanCheck())));
       // Time to the first question, measured and logged (the target is under 1.5 seconds).
       const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - began);
       trackGoal("first_question_shown", { ms });
       return true;
     } catch (e) {
-      setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : "Couldn't continue. Try again.");
+      setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please refresh the page and try again." : "Couldn't continue. Try again.");
       return false;
     } finally {
       setBusy(false);
@@ -287,12 +288,12 @@ export function useGoalFlow({ inApp = false } = {}) {
     if (email !== undefined && !EMAIL.test(address)) return "Enter your email address to continue.";
     setBusy(true);
     try {
-      const reply = await retryOnce(() => apiRequest(`/task-sessions/${session.id}/email`, "POST", email === undefined ? {} : { email: address, ...(called ? { name: called } : {}), marketing_consent: Boolean(consent) }));
+      const reply = await retryOnce(async () => apiRequest(`/task-sessions/${session.id}/email`, "POST", email === undefined ? {} : { email: address, ...(called ? { name: called } : {}), marketing_consent: Boolean(consent) }, await humanCheck()));
       rememberName(called || session?.first_name);      // given and accepted: a later flow won't ask again
       keep(reply);
       return "";
     } catch (e) {
-      return e?.status === 429 ? "That's a lot of codes. Please try again in a little while." : e?.status === 422 ? "Enter a valid email address." : "Couldn't continue. Try again.";
+      return e?.status === 429 ? "That's a lot of codes. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please refresh the page and try again." : e?.status === 422 ? "Enter a valid email address." : "Couldn't continue. Try again.";
     } finally {
       setBusy(false);
     }
@@ -323,7 +324,7 @@ export function useGoalFlow({ inApp = false } = {}) {
   /** The new account's first password, then on to the task. */
   const setPassword = useCallback(async (password) => {
     const pw = String(password || "");
-    if (pw.length < 8) return "Use at least 8 characters.";
+    if (pw.length < 10) return "Use at least 10 characters. A short phrase works well.";
     if (pw.length > 72) return "Use 72 characters or fewer.";
     setBusy(true);
     try {
@@ -335,6 +336,7 @@ export function useGoalFlow({ inApp = false } = {}) {
       return "";
     } catch (e) {
       if (e?.status === 409) { passwordHold.current = false; setNewPassword(false); navigate(startPath(session.id)); return ""; }      // it has one already: carry on
+      if (e?.status === 422 && typeof e?.data?.detail === "string") return e.data.detail;      // too common: said as it is
       return "Couldn't save the password. Try again.";
     } finally {
       setBusy(false);
@@ -1424,7 +1426,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                 {newPassword ? (
                   <div className="rounded-xl border border-white bg-white p-3 shadow-sm" data-password-step>
                     <div className="relative">
-                      <input type={showPassword ? "text" : "password"} aria-label="New password" placeholder="At least 8 characters" autoComplete="new-password" maxLength={72}
+                      <input type={showPassword ? "text" : "password"} aria-label="New password" placeholder="At least 10 characters" autoComplete="new-password" maxLength={72}
                         value={password} onChange={(e) => setPasswordText(e.target.value)} className={`${inputCls} pr-16`} />
                       <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[12px] font-semibold text-brand-700">{showPassword ? "Hide" : "Show"}</button>
                     </div>

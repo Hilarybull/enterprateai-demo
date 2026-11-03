@@ -18,6 +18,16 @@ class RealDatabaseUsed(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
+def _no_breach_lookups(monkeypatch):
+    """No test reaches the password breach service."""
+    from app.shared.auth import password_rules
+
+    async def _never(_password):
+        return False
+    monkeypatch.setattr(password_rules, "_seen_in_breaches", _never)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_database(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "supabase_url", None, raising=False)

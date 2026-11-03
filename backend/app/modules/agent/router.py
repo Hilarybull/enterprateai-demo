@@ -2547,10 +2547,12 @@ async def _scheduler_loop(interval_s: int) -> None:
     """Wakes workflows whose wait has elapsed. State is durable in the database, so a
     restart loses nothing: the next tick simply picks up whatever is due (s7.2, s21)."""
     passes = 0
+    wait = interval_s
     while True:
         try:
-            await asyncio.sleep(interval_s)
+            await asyncio.sleep(wait)
             woken = await get_orchestrator().tick()
+            wait = interval_s
             if woken:
                 logger.info("agent scheduler woke %s workflow(s)", woken)
             passes += 1
@@ -2560,7 +2562,8 @@ async def _scheduler_loop(interval_s: int) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as e:      # noqa: BLE001 - never let the loop die
-            logger.warning("agent scheduler tick failed: %s", e)
+            wait = min(wait * 2, 1800)      # a struggling database isn't asked again as often, up to every half hour
+            logger.warning("agent scheduler tick failed, next in %ss: %s", wait, e)
 
 
 def start_scheduler(interval_s: int = 300) -> None:

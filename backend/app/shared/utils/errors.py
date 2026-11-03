@@ -23,14 +23,14 @@ def _missing_table(exc: BaseException) -> bool:
 
 def describe(exc: BaseException) -> tuple[int, str, str]:
     """(HTTP status, error code, user-facing message) for an unhandled exception."""
-    from app.core.supabase import _is_retriable
+    from app.core.supabase import _is_retriable, is_database_down
 
     if _missing_table(exc):
         return 503, "feature_unavailable", (
             "This feature isn't available yet because its database tables haven't been created. "
             "Please try again later."
         )
-    if _is_retriable(exc):
+    if _is_retriable(exc) or is_database_down(exc):
         return 503, "service_unavailable", "We couldn't reach the database just now. It's safe to retry."
     return 500, "server_error", "Something went wrong on our side. It's safe to retry."
 

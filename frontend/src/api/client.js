@@ -112,6 +112,7 @@ async function send(path, method, body, options, asText = false) {
   const isFormData = body instanceof FormData;
   const headers = isFormData ? {} : { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (options?.headers) Object.assign(headers, options.headers);
   if (method && method !== "GET") {
     invalidateWorkspaceCache();
     if (/^\/(auth|plans|admin)\b/.test(path)) clearSessionCache();

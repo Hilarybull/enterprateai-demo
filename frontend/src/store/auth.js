@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { apiRequest, apiRequestCached, clearSessionCache, sessionGet } from "../api/client";
 import { useWorkspaceStore } from "./workspace";
 import { firstNameOf } from "../lib/greeting";
+import { humanCheck } from "../lib/turnstile";
 import { claimBrowser, clearOnSignOut, sweepOldData } from "../lib/browserData";
 
 sweepOldData();
@@ -24,6 +25,7 @@ function humanizeAuthError(e) {
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
   if (msg.startsWith("HTTP 403:")) {
     const lower = msg.toLowerCase();
+    if (lower.includes("from a person")) return msg.replace(/^HTTP 403:\s*/, "");
     if (lower.includes("suspended") || lower.includes("blocked")) {
       return msg.replace(/^HTTP 403:\s*/, "");
     }
@@ -33,7 +35,7 @@ function humanizeAuthError(e) {
     return "Access denied.";
   }
   if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
-  if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
+  if (msg.startsWith("HTTP 422:")) return /too common|at least 10/i.test(msg) ? msg.replace(/^HTTP 422:\s*/, "") : "Please enter a valid email and a password (10+ characters).";
   if (msg.startsWith("HTTP 500:")) return "Server configuration error. Try again later.";
   return msg.replace(/^HTTP \d{3}:\s*/, "");      // the words only, never a status code
 }
@@ -254,7 +256,7 @@ export const useAuthStore = create((set, get) => ({
           localStorage.removeItem("ea_referral");
         }
       } catch (_) {}
-      const result = await apiRequest("/auth/register", "POST", { email, password, ...extra, ...refData });
+      const result = await apiRequest("/auth/register", "POST", { email, password, ...extra, ...refData }, await humanCheck());
       if (result?.email_verification_sent) {
         set({ verificationPending: true, verificationEmail: email });
         return;

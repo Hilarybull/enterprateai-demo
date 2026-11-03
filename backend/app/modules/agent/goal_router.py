@@ -17,6 +17,7 @@ from app.modules.agent import first_value
 from app.modules.agent import goals
 from app.shared.auth.deps import get_current_user, get_optional_user
 from app.shared.limits import client_ip, hit as _limit_hit
+from app.shared.turnstile import require_human
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["goal-onboarding"])
@@ -225,6 +226,8 @@ async def start_session(body: StartIn, request: Request):
         started_by = await get_optional_user(request)
     except Exception:      # noqa: BLE001 - a bad token: started signed out
         started_by = None
+    if not started_by:
+        await require_human(request)      # signed out, this door leads to paid AI
     if body.business_id:
         # Signed in: the workspace's own currency, never what the browser had kept (the owner's QA, 20 Oct: £ chips on a
         # naira workspace put £250,000 on the case). Signed out, the visitor's country's, as the page sends it.
@@ -383,6 +386,7 @@ async def session_email(session_id: str, body: EmailIn, request: Request):
     if session["state"] == goals.ABANDONED:
         raise HTTPException(status_code=410, detail="This task has expired. Start again from the homepage.")
     _allow(request, bucket="codes", limit=CODE_LIMIT)
+    await require_human(request)      # each one sends an email
     if body.email and not _limit_hit(f"code-to:{str(body.email).strip().lower()}", 5, 3600):      # one inbox is never flooded, from any address
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="That's a lot of codes. Please try again in a little while.")
     try:

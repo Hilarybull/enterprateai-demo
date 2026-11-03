@@ -60,7 +60,9 @@ async def referral_click_redirect(code: str, request: Request):
     ).isoformat()
 
     # Pseudonymise IP for privacy
-    raw_ip = request.client.host if request.client else ""
+    from app.shared.limits import client_ip
+    raw_ip = client_ip(request)
+    raw_ip = "" if raw_ip == "unknown" else raw_ip
     ip_hash = _hash(raw_ip) if raw_ip else None
 
     click_row = {

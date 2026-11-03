@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from app.shared import limits
+from app.shared.auth.password_rules import check_new_password
+from app.shared.turnstile import require_human
 from app.core.config import get_settings
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.shared.auth.google import verify_google_id_token
@@ -107,6 +109,8 @@ async def _resolve_referral_attribution(new_user_id: str, ref_click_id: str | No
 @router.post("/register", response_model=UserPublic)
 async def register(payload: RegisterRequest, request: Request) -> UserPublic:
     _within(f"register:{limits.client_ip(request)}", REGISTER_IP)
+    await require_human(request)
+    await check_new_password(payload.password)
     settings = get_settings()
     existing = await sb_select("users", filters=[("email", "eq", payload.email.lower())], single=True)
     if existing:
@@ -580,6 +584,7 @@ async def change_password(payload: ChangePasswordRequest, user=Depends(get_curre
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password change is not available for Google accounts")
     if not verify_password(payload.current_password, user.get("password_hash") or ""):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    await check_new_password(payload.new_password)
     await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -591,6 +596,7 @@ async def set_first_password(payload: SetPasswordRequest, user=Depends(get_curre
     current one (/me/password) or by email (/forgot-password), never here."""
     if user.get("password_hash"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This account already has a password. Change it in Account settings.")
+    await check_new_password(payload.new_password)
     await sb_update("users", filters=[("id", "eq", user["id"])], payload={"password_hash": hash_password(payload.new_password)})
     forget_user(user["id"])      # the next /auth/me says has_password
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -634,6 +640,7 @@ async def change_password_with_otp(payload: dict, user=Depends(get_current_user)
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) > expires_at:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Please request a new one.")
+    await check_new_password(new_password)
     await sb_update(
         "users",
         filters=[("id", "eq", user["id"])],
@@ -690,6 +697,7 @@ async def reset_password(payload: ResetPasswordRequest, request: Request) -> Res
     if datetime.now(timezone.utc) > expires_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset link has expired. Please request a new one.")
 
+    await check_new_password(payload.new_password)
     await sb_update(
         "users",
         filters=[("id", "eq", user["id"])],

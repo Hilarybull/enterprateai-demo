@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     # Funding and launch scenarios (FR10 / LR10). Off = the checks work and scenarios say they are unavailable.
     readiness_scenarios_enabled: bool = Field(default=True, validation_alias=AliasChoices("READINESS_SCENARIOS_ENABLED",))
     # Sign-in and limits. REDIS_URL shares attempt counts and signed-out tokens between processes and across restarts.
+    turnstile_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("TURNSTILE_SECRET_KEY",))      # off until set
     redis_url: str | None = Field(default=None, validation_alias=AliasChoices("REDIS_URL",))
     client_ip_header: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_IP_HEADER",))      # overrides the host's own (see limits.client_ip)
     demo_login_enabled: bool = Field(default=True, validation_alias=AliasChoices("DEMO_LOGIN_ENABLED",))      # the public demo tour

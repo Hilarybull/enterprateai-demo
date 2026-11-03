@@ -127,7 +127,7 @@ export function SecuritySection() {
   async function savePassword(e) {
     e.preventDefault();
     if (pw.next !== pw.again) return setState({ problem: "The two passwords don't match." });
-    if (pw.next.length < 8) return setState({ problem: "Use at least 8 characters." });
+    if (pw.next.length < 10) return setState({ problem: "Use at least 10 characters. A short phrase works well." });
     setState({ busy: true });
     try {
       await apiRequest("/auth/me/change-password-otp", "POST", { otp_code: otp, new_password: pw.next });
