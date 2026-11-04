@@ -104,6 +104,7 @@ export function ProfileSection() {
           {state.problem && <span role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</span>}
         </div>
       </form>
+      <p className="mt-5 border-t border-slate-100 pt-4 text-[13px] text-slate-500 dark:border-slate-800">Want to close your account? <Link to="/account?section=privacy" className="font-semibold text-rose-600 hover:underline">Delete account</Link></p>
     </Section>
   );
 }

@@ -92,7 +92,47 @@ TIPS: dict[str, dict[str, Any]] = {
                     "Check that descriptions, prices and costs are current, then explore how that information can support quotations or invoices in your workspace."],
            "button": "Review my catalogue", "to": "/catalogue"},
 }
-ALL_TEMPLATES = {**TEMPLATES, **TIPS}
+# About the account itself, so they need no marketing permission and carry no unsubscribe link: W welcome, S a plan ending.
+# D is a follow-up to a quiet account: that is promotional, so it follows the same permission as every other journey.
+ACCOUNT_JOURNEYS = ("W", "S")
+WELCOME_WITHIN = timedelta(days=7)                    # a new account only: nobody who joined long ago gets a welcome
+ENDING_STEPS = (("s1", timedelta(days=1)), ("s7", timedelta(days=7)))      # nearest first
+DORMANT_STEPS = (("d3", timedelta(days=60)), ("d2", timedelta(days=30)), ("d1", timedelta(days=14)))      # longest first
+DORMANT_STOP = timedelta(days=90)                     # quiet for this long: we stop, as continuing tips do
+
+LIFECYCLE: dict[str, dict[str, Any]] = {
+    "w1": {"journey": "W", "subject": "Welcome to EnterprateAI",
+           "body": ["Thanks for joining EnterprateAI. Your account is ready, whether you already run a business or are still working out an idea.",
+                    "Tell the Agent what you are trying to do, or open the tool that fits. You can see your plan and credits at any time in Account Settings."],
+           "button": "Open EnterprateAI", "to": "/dashboard"},
+    "s7": {"journey": "S", "subject": "Your EnterprateAI plan ends on {date}",
+           "body": ["Your current EnterprateAI plan ends on {date}.",
+                    "To keep what your plan includes, renew before then from Plan & credits. If you don't, your account moves to the free Explorer plan. Your workspaces and records are kept."],
+           "button": "Review my plan", "to": "/account?section=plan"},
+    "s1": {"journey": "S", "subject": "Your EnterprateAI plan ends tomorrow",
+           "body": ["Your current EnterprateAI plan ends on {date}.",
+                    "To keep what your plan includes, renew from Plan & credits today. If you don't, your account moves to the free Explorer plan. Your workspaces and records are kept."],
+           "button": "Renew my plan", "to": "/account?section=plan"},
+    "d1": {"journey": "D", "subject": "Your workspace is where you left it",
+           "body": ["It has been a little while since you were in EnterprateAI. Everything you saved is still in your workspace.",
+                    "When you have a few minutes, open it and pick up the one thing you were working on."],
+           "button": "Open my workspace", "to": "/dashboard"},
+    "d2": {"journey": "D", "subject": "What decision are you working on?",
+           "body": ["Most businesses have one decision that keeps moving down the list: a price, a new customer, whether an idea is worth testing.",
+                    "If you have one in mind, tell the Agent what it is and see what it suggests as a next step."],
+           "button": "Pick up where I left off", "to": "/dashboard"},
+    "d3": {"journey": "D", "subject": "Should we stop checking in?",
+           "body": ["We haven't seen you in EnterprateAI for a while, so this is the last reminder we will send about coming back.",
+                    "Your account and your workspace stay as they are. If something got in the way, reply to this email and tell us what it was."],
+           "button": "Open my workspace", "to": "/dashboard"},
+}
+
+ALL_TEMPLATES = {**TEMPLATES, **TIPS, **LIFECYCLE}
+
+
+def template_of(step: str) -> dict[str, Any] | None:
+    """A plan reminder's step carries the date it is about (s7:2026-12-01), so each period gets its own."""
+    return ALL_TEMPLATES.get(str(step).split(":")[0])
 
 # Where the brief's copy was changed, and why. Shown to administrators so the difference is on record.
 NOTES = [
@@ -215,3 +255,41 @@ def first_name(name: Any) -> str | None:
         return None
     first = text.split()[0].strip(",.")
     return first if len(first) >= 2 and first.isalpha() else None
+
+
+def latest(*values: Any) -> datetime | None:
+    found = [t for t in (parse(v) for v in values) if t]
+    return max(found) if found else None
+
+
+def dormant_step(last_active: datetime | None, now: datetime) -> str | None:
+    """The follow-up an account's silence calls for, if any."""
+    if last_active is None or now - last_active >= DORMANT_STOP:
+        return None
+    return next((key for key, after in DORMANT_STEPS if now - last_active >= after), None)
+
+
+def dormant_after(step: str) -> timedelta:
+    return dict(DORMANT_STEPS)[step]
+
+
+def plan_ends_at(sub: dict | None) -> datetime | None:
+    """When a plan really ends: a trial, one set up by hand, or a Stripe plan cancelled for the end of its period.
+    A plan that renews by itself isn't ending, and gets no reminder."""
+    if not sub or sub.get("status") not in ("active", "trial") or sub.get("plan_key") in (None, "", "explorer"):
+        return None
+    end = parse(sub.get("current_period_end"))
+    if end is None:
+        return None
+    if sub.get("status") == "trial" or not sub.get("stripe_subscription_id"):
+        return end
+    cancelled, started = parse(sub.get("cancelled_at")), parse(sub.get("current_period_start"))
+    return end if cancelled and (started is None or cancelled >= started) else None      # an older cancel, before this period, doesn't count
+
+
+def ending_step(sub: dict | None, now: datetime) -> str | None:
+    end = plan_ends_at(sub)
+    if end is None or end <= now:
+        return None
+    key = next((k for k, within in ENDING_STEPS if end - now <= within), None)
+    return f"{key}:{end.date().isoformat()}" if key else None

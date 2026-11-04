@@ -572,6 +572,12 @@ async def delete_my_account(payload: DeleteAccountRequest, user=Depends(get_curr
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account can't be deleted from here.")
     # Everything the account owns goes with it: workspaces and their data, credits, plan, documents (the owner, 31 Oct)
     from app.shared.auth.purge import purge_account
+    try:      # Marketplace profiles these workspaces hold go back to being claimable; this never stops the account closing
+        from app.modules.marketplace.directory_router import get_service
+        for ws in await sb_select("workspaces", filters=[("user_id", "eq", user["id"])], columns="id") or []:
+            await get_service().release_workspace(str(ws["id"]), actor=user["id"])
+    except Exception:      # noqa: BLE001
+        logger.warning("account delete: Marketplace profiles not released for %s", user["id"], exc_info=True)
     await purge_account(user["id"], email)
     await sb_delete("users", filters=[("id", "eq", user["id"])])
     forget_user(user["id"])

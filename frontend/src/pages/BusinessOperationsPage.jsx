@@ -541,7 +541,7 @@ function rfqErrorMessage(e, fallback) {
   return m[2] || fallback;
 }
 
-function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
+function RfqRespondModal({ rfq, workspaceId, wsCurrency, onClose, onDone }) {
   const [prices, setPrices] = useState(() => (rfq.items || []).map(item => ({ ...item, unit_price: "" })));
   const [validityDays, setValidityDays] = useState("30");
   const [submitting, setSubmitting] = useState(false);
@@ -553,7 +553,7 @@ function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
   async function handleRespond() {
     setSubmitting(true); setError(null);
     try {
-      await apiRequest(`/marketplace/rfq/${rfq.id}/approve`, "POST", {
+      await apiRequest(`/marketplace/rfq/${rfq.id}/approve?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {
         validity_days: Number(validityDays) || 30,
         item_prices: prices.map(p => ({
           product_name: p.name,
@@ -2940,7 +2940,7 @@ export default function BusinessOperationsPage() {
                       ...(r.status === "pending" ? [
                         { label: "Respond with Quote", onClick: () => setRfqRespondTarget(r) },
                         { label: "Decline", onClick: async () => {
-                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); refreshWorkspace(); }
+                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject?workspace_id=${encodeURIComponent(workspaceId)}`, "POST"); refreshWorkspace(); }
                           catch (e) { alertDialog(rfqErrorMessage(e, "Could not decline this RFQ.")); }
                         } },
                       ] : []),
@@ -3697,6 +3697,7 @@ export default function BusinessOperationsPage() {
       {rfqRespondTarget && (
         <RfqRespondModal
           rfq={rfqRespondTarget}
+          workspaceId={workspaceId}
           wsCurrency={wsCurrency}
           onClose={() => setRfqRespondTarget(null)}
           onDone={() => { setRfqRespondTarget(null); refreshWorkspace(); }}

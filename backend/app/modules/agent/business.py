@@ -41,6 +41,16 @@ class Business:
         """The businesses this user owns: [{"id", "name", "data"}]."""
         raise NotImplementedError
 
+    async def close(self, business_id: str) -> dict:
+        """Nobody can open it any more: no owner, no members, no open invitations. Returns what is needed to put it back."""
+        raise NotImplementedError
+
+    async def reopen(self, business_id: str, closed: dict) -> None:
+        raise NotImplementedError
+
+    async def purge(self, business_id: str) -> None:
+        raise NotImplementedError
+
     async def create(self, user_id: str, name: str, data: dict, business_id: str | None = None) -> str:
         """Create a business owned by the user. With `business_id`, creating it twice is the
         same as creating it once (the existing one is returned untouched)."""
@@ -93,6 +103,18 @@ class MemoryBusiness(Business):
             raise BusinessAccessDenied("Business not found.")
         return build_actor(user_id=user_id, email=email, business_id=business_id, owner_id=b["owner"],
                            membership=(b.get("members") or {}).get(user_id), policy=policy)
+
+    async def close(self, business_id):
+        b = self.businesses[business_id]
+        closed = {"owner_id": b["owner"], "members": copy.deepcopy(b.get("members") or {})}
+        b["owner"], b["members"] = None, {}
+        return closed
+
+    async def reopen(self, business_id, closed):
+        self.businesses[business_id].update({"owner": closed["owner_id"], "members": copy.deepcopy(closed.get("members") or {})})
+
+    async def purge(self, business_id):
+        self.businesses.pop(business_id, None)
 
     async def load(self, business_id):
         return copy.deepcopy(self.businesses[business_id]["data"])
@@ -166,6 +188,25 @@ class SupabaseBusiness(Business):
             for r in rows:
                 found[str(r["id"])] = {"id": str(r["id"]), "name": ((r.get("data") or {}).get("workspace_profile") or {}).get("company_name") or r.get("name") or ""}
         return list(found.values())
+
+    async def close(self, business_id):
+        from app.core.supabase import sb_delete, sb_select, sb_update
+        row = await self._row(business_id)
+        members = await sb_select("workspace_members", filters=[("workspace_id", "eq", business_id)]) or []
+        await sb_update("workspaces", filters=[("id", "eq", business_id)], payload={"user_id": None})      # every look-up of a person's workspaces goes by this
+        await sb_delete("workspace_members", filters=[("workspace_id", "eq", business_id)])
+        await sb_delete("workspace_invitations", filters=[("workspace_id", "eq", business_id)])
+        return {"owner_id": str(row["user_id"]), "members": members}
+
+    async def reopen(self, business_id, closed):
+        from app.core.supabase import sb_insert, sb_update
+        await sb_update("workspaces", filters=[("id", "eq", business_id)], payload={"user_id": closed["owner_id"]})
+        for member in closed.get("members") or []:
+            await sb_insert("workspace_members", member)
+
+    async def purge(self, business_id):
+        from app.shared.auth.purge import purge_workspace
+        await purge_workspace(business_id)
 
     async def owned_by(self, user_id):
         from app.core.supabase import sb_select

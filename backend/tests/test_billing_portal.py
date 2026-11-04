@@ -68,4 +68,4 @@ def test_a_cancel_takes_effect_when_the_period_ends(client, monkeypatch, etype, 
     monkeypatch.setattr("app.core.supabase.sb_update", update)
     assert client.post("/plans/webhook", content=json.dumps(event), headers={"stripe-signature": "x"}).status_code == 200
     assert saved[0]["status"] == want
-    assert ("cancelled_at" in saved[0]) == (want == "cancelled")
+    assert saved[0]["cancelled_at"]      # recorded while it runs out too: that is what says the plan is ending, so the owner can be reminded

@@ -3,8 +3,8 @@ import { AdminTable, Chip, KpiTile } from "../admin/AdminUI";
 import AddBusinesses, { EditBusinessForm, VISIBILITY_OPTION } from "./AddBusiness";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
 import {
-  createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getFunnel, getProfileSources, getUnclaimedProfiles, getVisibility, indexRecords, moderateProfile,
-  normaliseLocations, resolveReport, reviewListing, setProfileVisibility, setVisibility,
+  createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile,
+  normaliseLocations, addTeamMember, getTeam, removeTeamMember, resolveReport, reviewListing, setProfileVisibility, setVisibility,
 } from "../../lib/directory";
 import { dateLabel } from "../../lib/readiness";
 
@@ -12,7 +12,7 @@ import { dateLabel } from "../../lib/readiness";
 // unclaimed profiles, reports, who can see unclaimed profiles, and adding records and claim
 // links. Every decision needs a reason, which is kept.
 
-export const MARKETPLACE_TABS = [["queue", "Queue"], ["unclaimed", "Unclaimed profiles"], ["reports", "Reports"], ["visibility", "Visibility"], ["index", "Index & invites"]];
+export const MARKETPLACE_TABS = [["index", "Index & invites"], ["queue", "Queue"], ["decided", "Approved & rejected"], ["unclaimed", "Unclaimed profiles"], ["reports", "Reports"], ["visibility", "Visibility"]];
 
 /** The evidence and the decision for one claim, opened under its row. */
 function ClaimReview({ claim, onDone }) {
@@ -63,6 +63,7 @@ function RevocationDecision({ item, onDone }) {
         <Btn kind="danger" className="!py-1.5 !text-[13px]" disabled={state.busy || reason.trim().length < 5} onClick={() => decide("revoke")}>Confirm revocation</Btn>
         <Btn className="!py-1.5 !text-[13px]" disabled={state.busy || reason.trim().length < 5} onClick={() => decide("keep")}>Keep the claim</Btn>
       </span>
+      {reason.trim().length < 5 && <p className="text-[12px] text-slate-500">Write a reason of at least 5 characters.</p>}
     </div>
   );
 }
@@ -141,15 +142,123 @@ function Queue({ queue, onChange }) {
   );
 }
 
+const DECISION_TYPE = { claim: "Claim", verification: "Verification", listing: "New listing" };
+const DECISION_EMAIL = {
+  sent: ["emerald", "Email sent"],
+  failed: ["rose", "Email failed"],
+  not_needed: ["slate", "Told on screen"],
+  before_emails: ["slate", "No email, decided earlier"],
+};
+
+/** Take back a claim that was approved. The reason is the team's; the person is only told it was removed after a review. */
+function RevokeClaim({ item, categories, twoPeople, onDone }) {
+  const [category, setCategory] = useState("");
+  const [reason, setReason] = useState("");
+  const [state, setState] = useState({});
+  async function revoke() {
+    setState({ busy: true });
+    try { await decideClaim(item.id, "revoke", reason, category); onDone(); } catch (e) { setState({ problem: directoryError(e).message }); }
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-[13px] text-slate-600 dark:text-slate-300">The business loses this profile and its listing is unpublished. Requests it hasn't answered go back to the profile, which returns to unclaimed, and the person is emailed.{item.links_to === "A new business" ? " The workspace this claim created is closed too, and deleted after 30 days unless it is restored." : ""}{twoPeople ? " A second reviewer has to confirm before anything changes." : ""}</p>
+      <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Why control is being removed
+        <select className={`mt-1 ${inputClass}`} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">Choose a reason</option>
+          {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+      </label>
+      <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Reason for the decision (kept with the claim; the person sees a general message)
+        <textarea rows={2} className={`mt-1 ${inputClass}`} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </label>
+      {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
+      <Btn kind="danger" disabled={state.busy || !category || reason.trim().length < 5} onClick={revoke}>{twoPeople ? "Ask to revoke" : "Revoke claim"}</Btn>
+      {(!category || reason.trim().length < 5) && <p className="text-[12px] text-slate-500">{!category ? "Choose why control is being removed." : "Write a reason of at least 5 characters."}</p>}
+    </div>
+  );
+}
+
+/** Everything already decided. Approved shows first, because that's what the team looks for. */
+function Decided({ onChange }) {
+  const [items, setItems] = useState(null);
+  const [problem, setProblem] = useState(null);
+  const [view, setView] = useState("approved");
+  const [open, setOpen] = useState(null);
+  const [extras, setExtras] = useState({ categories: [], twoPeople: false });
+  const [loads, setLoads] = useState(0);
+  const [note, setNote] = useState(null);
+  useEffect(() => {
+    let live = true;
+    getDecisions().then((d) => { if (live) { setItems(d.items || []); setExtras({ categories: d.revoke_categories || [], twoPeople: Boolean(d.second_reviewer_required) }); } })
+      .catch((e) => live && setProblem(directoryError(e, "The decisions couldn't be loaded.").message));
+    return () => { live = false; };
+  }, [loads]);
+  async function restore(r) {
+    setNote(null);
+    try { await restoreClaimWorkspace(r.id); setLoads((n) => n + 1); } catch (e) { setNote(directoryError(e).message); }
+  }
+  function changed() {
+    setOpen(null);
+    setLoads((n) => n + 1);
+    onChange?.();      // the tiles and the queue count
+  }
+  if (problem) return <Notice tone="rose" role="alert">{problem}</Notice>;
+  if (!items) return <p role="status" className="text-sm text-slate-500">Loading…</p>;
+  const approved = items.filter((i) => i.outcome === "approved");
+  const others = items.filter((i) => i.outcome !== "approved");
+  const rows = view === "approved" ? approved : others;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
+        <Btn kind={view === "approved" ? "primary" : undefined} className="!py-1.5 !text-[13px]" aria-pressed={view === "approved"} onClick={() => setView("approved")}>Approved ({approved.length})</Btn>
+        <Btn kind={view === "others" ? "primary" : undefined} className="!py-1.5 !text-[13px]" aria-pressed={view === "others"} onClick={() => setView("others")}>Rejected or removed ({others.length})</Btn>
+      </div>
+      {note && <Notice tone="rose" role="alert">{note}</Notice>}
+      <AdminTable caption={view === "approved" ? "Approved businesses" : "Rejected or removed"} minWidth={860} rows={rows} emptyText={view === "approved" ? "Nothing has been approved yet." : "Nothing has been rejected or removed."}
+        expanded={(r) => {
+          if (open !== r.id) return null;
+          return r.revocation
+            ? <div className="space-y-2"><p className="text-[13px] text-slate-600 dark:text-slate-300"><span className="font-semibold">{r.revocation.category_label}:</span> {r.revocation.reason}</p>
+              <RevocationDecision item={{ id: r.id, profile: { name: r.name }, requested_by_you: r.revocation.requested_by_you, needs_another_reviewer: r.revocation.requested_by_you || r.needs_another_reviewer }} onDone={changed} /></div>
+            : <RevokeClaim item={r} categories={extras.categories} twoPeople={extras.twoPeople} onDone={changed} />;
+        }}
+        columns={[
+        { key: "business", label: "Business", render: (r) => <><p className="break-words font-semibold text-slate-900 dark:text-slate-100">{r.slug && r.outcome === "approved" ? <a href={`/marketplace/business/${r.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.name}</a> : r.name}</p>
+          <p className="text-[12px] text-slate-500">{[DECISION_TYPE[r.type], r.links_to].filter(Boolean).join(" · ")}</p></> },
+        { key: "person", label: "Person told", tdClass: "break-all", render: (r) => r.person || "Not recorded" },
+        { key: "by", label: "Decided by", tdClass: "break-all", render: (r) => <>{r.decided_by}{r.decided_at && <span className="block whitespace-nowrap text-[12px] text-slate-500">{dateLabel(r.decided_at)}</span>}</> },
+        { key: "reason", label: "Reason", tdClass: "whitespace-pre-line break-words", render: (r) => r.reason || "None given" },
+        { key: "email", label: "Email", render: (r) => { const [tone, label] = DECISION_EMAIL[r.email] || DECISION_EMAIL.before_emails; return <Chip tone={tone}>{label}</Chip>; } },
+        ...(view === "others" ? [{ key: "workspace", label: "Workspace", render: (r) => {
+          if (!r.workspace) return "Not affected";
+          if (r.workspace.state === "closed") return <span className="inline-flex flex-col items-start gap-1"><Chip tone="amber">Closed until {dateLabel(r.workspace.until)}</Chip>
+            <Btn className="!py-1.5 !text-[13px]" aria-label={`Restore the workspace for ${r.name}`} onClick={() => restore(r)}>Restore</Btn></span>;
+          return { restored: <Chip tone="emerald">Restored</Chip>, deleted: <Chip tone="slate">Deleted</Chip>, failed: <Chip tone="rose">Couldn't be closed</Chip> }[r.workspace.state] || null;
+        } }] : []),
+        ...(view === "approved" ? [{ key: "action", label: "", tdClass: "text-right", render: (r) => {
+          if (!r.revocable) return null;
+          if (r.needs_another_reviewer && !r.revocation) return <Chip tone="amber">Needs another reviewer</Chip>;
+          const close = open === r.id ? "Close" : null;
+          return <span className="inline-flex flex-col items-end gap-1">{r.revocation && <Chip tone="amber">Revocation waiting</Chip>}
+            <Btn kind={close || r.revocation ? undefined : "danger"} className="!py-1.5 !text-[13px]" aria-expanded={open === r.id} aria-label={`${close || (r.revocation ? "Review revocation" : "Revoke")} ${r.name}`} onClick={() => setOpen(open === r.id ? null : r.id)}>{close || (r.revocation ? "Review" : "Revoke")}</Btn></span>;
+        } }] : []),
+      ]} />
+    </div>
+  );
+}
+
 function Reports({ queue, onChange, setProblem }) {
   if (!queue) return <p role="status" className="text-sm text-slate-500">Loading…</p>;
   async function resolve(report, action) {
     try { await resolveReport(report.id, action, action === "suppress" ? "Unlisted after a report" : "No change needed"); onChange(); } catch (e) { setProblem(directoryError(e).message); }
   }
   return (
-    <AdminTable caption="Corrections and unlist requests" minWidth={640} rows={queue.reports} emptyText="No open reports." columns={[
+    <AdminTable caption="Corrections and unlist requests" minWidth={860} rows={queue.reports} emptyText="No open reports." columns={[
+      { key: "business", label: "Business", render: (r) => <><p className="break-words font-semibold text-slate-900 dark:text-slate-100">{r.profile?.slug ? <a href={`/marketplace/business/${r.profile.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.profile.name}</a> : r.profile?.name || "Not found"}</p>
+        {r.profile?.location && <p className="text-[12px] text-slate-500">{r.profile.location}</p>}</> },
       { key: "kind", label: "Request", render: (r) => <Chip tone={r.kind === "unlist" ? "rose" : "slate"}>{r.kind === "unlist" ? "Asks to be removed" : r.kind === "correction" ? "Correction" : "Other"}</Chip> },
       { key: "message", label: "Message", tdClass: "whitespace-pre-line break-words", render: (r) => r.message },
+      { key: "sender", label: "Sent by", tdClass: "break-all", render: (r) => (r.needs_another_reviewer ? "Hidden" : r.reporter_email || "No email given") },
       { key: "received", label: "Received", tdClass: "whitespace-nowrap", render: (r) => dateLabel(r.created_at) },
       { key: "action", label: "Action", render: (r) => (r.needs_another_reviewer
         ? <span><Chip tone="amber">Needs another reviewer</Chip><span className="mt-1 block text-[12px] text-amber-800 dark:text-amber-200">This is about a profile your own business manages.</span></span>
@@ -162,6 +271,44 @@ const MODERATE = { suppress: ["Suppress", "Suppress profile", "It disappears fro
   archive: ["Archive", "Archive profile", "Put away: hidden everywhere, and can be restored."],
   restore: ["Restore", "Restore profile", "It goes back to the state it was in before."] };
 
+/** The requests kept for a business until it claims, in a popup over the list. */
+function WaitingRequests({ data, onClose }) {
+  useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button type="button" aria-label="Close requests" onClick={onClose} className="absolute inset-0 bg-slate-900/40" />
+      <div role="dialog" aria-modal="true" aria-label={`Requests for ${data.name}`} className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+          <div className="min-w-0"><h2 className="break-words text-base font-bold text-slate-900 dark:text-slate-100">Requests for {data.name}</h2>
+            <p className="text-[13px] text-slate-500">Private to the team. They go to the business when its claim is approved.</p></div>
+          <Btn className="!py-1.5 !text-[13px]" onClick={onClose}>Close</Btn>
+        </div>
+        <div className="space-y-3 overflow-y-auto p-4">
+          {data.items.length === 0 && <p className="text-sm text-slate-500">Nothing is waiting for this business now.</p>}
+          {data.items.map((r) => (
+            <article key={r.id} className="rounded-xl border border-slate-200 p-3 text-[13px] dark:border-slate-800">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Chip tone={r.kind === "quote" ? "sky" : "slate"}>{r.kind === "quote" ? "Quote request" : "Question"}</Chip>
+                <span className="text-[12px] text-slate-500">Received {dateLabel(r.received_at)}{r.needed_by ? ` · Needed by ${dateLabel(r.needed_by)}` : ""}</span>
+              </div>
+              <p className="mt-2 break-words font-semibold text-slate-900 dark:text-slate-100">{r.name}{r.company ? ` · ${r.company}` : ""}</p>
+              <p className="break-all text-slate-600 dark:text-slate-300">{r.email}</p>
+              {r.items.length > 0 && <ul className="mt-2 space-y-1 text-slate-700 dark:text-slate-200">
+                {r.items.map((it, i) => <li key={i} className="break-words">{it.name} × {it.quantity}{it.notes ? <span className="block text-[12px] text-slate-500">{it.notes}</span> : null}</li>)}
+              </ul>}
+              {r.details && <p className="mt-2 whitespace-pre-line break-words text-slate-600 dark:text-slate-300">{r.details}</p>}
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Every unclaimed profile, for moderators, whatever the visibility level, with what the public can see of each. */
 function Unclaimed({ onChange }) {
   const [list, setList] = useState(null);
@@ -170,6 +317,7 @@ function Unclaimed({ onChange }) {
   const [asking, setAsking] = useState(null);      // { profile, action } waiting for a reason
   const [reason, setReason] = useState("");
   const [sources, setSources] = useState(null);
+  const [requests, setRequests] = useState(null);
   const [editing, setEditing] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [vis, setVis] = useState(null);            // { profiles: [...], value, reason } being set
@@ -180,7 +328,8 @@ function Unclaimed({ onChange }) {
   async function invite(p, send) {
     setNote(null); setProblem(null);
     try {
-      const made = await createInvitation(p.slug, send ? { reason: "profile_control", send: true } : { reason: "profile_control", by_hand: true });
+      const reason = p.requests_waiting ? "opportunity" : "profile_control";      // someone has asked this business for something: the invitation says so
+      const made = await createInvitation(p.slug, send ? { reason, send: true } : { reason, by_hand: true });
       if (send) { setNote({ text: made.status === "sent" ? `Invitation sent to the contact on record for ${p.name}.` : `No email went out for ${p.name}. Here is the link instead:`, link: made.status === "sent" ? null : `${window.location.origin}${made.link}` }); return; }
       const link = `${window.location.origin}${made.link}`;
       let copied = false;
@@ -205,7 +354,7 @@ function Unclaimed({ onChange }) {
     setBusy(true); setProblem(null);
     try {
       const done = await setProfileVisibility(vis.profiles.map((p) => p.slug), vis.value, vis.reason);
-      setNote({ text: `Visibility set to "${VISIBILITY_OPTION[vis.value]}" for ${done.count} profile${done.count === 1 ? "" : "s"}.${done.skipped?.length ? ` ${done.skipped.length} skipped.` : ""}` });
+      setNote({ text: `Visibility set to "${VISIBILITY_OPTION[vis.value]}" for ${done.count} profile${done.count === 1 ? "" : "s"}.${vis.value === "public" ? " A profile appears in the directory once its Public state says Ready." : ""}${done.skipped?.length ? ` ${done.skipped.length} skipped.` : ""}` });
       setVis(null); setSelected(new Set());
       await load(); onChange?.();
     } catch (e) { setProblem(directoryError(e).message); } finally { setBusy(false); }
@@ -248,6 +397,7 @@ function Unclaimed({ onChange }) {
       )}
       {editing && <EditBusinessForm profile={editing} options={list?.options} onClose={() => setEditing(null)}
         onSaved={async (done) => { setEditing(null); setNote({ text: `${editing.name} saved: ${done.public_state}.` }); await load(); onChange?.(); }} />}
+      {requests && <WaitingRequests data={requests} onClose={() => setRequests(null)} />}
       {sources && (
         <section aria-label={`Sources for ${sources.name}`} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-start justify-between gap-3">
@@ -294,9 +444,13 @@ function Unclaimed({ onChange }) {
             // When a public profile is held back by quality, what is missing is on the chip (hover or focus) and read out with it.
             { key: "state", label: "Public state", render: (p) => (p.state_detail?.length
               ? <span tabIndex={0} title={`Missing: ${p.state_detail.join(" ")}`} className="inline-block rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500">
-                <Chip tone={p.state_tone}>{p.public_state}</Chip><span className="sr-only"> Missing: {p.state_detail.join(" ")}</span></span>
+                <Chip tone={p.state_tone}>{p.public_state}</Chip><span className="mt-1 block max-w-[16rem] whitespace-normal text-[11px] text-slate-500">{p.state_hint} Missing: {p.state_detail.join(" ")}</span></span>
               : <Chip tone={p.state_tone}>{p.public_state || p.publication}</Chip>) },
             { key: "visibility", label: "Visibility", render: (p) => p.visibility_label || "—" },
+            { key: "requests", label: "Requests waiting", render: (p) => (p.requests_waiting
+              ? <button type="button" aria-label={`Read ${p.requests_waiting === 1 ? "1 request" : `${p.requests_waiting} requests`} for ${p.name}`} className="rounded-full hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600"
+                onClick={() => getWaitingRequests(p.slug).then(setRequests).catch((e) => setProblem(directoryError(e).message))}><Chip tone="amber"><span className="underline">{p.requests_waiting}</span></Chip></button>
+              : 0) },
             { key: "contact", label: "Contact on record", render: (p) => (p.has_contact ? "Yes" : "No") },
           ]} />
       )}
@@ -305,7 +459,7 @@ function Unclaimed({ onChange }) {
 }
 
 /** Who can see profiles nobody has claimed yet. The choice is kept on the server with who made it and when. */
-function Visibility() {
+function Visibility({ readOnly }) {
   const [setting, setSetting] = useState(null);
   const [state, setState] = useState({});
   useEffect(() => { getVisibility().then(setSetting).catch((e) => setState({ problem: directoryError(e).message })); }, []);
@@ -316,7 +470,7 @@ function Visibility() {
   if (!setting) return state.problem ? <Notice tone="rose" role="alert">{state.problem}</Notice> : <p role="status" className="text-sm text-slate-500">Loading…</p>;
   return (
     <Panel title="Who can see unclaimed profiles" description="Profiles a business has claimed or created are always public. This is about the ones nobody has claimed yet.">
-      <fieldset className="grid gap-2 md:grid-cols-3" disabled={state.busy}>
+      <fieldset className="grid gap-2 md:grid-cols-3" disabled={state.busy || readOnly}>
         <legend className="sr-only">Unclaimed profile visibility</legend>
         {setting.levels.map((l) => (
           <label key={l.key} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${setting.unclaimed_visibility === l.key ? "border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-900/20" : "border-slate-200 dark:border-slate-700"}`}>
@@ -328,13 +482,14 @@ function Visibility() {
       <p role="status" className="mt-2 text-[12px] text-slate-500">
         {state.busy ? "Saving…" : setting.source === "moderator" ? `Set by ${setting.changed_by} on ${dateLabel(setting.changed_at)}.` : "This is the default. Nobody has changed it."}
         {state.saved && !state.busy ? " Saved." : ""}
+        {readOnly ? " Only the administrator can change this. You can set one profile's own visibility under Unclaimed profiles." : ""}
       </p>
       {state.problem && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{state.problem}</p>}
     </Panel>
   );
 }
 
-function IndexAndInvites({ onChange }) {
+function IndexAndInvites({ onChange, onTeam }) {
   const [json, setJson] = useState("");
   const [indexed, setIndexed] = useState(null);
   const [invite, setInvite] = useState({ ref: "", reason: "profile_control", opportunity_ref: "" });
@@ -361,12 +516,12 @@ function IndexAndInvites({ onChange }) {
   return (
     <div className="space-y-4">
       <AddBusinesses options={options} onChange={onChange} />
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+      {!onTeam && <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
         <Btn onClick={tidy}>Tidy stored locations</Btn>
         <span className="text-[12px] text-slate-500">Reduces any stored street address or full postcode to its town. Old profile addresses keep working.</span>
         {indexed?.tidied !== undefined && <span role="status" className="w-full text-[13px] text-slate-600 dark:text-slate-300">{indexed.tidied === 0 ? "Every stored location is already a town or region." : `Tidied ${indexed.tidied} profile${indexed.tidied === 1 ? "" : "s"}. Their old addresses still open.`}</span>}
-      </div>
-      <details className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
+      </div>}
+      {!onTeam && <details className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
         <summary className="cursor-pointer text-base font-bold text-slate-900 dark:text-slate-100">Advanced: paste records as JSON</summary>
         <p className="mb-2 mt-2 text-[13px] text-slate-500">Each record needs a name and a source (provider and record id). No account or business is created.</p>
         <textarea aria-label="Records as JSON" rows={6} className={`font-mono !text-[12px] ${inputClass}`} value={json} onChange={(e) => setJson(e.target.value)}
@@ -374,7 +529,7 @@ function IndexAndInvites({ onChange }) {
         <Btn className="mt-2" disabled={!json.trim()} onClick={addRecords}>Index records</Btn>
         {indexed?.problem && <p role="alert" className="mt-2 text-[12px] font-medium text-rose-600">{indexed.problem}</p>}
         {indexed?.summary && <p role="status" className="mt-2 text-[13px] text-slate-600 dark:text-slate-300">Created {indexed.summary.created}, updated {indexed.summary.updated}, excluded {indexed.summary.excluded}, invalid {indexed.summary.invalid}.</p>}
-      </details>
+      </details>}
       <Panel title="Claim invitation link" description="Creates a link you can share. An opportunity invitation is refused unless a real, open request matches the business.">
         <div className="grid gap-2 sm:grid-cols-3">
           <input aria-label="Profile address or id" className={inputClass} value={invite.ref} onChange={(e) => setInvite({ ...invite, ref: e.target.value })} placeholder="profile address, e.g. example-advisory-ltd-leeds" />
@@ -391,10 +546,54 @@ function IndexAndInvites({ onChange }) {
   );
 }
 
+/** The internal team who add and manage profiles for claiming. Only the administrator sees this. */
+function Team() {
+  const [team, setTeam] = useState(null);
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState({});
+  useEffect(() => { getTeam().then(setTeam).catch((e) => setState({ problem: directoryError(e).message })); }, []);
+  async function act(work) {
+    setState({ busy: true });
+    try { setTeam(await work()); setEmail(""); setState({}); } catch (e) { setState({ problem: directoryError(e).message }); }
+  }
+  const link = `${window.location.origin}/ent-admin?section=marketplace`;
+  return (
+    <Panel title="Marketplace team" description="Team members can add and import businesses, correct unclaimed profiles, make claim links, and decide claims and reports. They see nothing else in the admin area, and can't change who sees unclaimed profiles.">
+      <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (email.trim()) act(() => addTeamMember(email.trim())); }}>
+        <input type="email" aria-label="Team member's email" className={`min-w-0 flex-1 ${inputClass}`} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@enterprateai.com" />
+        <Btn type="submit" disabled={state.busy || !email.trim()}>Add to team</Btn>
+      </form>
+      {state.problem && <p role="alert" className="mt-2 text-[12px] font-medium text-rose-600">{state.problem}</p>}
+      <p className="mt-2 break-all text-[12px] text-slate-500">They sign in with that email, on a verified account, then open: {link}</p>
+      {!team && !state.problem && <p role="status" className="mt-3 text-sm text-slate-500">Loading…</p>}
+      {team && team.members.length === 0 && <p className="mt-3 text-sm text-slate-500">Nobody on the team yet.</p>}
+      {team && team.members.length > 0 && (
+        <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+          {team.members.map((m) => (
+            <li key={m.email} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span className="min-w-0 break-all text-sm"><span className="font-semibold text-slate-800 dark:text-slate-100">{m.email}</span><span className="block text-[12px] text-slate-500">Added {dateLabel(m.added_at)}</span></span>
+              <Btn disabled={state.busy} onClick={() => act(() => removeTeamMember(m.email))}>Remove</Btn>
+            </li>
+          ))}
+        </ul>
+      )}
+      {team && team.history.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-[13px] font-semibold text-slate-700 dark:text-slate-200">Changes to the team</summary>
+          <ul className="mt-2 space-y-1 text-[12px] text-slate-500">
+            {team.history.map((h) => <li key={`${h.at}${h.email}`} className="break-all">{dateLabel(h.at)}: {h.email} {h.action} by {h.by}</li>)}
+          </ul>
+        </details>
+      )}
+    </Panel>
+  );
+}
+
 /** `section` and `onSection` let the admin sidebar drive the tabs; without them the tabs keep their own place. */
-export default function AdminClaims({ section, onSection }) {
-  const known = (key) => MARKETPLACE_TABS.some(([k]) => k === key);
-  const [at, setAt] = useState(known(section) ? section : "queue");
+export default function AdminClaims({ section, onSection, superadmin = false, onTeam = false }) {
+  const tabs = superadmin ? [...MARKETPLACE_TABS, ["team", "Team"]] : MARKETPLACE_TABS;
+  const known = (key) => tabs.some(([k]) => k === key);
+  const [at, setAt] = useState(known(section) ? section : "index");
   useEffect(() => { if (known(section)) setAt(section); }, [section]);      // the sidebar moved us
   const go = (key) => { setAt(key); onSection?.(key); };
   const [queue, setQueue] = useState(null);
@@ -414,8 +613,9 @@ export default function AdminClaims({ section, onSection }) {
       {problem && <Notice tone="rose" role="alert">{problem}</Notice>}
 
       {funnel && (
-        <section aria-label="Directory at a glance" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section aria-label="Directory at a glance" className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           <KpiTile label="Indexed" value={funnel.profiles.total ?? 0} />
+          <KpiTile label="Requests waiting" value={funnel.requests_waiting ?? 0} />
           <KpiTile label="Claims started" value={events.BusinessClaimStarted ?? 0} />
           <KpiTile label="Verified" value={funnel.profiles.claimed ?? 0} />
           <KpiTile label="Published" value={funnel.profiles.published ?? 0} />
@@ -425,7 +625,7 @@ export default function AdminClaims({ section, onSection }) {
       )}
 
       <div role="tablist" aria-label="Marketplace moderation" className="flex gap-1 overflow-x-auto border-b border-slate-200 [scrollbar-width:none] dark:border-slate-800 [&::-webkit-scrollbar]:hidden">
-        {MARKETPLACE_TABS.map(([key, label]) => (
+        {tabs.map(([key, label]) => (
           <button key={key} type="button" role="tab" aria-selected={at === key} onClick={() => go(key)}
             className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${at === key ? "border-brand-600 text-brand-700 dark:text-brand-300" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"}`}>
             {label}{counts[key] ? <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">{counts[key]}</span> : null}
@@ -434,10 +634,12 @@ export default function AdminClaims({ section, onSection }) {
       </div>
 
       {at === "queue" && <Queue queue={queue} onChange={load} />}
+      {at === "decided" && <Decided onChange={load} />}
       {at === "unclaimed" && <Unclaimed onChange={load} />}
       {at === "reports" && <Reports queue={queue} onChange={load} setProblem={setProblem} />}
-      {at === "visibility" && <Visibility />}
-      {at === "index" && <IndexAndInvites onChange={load} />}
+      {at === "visibility" && <Visibility readOnly={onTeam} />}
+      {at === "index" && <IndexAndInvites onChange={load} onTeam={onTeam} />}
+      {at === "team" && superadmin && <Team />}
     </div>
   );
 }

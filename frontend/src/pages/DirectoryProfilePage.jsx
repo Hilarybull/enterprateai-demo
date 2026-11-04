@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ReportBox, TrustBadge } from "../components/marketplace/Directory";
-import MarketplaceHeader, { Initials } from "../components/marketplace/MarketplaceHeader";
+import LeaveARequest from "../components/marketplace/LeaveARequest";
+import MarketplaceHeader, { BusinessMark } from "../components/marketplace/MarketplaceHeader";
 import { Btn, Notice, Panel } from "../components/readiness/Fields";
 import { activateMarketplaceProfile, directoryError, getBusinessProfile, myClaims, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
 import { useAuthStore } from "../store/auth";
@@ -302,7 +303,7 @@ export default function DirectoryProfilePage() {
       <section aria-label="Business" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <Initials name={b.name} size={56} />
+            <BusinessMark name={b.name} logo={b.logo_data_url} size={56} />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <h1 className="min-w-0 break-words text-2xl font-bold leading-tight text-slate-900 sm:text-[28px] dark:text-slate-100">{b.name}</h1>
@@ -354,7 +355,8 @@ export default function DirectoryProfilePage() {
           </Panel>
 
           <Panel title="How to work with us">
-            {paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
+            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
+              : paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
               : ways.length > 0 ? (
                 <ul className="divide-y divide-slate-100 dark:divide-slate-800" data-ways>
                   {ways.map((w) => (
@@ -382,6 +384,7 @@ export default function DirectoryProfilePage() {
             {!b.claimed ? (
               <Panel title={myClaim ? "Your claim" : "Is this your business?"}>
                 {/* While their claim is under review the claimant sees where it stands, not the pitch to claim it (QA R9). */}
+                {!myClaim && b.requests_waiting > 0 && <Notice tone="amber" className="mb-2" data-requests-waiting>{b.requests_waiting === 1 ? "1 request is" : `${b.requests_waiting} requests are`} waiting for this business. Claim it to read and answer {b.requests_waiting === 1 ? "it" : "them"}.</Notice>}
                 {!myClaim && <p className="text-sm text-slate-700 dark:text-slate-200">Claim it to control this profile, publish your offerings, choose the opportunities you want and connect to EnterprateAI's business tools.</p>}
                 {myClaim
                   ? <p className="mt-2 text-[13px] text-slate-600 dark:text-slate-300" data-my-claim>{reviewing

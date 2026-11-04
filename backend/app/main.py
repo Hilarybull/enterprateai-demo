@@ -204,6 +204,9 @@ def create_app() -> FastAPI:
         # Agent workflows wait on due dates and payments; this wakes the ones that are due.
         start_agent_scheduler()
         start_activation_scheduler()      # does nothing each run unless ACTIVATION_EMAILS_ENABLED is set
+        if settings.supabase_url and settings.supabase_service_role_key:
+            from app.modules.marketplace.directory_router import start_workspace_sweep
+            start_workspace_sweep()
         # Flag receipts that were sent but are missing from the books (logged, never blocking).
         if settings.supabase_url and settings.supabase_service_role_key:
             from app.modules.agent.integrity import check_all_at_startup
@@ -214,6 +217,8 @@ def create_app() -> FastAPI:
     async def shutdown():
         stop_agent_scheduler()
         stop_activation_scheduler()
+        from app.modules.marketplace.directory_router import stop_workspace_sweep
+        stop_workspace_sweep()
         warm_task = getattr(app.state, "supabase_warm_task", None)
         if warm_task:
             warm_task.cancel()

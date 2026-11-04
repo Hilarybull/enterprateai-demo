@@ -2,7 +2,7 @@ import UkDateInput from "../UkDateInput";
 import { useEffect, useRef, useState } from "react";
 import { AdminTable, Chip } from "../admin/AdminUI";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
-import { addBusiness, checkBusiness, directoryError, editDirectoryProfile, importBusinesses } from "../../lib/directory";
+import { addBusiness, checkBusiness, directoryError, editDirectoryProfile, importBusinesses, suggestIndexField } from "../../lib/directory";
 
 // Adding businesses to the index by hand: a form (the main way), a CSV import with a preview,
 // and editing a record that is already there. A location is a town or region, never an address.
@@ -10,13 +10,13 @@ import { addBusiness, checkBusiness, directoryError, editDirectoryProfile, impor
 export const VISIBILITY_OPTION = { inherit: "Follow the global setting", hidden: "Hidden (moderators and invitation links)", invite_only: "Invite only (plus exact-match lookup)", public: "Public (listed and searchable)" };
 const STATUSES = [["active", "Active"], ["dormant", "Dormant"], ["dissolved", "Dissolved"], ["closed", "Closed"]];
 const today = () => new Date().toISOString().slice(0, 10);
-const BLANK = { name: "", trading_name: "", company_number: "", country: "United Kingdom", category: "", location: "", website: "", description: "", tags: "", business_status: "active",
+const BLANK = { logo: "", name: "", trading_name: "", company_number: "", country: "United Kingdom", category: "", location: "", website: "", description: "", tags: "", business_status: "active",
   contact_email: "", provider: "", reference: "", retrieved_at: today(), visibility: "inherit" };
 
 const toRecord = (f) => ({
   name: f.name.trim(), trading_name: f.trading_name.trim() || null, company_number: f.company_number.trim() || null, country: f.country.trim() || "United Kingdom", category: f.category,
   location: f.location.trim(), website: f.website.trim() || null, description: f.description.trim() || null, service_tags: f.tags.split(",").map((t) => t.trim()).filter(Boolean),
-  business_status: f.business_status, contact_email: f.contact_email.trim() || null, visibility: f.visibility,
+  business_status: f.business_status, contact_email: f.contact_email.trim() || null, visibility: f.visibility, logo_data_url: f.logo || null,
   source: { provider: f.provider, record_id: f.reference.trim(), retrieved_at: f.retrieved_at },
 });
 const RESULT = { published: ["Ready to be shown", "emerald"], noindex: ["Kept out of search engines", "amber"], unpublished: ["Not shown yet (needs more detail)", "slate"] };
@@ -34,9 +34,10 @@ function useFirstError(errors) {
   return form;
 }
 
-function Field({ label, error, required, hint, children, className = "" }) {
+function Field({ label, error, required, hint, action, children, className = "" }) {
   return (
-    <div className={className} data-invalid={error ? "true" : undefined}>
+    <div className={`relative ${className}`} data-invalid={error ? "true" : undefined}>
+      {action && <span className="absolute right-0 top-0 z-10">{action}</span>}
       <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">{label}{required && <span className="text-rose-600" aria-hidden="true"> *</span>}{children}</label>
       {hint && <span className="mt-0.5 block text-[12px] text-slate-500">{hint}</span>}
       {error && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{error}</span>}
@@ -57,6 +58,80 @@ function Duplicates({ items }) {
   );
 }
 
+/** AI Fill, on the field's label row as on the idea validation form. Writes from what the form holds; nothing is saved until the form is. */
+function AiFill({ field, form, onText, onProblem }) {
+  const [busy, setBusy] = useState(false);
+  async function fill() {
+    setBusy(true);
+    onProblem(null);
+    try {
+      const { tags, logo, ...rest } = form;
+      const reply = await suggestIndexField(field, { ...rest, service_tags: String(tags || "").split(",").map((t) => t.trim()).filter(Boolean) });
+      onText(reply.suggestion);
+    } catch (e) {
+      const p = directoryError(e, "That couldn't be filled just now. Please try again.");
+      onProblem(p.errors?.[field] || p.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button type="button" onClick={fill} disabled={busy} aria-label={`AI Fill: ${field === "service_tags" ? "service tags" : "short description"}`}
+      className="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 disabled:opacity-50">
+      {busy ? "Writing…" : "\u2726 AI Fill"}
+    </button>
+  );
+}
+
+/** Shrinks the picture in the browser: a logo is shown small, and every directory card carries it. */
+async function shrinkLogo(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = url; });
+    for (const size of [240, 160, 96]) {
+      const scale = Math.min(1, size / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      const made = canvas.toDataURL("image/webp", 0.85);
+      if (made.length <= 60000) return made.startsWith("data:image/webp") ? made : canvas.toDataURL("image/png");
+    }
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** `value`: "" none, "saved" one is already on the profile, or a new image. */
+function LogoField({ value, onChange, error }) {
+  const [problem, setProblem] = useState(null);
+  async function choose(file) {
+    setProblem(null);
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { setProblem("Use a PNG, JPG or WebP image."); return; }
+    const made = await shrinkLogo(file).catch(() => null);
+    if (made) onChange(made); else setProblem("That image couldn't be used. Try another one.");
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-3 sm:col-span-2" data-invalid={error || problem ? "true" : undefined}>
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white text-[11px] text-slate-400 dark:border-slate-700 dark:bg-slate-900">
+        {value.startsWith("data:") ? <img src={value} alt="Logo preview" className="h-full w-full object-contain" /> : value === "saved" ? "Saved" : "Logo"}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Logo</p>
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <label className="cursor-pointer text-[13px] font-semibold text-brand-600 underline-offset-2 hover:underline">
+            {value ? "Replace" : "Choose an image"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) choose(f); }} />
+          </label>
+          {value && <Btn kind="link" className="text-[13px]" onClick={() => onChange("")}>Remove</Btn>}
+        </div>
+        {(error || problem) && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error || problem}</p>}
+      </div>
+    </div>
+  );
+}
+
 /** The form. `options` carries the category list and the source providers from the server. */
 export function AddBusinessForm({ options, onAdded, onClose }) {
   const [form, setForm] = useState(BLANK);
@@ -64,6 +139,8 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
   const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setState((s) => ({ ...s, done: null })); };
   const errors = state.errors || {};
   const formRef = useFirstError(state.errors);
+  const aiFill = (field) => <AiFill field={field} form={form} onText={(text) => setForm((f) => ({ ...f, [field === "service_tags" ? "tags" : field]: text }))}
+    onProblem={(text) => setState((s) => ({ ...s, errors: { ...(s.errors || {}), [field]: text || undefined } }))} />;
 
   async function save(e, anyway = false) {
     e?.preventDefault();
@@ -89,6 +166,7 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
   return (
     <form ref={formRef} onSubmit={save} aria-label="Add business" className="space-y-4" noValidate>
       <div className="grid gap-3 sm:grid-cols-2">
+        <LogoField value={form.logo} onChange={(logo) => setForm((f) => ({ ...f, logo }))} error={errors.logo_data_url} />
         <Field label="Legal name" required error={errors.name}><input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} /></Field>
         <Field label="Trading name"><input className={`mt-1 ${inputClass}`} value={form.trading_name} onChange={set("trading_name")} /></Field>
         <Field label="Company number"><input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></Field>
@@ -101,8 +179,8 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
         <Field label="Business status" error={errors.business_status}>
           <select className={`mt-1 ${inputClass}`} value={form.business_status} onChange={set("business_status")}>{STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         </Field>
-        <Field label="Short description" className="sm:col-span-2" hint="40 characters or more counts towards quality."><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)"><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
+        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="40 characters or more counts towards quality. AI Fill uses only what's on this form, so check it against the source." action={aiFill("description")}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote." action={aiFill("service_tags")}><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
         <Field label="Private contact email" error={errors.contact_email} hint="For invitations only. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
       </div>
       <fieldset className="grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-3 dark:border-slate-700">
@@ -250,18 +328,20 @@ export function ImportCsv({ onImported }) {
 // ── editing a record that is already there ────────────────────────────────────
 
 export function EditBusinessForm({ profile, options, onSaved, onClose }) {
-  const first = { name: profile.name || "", trading_name: profile.trading_name || "", company_number: profile.company_number || "", country: profile.country || "", category: profile.category || "",
+  const first = { logo: profile.has_logo ? "saved" : "", name: profile.name || "", trading_name: profile.trading_name || "", company_number: profile.company_number || "", country: profile.country || "", category: profile.category || "",
     location: profile.location || "", website: profile.website || "", description: profile.description || "", tags: (profile.service_tags || []).join(", "), business_status: profile.business_status || "active" };
   const [form, setForm] = useState(first);
   const [reason, setReason] = useState("");
   const [state, setState] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const aiFill = (field) => <AiFill field={field} form={form} onText={(text) => setForm((f) => ({ ...f, [field === "service_tags" ? "tags" : field]: text }))}
+    onProblem={(text) => setState((s) => ({ ...s, errors: { ...(s.errors || {}), [field]: text || undefined } }))} />;
   const errors = state.errors || {};
   const formRef = useFirstError(state.errors);
   async function save(e) {
     e.preventDefault();
     const changes = {};
-    for (const k of Object.keys(first)) if (form[k] !== first[k]) changes[k === "tags" ? "service_tags" : k] = k === "tags" ? form.tags.split(",").map((t) => t.trim()).filter(Boolean) : form[k];
+    for (const k of Object.keys(first)) if (form[k] !== first[k]) changes[k === "tags" ? "service_tags" : k === "logo" ? "logo_data_url" : k] = k === "tags" ? form.tags.split(",").map((t) => t.trim()).filter(Boolean) : form[k];
     if (!Object.keys(changes).length) { setState({ problem: "Nothing has changed." }); return; }
     setState({ busy: true });
     try { onSaved(await editDirectoryProfile(profile.slug, changes, reason)); }
@@ -272,6 +352,7 @@ export function EditBusinessForm({ profile, options, onSaved, onClose }) {
       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Edit {profile.name}</p>
       <p className="text-[13px] text-slate-500">The earlier value and where it came from are kept in the profile's history. Its address doesn't change.</p>
       <div className="grid gap-3 sm:grid-cols-2">
+        <LogoField value={form.logo} onChange={(logo) => setForm((f) => ({ ...f, logo }))} error={errors.logo_data_url} />
         <Field label="Legal name" error={errors.name}><input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} /></Field>
         <Field label="Trading name"><input className={`mt-1 ${inputClass}`} value={form.trading_name} onChange={set("trading_name")} /></Field>
         <Field label="Company number"><input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></Field>
@@ -283,8 +364,8 @@ export function EditBusinessForm({ profile, options, onSaved, onClose }) {
         </Field>
         <Field label="Town or region" error={errors.location} hint="No street address or full postcode."><input className={`mt-1 ${inputClass}`} value={form.location} onChange={set("location")} /></Field>
         <Field label="Website" error={errors.website}><input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} /></Field>
-        <Field label="Short description" className="sm:col-span-2"><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)"><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
+        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="AI Fill uses only what's on this form, so check it against the source." action={aiFill("description")}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote." action={aiFill("service_tags")}><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
         <Field label="Reason for the change"><input className={`mt-1 ${inputClass}`} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
       </div>
       {state.problem && <p role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</p>}

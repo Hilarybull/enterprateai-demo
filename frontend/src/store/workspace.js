@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { apiRequest, apiRequestCached } from "../api/client";
+import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 
 // Dedupes concurrent callers (e.g. StrictMode's double effect, or two gated
 // pages mounting together) so one navigation never creates two workspaces.
@@ -42,6 +42,19 @@ export async function ensureWorkspaceId() {
     ensureInFlight = null;
   });
   return ensureInFlight;
+}
+
+/** The workspace to open. If the one they were in is gone (closed after a revoked claim, or deleted), `lost` is true
+ *  and `ws` is their most recent other one, or nothing when they have none. */
+export async function openWorkspace(pinnedId) {
+  if (!pinnedId) return { ws: await apiRequestCached("/validation/me"), lost: false };
+  try {
+    return { ws: await apiRequestCached(`/validation/${pinnedId}`), lost: false };
+  } catch (e) {
+    if (!String(e instanceof Error ? e.message : e || "").startsWith("HTTP 404:")) throw e;
+    invalidateWorkspaceCache();
+    return { ws: await apiRequest("/validation/me"), lost: true };
+  }
 }
 
 export const useWorkspaceStore = create(

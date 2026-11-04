@@ -789,8 +789,10 @@ async def stripe_webhook(request: Request):
                 "status": "cancelled" if ended else new_status,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            if ended and cancel_at:
+            if cancel_at:      # also while it runs to the end of the period: that's what says the plan is ending, not renewing
                 updates["cancelled_at"] = datetime.fromtimestamp(cancel_at, tz=timezone.utc).isoformat()
+            elif not ended:      # they changed their mind before it ended
+                updates["cancelled_at"] = None
             # Sync billing period on renewal / update
             ps = sub_obj.get("current_period_start") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_start", None)
             pe = sub_obj.get("current_period_end") if isinstance(sub_obj, dict) else getattr(sub_obj, "current_period_end", None)

@@ -178,6 +178,7 @@ export default function OnboardingPage() {
             ))}
           </div>
           <p className="text-[11px] font-semibold uppercase tracking-widest text-brand-600">Set up your workspace · Step {step + 1} of {STEPS.length}</p>
+          {params.get("workspace_closed") && <p role="status" data-workspace-closed className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">Your previous workspace was closed. Create a new one to keep using EnterprateAI.</p>}
           <h1 className="mt-1.5 text-xl font-extrabold text-slate-900 dark:text-slate-100">{current.title}</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{current.desc}</p>
 

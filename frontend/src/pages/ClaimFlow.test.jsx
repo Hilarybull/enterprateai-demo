@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import ClaimFlowPage from "./ClaimFlowPage";
 import DirectoryProfilePage from "./DirectoryProfilePage";
+import MarketplaceListings from "./MarketplaceListings";
 import { confirmDialog } from "../lib/dialog";
 import MarketplaceProfilePage from "./MarketplaceProfilePage";
 import MarketplaceModerationPage from "./MarketplaceModerationPage";
@@ -161,6 +162,14 @@ describe("public profile (W02 and W12)", () => {
     expect(document.head.querySelector('meta[name="robots"]')).toBeNull();
     fireEvent.click(within(header).getByRole("button", { name: "Contact" }));
     expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=products&business=ws9");
+  });
+
+  it("a service on an unclaimed profile opens the same quote form with that service on the first line", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...unclaimed, held_requests_open: true, service_tags: ["Strategy", "Pricing"] } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}?request=quote&service=Pricing`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    const form = await screen.findByRole("form", { name: "Request a quote" });
+    expect(within(form).getByRole("combobox", { name: "Item 1" }).value).toBe("Pricing");
   });
 
   it("with quotes on, the main button and each offering ask for a quote, with that offering already filled in", async () => {
@@ -513,7 +522,7 @@ describe("QA round 2", () => {
       reports: [{ id: "r1", kind: "unlist", message: "Please remove.", created_at: "2026-10-05T09:00:00Z", needs_another_reviewer: true }] } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: { BusinessClaimStarted: 2 }, reports_open: 1, profiles: { total: 2, published: 2, claimed: 0, suppressed: 0 } } }) },
       { method: "POST", match: /normalise-locations$/, reply: () => ({ body: { count: 1, changed: [] } }) }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const mine = (await screen.findByText("Northwind Advisory Ltd")).closest("tr");
     expect(within(mine).getByText("Needs another reviewer")).toBeTruthy();
     expect(within(mine).queryByRole("button", { name: "Review" })).toBeNull();
@@ -719,13 +728,13 @@ describe("QA round 5", () => {
     routes = [{ method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports: [], revocations: rows } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: {}, reports_open: 0, profiles: { total: 1, published: 1, claimed: 1, suppressed: 0 } } }) },
       { method: "POST", match: /business-claims\/c7\/review-decision$/, reply: () => { rows = []; return { body: { id: "c7", status: "revoked", revocation: "done" } }; } }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     await screen.findByRole("heading", { name: "Revocations waiting for a second reviewer" });
     expect(screen.getByText("You asked for this, so someone else has to confirm it.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Confirm revocation" })).toBeNull();
     cleanup();
     rows = [waiting()];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const confirm = await screen.findByRole("button", { name: "Confirm revocation" });
     expect(screen.getByText("The claim was verified in error")).toBeTruthy();
     expect(confirm.disabled).toBe(true);                                  // a decision needs a reason
@@ -739,7 +748,7 @@ describe("QA round 5", () => {
 describe("unclaimed profile visibility", () => {
   const listing = (over) => ({ method: "GET", match: /^\/marketplace\/businesses\?/, reply: () => ({ body: { enabled: true, total: 1, categories: [], items: [claimed], ...over } }) });
 
-  it("offers the 'Not yet claimed' filter only when unclaimed profiles are listed", async () => {
+  it("offers the 'Public listing' filter only when unclaimed profiles are listed", async () => {
     routes = [listing({ unclaimed_listed: false })];
     mount("/", <DirectoryResults query="" />, "/");
     await screen.findByText("Northwind Advisory Ltd");
@@ -749,7 +758,7 @@ describe("unclaimed profile visibility", () => {
     routes = [listing({ unclaimed_listed: true })];
     mount("/", <DirectoryResults query="" />, "/");
     await screen.findByText("Northwind Advisory Ltd");
-    expect(options()).toEqual(["Any status", "Verified only", "Created on EnterprateAI, not verified", "Not yet claimed"]);
+    expect(options()).toEqual(["Any status", "Verified only", "Created on EnterprateAI, not verified", "Public listing"]);
   });
 
   it("an invitation or lookup grant travels with every request for the profile, and on into the claim", async () => {
@@ -891,18 +900,115 @@ describe("admin area", () => {
     expect(items[0].disabled && items[1].disabled).toBe(true);
   });
 
+  it("lists approved businesses first, with who decided and whether the person was emailed", async () => {
+    const decisions = { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [
+      { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "team@enterprate.test", decided_at: "2026-11-04T10:00:00Z", reason: "Director on the filing", email: "sent" },
+      { id: "c2", type: "claim", outcome: "approved", name: "Older Ltd", slug: "older", person: "o@older.test", links_to: "An existing business", decided_by: "A team member", decided_at: "2026-10-01T10:00:00Z", reason: "Checked", email: "before_emails" },
+      { id: "c3", type: "listing", outcome: "rejected", name: "Spam Co", slug: "spam", person: "s@spam.test", links_to: null, decided_by: "team@enterprate.test", decided_at: "2026-11-02T10:00:00Z", reason: "Not a real service", email: "failed" },
+    ] } }) };
+    routes = [funnel, queue, decisions];
+    mount("/", <AdminClaims section="decided" />, "/");
+    expect((await screen.findByRole("link", { name: "Francal" })).getAttribute("href")).toBe("/marketplace/business/francal");
+    expect(screen.getByText("Email sent")).toBeTruthy();
+    expect(screen.getByText("No email, decided earlier")).toBeTruthy();
+    expect(screen.queryByText("Spam Co")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rejected or removed (1)" }));
+    expect(screen.getByText("Spam Co")).toBeTruthy();
+    expect(screen.getByText("Email failed")).toBeTruthy();
+  });
+
+  it("Products & Services lists the services of a public, unclaimed profile, and a quote goes through its profile", async () => {
+    const francal = { id: "p7", slug: "francal", name: "Francal", category: "Construction & Trades", location: "Florida", description: "Francal sells fashion accessories", service_tags: ["Suits", "Shoes"], held_requests_open: true };
+    const closed = { id: "p8", slug: "closed", name: "Closed Ltd", service_tags: ["Hidden service"], held_requests_open: false };
+    routes = [{ method: "GET", match: /^\/marketplace\/listings/, reply: () => ({ body: { items: [], total: 0 } }) },
+      { method: "GET", match: /^\/marketplace\/businesses\?/, reply: () => ({ body: { enabled: true, total: 2, items: [francal, closed] } }) }];
+    mount("/marketplace?tab=products", <MarketplaceListings />, "/marketplace");
+    const card = (await screen.findByRole("heading", { name: "Suits" })).closest("article");
+    expect(screen.getByRole("heading", { name: "Shoes" })).toBeTruthy();
+    expect(screen.queryByText("Hidden service")).toBeNull();
+    expect(screen.getByText("2 products")).toBeTruthy();
+    expect(sent("GET", /^\/marketplace\/businesses/)[0].path).toContain("trust=unclaimed");
+    fireEvent.click(within(card).getByRole("button", { name: "Request Quotation" }));
+    expect(screen.getByTestId("where").textContent).toBe("/marketplace/business/francal?request=quote&service=Suits");
+    expect(sent("POST", /\/marketplace\/rfq/)).toEqual([]);      // nothing is sent to a workspace that doesn't exist
+  });
+
+  it("a workspace closed by a revocation can be restored from Rejected or removed", async () => {
+    const row = { id: "c1", type: "claim", outcome: "removed", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: null, decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: false, workspace: { state: "closed", until: "2026-12-04T10:00:00Z" } };
+    routes = [funnel, queue, { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row], revoke_categories: [] } }) },
+      { method: "POST", match: /restore-workspace$/, reply: () => ({ body: { id: "c1", workspace: "restored" } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Rejected or removed (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore the workspace for Francal" }));
+    await waitFor(() => expect(sent("POST", /restore-workspace$/).length).toBe(1));
+  });
+
+  it("a report says which business it is about and who sent it", async () => {
+    const reports = [{ id: "r1", kind: "unlist", message: "Just remove it", created_at: "2026-11-04T10:00:00Z", needs_another_reviewer: false, reporter_email: "someone@example.com", profile: { name: "Francal", slug: "francal-florida", location: "Florida" } },
+      { id: "r2", kind: "correction", message: "Wrong address", created_at: "2026-11-04T10:00:00Z", needs_another_reviewer: false, reporter_email: null, profile: { name: "Older Ltd", slug: "older" } }];
+    routes = [funnel, { method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports, revocations: [] } }) }];
+    mount("/", <AdminClaims section="reports" />, "/");
+    expect((await screen.findByRole("link", { name: "Francal" })).getAttribute("href")).toBe("/marketplace/business/francal-florida");
+    expect(screen.getByText("someone@example.com")).toBeTruthy();
+    expect(screen.getByText("No email given")).toBeTruthy();
+  });
+
+  it("the number of requests waiting opens them in a popup, in full", async () => {
+    const profile = { id: "p1", slug: "francal", name: "Francal", publication: "published", requests_waiting: 1, service_tags: [] };
+    routes = [funnel, queue, { method: "GET", match: /directory\/unclaimed$/, reply: () => ({ body: { total: 1, items: [profile], options: { categories: [], providers: [], visibility: [] } } }) },
+      { method: "GET", match: /directory-profiles\/francal\/requests$/, reply: () => ({ body: { name: "Francal", slug: "francal", items: [{ id: "r1", kind: "quote", received_at: "2026-11-04T10:00:00Z", name: "Ada Buyer", email: "ada@buyer.test", company: "Ada Ltd", items: [{ name: "Suits", quantity: 2, notes: "Navy" }], details: "For a wedding" }] } }) }];
+    mount("/", <AdminClaims section="unclaimed" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Read 1 request for Francal" }));
+    const popup = await screen.findByRole("dialog", { name: "Requests for Francal" });
+    for (const text of ["Quote request", "Ada Buyer · Ada Ltd", "ada@buyer.test", "Suits × 2", "Navy", "For a wedding"]) expect(within(popup).getByText(text)).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Requests for Francal" })).toBeNull();
+  });
+
+  it("an approved claim can be revoked from Approved & rejected, with a category and a reason", async () => {
+    const row = { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: true, revocation: null, needs_another_reviewer: false };
+    const listing = { id: "p1", type: "listing", outcome: "approved", name: "Own Listing", slug: "own", person: "o@own.test", links_to: null, decided_by: "A team member", decided_at: "2026-11-03T10:00:00Z", reason: "", email: "sent" };
+    const decisions = { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row, listing], second_reviewer_required: true, revoke_categories: [{ key: "policy", label: "A breach of Marketplace policy" }] } }) };
+    routes = [funnel, queue, decisions, { method: "POST", match: /review-decision$/, reply: () => ({ body: { id: "c1", status: "verified", revocation: "awaiting_second_reviewer" } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Francal" }));
+    expect(screen.queryByRole("button", { name: "Revoke Own Listing" })).toBeNull();      // a listing isn't a claim
+    const ask = screen.getByRole("button", { name: "Ask to revoke" });
+    expect(ask.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Why control is being removed"), { target: { value: "policy" } });
+    fireEvent.change(screen.getByLabelText(/Reason for the decision/), { target: { value: "test" } });
+    expect(ask.disabled).toBe(true);
+    expect(screen.getByText("Write a reason of at least 5 characters.")).toBeTruthy();      // says why it can't be pressed yet
+    fireEvent.change(screen.getByLabelText(/Reason for the decision/), { target: { value: "The documents were forged." } });
+    expect(screen.queryByText("Write a reason of at least 5 characters.")).toBeNull();
+    fireEvent.click(ask);
+    await waitFor(() => expect(sent("POST", /review-decision$/).length).toBe(1));
+    expect(sent("POST", /review-decision$/)[0].body).toEqual({ decision: "revoke", reason: "The documents were forged.", reason_category: "policy" });
+  });
+
+  it("a revocation someone else asked for is confirmed from the same row", async () => {
+    const row = { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: true, needs_another_reviewer: false, revocation: { requested_by_you: false, category_label: "Fraud or impersonation", reason: "Forged filing" } };
+    routes = [funnel, queue, { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row], second_reviewer_required: true, revoke_categories: [] } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    expect(await screen.findByText("Revocation waiting")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review revocation Francal" }));
+    expect(screen.getByText("Forged filing")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm revocation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep the claim" })).toBeTruthy();
+  });
+
   it("design 6: the Marketplace section has its own tabs, driven by the sidebar or by itself", async () => {
     routes = [funnel, queue];
     const onSection = vi.fn();
     mount("/", <AdminClaims section="queue" onSection={onSection} />, "/");
     await screen.findByText("Nothing is waiting.");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Queue", "Unclaimed profiles", "Reports", "Visibility", "Index & invites"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Index & invites", "Queue", "Approved & rejected", "Unclaimed profiles", "Reports", "Visibility"]);
     expect(screen.getByRole("tab", { name: "Queue" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "Index & invites" }));
     expect(onSection).toHaveBeenCalledWith("index");
     const tiles = screen.getByRole("region", { name: "Directory at a glance" });
     expect(within(tiles).getByText("Claims started").parentElement.textContent).toBe("Claims started3");
-    expect(tiles.children.length).toBe(6);                                // its own six tiles, and no others
+    expect(tiles.children.length).toBe(7);                                // its own seven tiles, and no others
   });
 
   it("A-5: a moderator who isn't an administrator sees only the Marketplace section", async () => {
@@ -911,7 +1017,7 @@ describe("admin area", () => {
     mount("/ent-admin?section=marketplace", <AdminPage />, "/ent-admin");
     await screen.findByRole("heading", { level: 1, name: "Marketplace Claims" });
     const nav = screen.getAllByRole("navigation", { name: "Admin sections" })[0];
-    expect(within(nav).getAllByRole("button").map((b) => b.textContent.replace(/Decisions.*|Indexed,.*|Who sees.*|Add records.*/, ""))).toEqual(["Claims & reports", "Unclaimed profiles", "Visibility", "Index & invites"]);
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent.replace(/Decisions.*|Indexed,.*|Who sees.*|Add records.*|What's been.*/, ""))).toEqual(["Index & invites", "Claims & reports", "Approved & rejected", "Unclaimed profiles", "Visibility"]);
     expect(screen.queryByText("Platform health")).toBeNull();
     expect(screen.getByText("ADMIN", { exact: false, selector: "p" })).toBeTruthy();
     expect(sent("GET", /\/admin\/stats$/).length).toBe(0);                // never asks for what it may not see
@@ -1090,7 +1196,7 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     routes = [{ method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports: [], revocations: [], new_listings: rows, self_created_review: "post_publish" } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: {}, reports_open: 0, profiles: { total: 3, published: 2, claimed: 0, suppressed: 0 } } }) },
       { method: "POST", match: /listings\/.+\/review$/, reply: ({ path }) => { rows = rows.filter((r) => !path.includes(r.slug)); return { body: {} }; } }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const table = await screen.findByRole("table", { name: "New listings" });
     expect(screen.getByRole("tab", { name: /^Queue/ }).textContent).toBe("Queue3");
     const first = within(table).getByText("Apex Consulting").closest("tr");

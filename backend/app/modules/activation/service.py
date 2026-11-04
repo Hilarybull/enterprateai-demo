@@ -50,6 +50,7 @@ class Config:
     sender_name: str = "EnterprateAI"
     reply_to: str | None = None
     postal_address: str = ""
+    lifecycle_emails: bool = True         # welcome, a plan ending, and following up a quiet account
 
 
 @dataclass
@@ -88,6 +89,16 @@ class ActivationService:
         if status in rules.PERMITTED:
             return True, status
         return False, {"unknown": "no_permission_recorded"}.get(status, status)
+
+    def may_send(self, user: dict, row: dict) -> tuple[bool, str]:
+        """An email about the account itself needs no marketing permission, only an address that works."""
+        if row.get("journey_key") not in rules.ACCOUNT_JOURNEYS:
+            return self.permission(user)
+        if user.get("email_verified") is False:
+            return False, "not_verified"
+        if user.get("marketing_email_status") == "suppressed":
+            return False, "suppressed"      # the address bounced or complained
+        return True, "about their account"
 
     def in_cohort(self, user: dict) -> bool:
         c = self.config
@@ -224,9 +235,13 @@ class ActivationService:
             by_user.setdefault(r["user_id"], []).append(r)
         plan: list[dict] = []
         backlog = 0
+        subs = await self.store.subscriptions() if c.lifecycle_emails else {}
         for user in users:
             uid = user["id"]
             rows = by_user.get(uid, [])
+            if c.lifecycle_emails and self.in_cohort(user):
+                await self._account_emails(user, rows, subs.get(uid), now, plan, write)
+            rows = [r for r in rows if r["journey_key"] not in rules.ACCOUNT_JOURNEYS]      # the rest is about permission; these aren't
             pending = [r for r in rows if r.get("state") in PENDING]
             allowed, why = self.permission(user)
             if not allowed:
@@ -251,6 +266,13 @@ class ActivationService:
                 continue
             before = len(plan)
             historical = self._historical(user)
+            if c.lifecycle_emails and not pending:
+                quiet = rules.latest(user.get("last_seen_at"), user.get("created_at"), *[s.get("updated_at") for s in spaces])
+                step = rules.dormant_step(quiet, now)
+                if step and not any(r["journey_key"] == "D" and r["step_key"] == step for r in rows):
+                    plan.append({"user_id": uid, "action": "schedule", "journey": "D", "why": f"no activity since {quiet.date().isoformat()}", "steps": [step]})
+                    if write:
+                        await self._schedule(uid, "D", step, now)
             if not has_ws:
                 # Journey A, once: an account that has had it, or has ever had a workspace, never re-enters.
                 if "A" not in journeys and "B" not in journeys and "C" not in journeys:
@@ -302,6 +324,24 @@ class ActivationService:
                 plan.append({"user_id": uid, "action": "skip", "journey": "B", "why": "already_in_journey" if any(r["journey_key"] == "B" for r in pending) else "journey_already_run"})
         return plan
 
+    async def _account_emails(self, user: dict, rows: list[dict], sub: dict | None, now: datetime, plan: list[dict], write: bool) -> None:
+        """A welcome for a new account, and a reminder when a plan is really ending. Each exists once."""
+        uid = user["id"]
+        allowed, _why = self.may_send(user, {"journey_key": "W"})
+        if not allowed:
+            return
+        had = {r["step_key"] for r in rows}
+        joined = rules.parse(user.get("created_at"))
+        if "w1" not in had and joined and now - joined <= rules.WELCOME_WITHIN:
+            plan.append({"user_id": uid, "action": "schedule", "journey": "W", "why": "new account", "steps": ["w1"]})
+            if write:
+                await self._schedule(uid, "W", "w1", now)
+        step = rules.ending_step(sub, now)
+        if step and step not in had:
+            plan.append({"user_id": uid, "action": "schedule", "journey": "S", "why": "plan ending", "steps": [step]})
+            if write:
+                await self._schedule(uid, "S", step, now)
+
     async def _next_tip(self, user: dict, rows: list[dict], facts: dict, now: datetime) -> str | None:
         """At most two tips in any 30 days, at least ten days apart, and none while one is waiting or the account has gone quiet."""
         mine = [r for r in rows if r["journey_key"] == "C"]
@@ -324,8 +364,16 @@ class ActivationService:
 
     async def _still_applies(self, row: dict, user: dict) -> tuple[bool, str]:
         """Checked against the records as they are now, not as they were when the step was scheduled."""
+        if row["journey_key"] == "W":
+            return True, "new account"
+        if row["journey_key"] == "S":
+            step = rules.ending_step((await self.store.subscriptions()).get(user["id"]), self.clock())
+            return (True, "plan ending") if step and step.split(":")[1] == row["step_key"].split(":")[1] else (False, "plan_no_longer_ending")
         spaces = await self.store.workspaces_of(user["id"])
         facts = rules.user_facts(spaces)
+        if row["journey_key"] == "D":
+            quiet = rules.latest(user.get("last_seen_at"), user.get("created_at"), facts.get("last_active_at"))
+            return (True, "still quiet") if quiet and self.clock() - quiet >= rules.dormant_after(row["step_key"]) else (False, "active_again")
         if row["journey_key"] == "A":
             return (False, "workspace_created") if facts["has_workspace"] else (True, "no workspace")
         if row["journey_key"] == "B":
@@ -341,29 +389,37 @@ class ActivationService:
     def message(self, user: dict, row: dict) -> dict:
         """The email for one step. No business content: a neutral greeting, the reviewed copy, one link into the app."""
         c = self.config
-        t = rules.ALL_TEMPLATES[row["step_key"]]
+        t = rules.template_of(row["step_key"])
+        about_account = row["journey_key"] in rules.ACCOUNT_JOURNEYS
+        date_part = row["step_key"].split(":")[1] if ":" in row["step_key"] else ""
+        ends = rules.parse(date_part)
+        when = f"{ends.day} {ends:%B %Y}" if ends else "the end of your current period"
+        body = [p.replace("{date}", when) for p in t["body"]]
         base = c.base_url.rstrip("/")
         to = t["to"]
         link = f"{base}{to}{'&' if '?' in to else '?'}utm_source=activation&utm_medium=email&utm_campaign=journey_{row['journey_key'].lower()}&utm_content={row['step_key']}"
         token = self.token(user["id"])
         unsubscribe, prefs = f"{base}/email/unsubscribe?token={token}", f"{base}/email/preferences?token={token}"
         hello = f"Hello {rules.first_name(user.get('name'))}," if rules.first_name(user.get("name")) else "Hello,"
-        foot = (f"You are receiving this because you asked for tips on getting started with EnterprateAI. "
+        foot = ("You are receiving this because you have an EnterprateAI account." if about_account else
+                f"You are receiving this because you asked for tips on getting started with EnterprateAI. "
                 f"Unsubscribe: {unsubscribe}  ·  Email preferences: {prefs}")
         sender = f"{c.sender_name}" + (f", {c.postal_address}" if c.postal_address else "")
-        text = "\n\n".join([hello, *t["body"], f"{t['button']}: {link}", "The EnterprateAI team", foot, sender])
+        text = "\n\n".join([hello, *body, f"{t['button']}: {link}", "The EnterprateAI team", foot, sender])
         html = (f"<div style='font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1e293b;max-width:560px'>"
-                f"<p>{escape(hello)}</p>" + "".join(f"<p>{escape(p)}</p>" for p in t["body"])
+                f"<p>{escape(hello)}</p>" + "".join(f"<p>{escape(p)}</p>" for p in body)
                 + f"<p style='margin:24px 0'><a href='{escape(link)}' style='background:#4f46e5;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:600;display:inline-block'>{escape(t['button'])}</a></p>"
                 f"<p>The EnterprateAI team</p>"
                 f"<p style='font-size:12px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:12px;margin-top:28px'>"
-                f"You are receiving this because you asked for tips on getting started with EnterprateAI. "
-                f"<a href='{escape(unsubscribe)}' style='color:#64748b'>Unsubscribe</a> · <a href='{escape(prefs)}' style='color:#64748b'>Email preferences</a><br>{escape(sender)}</p></div>")
+                + ("You are receiving this because you have an EnterprateAI account." if about_account else
+                   f"You are receiving this because you asked for tips on getting started with EnterprateAI. "
+                   f"<a href='{escape(unsubscribe)}' style='color:#64748b'>Unsubscribe</a> · <a href='{escape(prefs)}' style='color:#64748b'>Email preferences</a>")
+                + f"<br>{escape(sender)}</p></div>")
         headers = {"X-Entity-Ref-ID": f"activation-{row['id']}"}
-        if c.api_base_url:      # one-click unsubscribe for mail clients that offer it
+        if c.api_base_url and not about_account:      # one-click unsubscribe for mail clients that offer it
             headers["List-Unsubscribe"] = f"<{c.api_base_url.rstrip('/')}/email/unsubscribe?token={token}>"
             headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-        return {"to": user["email"], "subject": t["subject"], "text": text, "html": html, "headers": headers, "reply_to": c.reply_to,
+        return {"to": user["email"], "subject": t["subject"].replace("{date}", when), "marketing": not about_account, "text": text, "html": html, "headers": headers, "reply_to": c.reply_to,
                 "idempotency_key": f"activation/{user['id']}/{row['journey_key']}/{row['step_key']}/{row.get('template_version') or rules.TEMPLATE_VERSION}"}
 
     async def deliver(self, *, dry_run: bool | None = None) -> list[dict]:
@@ -382,7 +438,8 @@ class ActivationService:
                 await self.store.update_ledger(r["id"], {"state": "cancelled", "stopped_reason": "account_deleted", "updated_at": now}, expect_state=r["state"])
                 report.append({**out, "result": "cancelled", "why": "account_deleted"})
                 continue
-            allowed, why = self.permission(user)
+            about_account = r["journey_key"] in rules.ACCOUNT_JOURNEYS
+            allowed, why = self.may_send(user, r)
             if not allowed:
                 await self.store.update_ledger(r["id"], {"state": "cancelled", "stopped_reason": why, "updated_at": now}, expect_state=r["state"])
                 report.append({**out, "result": "cancelled", "why": why})
@@ -394,25 +451,25 @@ class ActivationService:
                     await self._cancel(await self.store.ledger(r["user_id"]), reason, r["journey_key"])
                 report.append({**out, "result": "cancelled", "why": reason})
                 continue
-            if self.holdout(user):
+            if self.holdout(user) and not about_account:
                 # Held back on purpose and counted, so the emails' effect can be measured against people who got none.
                 await self.store.update_ledger(r["id"], {"state": "holdout", "stopped_reason": "holdout", "updated_at": now}, expect_state=r["state"])
                 report.append({**out, "result": "holdout", "why": "in the measurement holdout"})
                 continue
-            if not rules.in_send_window(now, user.get("timezone")):
+            if r["journey_key"] != "W" and not rules.in_send_window(now, user.get("timezone")):      # a welcome goes when they join
                 later = rules.next_window_start(now, user.get("timezone"))
                 await self.store.update_ledger(r["id"], {"due_at": later, "updated_at": now}, expect_state=r["state"])
                 report.append({**out, "result": "deferred", "why": "outside 09:00 to 18:00 where they are", "until": later.isoformat()})
                 continue
             mine = await self.store.ledger(r["user_id"])
-            last = max((t for t in (rules.parse(x.get("sent_at")) for x in mine if x["id"] != r["id"] and x.get("state") == "sent") if t), default=None)
-            if r["user_id"] in sent_this_run or (last and now - last < rules.MIN_GAP):
+            last = max((t for t in (rules.parse(x.get("sent_at")) for x in mine if x["id"] != r["id"] and x.get("state") == "sent" and x["journey_key"] not in rules.ACCOUNT_JOURNEYS) if t), default=None)
+            if not about_account and (r["user_id"] in sent_this_run or (last and now - last < rules.MIN_GAP)):      # the gap is for promotional email
                 later = rules.next_window_start((last or now) + rules.MIN_GAP, user.get("timezone"))
                 await self.store.update_ledger(r["id"], {"due_at": later, "updated_at": now}, expect_state=r["state"])
                 report.append({**out, "result": "deferred", "why": "another activation email went in the last 48 hours", "until": later.isoformat()})
                 continue
             if dry:
-                report.append({**out, "result": "would_send", "why": reason, "to": user["email"], "subject": rules.ALL_TEMPLATES[r["step_key"]]["subject"]})
+                report.append({**out, "result": "would_send", "why": reason, "to": user["email"], "subject": rules.template_of(r["step_key"])["subject"]})
                 continue
             claimed = await self.store.update_ledger(r["id"], {"state": "sending", "attempt_count": int(r.get("attempt_count") or 0) + 1, "updated_at": now}, expect_state=r["state"])
             if not claimed:
@@ -427,7 +484,8 @@ class ActivationService:
             if result.sent:
                 await self.store.update_ledger(r["id"], {"state": "sent", "sent_at": now, "provider_message_id": result.message_id, "delivery_status": "accepted", "updated_at": now})
                 await self._event(r["user_id"], "sent", {"journey": r["journey_key"], "step": r["step_key"], "template_version": claimed.get("template_version")}, dedupe=f"sent:{r['id']}")
-                sent_this_run.add(r["user_id"])
+                if not about_account:
+                    sent_this_run.add(r["user_id"])
                 report.append({**out, "result": "sent", "why": reason})
             elif result.recipient_rejected:
                 await self.store.update_ledger(r["id"], {"state": "failed", "stopped_reason": "recipient_rejected", "delivery_status": "bounced", "updated_at": now})
@@ -467,18 +525,18 @@ class ActivationService:
             if not user:
                 out.append({**row, "result": "would_cancel", "why": "account_deleted"})
                 continue
-            allowed, why = self.permission(user)
+            allowed, why = self.may_send(user, r)
             applies, reason = (False, why) if not allowed else await self._still_applies(r, user)
             if not applies:
                 out.append({**row, "result": "would_cancel", "why": reason})
-            elif self.holdout(user):
+            elif self.holdout(user) and r["journey_key"] not in rules.ACCOUNT_JOURNEYS:
                 out.append({**row, "result": "holdout", "why": "in the measurement holdout"})
-            elif not rules.in_send_window(now, user.get("timezone")):
+            elif r["journey_key"] != "W" and not rules.in_send_window(now, user.get("timezone")):
                 local = now.astimezone(rules.zone(user.get("timezone")))
                 out.append({**row, "result": "would_defer", "why": f"outside 09:00 to 18:00 where they are (it would be {local:%H:%M} in {user.get('timezone') or rules.DEFAULT_TIMEZONE})",
                             "until": rules.next_window_start(now, user.get("timezone")).isoformat(), "timezone": user.get("timezone") or rules.DEFAULT_TIMEZONE})
             else:
-                out.append({**row, "result": "would_send", "why": reason, "subject": rules.ALL_TEMPLATES[r["step_key"]]["subject"]})
+                out.append({**row, "result": "would_send", "why": reason, "subject": rules.template_of(r["step_key"])["subject"]})
         return out
 
     # ── delivery events from the provider ─────────────────────────────────────
@@ -523,7 +581,7 @@ class ActivationService:
                            "collected_at": user.get("marketing_permission_at"), "unsubscribed_at": user.get("marketing_unsubscribed_at"),
                            "suppression_reason": user.get("marketing_suppression_reason")},
             "cohort": {"in_rollout": self.in_cohort(user), "holdout": self.holdout(user), "internal": self.internal(user)},
-            "steps": [{"journey": r["journey_key"], "step": r["step_key"], "subject": rules.ALL_TEMPLATES.get(r["step_key"], {}).get("subject"), "state": r.get("state"),
+            "steps": [{"journey": r["journey_key"], "step": r["step_key"], "subject": (rules.template_of(r["step_key"]) or {}).get("subject"), "state": r.get("state"),
                        "due_at": r.get("due_at"), "sent_at": r.get("sent_at"), "attempts": r.get("attempt_count"), "template_version": r.get("template_version"),
                        "delivery_status": r.get("delivery_status"), "stopped_reason": r.get("stopped_reason")} for r in rows],
         }
@@ -540,7 +598,7 @@ class ActivationService:
         for key, t in rules.ALL_TEMPLATES.items():
             steps[key] = {"step": key, "journey": t["journey"], "subject": t["subject"], "scheduled": 0, "sent": 0, "delivered": 0, "bounced": 0, "complained": 0, "cancelled": 0, "holdout": 0, "failed": 0}
         for r in rows:
-            s = steps.get(r["step_key"])
+            s = steps.get(r["step_key"].split(":")[0])
             if not s:
                 continue
             state = r.get("state")

@@ -30,7 +30,7 @@ class World:
         self.outbox: list[dict] = []
         self.results: list[SendResult] = []      # queued outcomes for the next sends; default is "sent"
         self.plans: dict[str, str] = {}
-        self.config = Config(**{"enabled": True, "dry_run": False, "cohort": "all", "holdout_percent": 0, **config})
+        self.config = Config(**{"enabled": True, "dry_run": False, "cohort": "all", "holdout_percent": 0, "lifecycle_emails": False, **config})
         self.svc = ActivationService(store=self.store, send=self._send, config=lambda: self.config, clock=lambda: self.now, plan_of=self._plan)
 
     async def _send(self, message):

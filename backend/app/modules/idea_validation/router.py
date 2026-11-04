@@ -16,6 +16,7 @@ from app.modules.idea_validation.schemas import (
     WorkspaceResponse,
 )
 from app.modules.idea_validation.service import (
+    _get_accessible_workspace,
     create_workspace,
     evaluate,
     evaluate_v4_idea,
@@ -166,6 +167,26 @@ def _tell_agent(ws, patch) -> None:
     except Exception:      # noqa: BLE001
         pass
 
+
+
+class DeleteWorkspaceRequest(BaseModel):
+    confirm: str      # the workspace's name, typed out
+
+
+@router.post("/{workspace_id}/delete", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_validation_workspace(workspace_id: str, payload: DeleteWorkspaceRequest, user=Depends(get_current_user)) -> Response:
+    """The owner deletes one workspace for good. Their account, plan, credits and other workspaces are untouched."""
+    ws, is_owner = await _get_accessible_workspace(user_id=user["id"], workspace_id=workspace_id)
+    if not is_owner or user.get("id") == "demo":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete this workspace.")
+    names = {str(n).strip().lower() for n in (ws.name, ((ws.data or {}).get("workspace_profile") or {}).get("company_name")) if n}
+    if payload.confirm.strip().lower() not in names:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Type the workspace name exactly to confirm.")
+    from app.modules.marketplace.directory_router import get_service
+    from app.shared.auth.purge import purge_workspace
+    await get_service().release_workspace(workspace_id, actor=user["id"])
+    await purge_workspace(workspace_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceResponse)

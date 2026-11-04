@@ -60,7 +60,7 @@ def read_config() -> Config:
 async def _send(message: dict) -> SendResult:
     from app.shared.email.resend import send_email_via_resend
     r = await send_email_via_resend(to_email=message["to"], subject=message["subject"], text_content=message["text"], html_content=message["html"],
-                                    reply_to_email=message.get("reply_to"), idempotency_key=message["idempotency_key"], headers=message.get("headers"), marketing=True)
+                                    reply_to_email=message.get("reply_to"), idempotency_key=message["idempotency_key"], headers=message.get("headers"), marketing=message.get("marketing", True))
     return SendResult(sent=bool(r.sent), message_id=getattr(r, "message_id", None), uncertain=bool(getattr(r, "uncertain", False)),
                       recipient_rejected=bool(getattr(r, "recipient_rejected", False)), error=getattr(r, "error", None))
 

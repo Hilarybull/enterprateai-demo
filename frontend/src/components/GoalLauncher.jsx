@@ -221,7 +221,7 @@ export function useGoalFlow({ inApp = false } = {}) {
       trackGoal("first_question_shown", { ms });
       return true;
     } catch (e) {
-      setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please refresh the page and try again." : "Couldn't continue. Try again.");
+      setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please try again and tick the box when it appears. If it keeps happening, turn off any ad blocker or VPN." : "Couldn't continue. Try again.");
       return false;
     } finally {
       setBusy(false);
@@ -293,7 +293,7 @@ export function useGoalFlow({ inApp = false } = {}) {
       keep(reply);
       return "";
     } catch (e) {
-      return e?.status === 429 ? "That's a lot of codes. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please refresh the page and try again." : e?.status === 422 ? "Enter a valid email address." : "Couldn't continue. Try again.";
+      return e?.status === 429 ? "That's a lot of codes. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please try again and tick the box when it appears. If it keeps happening, turn off any ad blocker or VPN." : e?.status === 422 ? "Enter a valid email address." : "Couldn't continue. Try again.";
     } finally {
       setBusy(false);
     }

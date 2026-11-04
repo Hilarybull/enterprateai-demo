@@ -52,10 +52,12 @@ export const ADMIN_NAV = [
     { key: "demo-requests", label: "Demo requests", subtitle: "People who asked for a demo", icon: "calendar" },
   ] },
   { group: "Marketplace", items: [
+    { key: "marketplace-index", label: "Index & invites", subtitle: "Add records, make claim links", icon: "upload", marketplace: true },
     { key: "marketplace-queue", label: "Claims & reports", subtitle: "Decisions waiting for a person", icon: "shield", marketplace: true },
+    { key: "marketplace-decided", label: "Approved & rejected", subtitle: "What's been decided, and who was told", icon: "list", marketplace: true },
     { key: "marketplace-unclaimed", label: "Unclaimed profiles", subtitle: "Indexed, not yet claimed", icon: "store", marketplace: true },
     { key: "marketplace-visibility", label: "Visibility", subtitle: "Who sees unclaimed profiles", icon: "eye", marketplace: true },
-    { key: "marketplace-index", label: "Index & invites", subtitle: "Add records, make claim links", icon: "upload", marketplace: true },
+    { key: "marketplace-team", label: "Team", subtitle: "Who can add and manage profiles", icon: "users" },
   ] },
   { group: "Content", items: [
     { key: "blog", label: "Blog", subtitle: "Articles, categories and tags", icon: "pen" },

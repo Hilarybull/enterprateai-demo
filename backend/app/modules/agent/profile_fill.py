@@ -84,7 +84,7 @@ def proposed(answers: dict, goal: str, currency: str | None = None) -> dict[str,
     offering = re.sub(r"^(?:a|an|the|my|our)\s+", "", raw, flags=re.I)
     if offering:
         out["key_offering_focus"] = offering[:1].upper() + offering[1:]
-        out["services"] = [{"service_name": out["key_offering_focus"][:80], "description": out["key_offering_focus"]}]
+        out["services"] = [{"service_name": out["key_offering_focus"][:80], "service_category": "other", "description": out["key_offering_focus"]}]
         industry = next((k for k, pattern in INDUSTRY if re.search(pattern, offering, re.I)), None)
         plain = re.sub(r"\s+(?:subscription|service|services|business|company|startup)s?$", "", offering.lower()).strip()
         plain = re.sub(r"^(?:monthly|weekly|daily|premium|affordable|local|on-demand)\s+", "", plain).strip()

@@ -2,7 +2,7 @@ import { SkeletonCard, SkeletonRegion } from "../Skeleton";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Btn, Notice, Panel, Pill, inputClass } from "../readiness/Fields";
-import { Initials } from "./MarketplaceHeader";
+import { BusinessMark } from "./MarketplaceHeader";
 import { useAuthStore } from "../../store/auth";
 import {
   OPPORTUNITY_LABEL, TRUST_MARK, TRUST_TONE, activateMarketplaceProfile, claimLookup, directoryError, reportBusiness, searchBusinesses, suggestMarketplaceServices, suggestMarketplaceDescription, updateMarketplaceProfile,
@@ -76,7 +76,7 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
           <select aria-label="Profile status" className={field} value={filters.trust} onChange={set("trust")}>
             <option value="">Any status</option><option value="claimed">Verified only</option><option value="created">Created on EnterprateAI, not verified</option>
             {/* Offered only when unclaimed profiles are listed at all. */}
-            {state.unclaimed_listed && <option value="unclaimed">Not yet claimed</option>}
+            {state.unclaimed_listed && <option value="unclaimed">Public listing</option>}
           </select>
           <select aria-label="Open for" className={field} value={filters.open_for} onChange={set("open_for")}>
             <option value="">Any opportunity</option><option value="enquiries">Open for enquiries</option><option value="rfqs">Open for quote requests</option><option value="proposals">Open for proposals</option>
@@ -99,7 +99,7 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                         {/* The badge has the top line to itself on every card, so names line up across a row. */}
                         <div className="flex justify-end"><TrustBadge trust={b.trust} /></div>
                         <div className="mt-2 flex items-center gap-3">
-                          <Initials name={b.name} size={40} />
+                          <BusinessMark name={b.name} logo={b.logo_data_url} size={40} />
                           <div className="min-w-0">
                             <h3 className="break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-100">{b.name}</h3>
                             <p className="truncate text-[12px] text-slate-500">{[b.category, b.location].filter(Boolean).join(" · ")}</p>
@@ -113,7 +113,7 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                           </p>
                         )}
                         <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-                          <OpportunityChips opportunities={b.opportunities} />
+                          <OpportunityChips opportunities={b.held_requests_open ? { ...b.opportunities, enquiries: true, rfqs: true } : b.opportunities} />
                           <span className="ml-auto shrink-0 whitespace-nowrap text-[13px] font-semibold text-brand-600 group-hover:underline dark:text-brand-300">View profile →</span>
                         </div>
                       </Link>

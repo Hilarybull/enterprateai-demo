@@ -203,3 +203,11 @@ def test_the_api_says_who_is_a_moderator_and_public_listings_stay_free_of_privat
         assert OWNER not in page.text and OWNER not in listed and "hello@apex.test" not in page.text
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_a_service_saved_without_a_category_does_not_take_the_directory_down():
+    from app.modules.marketplace.schemas import ServiceEntryOut
+    filled_by_the_agent = ServiceEntryOut.model_validate({"service_name": "AI Adoption Framework", "description": "AI Adoption Framework"})
+    assert filled_by_the_agent.model_dump() == {"service_name": "AI Adoption Framework", "service_category": "", "service_description": "AI Adoption Framework"}
+    assert ServiceEntryOut.model_validate({"service_name": "Audits", "service_category": None, "service_description": "Yearly"}).service_description == "Yearly"
+    assert ServiceEntryOut.model_validate({"service_name": "Audits", "service_category": "consulting"}).service_category == "consulting"

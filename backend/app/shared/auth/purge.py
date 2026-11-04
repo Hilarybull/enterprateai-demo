@@ -31,6 +31,20 @@ async def _drop(table: str, column: str, value: str) -> None:
         logger.warning("account purge: %s where %s=%s not cleared", table, column, value, exc_info=True)
 
 
+async def purge_workspace(wid: str) -> None:
+    """One workspace and its business data."""
+    for table in _BY_BUSINESS:
+        await _drop(table, "business_id", wid)
+    for table in _BY_WORKSPACE:
+        await _drop(table, "workspace_id", wid)
+    await _drop("workspaces", "id", wid)
+    try:      # its saved copies (Mongo), when that store is there
+        from app.core.database import get_mongo_db
+        await get_mongo_db()["workspace_snapshots"].delete_many({"workspace_id": wid})
+    except Exception:      # noqa: BLE001
+        pass
+
+
 async def purge_account(user_id: str, email: str | None = None) -> None:
     """Remove the account's workspaces (with their business data), credits, plan, grants and documents. The account record
     itself is removed by the caller, after this."""
@@ -43,16 +57,7 @@ async def purge_account(user_id: str, email: str | None = None) -> None:
         wid = str(ws.get("id") or "")
         if not wid:
             continue
-        for table in _BY_BUSINESS:
-            await _drop(table, "business_id", wid)
-        for table in _BY_WORKSPACE:
-            await _drop(table, "workspace_id", wid)
-        await _drop("workspaces", "id", wid)
-        try:      # its saved copies (Mongo), when that store is there
-            from app.core.database import get_mongo_db
-            await get_mongo_db()["workspace_snapshots"].delete_many({"workspace_id": wid})
-        except Exception:      # noqa: BLE001
-            pass
+        await purge_workspace(wid)
     for table in _BY_USER:
         await _drop(table, "user_id", user_id)
     if email:

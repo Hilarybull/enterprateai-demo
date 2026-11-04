@@ -12,7 +12,7 @@ from app.shared.limits import client_ip
 logger = logging.getLogger(__name__)
 
 VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-REFUSED = "We couldn't confirm this came from a person. Please refresh the page and try again."
+REFUSED = "We couldn't confirm this came from a person. Please try again and tick the box when it appears. If it keeps happening, turn off any ad blocker or VPN."
 
 
 async def require_human(request: Request) -> None:

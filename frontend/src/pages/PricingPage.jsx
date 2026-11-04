@@ -718,6 +718,7 @@ export default function PricingPage() {
         </div>
 
         {/* â”€â”€ Marketplace Add-ons â”€â”€ */}
+        {/* Hidden for now (the owner, 4 Nov): put back by removing this comment.
         <div id="addons" className="mt-12 scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-1 flex items-center gap-2">
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
@@ -732,7 +733,7 @@ export default function PricingPage() {
           </p>
 
           <div className="mt-6 space-y-6">
-            {/* Featured Listing Boosts */}
+            Featured Listing Boosts:
             <div>
               <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                 Featured Listing Boosts
@@ -748,7 +749,7 @@ export default function PricingPage() {
               </div>
             </div>
 
-            {/* RFQ Credit Packs */}
+            RFQ Credit Packs:
             <div>
               <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                 RFQ Response Credit Packs
@@ -765,6 +766,7 @@ export default function PricingPage() {
             </div>
           </div>
         </div>
+        */}
 
         <div className="mt-10 text-center">
           <p className="text-sm text-slate-500 dark:text-slate-400">

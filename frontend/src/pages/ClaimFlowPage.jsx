@@ -464,6 +464,7 @@ export default function ClaimFlowPage() {
         {claim?.notice && step !== "closed" && <Notice tone="amber">{claim.notice}</Notice>}
         {claim?.opportunity && step !== "closed" && <Teaser opportunity={claim.opportunity} />}
 
+        {manages && claim?.requests_delivered > 0 && <Notice tone="emerald" data-requests-delivered>{claim.requests_delivered === 1 ? "1 request" : `${claim.requests_delivered} requests`} sent to this business before you verified it {claim.requests_delivered === 1 ? "is" : "are"} now yours. You'll find {claim.requests_delivered === 1 ? "it" : "them"} with your quote requests in Business Operations.</Notice>}
         {manages && <Manages name={profile.name} businessId={claim?.business_id || profile.business_id}
           onDashboard={() => finished({ business_id: claim?.business_id || profile.business_id, to: "/dashboard" })} />}
         {heldByAnother && <AlreadyClaimed profile={profile} signedIn={Boolean(token)} busy={busy} onChallenge={begin} onSignIn={signIn} />}
@@ -481,6 +482,7 @@ export default function ClaimFlowPage() {
         {claim?.status === "verified" && !settings && <p role="status" className="text-sm text-slate-500">Loading your profile…</p>}
         {claim && step === "profile_review" && settings && (
           <Panel title={`You now manage ${profile.name} on EnterprateAI`} description="Check what the public will see. You can change any of this later.">
+            {claim.requests_delivered > 0 && <Notice tone="emerald" className="mb-3" data-requests-delivered>{claim.requests_delivered === 1 ? "1 request" : `${claim.requests_delivered} requests`} sent to this business before you claimed it {claim.requests_delivered === 1 ? "is" : "are"} now yours. You'll find {claim.requests_delivered === 1 ? "it" : "them"} with your quote requests in Business Operations.</Notice>}
             <ProfileSettings profile={settings} claimId={claim.id} saveLabel="Save & Set Opportunity Preferences" footerLeft={cancelLink || <span />}
               onSaved={async (saved) => { setSettings(saved); setClaim(await getClaim(claim.id)); }} />
           </Panel>

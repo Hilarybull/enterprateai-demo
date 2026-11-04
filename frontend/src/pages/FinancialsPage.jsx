@@ -2109,7 +2109,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function approveRfq(rfqId, itemPrices, validityDays = 30) {
     setError(null);
     try {
-      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve`, "POST", {
+      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {
         validity_days: validityDays,
         item_prices: itemPrices || undefined,
       });
@@ -2152,7 +2152,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     setError(null);
     try {
       const rfqBefore = rfqRequests.find((r) => r.id === rfqId);
-      const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject`, "POST", {});
+      const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {});
       setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
       // Send rejection notification email to customer
       if (rfqBefore?.customer_email) {
@@ -2194,7 +2194,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function _doDeleteRfq(rfqId) {
     setError(null);
     try {
-      await apiRequest(`/marketplace/rfq/${rfqId}`, "DELETE");
+      await apiRequest(`/marketplace/rfq/${rfqId}?workspace_id=${encodeURIComponent(workspaceId)}`, "DELETE");
       setRfqRequests((prev) => prev.filter((r) => r.id !== rfqId));
       await persist({ invoices, quotes, expenses, contracts });
     } catch (e) {

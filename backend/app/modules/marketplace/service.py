@@ -687,6 +687,22 @@ async def submit_rfq(
     return rfq
 
 
+async def note_sent_request(user_id: str, workspace_id: str, request_id: str, recipient: str, items: list[dict], message: str | None) -> None:
+    """The sender's own copy of a request left on an unclaimed profile, so it shows among the requests they've sent."""
+    try:
+        ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id), ("user_id", "eq", user_id)], single=True)
+        if not ws:
+            return
+        data = ws.get("data") or {}
+        fin = data.get("financials") or {}
+        now = datetime.now(timezone.utc).isoformat()
+        sent = [{"id": request_id, "recipient_workspace_id": None, "recipient_company_name": recipient, "items": items,
+                 "message": message, "status": "pending", "created_at": now}, *(fin.get("sent_rfqs") or [])]
+        await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": {**data, "financials": {**fin, "sent_rfqs": sent}}, "updated_at": now})
+    except Exception:      # noqa: BLE001 - never fails the request itself
+        logging.getLogger(__name__).warning("could not record a sent request", exc_info=True)
+
+
 async def _hand_rfq_to_agent(workspace_id: str, rfq_id: str) -> None:
     """Let the seller's Agent start drafting a reply, if the business has that switched on.
     The buyer's request is already saved; whatever happens here never fails it."""

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
 import logoUrl from "../enterprate-logo.png";
-import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
+import { openWorkspace, useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { getAgentSummary } from "../lib/agent";
 import { AgentLauncher } from "./BusinessAssistant";
 import WorkspaceCompletion from "./WorkspaceCompletion";
@@ -649,10 +649,24 @@ export default function Layout() {
         // If user already has a workspace selected, reload that specific one.
         // Only fall back to /me (most-recently-updated) when nothing is pinned.
         const pinnedId = useWorkspaceStore.getState().workspaceId;
-        const ws = pinnedId
-          ? await apiRequestCached(`/validation/${pinnedId}`)
-          : await apiRequestCached("/validation/me");
+        const { ws, lost } = await openWorkspace(pinnedId);
         if (cancelled) return;
+        if (lost) {
+          // The workspace they were in has been closed: carry on in another one, or create a new one.
+          const gone = useWorkspaceStore.getState().workspaceName || "That workspace";
+          useWorkspaceStore.getState().setWorkspaceId(null);
+          if (ws) {
+            window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "info", title: "Workspace closed", message: `${gone} is no longer available on your account. You're now in ${ws.name || "your other workspace"}.` } }));
+          } else {
+            const shared = await apiRequest("/workspace/me/memberships", "GET").catch(() => []);
+            if (cancelled) return;
+            if (Array.isArray(shared) && shared.length > 0) throw new Error("HTTP 404: closed, and a shared workspace is left");
+            setWorkspaceName(null);
+            setWorkspaceLogo(null);
+            navigate("/onboarding?next=%2Fdashboard&workspace_closed=1", { replace: true });
+            return;
+          }
+        }
 
         // First sign-in (or a workspace that was never set up): show the
         // stepped workspace form once. Finishing or skipping it records

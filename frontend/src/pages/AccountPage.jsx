@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import { UndoToast } from "../components/FirstResultPanel";
 import { useProposalStore } from "../store/proposal";
-import { apiRequest } from "../api/client";
+import { apiRequest, invalidateWorkspaceCache } from "../api/client";
 import { SavedBusinessMatch } from "../components/marketplace/MatchPrompt";
 import AccountSettings from "./AccountSettings";
 
@@ -736,6 +736,48 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   );
 }
 
+/** Delete this one workspace. The person types its name; anything else they have stays. */
+export function DeleteWorkspaceCard({ workspaceId, name }) {
+  const navigate = useNavigate();
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const [typed, setTyped] = useState("");
+  const [state, setState] = useState({});
+  if (isMemberMode || !workspaceId || !name) return null;
+  const matches = typed.trim().toLowerCase() === String(name).trim().toLowerCase();
+  async function remove(e) {
+    e.preventDefault();
+    setState({ busy: true });
+    try {
+      await apiRequest(`/validation/${workspaceId}/delete`, "POST", { confirm: typed });
+      invalidateWorkspaceCache();
+      const store = useWorkspaceStore.getState();
+      store.setWorkspaceId(null);
+      store.setWorkspaceName(null);
+      store.setWorkspaceLogo(null);
+      window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "info", title: "Workspace deleted", message: `${name} has been deleted.` } }));
+      navigate("/dashboard", { replace: true });
+      window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));      // opens another workspace, or asks them to create one
+    } catch (err) {
+      setState({ problem: (err instanceof Error ? err.message : "").replace(/^HTTP \d+:\s*/, "") || "The workspace couldn't be deleted. Nothing was changed." });
+    }
+  }
+  return (
+    <Card className="!border-rose-200 dark:!border-rose-900">
+      <div className="px-6 py-5">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Delete workspace</p>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">This deletes {name} and everything in it: customers, documents, requests and its Marketplace listing. Anyone you invited loses access. Your account, plan and credits stay, and so do your other workspaces. It can't be undone.</p>
+        <form onSubmit={remove} className="mt-4 max-w-md space-y-3" aria-label="Delete workspace">
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Type {name} to confirm
+            <input className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" value={typed} onChange={(e) => { setTyped(e.target.value); setState({}); }} autoComplete="off" />
+          </label>
+          <button type="submit" disabled={!matches || state.busy} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300">{state.busy ? "Deleting…" : "Delete this workspace"}</button>
+          {state.problem && <p role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</p>}
+        </form>
+      </div>
+    </Card>
+  );
+}
+
 function ProposalSettingsCard() {
   const { preferences, preferencesLoading, fetchPreferences, savePreferences } = useProposalStore();
   const [open, setOpen] = useState(null); // null = loading, true/false = loaded
@@ -1136,6 +1178,7 @@ function WorkspaceTab({ workspaceId }) {
       </div>
     </Card>
     <ProposalSettingsCard />
+    <DeleteWorkspaceCard workspaceId={workspaceId} name={ws?.workspace_profile?.company_name || useWorkspaceStore.getState().workspaceName} />
     </>
   );
 }

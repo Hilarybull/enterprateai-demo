@@ -1,6 +1,7 @@
 import { SkeletonCard, SkeletonRegion } from "../components/Skeleton";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { alertDialog } from "../lib/dialog";
+import { searchBusinesses } from "../lib/directory";
 import { hasPaidAccess } from "../lib/plans";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -2421,6 +2422,7 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
 
   const activeTab = tab;
   const [listings, setListings] = useState([]);
+  const [publicListings, setPublicListings] = useState([]);      // profiles nobody has claimed yet: their services are open to requests too
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2550,6 +2552,15 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
   }, [debouncedSearch, filterIndustry, filterType, page, refreshKey]);
 
   useEffect(() => {
+    if (activeTab !== "products") return undefined;
+    let alive = true;
+    searchBusinesses({ trust: "unclaimed", q: debouncedSearch, page_size: 60 })
+      .then((res) => { if (alive) setPublicListings(res.items || []); })
+      .catch(() => { if (alive) setPublicListings([]); });      // the rest of the tab is still worth showing
+    return () => { alive = false; };
+  }, [activeTab, debouncedSearch, refreshKey]);
+
+  useEffect(() => {
     if (!isLoggedIn || !workspaceId) return;
     let alive = true;
     apiRequest("/marketplace/status", "GET").then((res) => { if (alive) setMyStatus(res); }).catch(() => {}).finally(() => { alive = false; });
@@ -2617,6 +2628,20 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
           });
       }
     }
+    // Services on a profile nobody has claimed: a request is kept for whoever claims it, on the profile's own page.
+    for (const b of publicListings) {
+      if (!b.held_requests_open) continue;
+      const category = String(b.category || "");
+      if (filterType || (filterIndustry && !category.toLowerCase().replace(/\s+/g, "_").includes(filterIndustry))) continue;
+      const listing = { workspace_id: `profile:${b.id}`, company_name: b.name || "", logo_data_url: b.logo_data_url, city: b.location, country: b.country, directorySlug: b.slug };
+      for (const name of (b.service_tags || [])) {
+        const description = b.description || "";
+        const matchesSearch = !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q) || listing.company_name.toLowerCase().includes(q);
+        const matchesCategory = !filterCategory || category.toLowerCase().includes(filterCategory.toLowerCase());
+        if (matchesSearch && matchesCategory)
+          products.push({ service: { service_name: name, service_description: description, service_category: category }, listing, _key: `svc-${listing.workspace_id}-${name}` });
+      }
+    }
     // Deduplicate: if a catalogue product and a profile service share the same name for the same workspace,
     // keep the catalogue product (richer data) and drop the service duplicate.
     // Build a lookup of profile service descriptions so catalogue products can fall back to them.
@@ -2649,7 +2674,7 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
     // Featured listings always lead; order within each group is kept.
     deduped.sort((a, b) => Number(!!b.listing.is_featured) - Number(!!a.listing.is_featured));
     return deduped;
-  }, [listings, debouncedSearch, filterCategory, sortBy]);
+  }, [listings, publicListings, debouncedSearch, filterCategory, filterIndustry, filterType, sortBy]);
 
   function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); onQuery?.(""); setPage(1); }
   const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
@@ -2889,6 +2914,20 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {allProducts.map((product) => {
                 const isOwn = isLoggedIn && (myStatus?.workspace_id || workspaceId) === product.listing.workspace_id;
+                const slug = product.listing.directorySlug;
+                if (slug) {
+                  const openProfile = () => navigate(`/marketplace/business/${slug}`);
+                  return (
+                    <ProductCard
+                      key={product._key}
+                      product={product}
+                      onOpen={openProfile}
+                      onCompanyClick={openProfile}
+                      onRequestQuote={(_listing, productName) => navigate(`/marketplace/business/${slug}?request=quote&service=${encodeURIComponent(productName)}`)}
+                      isOwn={false}
+                    />
+                  );
+                }
                 return (
                   <ProductCard
                     key={product._key}

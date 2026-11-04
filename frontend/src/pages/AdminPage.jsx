@@ -4,7 +4,7 @@ import ResearchDiagnostics from "../components/admin/ResearchDiagnostics";
 import { createPortal } from "react-dom";
 import { alertDialog } from "../lib/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { EXTRA_GRANTS, MODULES, FEATURES } from "../lib/permissions";
@@ -1785,11 +1785,12 @@ export default function AdminPage() {
   const [tab, setTab] = useState(() => {
     const wanted = params.get("tab");
     if (ALL_KEYS.includes(wanted) || wanted === "marketplace-reports") return wanted;
-    return params.get("section") === "marketplace" ? "marketplace-queue" : "overview";
+    return params.get("section") === "marketplace" ? "marketplace-index" : "overview";
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [moderator, setModerator] = useState(null);      // a Marketplace moderator who isn't an administrator sees only that section
+  const [onTeam, setOnTeam] = useState(false);           // an internal team member: the same section, without the directory-wide settings
   const [search, setSearch] = useState("");
   const [invitationFilter, setInvitationFilter] = useState("all");
   const [aiModelFilter, setAiModelFilter] = useState("");
@@ -1839,10 +1840,10 @@ export default function AdminPage() {
   // Not an administrator: the server says whether this account moderates the Marketplace.
   useEffect(() => {
     if (isAdmin) return;
-    moderatorAccess().then((r) => setModerator(Boolean(r.moderator))).catch(() => setModerator(false));
+    moderatorAccess().then((r) => { setModerator(Boolean(r.moderator)); setOnTeam(Boolean(r.team)); }).catch(() => setModerator(false));
   }, [isAdmin]);
   const marketplaceOnly = !isAdmin && moderator === true;
-  useEffect(() => { if (marketplaceOnly && !tab.startsWith("marketplace-")) setTab("marketplace-queue"); }, [marketplaceOnly, tab]);
+  useEffect(() => { if (marketplaceOnly && !tab.startsWith("marketplace-")) setTab("marketplace-index"); }, [marketplaceOnly, tab]);
 
   const loadUpgrades = useCallback(() => {
     if (upgradesLoaded) return;
@@ -2541,7 +2542,7 @@ export default function AdminPage() {
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-700 lg:hidden">
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
-          <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
+          <Link to="/" aria-label="EnterprateAI home" className="shrink-0"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></Link>
           <div className="h-5 w-px bg-slate-200" />
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-sm font-semibold text-slate-800">{marketplaceOnly ? "Marketplace moderation" : "System Admin"}</span>
@@ -2550,8 +2551,9 @@ export default function AdminPage() {
             </span>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <Link to="/dashboard" className="whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Dashboard</Link>
             <span className="hidden text-xs text-slate-400 sm:block">{email}</span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">{marketplaceOnly ? "Moderator" : "Admin"}</span>
+            <span className="hidden rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 sm:inline">{marketplaceOnly ? "Moderator" : "Admin"}</span>
           </div>
         </div>
       </header>
@@ -2576,7 +2578,7 @@ export default function AdminPage() {
           return <AdminHeader lead={lead} accent={accent} subtitle={subtitle} updatedAt={isAdmin ? updatedAt : null} onRefresh={isAdmin ? () => loadStats(true) : null} refreshing={refreshing} />;
         })()}
 
-        {tab.startsWith("marketplace-") && <AdminClaims section={tab.slice("marketplace-".length)} onSection={(key) => goToTab(`marketplace-${key}`)} />}
+        {tab.startsWith("marketplace-") && <AdminClaims section={tab.slice("marketplace-".length)} onSection={(key) => goToTab(`marketplace-${key}`)} superadmin={isAdmin} onTeam={onTeam} />}
 
         {tab === "overview" && isAdmin && (
           <div className="space-y-5">
