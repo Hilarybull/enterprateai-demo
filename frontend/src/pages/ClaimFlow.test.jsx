@@ -918,6 +918,30 @@ describe("admin area", () => {
     expect(screen.getByText("Email failed")).toBeTruthy();
   });
 
+  it("Business Directory has Previous, Next and page numbers", async () => {
+    const row = (n) => ({ ...base, id: `b${n}`, slug: `biz-${n}`, name: `Business ${n}`, service_tags: [] });
+    routes = [{ method: "GET", match: /^\/marketplace\/businesses\?/, reply: ({ path }) => ({ body: { enabled: true, total: 50, categories: [], items: [row(Number(new URLSearchParams(path.split("?")[1]).get("page")))] } }) }];
+    mount("/", <DirectoryResults />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByText("Business 2");
+    fireEvent.click(screen.getByRole("button", { name: "Page 3" }));
+    await screen.findByText("Business 3");
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByText("Business 2");
+    expect(screen.queryByText(/Narrow the search/)).toBeNull();
+  });
+
+  it("Products & Services loads every page of public services and shows them a page at a time", async () => {
+    const biz = (n) => ({ id: `p${n}`, slug: `p${n}`, name: `Biz ${n}`, service_tags: [`Service ${n}`], held_requests_open: true });
+    routes = [{ method: "GET", match: /^\/marketplace\/listings/, reply: () => ({ body: { items: [], total: 0 } }) },
+      { method: "GET", match: /^\/marketplace\/businesses\?/, reply: ({ path }) => { const from = (Number(new URLSearchParams(path.split("?")[1]).get("page")) - 1) * 60 + 1; return { body: { enabled: true, total: 70, items: Array.from({ length: Math.min(60, 70 - from + 1) }, (_, i) => biz(from + i)) } }; } }];
+    mount("/marketplace?tab=products", <MarketplaceListings />, "/marketplace");
+    expect(await screen.findByText("70 products")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Request Quotation" }).length).toBe(24);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getAllByRole("button", { name: "Request Quotation" }).length).toBe(24);
+  });
+
   it("Products & Services lists the services of a public, unclaimed profile, and a quote goes through its profile", async () => {
     const francal = { id: "p7", slug: "francal", name: "Francal", category: "Construction & Trades", location: "Florida", description: "Francal sells fashion accessories", service_tags: ["Suits", "Shoes"], held_requests_open: true };
     const closed = { id: "p8", slug: "closed", name: "Closed Ltd", service_tags: ["Hidden service"], held_requests_open: false };

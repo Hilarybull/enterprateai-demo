@@ -1,5 +1,6 @@
 import { SkeletonCard, SkeletonRegion } from "../Skeleton";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Pagination from "../Pagination";
 import { Link, useNavigate } from "react-router-dom";
 import { Btn, Notice, Panel, Pill, inputClass } from "../readiness/Fields";
 import { BusinessMark } from "./MarketplaceHeader";
@@ -44,28 +45,34 @@ export function OpportunityChips({ opportunities }) {
 
 // ── W01: search and results ───────────────────────────────────────────────────
 
+const DIRECTORY_PAGE = 24;
+
 /** `stickyTop`: the height of whatever is fixed above (the Marketplace header), so the filter bar stays in view under it. */
 export function DirectoryResults({ query = "", stickyTop = 0 }) {
   const [filters, setFilters] = useState({ category: "", location: "", trust: "", open_for: "" });
   const [state, setState] = useState({ loading: true, items: [], total: 0, categories: [] });
+  const [paged, setPaged] = useState({ page: 1, more: 1 });      // Previous, Next and the numbers; on a phone, "Load more" adds to the list
+  const top = useRef(null);
+  useEffect(() => { setPaged({ page: 1, more: 1 }); }, [query, filters]);
 
   useEffect(() => {
     let live = true;
-    setState((s) => ({ ...s, loading: true, problem: null }));
+    const adding = paged.more > 1;
+    setState((s) => ({ ...s, loading: !adding, problem: null }));
     const t = setTimeout(() => {
-      searchBusinesses({ q: query, ...filters })
-        .then((r) => live && setState({ loading: false, ...r }))
+      searchBusinesses({ q: query, ...filters, page: paged.page + paged.more - 1, page_size: DIRECTORY_PAGE })
+        .then((r) => live && setState((s) => ({ loading: false, ...r, items: adding ? [...s.items, ...(r.items || [])] : r.items })))
         .catch((e) => live && setState({ loading: false, items: [], total: 0, categories: [], problem: directoryError(e, "The directory couldn't be loaded.").message }));
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [query, filters]);
+  }, [query, filters, paged]);
 
   if (state.enabled === false) return <div className="pt-6"><Notice>The business directory isn't available yet.</Notice></div>;
   const set = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   const narrowed = Boolean(query.trim()) || Object.values(filters).some(Boolean);
   const field = `${inputClass} !py-2 !text-[13px]`;
   return (
-    <div>
+    <div ref={top} style={{ scrollMarginTop: stickyTop }}>
       <div style={{ top: stickyTop }} className="sticky z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 dark:border-slate-800 dark:bg-slate-950/95">
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter businesses">
           <select aria-label="Category" className={field} value={filters.category} onChange={set("category")}>
@@ -122,7 +129,8 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                 })}
               </ul>
             )}
-        {!state.loading && state.total > state.items.length && <p className="text-[12px] text-slate-500">Showing {state.items.length} of {state.total}. Narrow the search to see the rest.</p>}
+        {!state.loading && <Pagination total={state.total} page={paged.page} more={paged.more} size={DIRECTORY_PAGE} noun="businesses" className="!px-0"
+          onPage={(page) => { setPaged({ page, more: 1 }); top.current?.scrollIntoView?.({ block: "start" }); }} onMore={(more) => setPaged((p) => ({ ...p, more }))} />}
       </div>
     </div>
   );

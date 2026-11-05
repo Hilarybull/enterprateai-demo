@@ -2,6 +2,7 @@ import { SkeletonCard, SkeletonRegion } from "../components/Skeleton";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { alertDialog } from "../lib/dialog";
 import { searchBusinesses } from "../lib/directory";
+import Pagination, { pageSlice } from "../components/Pagination";
 import { hasPaidAccess } from "../lib/plans";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -2422,6 +2423,7 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
 
   const activeTab = tab;
   const [listings, setListings] = useState([]);
+  const [productPaging, setProductPaging] = useState({ page: 1, more: 1 });
   const [publicListings, setPublicListings] = useState([]);      // profiles nobody has claimed yet: their services are open to requests too
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -2554,8 +2556,16 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
   useEffect(() => {
     if (activeTab !== "products") return undefined;
     let alive = true;
-    searchBusinesses({ trust: "unclaimed", q: debouncedSearch, page_size: 60 })
-      .then((res) => { if (alive) setPublicListings(res.items || []); })
+    (async () => {      // every page of them, one request at a time: the tab's own pager shows them
+      const all = [];
+      for (let p = 1; p <= 50 && alive; p += 1) {
+        const res = await searchBusinesses({ trust: "unclaimed", q: debouncedSearch, page: p, page_size: 60 });
+        all.push(...(res.items || []));
+        if (!res.items?.length || all.length >= (res.total || 0)) break;
+      }
+      return all;
+    })()
+      .then((items) => { if (alive) setPublicListings(items); })
       .catch(() => { if (alive) setPublicListings([]); });      // the rest of the tab is still worth showing
     return () => { alive = false; };
   }, [activeTab, debouncedSearch, refreshKey]);
@@ -2675,6 +2685,8 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
     deduped.sort((a, b) => Number(!!b.listing.is_featured) - Number(!!a.listing.is_featured));
     return deduped;
   }, [listings, publicListings, debouncedSearch, filterCategory, filterIndustry, filterType, sortBy]);
+  useEffect(() => { setProductPaging({ page: 1, more: 1 }); }, [debouncedSearch, filterCategory, filterIndustry, filterType, sortBy]);
+  const productsAt = pageSlice(allProducts.length, productPaging.page, productPaging.more, PAGE_SIZE);
 
   function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); onQuery?.(""); setPage(1); }
   const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
@@ -2911,8 +2923,9 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
               {hasFilters && <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>}
             </div>
           ) : (
+            <>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {allProducts.map((product) => {
+              {allProducts.slice(productsAt.offset, productsAt.offset + productsAt.limit).map((product) => {
                 const isOwn = isLoggedIn && (myStatus?.workspace_id || workspaceId) === product.listing.workspace_id;
                 const slug = product.listing.directorySlug;
                 if (slug) {
@@ -2940,6 +2953,9 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
                 );
               })}
             </div>
+            <Pagination total={allProducts.length} page={productPaging.page} more={productPaging.more} size={PAGE_SIZE} noun="products" className="!px-0 mt-4"
+              onPage={(page) => { setProductPaging({ page, more: 1 }); window.scrollTo?.({ top: 0 }); }} onMore={(more) => setProductPaging((p) => ({ ...p, more }))} />
+            </>
           )
         ) : (
           /* ── Profiles tab ── */
