@@ -662,37 +662,37 @@ export default function PricingPage() {
               {
                 title: "Idea Validation",
                 desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Business Blueprints",
                 desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Catalogue",
                 desc: "Manage products, customers, and vendors in one place. Free on Explorer with no record limits. Starter includes up to 250 products, 500 customers, and 250 vendors.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Financials",
                 desc: "Create invoices, raise quotations, log expenses, and manage contracts. Explorer includes unlimited invoices and quotations. Starter includes 50 of each per month.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Scenario Simulation",
                 desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
-                plans: ["Starter", "Decision Engine"],
+                plans: ["Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Fragility Index",
                 desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
-                plans: ["Starter", "Decision Engine"],
+                plans: ["Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Live Plan Intelligence",
-                desc: "Decision Engine adds live-plan import, section refresh, variance interpretation, and board-ready summaries for ongoing operating visibility.",
-                plans: ["Decision Engine"],
+                desc: "Pro (Decision Engine) adds live-plan import, section refresh, variance interpretation, and board-ready summaries for ongoing operating visibility.",
+                plans: ["Pro (Decision Engine)"],
               },
             ].map((item) => (
               <div key={item.title} className="space-y-1.5">

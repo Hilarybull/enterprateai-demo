@@ -30,6 +30,8 @@ const inChat = (h) => {
   return "/agent";
 };
 const TASKS = new Set(["create_invoice", "create_quotation", "create_business_plan", "prepare_proposal"]);      // drafted in the Agent Centre's chat
+// The live landing goals that run in the Agent Centre chat. Those off the landing page (price, cash flow, growth) are left as they are for now.
+const IN_CHAT = new Set([...TASKS, "more_customers", "business_risks"]);
 const notStarted = (h) => Boolean(h) && (h.blocked === true || (!h.run_id && !h.subject_id && String(h.to || "/dashboard") === "/dashboard"));
 
 const STEP_ICON = {
@@ -173,7 +175,8 @@ export default function StartPage({ framed = false }) {
     const words = known ? carriedText(known) : "";
     if (!words || !known?.business_id || goesStraightOn(sessionId)) return false;      // already answered in the chat: started here, never back to it
     const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
-    const to = asked?.converse ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
+    // Funding, launch and an idea are chat conversations, also when the look-up was too slow to answer
+    const to = asked?.converse || (asked === null && TALKED.has(known.goal_key)) ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
     if (!to) return false;
     try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
     useWorkspaceStore.getState().setWorkspaceId(known.business_id);
@@ -184,12 +187,13 @@ export default function StartPage({ framed = false }) {
   const prepare = useCallback(async (known = null, confirmed = false) => {
     setStage("preparing");
     if (known && !confirmed && await handOver(known)) return;
-    // A task (an invoice, a quotation, a plan) is started in the Agent Centre's chat, never on this page while it works (the
-    // owner, 1 Nov: "why is invoice from the landing page running here and not in the Agent Centre")
-    if (known && !confirmed && TASKS.has(known.goal_key) && known.business_id && known.authenticated !== false && !known.handoff) {
+    // Live landing page work (a task or a free check) runs in the Agent Centre's chat, never
+    // on this page while it works (the owner, 1 Nov: "why is invoice from the landing page running here and not in the Agent
+    // Centre"; 5 Nov: "fix every flow"). The chat starts it, so this never goes back and forth.
+    if (known && !confirmed && IN_CHAT.has(known.goal_key) && known.business_id && known.authenticated !== false && !known.handoff) {
       try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
       useWorkspaceStore.getState().setWorkspaceId(known.business_id);
-      reviewInChat({ sessionId, message: "Picking up the task you started. One moment while I get it ready." });
+      reviewInChat({ sessionId, message: TASKS.has(known.goal_key) ? "Picking up the task you started. One moment while I get it ready." : `Working on ${known.goal_label || "that"} now. One moment.` });
       trackGoal("dashboard_handoff_completed", { session_id: sessionId });
       navigate("/agent", { replace: true });
       return;
@@ -296,8 +300,9 @@ export default function StartPage({ framed = false }) {
       setSession(resumed);
       setWorkspace(true);
       if (!resumed.handoff && await handOver(resumed)) return;      // a conversation: in the Agent Centre, never the currency or details step here
-      // A workspace that was already theirs: carry on inside the real app, with its own sidebar.
-      if (!framed && !businessName && resumed.business_id && !resumed.handoff) {
+      // A workspace that was already theirs, and something still to ask or a case to open: carry on inside the real app, with its
+      // own sidebar. With nothing left to ask, on to the chat straight away, without this page showing in between.
+      if (!framed && !businessName && resumed.business_id && !resumed.handoff && (!IN_CHAT.has(resumed.goal_key) || resumed.currency_question || resumed.missing?.length)) {
         useWorkspaceStore.getState().setWorkspaceId(resumed.business_id);
         navigate(`/resume/${sessionId}`, { replace: true });
         return;
@@ -321,7 +326,14 @@ export default function StartPage({ framed = false }) {
       const attached = await apiRequest(`/task-sessions/${sessionId}/attach-user`, "POST", confirm === true || cameFromCard(sessionId) ? { confirm: true } : {}, { timeoutMs: 15000 });
       setSession(attached);
       if (TALKED.has(attached.goal_key) && attached.business_id && await handOver(attached)) return undefined;
-      // Already prepared (a second tab, a refresh): straight to it. One that could not be started last time is tried again below.
+      // Already prepared (a second tab, a refresh, an old link): straight to it. One that could not be started last time is tried again below.
+      if (attached.handoff?.to && !notStarted(attached.handoff) && IN_CHAT.has(attached.goal_key) && attached.business_id) {
+        // Shown in the chat, the same result or draft: preparing again never starts a second one
+        useWorkspaceStore.getState().setWorkspaceId(attached.business_id);
+        reviewInChat({ sessionId });
+        navigate("/agent", { replace: true });
+        return undefined;
+      }
       if (attached.handoff?.to && !notStarted(attached.handoff)) {
         // A refresh while the result (and its review) is on screen: the same result again, never thrown to the case page
         // (the owner's QA, 17 Oct). With no result to show, on to where the task was handed.
@@ -518,7 +530,7 @@ export default function StartPage({ framed = false }) {
         )}
 
         {stage === "problem" && (
-          <LoadError what="your task" detail={problem} onRetry={() => (session?.authenticated && session?.business_id ? prepare() : begin())} className="mt-4 border-0 p-2">
+          <LoadError what="your task" detail={problem} onRetry={() => (session?.authenticated && session?.business_id ? prepare(session) : begin())} className="mt-4 border-0 p-2">
             <button type="button" onClick={() => navigate("/dashboard", { replace: true })} className="text-sm font-semibold text-brand-600 hover:underline">Go to the dashboard</button>
           </LoadError>
         )}

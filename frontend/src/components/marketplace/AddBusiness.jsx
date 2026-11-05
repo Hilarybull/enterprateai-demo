@@ -2,7 +2,7 @@ import UkDateInput from "../UkDateInput";
 import { useEffect, useRef, useState } from "react";
 import { AdminTable, Chip } from "../admin/AdminUI";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
-import { addBusiness, checkBusiness, directoryError, editDirectoryProfile, importBusinesses, suggestIndexField } from "../../lib/directory";
+import { addBusiness, checkBusiness, directoryError, editDirectoryProfile, importBusinesses } from "../../lib/directory";
 
 // Adding businesses to the index by hand: a form (the main way), a CSV import with a preview,
 // and editing a record that is already there. A location is a town or region, never an address.
@@ -11,12 +11,12 @@ export const VISIBILITY_OPTION = { inherit: "Follow the global setting", hidden:
 const STATUSES = [["active", "Active"], ["dormant", "Dormant"], ["dissolved", "Dissolved"], ["closed", "Closed"]];
 const today = () => new Date().toISOString().slice(0, 10);
 const BLANK = { logo: "", name: "", trading_name: "", company_number: "", country: "United Kingdom", category: "", location: "", website: "", description: "", tags: "", business_status: "active",
-  contact_email: "", provider: "", reference: "", retrieved_at: today(), visibility: "inherit" };
+  contact_email: "", contact_phone: "", provider: "", reference: "", retrieved_at: today(), visibility: "inherit" };
 
 const toRecord = (f) => ({
   name: f.name.trim(), trading_name: f.trading_name.trim() || null, company_number: f.company_number.trim() || null, country: f.country.trim() || "United Kingdom", category: f.category,
   location: f.location.trim(), website: f.website.trim() || null, description: f.description.trim() || null, service_tags: f.tags.split(",").map((t) => t.trim()).filter(Boolean),
-  business_status: f.business_status, contact_email: f.contact_email.trim() || null, visibility: f.visibility, logo_data_url: f.logo || null,
+  business_status: f.business_status, contact_email: f.contact_email.trim() || null, contact_phone: f.contact_phone.trim() || null, visibility: f.visibility, logo_data_url: f.logo || null,
   source: { provider: f.provider, record_id: f.reference.trim(), retrieved_at: f.retrieved_at },
 });
 const RESULT = { published: ["Ready to be shown", "emerald"], noindex: ["Kept out of search engines", "amber"], unpublished: ["Not shown yet (needs more detail)", "slate"] };
@@ -55,31 +55,6 @@ function Duplicates({ items }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-/** AI Fill, on the field's label row as on the idea validation form. Writes from what the form holds; nothing is saved until the form is. */
-function AiFill({ field, form, onText, onProblem }) {
-  const [busy, setBusy] = useState(false);
-  async function fill() {
-    setBusy(true);
-    onProblem(null);
-    try {
-      const { tags, logo, ...rest } = form;
-      const reply = await suggestIndexField(field, { ...rest, service_tags: String(tags || "").split(",").map((t) => t.trim()).filter(Boolean) });
-      onText(reply.suggestion);
-    } catch (e) {
-      const p = directoryError(e, "That couldn't be filled just now. Please try again.");
-      onProblem(p.errors?.[field] || p.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <button type="button" onClick={fill} disabled={busy} aria-label={`AI Fill: ${field === "service_tags" ? "service tags" : "short description"}`}
-      className="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 disabled:opacity-50">
-      {busy ? "Writing…" : "\u2726 AI Fill"}
-    </button>
   );
 }
 
@@ -139,8 +114,6 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
   const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setState((s) => ({ ...s, done: null })); };
   const errors = state.errors || {};
   const formRef = useFirstError(state.errors);
-  const aiFill = (field) => <AiFill field={field} form={form} onText={(text) => setForm((f) => ({ ...f, [field === "service_tags" ? "tags" : field]: text }))}
-    onProblem={(text) => setState((s) => ({ ...s, errors: { ...(s.errors || {}), [field]: text || undefined } }))} />;
 
   async function save(e, anyway = false) {
     e?.preventDefault();
@@ -179,9 +152,10 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
         <Field label="Business status" error={errors.business_status}>
           <select className={`mt-1 ${inputClass}`} value={form.business_status} onChange={set("business_status")}>{STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         </Field>
-        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="40 characters or more counts towards quality. AI Fill uses only what's on this form, so check it against the source." action={aiFill("description")}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote." action={aiFill("service_tags")}><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
-        <Field label="Private contact email" error={errors.contact_email} hint="For invitations only. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
+        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="40 characters or more counts towards quality."><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote."><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
+        <Field label="Private contact email" error={errors.contact_email} hint="For internal use and claim emails. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
+        <Field label="Private phone number" error={errors.contact_phone} hint="For internal use. Never shown or searchable."><input type="tel" className={`mt-1 ${inputClass}`} value={form.contact_phone} onChange={set("contact_phone")} /></Field>
       </div>
       <fieldset className="grid gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-3 dark:border-slate-700">
         <legend className="px-1 text-[13px] font-semibold text-slate-800 dark:text-slate-100">Where this came from</legend>
@@ -227,7 +201,7 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
 
 // ── CSV ───────────────────────────────────────────────────────────────────────
 
-export const CSV_COLUMNS = ["name", "trading_name", "company_number", "country", "category", "location", "website", "description", "service_tags", "business_status", "contact_email",
+export const CSV_COLUMNS = ["name", "trading_name", "company_number", "country", "category", "location", "website", "description", "service_tags", "business_status", "contact_email", "contact_phone",
   "source_provider", "source_reference", "retrieved_at", "visibility"];
 const CSV_EXAMPLE = ["Example Advisory Ltd", "Example Advisory", "12345678", "United Kingdom", "Consulting", "Leeds", "https://example.co.uk",
   "Independent advisers helping small firms set prices and plan growth.", "Pricing; Strategy", "active", "hello@example.co.uk", "Companies House", "12345678", today(), "inherit"];
@@ -254,7 +228,7 @@ export function parseCsv(text) {
     const o = Object.fromEntries(head.map((h, i) => [h, (r[i] || "").trim()]));
     return { name: o.name, trading_name: o.trading_name || null, company_number: o.company_number || null, country: o.country || "United Kingdom", category: o.category, location: o.location,
       website: o.website || null, description: o.description || null, service_tags: (o.service_tags || "").split(/[;|]/).map((t) => t.trim()).filter(Boolean),
-      business_status: o.business_status || "active", contact_email: o.contact_email || null, visibility: o.visibility || "inherit",
+      business_status: o.business_status || "active", contact_email: o.contact_email || null, contact_phone: o.contact_phone || null, visibility: o.visibility || "inherit",
       source: { provider: o.source_provider, record_id: o.source_reference, retrieved_at: o.retrieved_at } };
   });
 }
@@ -329,13 +303,11 @@ export function ImportCsv({ onImported }) {
 
 export function EditBusinessForm({ profile, options, onSaved, onClose }) {
   const first = { logo: profile.has_logo ? "saved" : "", name: profile.name || "", trading_name: profile.trading_name || "", company_number: profile.company_number || "", country: profile.country || "", category: profile.category || "",
-    location: profile.location || "", website: profile.website || "", description: profile.description || "", tags: (profile.service_tags || []).join(", "), business_status: profile.business_status || "active" };
+    location: profile.location || "", website: profile.website || "", description: profile.description || "", tags: (profile.service_tags || []).join(", "), business_status: profile.business_status || "active", contact_email: profile.contact_email || "", contact_phone: profile.contact_phone || "" };
   const [form, setForm] = useState(first);
   const [reason, setReason] = useState("");
   const [state, setState] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const aiFill = (field) => <AiFill field={field} form={form} onText={(text) => setForm((f) => ({ ...f, [field === "service_tags" ? "tags" : field]: text }))}
-    onProblem={(text) => setState((s) => ({ ...s, errors: { ...(s.errors || {}), [field]: text || undefined } }))} />;
   const errors = state.errors || {};
   const formRef = useFirstError(state.errors);
   async function save(e) {
@@ -364,8 +336,10 @@ export function EditBusinessForm({ profile, options, onSaved, onClose }) {
         </Field>
         <Field label="Town or region" error={errors.location} hint="No street address or full postcode."><input className={`mt-1 ${inputClass}`} value={form.location} onChange={set("location")} /></Field>
         <Field label="Website" error={errors.website}><input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} /></Field>
-        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="AI Fill uses only what's on this form, so check it against the source." action={aiFill("description")}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote." action={aiFill("service_tags")}><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
+        <Field label="Short description" className="sm:col-span-2" error={errors.description}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote."><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
+        <Field label="Private contact email" error={errors.contact_email} hint="For internal use and claim emails. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
+        <Field label="Private phone number" error={errors.contact_phone} hint="For internal use. Never shown or searchable."><input type="tel" className={`mt-1 ${inputClass}`} value={form.contact_phone} onChange={set("contact_phone")} /></Field>
         <Field label="Reason for the change"><input className={`mt-1 ${inputClass}`} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
       </div>
       {state.problem && <p role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</p>}

@@ -11,6 +11,8 @@ import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActi
 import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
 import { checkLines, linesFromText } from "./agent/AgentBits";
 import { AgentGoalChat } from "./GoalLauncher";
+import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValueCard";
+import { resultHome } from "../lib/resultHome";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
 const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
@@ -601,9 +603,18 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             prompts: [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }] });
           return;
         }
+        if (done.first_value && !done.handoff?.run_id) {      // a free check: its result, here in the chat
+          const check = await fetchFirstValue(r.sessionId).catch(() => null);
+          if (check?.result && !resultHome(check.result)) {
+            rememberFirstValue(r.sessionId);
+            push({ role: "assistant", at: new Date().toISOString(), content: "Here's your result. It's saved under Results too.", cards: [{ type: "first_value", result: check.result }] });
+            return;
+          }
+        }
         if (!done.handoff?.run_id) {
-          push({ role: "assistant", at: new Date().toISOString(), content: done.handoff?.message || done.problem || "That couldn't be started just now. Nothing was lost.",
-            ...(done.handoff?.upgrade ? { link: "/pricing" } : {}) });
+          const ready = done.handoff?.free || done.handoff?.subject_id;      // nothing to follow here: it's on its own page
+          push({ role: "assistant", at: new Date().toISOString(), content: done.handoff?.message || done.problem || (ready ? "It's ready. Next step: open it." : "That couldn't be started just now. Nothing was lost."),
+            ...(done.handoff?.upgrade ? { link: "/pricing" } : ready ? { link: done.handoff.to } : {}) });
           return;
         }
         r = { runId: done.handoff.run_id, message: done.handoff.ready_message || "" };
@@ -802,6 +813,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       </section>;
       return null;
     }
+    if (c.type === "first_value") return <div key={key} className="max-w-2xl" data-chat-first-value><FirstValueCard result={c.result} /></div>;
     if (c.type === "score_change") return <div key={key} data-readiness-card="score-change" className="w-fit rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">Readiness score: {c.before}/100 → {c.after}/100</div>;
     if (c.type === "risk" && risk) return <RiskCard key={key} risk={risk} onScenario={runScenario} onSegments={() => push(mine("Find new customer segments"), { role: "assistant", at: new Date().toISOString(), content: "I can research new customer segments for you.", cards: [{ type: "segments" }] })} />;
     if (c.type === "scenario") return <ScenarioCard key={key} card={c} />;

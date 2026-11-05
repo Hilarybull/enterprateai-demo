@@ -54,7 +54,7 @@ export const PLANS = [
   },
   {
     key: "decision_engine",
-    label: "Decision Engine",
+    label: "Pro (Decision Engine)",
     headline: "Decide with confidence.",
     tagline: "For growing businesses and teams",
     monthlyPrice: 59,
@@ -62,7 +62,7 @@ export const PLANS = [
     annualTotal: 590,
     annualSaving: 118,
     badge: "Most Popular",
-    cta: "Choose Decision Engine",
+    cta: "Choose Pro (Decision Engine)",
     ctaStyle: "solid",
     features: [
       "Everything in Starter",

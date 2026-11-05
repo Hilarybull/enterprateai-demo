@@ -65,6 +65,13 @@ _FOOTER_TEXT = (
 )
 
 
+def email_button(url: str, label: str) -> str:
+    """The one call to action in an email: a centred button. The url and label are escaped here."""
+    return (f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(url, quote=True)}\" "
+            "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
+            f"{escape(label)}</a></p>")
+
+
 async def send_email_via_resend(
     *,
     to_email: str | list[str],

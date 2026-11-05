@@ -347,6 +347,109 @@ def test_only_the_team_can_restore_a_workspace():
         run(s.restore_workspace(U(NEW), claim["id"]))
 
 
+def item(view, key):
+    return next(i for i in view["activation"]["items"] if i["key"] == key)
+
+
+def test_public_services_count_on_the_checklist_and_stay_public_after_a_claim():
+    env = Env()
+    s = svc_of(env)
+    index(env)
+    run(s.set_visibility(ADMIN, "public"))
+    tags = [t["tag"] for t in next(p for p in s.store.rows["profiles"].values() if p["data"]["slug"] == SLUG)["data"]["service_tags"]]
+    assert tags
+    claim = waiting_claim(env)
+    run(s.review_decision(ADMIN, claim["id"], decision="approve", reason="Director on the filing."))
+    business = s.store.rows["claims"][claim["id"]]["data"]["linked_business_id"]
+    view = run(s.business_profile(U(NEW), business))
+    assert item(view, "offering")["done"] is True and view["profile"]["service_tags"] == tags
+    run(s.business.mutate(business, lambda data: data["marketplace"].update(is_active=True)))      # published
+    assert run(s.public_profile(SLUG))["service_tags"] == tags
+    products = run(s.business.load(business))["catalogue"]["products"]
+    assert [p["name"] for p in products] == tags and all(p["base_price"] is None and p["price_needed"] for p in products)      # no price invented
+
+
+def test_a_business_claimed_before_this_counts_its_public_services_without_saving_anything():
+    env = Env()
+    s = svc_of(env)
+    index(env)
+    run(s.set_visibility(ADMIN, "public"))
+    tags = [t["tag"] for t in next(p for p in s.store.rows["profiles"].values() if p["data"]["slug"] == SLUG)["data"]["service_tags"]]
+    claim = waiting_claim(env)
+    run(s.review_decision(ADMIN, claim["id"], decision="approve", reason="Director on the filing."))
+    business = s.store.rows["claims"][claim["id"]]["data"]["linked_business_id"]
+    run(s.business.mutate(business, lambda data: data["marketplace"]["profile"].pop("service_tags", None)))      # as an older claim left it
+    view = run(s.business_profile(U(NEW), business))
+    assert item(view, "offering")["done"] is True and view["profile"]["service_tags"] == tags
+    run(s.business.mutate(business, lambda data: data["marketplace"].update(is_active=True)))
+    assert run(s.public_profile(SLUG))["service_tags"] == tags
+    assert SLUG in [x["slug"] for x in run(s.search())["items"]]      # and it stays in the directory
+
+
+def test_services_an_owner_already_set_arent_replaced_by_a_claim():
+    env = Env()
+    s = svc_of(env)
+    index(env)
+    env.businesses["A"]["data"].setdefault("marketplace", {})["profile"] = {"service_tags": ["Our own"]}
+    claim = waiting_claim(env, user=OWNER, target="A")
+    run(s.review_decision(ADMIN, claim["id"], decision="approve", reason="Director on the filing."))
+    assert run(s.business.load("A"))["marketplace"]["profile"]["service_tags"] == ["Our own"]
+
+
+def claimed_into_existing(env):
+    s = svc_of(env)
+    index(env)
+    run(s.set_visibility(ADMIN, "public"))
+    env.businesses["A"]["data"].setdefault("catalogue", {})["products"] = [{"id": "mine", "name": "Tester's own"}]
+    unanswered = run(s.hold_request(SLUG, BUYER))["id"]
+    answered = run(s.hold_request(SLUG, {**BUYER, "email": "bo@buyer.test", "name": "Bo Buyer"}))["id"]
+    claim = waiting_claim(env, user=OWNER, target="A")
+    run(s.review_decision(ADMIN, claim["id"], decision="approve", reason="Director on the filing."))
+
+    def answer(data):
+        for r in data["financials"]["rfq_requests"]:
+            if r["id"] == answered:
+                r.update(status="approved", quote_id="q1")
+        data["marketplace"]["profile"]["description"] = "What the owner wrote for the public."
+        data["marketplace"]["opportunity_preferences"] = {"enquiries": {"enabled": True}}
+    run(s.business.mutate("A", answer))
+    return s, claim, unanswered, answered
+
+
+def test_a_business_in_another_workspace_can_move_to_its_own():
+    env = Env()
+    s, claim, unanswered, answered = claimed_into_existing(env)
+    made = run(s.separate_claim(U(OWNER), claim["id"]))
+    new = made["business_id"]
+    assert new != "A" and new in [b["id"] for b in run(s.business.owned_by(OWNER))]
+    data = run(s.business.load(new))
+    assert data["workspace_profile"]["company_name"] == made["name"]
+    assert data["marketplace"]["profile"]["description"] == "What the owner wrote for the public."
+    assert data["marketplace"]["opportunity_preferences"]["enquiries"]["enabled"] is True
+    assert [r["id"] for r in data["financials"]["rfq_requests"]] == [unanswered]
+    assert [p["name"] for p in data["catalogue"]["products"]]      # its services
+    # the old workspace keeps its own records and what it answered, and no longer holds the profile
+    old = run(s.business.load("A"))
+    assert [p["id"] for p in old["catalogue"]["products"]] == ["mine"]
+    assert [r["id"] for r in old["financials"]["rfq_requests"]] == [answered]
+    assert "directory_profile_id" not in old["marketplace"] and "profile" not in old["marketplace"]
+    profile = next(p for p in s.store.rows["profiles"].values() if p["data"]["slug"] == SLUG)
+    assert profile["data"]["linked_business_id"] == new and profile["data"]["claim_state"] == "verified"
+    row = next(r for r in decided(s) if r["type"] == "claim")
+    assert (row["outcome"], row["links_to"]) == ("approved", "A new business")
+    assert run(s.get_claim(U(OWNER), claim["id"]))["business_id"] == new
+
+
+def test_it_cant_be_moved_twice_or_by_someone_else():
+    env = Env()
+    s, claim, _unanswered, _answered = claimed_into_existing(env)
+    with pytest.raises(d.NotFound):
+        run(s.separate_claim(U(NEW), claim["id"]))
+    run(s.separate_claim(U(OWNER), claim["id"]))
+    with pytest.raises(Conflict):
+        run(s.separate_claim(U(OWNER), claim["id"]))
+
+
 def test_a_rejected_claim_has_nothing_to_revoke():
     env = Env()
     s = svc_of(env)
@@ -406,6 +509,7 @@ def test_the_emails_read_properly_and_are_safe(monkeypatch, kind):
     assert sent["to_email"] == "a@b.test" and sent["idempotency_key"] == "k"
     assert "<b>Acme" not in sent["html_content"] and "&lt;b&gt;Acme" in sent["html_content"] and "/marketplace/claim/acme" in sent["text_content"]
     assert "Next step:" in sent["text_content"]
+    assert "text-align:center" in sent["html_content"] and "background:#4f46e5" in sent["html_content"]      # a centred button, not a bare link
     for dash in ("–", "—"):
         assert dash not in sent["text_content"] and dash not in sent["subject"]
 

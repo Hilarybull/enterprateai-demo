@@ -6,6 +6,7 @@ import { UndoToast } from "../components/FirstResultPanel";
 import { useProposalStore } from "../store/proposal";
 import { apiRequest, invalidateWorkspaceCache } from "../api/client";
 import { SavedBusinessMatch } from "../components/marketplace/MatchPrompt";
+import { myClaims } from "../lib/directory";
 import AccountSettings from "./AccountSettings";
 
 function initialsFromName(name, email) {
@@ -736,6 +737,39 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   );
 }
 
+const CLAIM_WORDS = { verified: "Yours", revoked: "Removed after a review", rejected: "Not approved", disputed: "Under review", verification_pending: "Waiting for review", claim_started: "Not finished" };
+
+/** Every business this person has claimed, and where each stands, so one that has gone doesn't just vanish. */
+export function ClaimedBusinesses() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let live = true;
+    myClaims().then((r) => { if (live) setItems(r?.items || []); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!items.length) return null;
+  return (
+    <Card>
+      <div className="px-6 py-5">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Claimed businesses</p>
+        <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800" data-claimed-businesses>
+          {items.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
+              <span className="min-w-0 break-words font-medium text-slate-800 dark:text-slate-200">{c.profile?.name || "A business"}</span>
+              <span className="flex items-center gap-3 text-[13px] text-slate-500">
+                {CLAIM_WORDS[c.status] || c.status}
+                {c.status === "verified" && c.business_id
+                  ? <Link className="font-semibold text-brand-600 hover:underline" to={`/marketplace/profile?business=${c.business_id}`} onClick={() => useWorkspaceStore.getState().setWorkspaceId(c.business_id)}>Open</Link>
+                  : c.profile?.slug && <Link className="font-semibold text-brand-600 hover:underline" to={`/marketplace/claim/${c.profile.slug}`}>View</Link>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
 /** Delete this one workspace. The person types its name; anything else they have stays. */
 export function DeleteWorkspaceCard({ workspaceId, name }) {
   const navigate = useNavigate();
@@ -1178,6 +1212,7 @@ function WorkspaceTab({ workspaceId }) {
       </div>
     </Card>
     <ProposalSettingsCard />
+    <ClaimedBusinesses />
     <DeleteWorkspaceCard workspaceId={workspaceId} name={ws?.workspace_profile?.company_name || useWorkspaceStore.getState().workspaceName} />
     </>
   );

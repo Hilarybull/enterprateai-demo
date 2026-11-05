@@ -33,6 +33,16 @@ export const createClaimIntent = (slug, body) => apiRequest(`/marketplace/direct
 export const startClaim = (slug, body) => apiRequest(`/marketplace/directory-profiles/${encodeURIComponent(slug)}/claims`, "POST", body || {});
 export const getClaim = (id) => apiRequest(`/business-claims/${id}`, "GET");
 export const myClaims = () => apiRequest("/business-claims", "GET");
+export const separateClaim = (id) => apiRequest(`/business-claims/${id}/separate`, "POST", {});
+/** Businesses claimed into a workspace the person already had: they have no workspace of their own to switch to.
+ *  One claimed as a new business is already in the list as its workspace. */
+export const claimedEntities = (claims, workspaces) => (claims || []).flatMap((c) => {
+  const ws = (workspaces || []).find((w) => w.id === c.business_id);
+  const inside = ws?.data?.workspace_profile?.company_name || ws?.name || "";
+  const name = c.profile?.name || "";
+  return c.status === "verified" && ws && c.target !== "new" && name && name.toLowerCase() !== inside.toLowerCase()
+    ? [{ id: c.id, name, business_id: c.business_id, inside }] : [];
+});
 export const confirmMatch = (id, businessId) => apiRequest(`/business-claims/${id}/match`, "POST", { business_id: businessId });
 export const startVerification = (id, body) => apiRequest(`/business-claims/${id}/verification`, "POST", body);
 export const completeVerification = (id, verificationId, code) => apiRequest(`/business-claims/${id}/verification/${verificationId}/complete`, "POST", { code });

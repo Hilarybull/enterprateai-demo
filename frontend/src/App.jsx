@@ -46,6 +46,7 @@ import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
 import MarketplacePage from "./pages/MarketplacePage";
 import DirectoryProfilePage from "./pages/DirectoryProfilePage";
+import ClaimEmailsOptOutPage from "./pages/ClaimEmailsOptOutPage";
 import ClaimFlowPage from "./pages/ClaimFlowPage";
 import MarketplaceProfilePage, { ProfileSkeleton } from "./pages/MarketplaceProfilePage";
 import { MarketplaceShell } from "./components/marketplace/MarketplaceHeader";
@@ -219,6 +220,7 @@ export default function App() {
       <Route path="/marketplace/profile" element={<Protected><MarketplaceShell><RequireWorkspace fallback={<ProfileSkeleton />}><ErrorBoundary label="Marketplace profile"><MarketplaceProfilePage /></ErrorBoundary></RequireWorkspace></MarketplaceShell></Protected>} />
       <Route path="/marketplace-profile" element={<OldMarketplaceProfile />} />
       <Route path="/marketplace/business/:slug" element={<ErrorBoundary label="Business profile"><DirectoryProfilePage /></ErrorBoundary>} />
+      <Route path="/marketplace/invitations/:token/opt-out" element={<ClaimEmailsOptOutPage />} />
       <Route path="/marketplace/claim/:slug" element={<ErrorBoundary label="Claim your business"><ClaimFlowPage /></ErrorBoundary>} />
       <Route path="*" element={<NotFound />} />
     </Routes>

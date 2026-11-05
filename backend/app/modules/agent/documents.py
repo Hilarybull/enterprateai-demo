@@ -63,7 +63,7 @@ _CTA_SLOT = "<!--view-online-->"      # where a "view online" button goes, for a
 
 def _button(label: str, href: str, aside: str = "") -> str:
     extra = f'<td style="padding-left:14px;font-family:{_FONT};font-size:13px;color:{_MUTED};">{escape(aside)}</td>' if aside else ""
-    return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;"><tr>'
+    return (f'<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:24px auto 8px;"><tr>'
             f'<td style="border-radius:10px;background:{_BRAND};">'
             f'<a href="{escape(href)}" style="display:inline-block;padding:12px 22px;font-family:{_FONT};font-size:15px;'
             f'font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">{escape(label)}</a></td>{extra}</tr></table>')

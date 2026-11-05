@@ -523,6 +523,11 @@ async def decisions(user=Depends(get_current_user)):
     return await _run(get_service().decisions(user))
 
 
+@router.post("/business-claims/{claim_id}/separate")
+async def separate_claim(claim_id: str, user=Depends(get_current_user)):
+    return await _run(get_service().separate_claim(user, claim_id))
+
+
 @router.post("/business-claims/{claim_id}/restore-workspace")
 async def restore_workspace(claim_id: str, user=Depends(get_current_user)):
     return await _run(get_service().restore_workspace(user, claim_id))
@@ -605,7 +610,7 @@ async def funnel(user=Depends(get_current_user)):
     return await _run(get_service().funnel(user))
 
 
-# ── workspaces closed by a revocation: deleted once their 30 days are up ──
+# ── the Marketplace's own timed jobs: the Monday reminders, and workspaces closed by a revocation (deleted after 30 days) ──
 
 _sweep_task = None
 
@@ -613,17 +618,21 @@ _sweep_task = None
 async def _sweep_loop(interval_s: int) -> None:
     import asyncio
     import logging
+    runs = 0
     while True:
         try:
-            await get_service().sweep_closed_workspaces()
+            await get_service().send_claim_reminders(pause=0.6)
+            if runs % 72 == 0:      # about every six hours
+                await get_service().sweep_closed_workspaces()
+            runs += 1
         except asyncio.CancelledError:
             raise
         except Exception as e:      # noqa: BLE001 - tried again next run; tables not set up on this server land here too
-            logging.getLogger(__name__).warning("closed workspace sweep failed: %s", e)
+            logging.getLogger(__name__).warning("Marketplace timed job failed: %s", e)
         await asyncio.sleep(interval_s)
 
 
-def start_workspace_sweep(interval_s: int = 6 * 3600) -> None:
+def start_workspace_sweep(interval_s: int = 300) -> None:
     import asyncio
     global _sweep_task
     if _sweep_task is None or _sweep_task.done():

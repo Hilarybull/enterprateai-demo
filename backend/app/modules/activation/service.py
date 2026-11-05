@@ -408,7 +408,7 @@ class ActivationService:
         text = "\n\n".join([hello, *body, f"{t['button']}: {link}", "The EnterprateAI team", foot, sender])
         html = (f"<div style='font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1e293b;max-width:560px'>"
                 f"<p>{escape(hello)}</p>" + "".join(f"<p>{escape(p)}</p>" for p in body)
-                + f"<p style='margin:24px 0'><a href='{escape(link)}' style='background:#4f46e5;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:600;display:inline-block'>{escape(t['button'])}</a></p>"
+                + f"<p style='margin:28px 0;text-align:center'><a href='{escape(link)}' style='background:#4f46e5;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:600;display:inline-block'>{escape(t['button'])}</a></p>"
                 f"<p>The EnterprateAI team</p>"
                 f"<p style='font-size:12px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:12px;margin-top:28px'>"
                 + ("You are receiving this because you have an EnterprateAI account." if about_account else

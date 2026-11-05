@@ -234,6 +234,8 @@ def test_ac07_ac08_ac09_ac10_a_second_claimed_business_is_separate_and_uses_the_
     assert env.businesses["A"]["data"] == a_before                        # nothing merged into the existing business
     assert [b["id"] for b in run(env.orch.rt.business.owned_by(OWNER))] == ["A", one["business_id"], two["business_id"]]
     # The claimed business enters the ordinary dashboard, composed by the ordinary rules: nothing marks it "operating" or "multi-entity".
+    assert run(dash.build_dashboard(env.orch, OWNER, one["business_id"]))["context"]["business_stage"] == "pre_launch"      # the ordinary rule: its services are in its Catalogue from the claim
+    env.businesses[one["business_id"]]["data"].pop("catalogue")      # with nothing listed, it is exactly a business made on the homepage
     built = run(dash.build_dashboard(env.orch, OWNER, one["business_id"]))
     direct = Env()
     direct.businesses["A"]["data"] = {"settings": {"currency": "GBP"}, "workspace_profile": copy.deepcopy(env.businesses[one["business_id"]]["data"]["workspace_profile"])}

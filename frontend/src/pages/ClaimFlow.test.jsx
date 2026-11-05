@@ -272,9 +272,10 @@ describe("claim journey (W03 to W11)", () => {
       { method: "GET", match: /businesses\/ws1\/marketplace-profile$/, reply: () => ({ body: settings({ business_id: "ws1" }) }) }];
     mount(`/marketplace/claim/${base.slug}?intent=INT-1`, <ClaimFlowPage />, "/marketplace/claim/:slug");
     await screen.findByText("Which EnterprateAI business should this profile belong to?");      // no introduction again: straight to where they were
+    expect(screen.queryByText(/Other Co/)).toBeNull();      // a workspace that is plainly another business is not offered
+    expect(screen.getByLabelText(/as its own business/)).toBeTruthy();
     expect(sent("POST", /\/claims$/)[0].body).toMatchObject({ intent: "INT-1" });
-    expect(screen.getByLabelText(/Northwind \(existing\) · likely the same business/).checked).toBe(true);
-    expect(screen.getByLabelText(/Other Co/).disabled).toBe(true);        // already has a profile: can't be given a second
+    expect(screen.getByLabelText(/Northwind \(existing\) is this business/).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Confirm Business" }));
     await screen.findByText("Verify that you manage Northwind Advisory Ltd");
     expect(sent("POST", /\/match$/)[0].body).toEqual({ business_id: "ws1" });

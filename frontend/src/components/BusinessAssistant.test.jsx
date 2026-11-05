@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 // The chat bubble is the Agent: one entry point, the conversation sent with every message,
 // what an answer costs, and what it remembers.
 import React from "react";
@@ -208,4 +209,39 @@ describe("a task's questions in the chat", () => {
     expect(screen.queryByText("Working on it…")).toBeNull();
     expect(screen.getByRole("button", { name: "Skip" })).toBeTruthy();      // optional: a chip to skip it
   });
+});
+
+it("a free check from the landing page runs here and shows its result in the chat", async () => {
+  sessionStorage.setItem("ea:chat:review", JSON.stringify({ sessionId: "s1", message: "Working on getting more customers now. One moment." }));
+  const earlier = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = vi.fn(async (url, init) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, "");
+    asked.push(path);
+    const json = (out) => new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (/\/task-sessions\/s1\/prepare$/.test(path)) return json({ first_value: true, goal_key: "more_customers", handoff: { to: "/dashboard" } });
+    if (/\/task-sessions\/s1\/first-value$/.test(path)) return json({ result: { assessment_type: "customers_initial", headline: "Getting more customers", score: 30, evidence_coverage: 25, band: "Not ready yet", currency_sign: "£", key_numbers: [], gaps: { failed: [], early: [], unknown: [] }, strengths: [], blockers: [], metrics: [], criteria: [], free_next_actions: [], premium_gate: { allowed: true } } });
+    return earlier(url, init);
+  });
+  await act(async () => { render(<MemoryRouter><BusinessAssistant /></MemoryRouter>); });
+  await waitFor(() => expect(document.querySelector("[data-chat-first-value]")).toBeTruthy());
+  expect(asked.some((p) => /\/prepare$/.test(p))).toBe(true);
+  expect(screen.getByText("Working on getting more customers now. One moment.")).toBeTruthy();
+  expect(screen.getByText(/saved under Results/)).toBeTruthy();
+  expect(screen.queryByText(/couldn't be started/)).toBeNull();
+});
+
+it("a landing page task that turns into a running task is followed here, and a slow result still gives a way to it", async () => {
+  sessionStorage.setItem("ea:chat:review", JSON.stringify({ sessionId: "s2" }));
+  const earlier = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, "");
+    const json = (out) => new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (/\/task-sessions\/s2\/prepare$/.test(path)) return json({ first_value: true, goal_key: "more_customers", handoff: { to: "/check/customers", free: true } });
+    if (/\/task-sessions\/s2\/first-value$/.test(path)) return json({});
+    return earlier(url, init);
+  });
+  await act(async () => { render(<MemoryRouter><BusinessAssistant /></MemoryRouter>); });
+  expect(await screen.findByText(/It's ready\. Next step: open it\./)).toBeTruthy();
+  expect(screen.queryByText(/couldn't be started/)).toBeNull();
 });

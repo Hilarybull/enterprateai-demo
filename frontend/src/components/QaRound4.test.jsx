@@ -43,7 +43,7 @@ describe("U4 plans by name", () => {
     }
     expect(planLabel("strategic_business_os", "active")).toBe("Strategic Business OS");
     expect(accessLabel({ plan_key: "strategic_business_os", status: "active", access_source: "admin full-access grant" })).toBe("Full access (test grant)");
-    expect(accessLabel({ plan_key: "decision_engine", status: "active", access_source: "subscription" })).toBe("Decision Engine");
+    expect(accessLabel({ plan_key: "decision_engine", status: "active", access_source: "subscription" })).toBe("Pro (Decision Engine)");
     expect(accessLabel({ plan_key: "starter_insight", status: "active" })).toBe("Starter");
     expect(accessLabel({ plan_key: "explorer", status: "active" })).toBe("Explorer");
     expect(accessLabel({ plan_key: "free_trial", status: "grandfathered" })).toBe("Early Access");

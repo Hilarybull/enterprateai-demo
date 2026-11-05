@@ -5,6 +5,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
+import { claimedEntities, myClaims, separateClaim } from "../lib/directory";
+import { alertDialog, confirmDialog } from "../lib/dialog";
 import logoUrl from "../enterprate-logo.png";
 import { openWorkspace, useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { getAgentSummary } from "../lib/agent";
@@ -384,6 +386,7 @@ export default function Layout() {
   const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
   const [workspaceGateReturn, setWorkspaceGateReturn] = useState("/dashboard");
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
+  const [claimedInWorkspaces, setClaimedInWorkspaces] = useState([]);      // the card's list: businesses claimed into a workspace already there
   const [allWorkspaces, setAllWorkspaces] = useState([]);
   const [switchingId, setSwitchingId] = useState(null);
   const creditBalance = useAuthStore((s) => s.creditBalance);
@@ -842,6 +845,43 @@ export default function Layout() {
     location.pathname === "/validation" &&
     new URLSearchParams(location.search).get("from") === "module";
 
+  const switchToWorkspace = (ws) => {
+    if (!ws || ws.id === workspaceId) { setWorkspaceSwitcherOpen(false); return; }
+    setSwitchingId(ws.id);
+    try {
+      setWorkspaceId(ws.id);
+      setWorkspaceName(ws.name || null);
+      setWorkspaceLogo(ws.data?.workspace_profile?.logo_data_url || null);
+      setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
+      setDecisionStatus(ws.data?.decision_status || null);
+      setServiceDecisionStatus(ws.data?.service_decision_status || null);
+      setCurrency(workspaceCurrencyOf(ws.data) || null);
+      clearMemberMode();
+      invalidateWorkspaceCache();
+      window.dispatchEvent(new Event("ea:workspace:refresh"));
+    } finally {
+      setSwitchingId(null);
+      setWorkspaceSwitcherOpen(false);
+    }
+  };
+
+  // A business claimed into another workspace has nothing to switch to until it has its own.
+  const giveOwnWorkspace = async (c) => {
+    setWorkspaceSwitcherOpen(false);
+    const yes = await confirmDialog(`${c.name} gets its own workspace to switch to, and its profile, services and unanswered requests move there. ${c.inside} keeps its own records, and any request it has already answered.`,
+      { title: `Give ${c.name} its own workspace?`, confirmLabel: "Create workspace" });
+    if (!yes) return;
+    try {
+      const made = await separateClaim(c.id);
+      invalidateWorkspaceCache();
+      switchToWorkspace(await apiRequest(`/validation/${made.business_id}`, "GET"));
+      setMobileOpen(false);
+      navigate("/dashboard");
+    } catch (e) {
+      alertDialog(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : "That couldn't be done just now. Nothing was changed.");
+    }
+  };
+
   const Sidebar = (
     <aside className="flex h-full min-h-0 w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[260px] lg:max-w-none xl:w-[320px] xl:px-5">
       <div className="mx-1 flex items-start justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
@@ -892,7 +932,7 @@ export default function Layout() {
         ))}
       </nav>
 
-      <div data-tour="workspace-panel" className="mt-3 max-h-[45%] shrink-0 overflow-y-auto rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
+      <div data-tour="workspace-panel" className={`mt-3 shrink-0 ${workspaceSwitcherOpen ? "" : "max-h-[45%] overflow-y-auto"} rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800`}>
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {isMemberMode ? "Shared workspace" : "Workspace"}
@@ -921,9 +961,10 @@ export default function Layout() {
               }
               if (workspaceSwitcherOpen) { setWorkspaceSwitcherOpen(false); return; }
               try {
-                const list = await apiRequest("/validation/list", "GET");
+                const [list, claims] = await Promise.all([apiRequest("/validation/list", "GET"), myClaims().catch(() => null)]);
                 setAllWorkspaces(list || []);
-              } catch { setAllWorkspaces([]); }
+                setClaimedInWorkspaces(claimedEntities(claims?.items, list));
+              } catch { setAllWorkspaces([]); setClaimedInWorkspaces([]); }
               setWorkspaceSwitcherOpen(true);
             }}
             className="flex min-w-0 flex-1 items-center justify-between gap-1 text-left text-base font-semibold text-slate-900 dark:text-slate-100 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
@@ -937,7 +978,7 @@ export default function Layout() {
             <WorkspaceCompletion completion={completion} onClick={() => setMobileOpen(false)} />
           )}
           {workspaceSwitcherOpen && (
-            <div className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900 overflow-hidden">
+            <div data-workspace-list className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
               {allWorkspaces.length === 0 && (
                 <div className="px-3 py-2 text-[12px] text-slate-400">No workspaces found</div>
               )}
@@ -949,25 +990,7 @@ export default function Layout() {
                     key={ws.id}
                     type="button"
                     disabled={switchingId != null}
-                    onClick={async () => {
-                      if (isActive) { setWorkspaceSwitcherOpen(false); return; }
-                      setSwitchingId(ws.id);
-                      try {
-                        setWorkspaceId(ws.id);
-                        setWorkspaceName(ws.name || null);
-                        setWorkspaceLogo(ws.data?.workspace_profile?.logo_data_url || null);
-                        setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
-                        setDecisionStatus(ws.data?.decision_status || null);
-                        setServiceDecisionStatus(ws.data?.service_decision_status || null);
-                        setCurrency(workspaceCurrencyOf(ws.data) || null);
-                        clearMemberMode();
-                        invalidateWorkspaceCache();
-                        window.dispatchEvent(new Event("ea:workspace:refresh"));
-                      } finally {
-                        setSwitchingId(null);
-                        setWorkspaceSwitcherOpen(false);
-                      }
-                    }}
+                    onClick={() => switchToWorkspace(ws)}
                     className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 ${isActive ? "bg-brand-50 dark:bg-brand-900/20" : ""}`}
                   >
                     <span className={`flex-1 truncate font-medium ${isActive ? "text-brand-700 dark:text-brand-400" : "text-slate-700 dark:text-slate-300"}`}>{name}</span>
@@ -976,6 +999,15 @@ export default function Layout() {
                   </button>
                 );
               })}
+              {claimedInWorkspaces.length > 0 && <p className="border-t border-slate-100 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800">Claimed businesses</p>}
+              {claimedInWorkspaces.map((c) => (
+                <button key={c.id} type="button" disabled={switchingId != null} data-claimed-entity
+                  onClick={() => giveOwnWorkspace(c)}
+                  className="flex w-full flex-col px-3 py-2 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800">
+                  <span className="w-full truncate font-medium text-slate-700 dark:text-slate-300">{c.name}</span>
+                  <span className="w-full truncate text-[11px] text-slate-500">in {c.inside}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
