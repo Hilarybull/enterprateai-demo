@@ -6,7 +6,7 @@ import { Btn, Notice, Panel, Pill, inputClass } from "../readiness/Fields";
 import { BusinessMark } from "./MarketplaceHeader";
 import { useAuthStore } from "../../store/auth";
 import {
-  OPPORTUNITY_LABEL, TRUST_MARK, TRUST_TONE, activateMarketplaceProfile, claimLookup, directoryError, reportBusiness, searchBusinesses, suggestMarketplaceServices, suggestMarketplaceDescription, updateMarketplaceProfile,
+  OPPORTUNITY_LABEL, TRUST_MARK, TRUST_TONE, activateMarketplaceProfile, claimLookup, directoryError, reportBusiness, searchBusinesses, suggestBusinesses, suggestMarketplaceServices, suggestMarketplaceDescription, updateMarketplaceProfile,
   updateOpportunityPreferences,
 } from "../../lib/directory";
 
@@ -146,7 +146,30 @@ export function FindToClaim({ defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const [form, setForm] = useState({ name: "", company_number: "", website: "" });
   const [state, setState] = useState({});
-  const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setState({}); };
+  const [suggestions, setSuggestions] = useState({ name: [], company_number: [], website: [] });
+  const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setSuggestions((s) => ({ ...s, [k]: [] })); setState({}); };
+  useEffect(() => {
+    let live = true;
+    const timers = [];
+    for (const field of ["name", "company_number", "website"]) {
+      const typed = form[field].trim();
+      const ready = field === "name" ? typed.length >= 2 : field === "company_number" ? typed.length >= 3 : typed.length >= 5;
+      if (!ready) { setSuggestions((s) => s[field].length ? { ...s, [field]: [] } : s); continue; }
+      timers.push(setTimeout(() => {
+        suggestBusinesses(field === "name" ? { q: typed } : { [field]: typed })
+          .then((r) => { if (live) setSuggestions((s) => ({ ...s, [field]: r.items || [] })); })
+          .catch(() => { if (live) setSuggestions((s) => ({ ...s, [field]: [] })); });
+      }, 120));
+    }
+    return () => { live = false; timers.forEach(clearTimeout); };
+  }, [form.name, form.company_number, form.website]);
+  const matchingBusinesses = (field) => suggestions[field]?.length > 0 && (
+    <ul aria-label={`Matching businesses by ${field.replace("_", " ")}`} data-claim-suggestions className="mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      {suggestions[field].map((b) => <li key={b.id}><button type="button" onClick={() => navigate(b.claimed ? `/marketplace/business/${b.slug}` : `/marketplace/claim/${b.slug}`)}
+        className="flex w-full flex-col px-3 py-2 text-left text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800"><span className="break-words font-semibold text-slate-800 dark:text-slate-100">{b.name}</span>
+          <span className="text-[12px] text-slate-500">{[b.location, b.claimed ? "Already claimed" : "Claim this business"].filter(Boolean).join(" · ")}</span></button></li>)}
+    </ul>
+  );
 
   async function find(e) {
     e.preventDefault();
@@ -176,11 +199,12 @@ export function FindToClaim({ defaultOpen = false }) {
       <p className="mt-0.5 text-[13px] text-slate-500">Enter the name exactly as it is registered or trades, with the company number or the website.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Business name
-          <input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} required /></label>{err("name")}</div>
+          <input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} required autoComplete="off" /></label>{err("name")}
+          {matchingBusinesses("name")}</div>
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Company number
-          <input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></label>{err("company_number")}</div>
+          <input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></label>{err("company_number")}{matchingBusinesses("company_number")}</div>
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">or website
-          <input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} placeholder="example.co.uk" /></label></div>
+          <input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} placeholder="example.co.uk" /></label>{matchingBusinesses("website")}</div>
       </div>
       {state.problem && !Object.keys(state.problem.errors || {}).length && <p role="alert" className="mt-2 text-[13px] font-medium text-rose-600">{state.problem.message}</p>}
       {state.missed && (

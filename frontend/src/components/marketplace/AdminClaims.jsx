@@ -554,9 +554,14 @@ function Team() {
   useEffect(() => { getTeam().then(setTeam).catch((e) => setState({ problem: directoryError(e).message })); }, []);
   async function act(work) {
     setState({ busy: true });
-    try { setTeam(await work()); setEmail(""); setState({}); } catch (e) { setState({ problem: directoryError(e).message }); }
+    try {
+      const result = await work();
+      setTeam(result);
+      setEmail("");
+      setState(result?.invite_sent === false ? { problem: "The team member was added, but the email could not be sent. Add the same address again to send a fresh link." }
+        : result?.invite_sent ? { note: "Invitation sent. The link verifies their email and opens Marketplace Claims without a separate sign-up or login." } : {});
+    } catch (e) { setState({ problem: directoryError(e).message }); }
   }
-  const link = `${window.location.origin}/ent-admin?section=marketplace`;
   return (
     <Panel title="Marketplace team" description="Team members can add and import businesses, correct unclaimed profiles, make claim links, and decide claims and reports. They see nothing else in the admin area, and can't change who sees unclaimed profiles.">
       <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (email.trim()) act(() => addTeamMember(email.trim())); }}>
@@ -564,7 +569,8 @@ function Team() {
         <Btn type="submit" disabled={state.busy || !email.trim()}>Add to team</Btn>
       </form>
       {state.problem && <p role="alert" className="mt-2 text-[12px] font-medium text-rose-600">{state.problem}</p>}
-      <p className="mt-2 break-all text-[12px] text-slate-500">They sign in with that email, on a verified account, then open: {link}</p>
+      {state.note && <p role="status" className="mt-2 text-[12px] font-medium text-emerald-700">{state.note}</p>}
+      <p className="mt-2 text-[12px] text-slate-500">We email each invited teammate a secure link. Opening it verifies their email and takes them straight to Marketplace Claims.</p>
       {!team && !state.problem && <p role="status" className="mt-3 text-sm text-slate-500">Loading…</p>}
       {team && team.members.length === 0 && <p className="mt-3 text-sm text-slate-500">Nobody on the team yet.</p>}
       {team && team.members.length > 0 && (

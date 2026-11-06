@@ -214,6 +214,41 @@ async def verify_email(token: str) -> dict:
     return {"verified": True, "email": user["email"]}
 
 
+@router.post("/accept-marketplace-team-invite")
+async def accept_marketplace_team_invite(payload: dict, request: Request) -> dict:
+    """Verify an invited teammate's control of their email and sign them in directly to Claims."""
+    _within(f"marketplace-team-invite:{limits.client_ip(request)}", (10, 900))
+    if not get_settings().marketplace_claim_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    invite_token = str(payload.get("token") or "").strip()
+    if len(invite_token) < 32 or len(invite_token) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invitation link is invalid or has expired.")
+    from app.modules.agent.router import get_orchestrator
+    from app.modules.marketplace.directory import NotFound as MarketplaceNotFound, service_for
+    try:
+        email = await service_for(get_orchestrator()).consume_team_invitation(invite_token)
+    except MarketplaceNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invitation link is invalid or has expired.") from exc
+
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    if not user:
+        user = {"id": email, "email": email, "name": email.split("@", 1)[0], "password_hash": None,
+                "auth_provider": "email_invitation", "email_verified": True, "email_verification_token": None,
+                "created_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            await sb_insert("users", user)
+        except Exception:
+            user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+            if not user:
+                raise
+    if user.get("email_verified") is False:
+        await sb_update("users", filters=[("id", "eq", email)], payload={"email_verified": True, "email_verification_token": None})
+        await _mark_verified(email)
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is suspended. Contact support.")
+    return {"access_token": create_access_token(subject=email), "token_type": "bearer", "email": email}
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, request: Request) -> TokenResponse:
     email, ip = payload.email.lower(), limits.client_ip(request)

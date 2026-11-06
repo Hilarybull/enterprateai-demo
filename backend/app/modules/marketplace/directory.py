@@ -20,6 +20,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
@@ -267,6 +268,25 @@ def _norm_name(name: str) -> str:
     return " ".join(re.sub(r"\b(ltd|limited|llp|plc|inc|co|company|the)\b", "", re.sub(r"[^a-z0-9 ]+", " ", str(name or "").lower())).split())
 
 
+def name_likeness(typed: str, name: str) -> float:
+    """How well what someone is typing fits a business name, 0 to 1."""
+    wanted, have = _norm_name(typed), _norm_name(name)
+    if len(wanted) < 2 or not have:
+        return 0.0
+    if have.startswith(wanted):
+        return 1.0
+    if wanted in have:
+        return 0.9
+    if len(wanted) < 3:
+        return 0.0
+    words = have.split()
+    def fit(word: str) -> float:
+        return max((1.0 if w.startswith(word) else SequenceMatcher(None, word, w).ratio()) for w in words)
+    typed_words = wanted.split()
+    return max(sum(fit(w) for w in typed_words) / len(typed_words) * 0.85,
+               SequenceMatcher(None, wanted, have[:len(wanted) + 2]).ratio() * 0.85)
+
+
 def country_code(value: Any) -> str:
     text = str(value or "").strip().upper()
     return "GB" if text in ("", "UK", "GB", "UNITED KINGDOM", "GREAT BRITAIN", "ENGLAND", "SCOTLAND", "WALES", "NORTHERN IRELAND") else text[:2]
@@ -451,12 +471,14 @@ class DirectoryService:
                  plan_of: Callable[[str], Awaitable[str]] | None = None,
                  request_delivered: Callable[[str, str], Awaitable[None]] | None = None,
                  send_decision: Callable[[dict], Awaitable[bool]] | None = None,
-                 email_of: Callable[[str], Awaitable[str | None]] | None = None):
+                 email_of: Callable[[str], Awaitable[str | None]] | None = None,
+                 send_team_invite: Callable[[dict], Awaitable[bool]] | None = None):
         self.store, self.business, self.clock = store, business, clock
         self._send_code, self._send_invitation = send_code, send_invitation
         self._opportunity_lookup, self._plan_of = opportunity_lookup, plan_of
         self._request_delivered = request_delivered
         self._send_decision, self._email_of = send_decision, email_of
+        self._send_team_invite = send_team_invite
         self.sent_decisions: list[dict] = []      # what would have gone when no mailer is configured: tests and local development
         self.sent_codes: list[tuple[str, str]] = []      # (email, code) when no mailer is configured: tests and local development
         self._visibility: tuple[str, float] | None = None      # (level, read at): looked up at most every few seconds
@@ -505,7 +527,9 @@ class DirectoryService:
 
     async def _team_view(self) -> dict:
         data = ((await self._team_row()) or {}).get("data") or {}
-        return {"members": sorted(data.get("members") or [], key=lambda m: m.get("email") or ""), "history": list(reversed(data.get("history") or []))[:30]}
+        members = [{k: m.get(k) for k in ("email", "added_by", "added_at", "invite_sent_at", "invite_expires_at", "accepted_at") if m.get(k)}
+                   for m in data.get("members") or []]
+        return {"members": sorted(members, key=lambda m: m.get("email") or ""), "history": list(reversed(data.get("history") or []))[:30]}
 
     async def team(self, admin: dict) -> dict:
         if not self.is_superadmin(admin):
@@ -533,10 +557,50 @@ class DirectoryService:
             raise Invalid({"email": "This is the administrator's address, which already has access."})
         row = await self._team_row()
         members = list(((row or {}).get("data") or {}).get("members") or [])
-        if not any(m.get("email") == address for m in members):
-            at, by = self.clock().isoformat(), admin.get("email") or admin["id"]
-            await self._save_team(admin, row, [*members, {"email": address, "added_by": by, "added_at": at}], {"action": "added", "email": address, "by": by, "at": at})
-        return await self._team_view()
+        at, by = self.clock(), admin.get("email") or admin["id"]
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        expires = at + timedelta(days=2)
+        previous = next((m for m in members if str(m.get("email") or "").lower() == address), None)
+        updated = {**(previous or {}), "email": address, "added_by": (previous or {}).get("added_by") or by,
+                   "added_at": (previous or {}).get("added_at") or at.isoformat(), "invite_token_hash": token_hash,
+                   "invite_expires_at": expires.isoformat(), "invite_sent_at": at.isoformat()}
+        members = [m for m in members if str(m.get("email") or "").lower() != address] + [updated]
+        entry = {"action": "invite_resent" if previous else "added", "email": address, "by": by, "at": at.isoformat()}
+        await self._save_team(admin, row, members, entry)
+        sent = False
+        if self._send_team_invite:
+            try:
+                sent = bool(await self._send_team_invite({"email": address, "token": token, "expires_at": expires.isoformat()}))
+            except Exception as exc:      # noqa: BLE001 - adding the member is saved; the admin can issue a fresh link
+                logger.warning("Marketplace team invitation email could not be sent to %s: %s", address, exc)
+        return {**(await self._team_view()), "invite_sent": sent}
+
+    async def consume_team_invitation(self, token: str) -> str:
+        """Consume a short-lived, email-delivered team link and return its verified address."""
+        token_hash = hashlib.sha256(str(token or "").encode()).hexdigest()
+        row = await self._team_row()
+        data = (row or {}).get("data") or {}
+        members = list(data.get("members") or [])
+        member = next((m for m in members if secrets.compare_digest(str(m.get("invite_token_hash") or ""), token_hash)), None)
+        if not row or not member:
+            raise NotFound()
+        try:
+            expires = datetime.fromisoformat(str(member.get("invite_expires_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            expires = self.clock() - timedelta(seconds=1)
+        if expires <= self.clock():
+            raise NotFound()
+        address = str(member.get("email") or "").lower()
+        if not address:
+            raise NotFound()
+        members = [{k: v for k, v in m.items() if k not in ("invite_token_hash", "invite_expires_at", "invite_sent_at")} | ({"accepted_at": self.clock().isoformat()} if m is member else {}) for m in members]
+        saved = await self.store.update("identities", row["id"], {"data": {**data, "members": members}, "updated_at": self.clock()},
+                                        expect_revision=int(row.get("revision") or 0))
+        if not saved:
+            raise NotFound()
+        self._team = ({str(m.get("email") or "").lower() for m in members}, time.monotonic())
+        return address
 
     async def remove_team_member(self, admin: dict, email: str) -> dict:
         if not self.is_superadmin(admin):
@@ -1263,11 +1327,13 @@ class DirectoryService:
 
     async def search(self, *, q: str = "", category: str = "", location: str = "", trust: str = "", open_for: str = "", page: int = 1, page_size: int = 24) -> dict:
         rows = [r for r in await self.store.list("profiles", SCOPE, limit=5000) if (r["data"] or {}).get("publication") == "published"]
+        linked_ids = list(dict.fromkeys(str((r["data"] or {}).get("linked_business_id")) for r in rows if (r["data"] or {}).get("linked_business_id")))
+        linked_by_id = await self.business.load_many(linked_ids)
         level = await self.visibility()
         listed = level == "public"      # becomes true below if any unclaimed profile is listed (its own setting may make it public)
         items, shown = [], []
         for row in rows:
-            linked = await self._linked(row)
+            linked = linked_by_id.get(str((row["data"] or {}).get("linked_business_id")))
             item = self._public(row, linked)
             if item["claimed"] and item.get("activated") and listing_quality(_with_public_services(marketplace_settings(linked), row)):
                 continue      # published before the quality check, and not good enough to show yet
@@ -1294,6 +1360,27 @@ class DirectoryService:
         start = (max(1, page) - 1) * page_size
         return {"items": items[start:start + page_size], "total": len(items), "unclaimed_listed": listed,
                 "categories": sorted({(r["data"] or {}).get("category") for r in shown if (r["data"] or {}).get("category")})}
+
+    async def suggest_names(self, typed: str = "", *, company_number: str = "", website: str = "", limit: int = 6) -> list[dict]:
+        """Suggest public matches by name, or by exact registered number/domain."""
+        if company_number or website:
+            key = next(iter(identity_keys({"name": "", "company_number": company_number, "website": website, "country": ""})), None)
+            if not key:
+                return []
+            hit = await self.store.find_key("identities", SCOPE, None, key)
+            profile = await self.store.get("profiles", hit["data"]["profile_id"]) if hit else None
+            data = (profile or {}).get("data") or {}
+            if not profile or data.get("publication") not in ("published", "noindex") or level_for(data, await self.visibility()) != "public":
+                return []
+            return [{"id": profile["id"], "slug": data.get("slug"), "name": data.get("name"), "location": data.get("location"),
+                     "claimed": bool(data.get("linked_business_id"))}]
+        if len(str(typed or "").strip()) < 2:
+            return []
+        items = (await self.search(page_size=5000))["items"]
+        scored = [(max(name_likeness(typed, item.get("name")), name_likeness(typed, item.get("trading_name"))), item) for item in items]
+        scored = sorted((x for x in scored if x[0] >= 0.62), key=lambda x: (-x[0], str(x[1].get("name")).lower()))
+        return [{"id": item["id"], "slug": item.get("slug"), "name": item.get("name"), "location": item.get("location"), "claimed": bool(item.get("claimed"))}
+                for _score, item in scored[:limit]]
 
     async def public_profile(self, ref: str, viewer: dict | None = None, via: dict | None = None) -> dict:
         row = await self._profile(ref)
@@ -3172,7 +3259,8 @@ def service_for(orch) -> DirectoryService:
                            send_code=None if memory else _email_code, send_invitation=None if memory else _email_invitation,
                            opportunity_lookup=None if memory else _open_request, plan_of=orch.rt.meter.plan,
                            request_delivered=None if memory else _hand_delivered_request,
-                           send_decision=None if memory else _email_decision, email_of=None if memory else _user_email)
+                           send_decision=None if memory else _email_decision, email_of=None if memory else _user_email,
+                           send_team_invite=None if memory else _email_team_invite)
     orch._directory = svc
     return svc
 
@@ -3181,6 +3269,24 @@ async def _user_email(user_id: str) -> str | None:
     from app.core.supabase import sb_select
     row = await sb_select("users", filters=[("id", "eq", user_id)], columns="email", single=True)
     return (row or {}).get("email")
+
+
+async def _email_team_invite(message: dict) -> bool:
+    from html import escape
+    from app.core.config import get_settings
+    from app.shared.email.resend import email_button, send_email_via_resend
+    base = str(getattr(get_settings(), "frontend_url", "") or "").split(",")[0].strip().rstrip("/")
+    url = f"{base}/marketplace/team-invite?token={message['token']}"
+    text = ("You've been invited to help review business profiles and claims on the EnterprateAI Marketplace. "
+            "Open the secure link below to verify your email and access Marketplace Claims. The link expires in 48 hours.\n\n"
+            f"Verify your email and open Marketplace Claims: {url}\n\nIf you weren't expecting this invitation, you can ignore this email.")
+    html = ("<p>You've been invited to help review business profiles and claims on the EnterprateAI Marketplace.</p>"
+            "<p>Open the secure link to verify your email and access Marketplace Claims. It expires in 48 hours.</p>"
+            + email_button(url, "Verify email and open Claims")
+            + f"<p style='font-size:12px;color:#64748b'>Sent to {escape(message['email'])}. If you weren't expecting this, ignore this email.</p>")
+    result = await send_email_via_resend(to_email=message["email"], subject="Your EnterprateAI Marketplace team invitation",
+                                         text_content=text, html_content=html, idempotency_key=f"marketplace-team-invite/{message['token']}")
+    return bool(getattr(result, "sent", True))
 
 
 async def _email_decision(message: dict) -> bool:

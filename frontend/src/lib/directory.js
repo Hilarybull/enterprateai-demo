@@ -7,6 +7,11 @@ export const searchBusinesses = (params = {}) => {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined));
   return apiRequest(`/marketplace/businesses?${q}`, "GET");
 };
+export const suggestBusinesses = (input) => {
+  const params = typeof input === "string" ? { q: input } : (input || {});
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => String(value || "").trim()));
+  return apiRequest(`/marketplace/business-suggestions?${query}`, "GET");
+};
 // An unclaimed profile may not be public. `via` is what the visitor holds that opens it: an
 // invitation link's token, an exact-match lookup's grant, or the claim they started.
 const viaQuery = (via) => {

@@ -60,6 +60,7 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
+import MarketplaceTeamInvitePage from "./pages/MarketplaceTeamInvitePage";
 import EmailPreferencesPage, { UnsubscribePage } from "./pages/EmailPreferencesPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
@@ -159,6 +160,7 @@ export default function App() {
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/marketplace/team-invite" element={<MarketplaceTeamInvitePage />} />
       <Route path="/email/unsubscribe" element={<UnsubscribePage />} />
       <Route path="/email/preferences" element={<EmailPreferencesPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />

@@ -191,6 +191,14 @@ class InvitationIn(BaseModel):
 
 # ── public discovery ──────────────────────────────────────────────────────────
 
+@router.get("/marketplace/business-suggestions")
+async def business_suggestions(q: str = Query(default="", max_length=120), company_number: str = Query(default="", max_length=80),
+                               website: str = Query(default="", max_length=200)):
+    """As someone types a name, registered number, or website: public matching profiles only."""
+    if not enabled():
+        return {"items": []}
+    return {"items": await _run(get_service().suggest_names(q, company_number=company_number, website=website))}
+
 @router.get("/marketplace/businesses")
 async def search_businesses(q: str = Query(default="", max_length=120), category: str = Query(default="", max_length=80),
                             location: str = Query(default="", max_length=80), trust: str = Query(default="", max_length=20),

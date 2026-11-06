@@ -25,6 +25,10 @@ class Business:
     async def mutate(self, business_id: str, fn: Callable[[dict], Any]) -> Any: raise NotImplementedError
     async def owner_id(self, business_id: str) -> str: raise NotImplementedError
 
+    async def load_many(self, business_ids: list[str]) -> dict[str, dict]:
+        """Load several business records in one backend operation where supported."""
+        return {business_id: await self.load(business_id) for business_id in dict.fromkeys(business_ids)}
+
     async def record(self, business_id: str) -> dict:
         """Owner and data together. Implementations should do this in one read."""
         return {"owner_id": await self.owner_id(business_id), "data": await self.load(business_id)}
@@ -119,6 +123,9 @@ class MemoryBusiness(Business):
     async def load(self, business_id):
         return copy.deepcopy(self.businesses[business_id]["data"])
 
+    async def load_many(self, business_ids):
+        return {bid: copy.deepcopy(self.businesses[bid]["data"]) for bid in dict.fromkeys(business_ids) if bid in self.businesses}
+
     async def mutate(self, business_id, fn):
         data = self.businesses[business_id]["data"]
         return fn(data)
@@ -164,6 +171,14 @@ class SupabaseBusiness(Business):
 
     async def load(self, business_id):
         return (await self._row(business_id)).get("data") or {}
+
+    async def load_many(self, business_ids):
+        ids = list(dict.fromkeys(str(bid) for bid in business_ids if bid))
+        if not ids:
+            return {}
+        from app.core.supabase import sb_select
+        rows = await sb_select("workspaces", filters=[("id", "in", ids)], columns="id,data") or []
+        return {str(row["id"]): row.get("data") or {} for row in rows}
 
     async def context(self, user_id, business_id, email=None):
         from app.core.supabase import sb_select
