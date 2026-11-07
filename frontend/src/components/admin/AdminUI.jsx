@@ -44,6 +44,7 @@ export const ADMIN_NAV = [
   ] },
   { group: "Growth", items: [
     { key: "upgrades", label: "Upgrade clicks", subtitle: "Interest in paid plans", icon: "arrowUp" },
+    { key: "discounts", label: "Pricing discounts", subtitle: "Create and manage offer codes", icon: "puzzle" },
     { key: "module-interest", label: "Module interest", subtitle: "Tools people asked about", icon: "puzzle" },
     { key: "referrals", label: "Referrals", subtitle: "Referral links and rewards", icon: "share" },
     { key: "activation", label: "Activation emails", subtitle: "Getting-started journeys", icon: "mail" },
