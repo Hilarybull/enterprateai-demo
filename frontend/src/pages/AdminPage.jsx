@@ -13,6 +13,7 @@ import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
+import DiscountsAdmin from "../components/admin/DiscountsAdmin";
 import AgentSpend from "../components/admin/AgentSpend";
 import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
 import { moderatorAccess } from "../lib/directory";
@@ -1677,6 +1678,7 @@ const PAGE_TITLE = {
   members: ["Team", "Members", "Who belongs to which workspace."],
   invitations: ["Team", "Invitations", "Invitations sent, accepted and revoked."],
   upgrades: ["Upgrade", "Clicks", "People who showed interest in a paid plan."],
+  discounts: ["Pricing", "Discounts", "Create and manage the codes customers can use at checkout."],
   "module-interest": ["Module", "Interest", "Tools people asked to hear about."],
   activation: ["Activation", "Emails", "Getting-started and education journeys: who gets what, and what it changes."],
   contacts: ["All", "Contacts", "Everyone's name and email, how they came, and their marketing choice."],
@@ -3440,6 +3442,7 @@ export default function AdminPage() {
         )}
 
         {tab === "activation" && isAdmin && <ActivationAdmin />}
+        {tab === "discounts" && isAdmin && <DiscountsAdmin />}
 
         {tab === "contacts" && isAdmin && <ContactsSection />}
 

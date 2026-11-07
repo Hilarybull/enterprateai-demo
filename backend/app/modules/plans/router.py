@@ -336,7 +336,7 @@ async def create_subscription(
             codes = client.promotion_codes.list({"code": payload.promo_code, "active": True, "limit": 1})
             if not codes.data:
                 raise HTTPException(status_code=400, detail="Invalid or expired promo code.")
-            sub_params["promotion_code"] = codes.data[0].id
+            sub_params["discounts"] = [{"promotion_code": codes.data[0].id}]
         except HTTPException:
             raise
         except Exception as e:

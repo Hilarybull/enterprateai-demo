@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
 
+import stripe
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
+from app.core.config import get_settings
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update, sb_upsert
 from app.shared.auth.deps import get_current_user
 
@@ -424,6 +427,197 @@ async def _audit(actor: dict, action: str, detail: dict) -> None:
     except Exception:
         import logging
         logging.getLogger(__name__).warning("admin audit: %s by %s %s", action, actor.get("email"), detail)
+
+
+class DiscountCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    code: str = Field(min_length=3, max_length=50)
+    percent_off: float = Field(gt=0, le=100)
+    duration: str = "repeating"
+    duration_in_months: Optional[int] = Field(default=None, ge=1, le=36)
+    max_redemptions: Optional[int] = Field(default=None, ge=1)
+    redeem_by: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_duration(self):
+        if self.duration not in {"once", "repeating", "forever"}:
+            raise ValueError("Duration must be once, repeating or forever.")
+        if self.duration == "repeating" and self.duration_in_months is None:
+            raise ValueError("Repeating discounts need a duration in months.")
+        return self
+
+
+class DiscountStatusPayload(BaseModel):
+    active: bool
+
+
+def _stripe_admin_client():
+    settings = get_settings()
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=503, detail="Stripe is not configured for this environment.")
+    client_class = getattr(stripe, "StripeClient", None) or getattr(stripe, "Stripe", None)
+    if client_class is None:
+        raise HTTPException(status_code=503, detail="The configured Stripe SDK is not supported.")
+    return client_class(settings.stripe_secret_key)
+
+
+def _stripe_attr(value, key, default=None):
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _discount_response(promotion, coupon, livemode: bool) -> dict:
+    metadata = _stripe_attr(promotion, "metadata", {})
+    return {
+        "id": _stripe_attr(promotion, "id"),
+        "code": _stripe_attr(promotion, "code"),
+        "name": _stripe_attr(metadata, "offer_name") or _stripe_attr(coupon, "name"),
+        "coupon_name": _stripe_attr(coupon, "name"),
+        "percent_off": _stripe_attr(coupon, "percent_off"),
+        "amount_off": _stripe_attr(coupon, "amount_off"),
+        "currency": _stripe_attr(coupon, "currency"),
+        "duration": _stripe_attr(coupon, "duration"),
+        "duration_in_months": _stripe_attr(coupon, "duration_in_months"),
+        "active": bool(_stripe_attr(promotion, "active", False)) and bool(_stripe_attr(coupon, "valid", True)),
+        "times_redeemed": _stripe_attr(promotion, "times_redeemed", 0),
+        "max_redemptions": _stripe_attr(promotion, "max_redemptions"),
+        "expires_at": _stripe_attr(promotion, "expires_at"),
+        "redeem_by": _stripe_attr(coupon, "redeem_by"),
+        "products": _stripe_attr(_stripe_attr(coupon, "applies_to", {}), "products", []) or [],
+        "livemode": livemode,
+    }
+
+
+def _configured_plan_products(client) -> list[str]:
+    """Resolve the configured plan prices to products so a plan offer cannot discount unrelated products."""
+    from app.modules.plans.router import _PRICE_ATTR
+
+    settings = get_settings()
+    products = set()
+    for attr in set(_PRICE_ATTR.values()):
+        price_id = getattr(settings, attr, None)
+        if not price_id:
+            continue
+        price = client.prices.retrieve(price_id)
+        product = _stripe_attr(price, "product")
+        product_id = _stripe_attr(product, "id") if not isinstance(product, str) else product
+        if product_id:
+            products.add(str(product_id))
+    if not products:
+        raise HTTPException(status_code=503, detail="No paid plan prices are configured in Stripe for this environment.")
+    return sorted(products)
+
+
+@router.get("/discounts")
+async def list_discounts(user=Depends(require_admin)) -> dict:
+    """List Stripe promotion codes and their coupon terms for the active environment."""
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    try:
+        response = client.promotion_codes.list({"limit": 100, "expand": ["data.coupon"]})
+        rows = []
+        pages = 0
+        while response and pages < 20:
+            for promotion in response.data:
+                coupon = _stripe_attr(promotion, "coupon")
+                if isinstance(coupon, str):
+                    coupon = client.coupons.retrieve(coupon)
+                rows.append(_discount_response(promotion, coupon, livemode))
+            if not response.has_more or not response.data:
+                break
+            response = client.promotion_codes.list({
+                "limit": 100,
+                "starting_after": response.data[-1].id,
+                "expand": ["data.coupon"],
+            })
+            pages += 1
+        return {"items": rows, "livemode": livemode, "partial": pages >= 20}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe promotion codes could not be listed")
+        raise HTTPException(status_code=502, detail="Discounts could not be loaded from Stripe.") from exc
+
+
+@router.post("/discounts")
+async def create_discount(payload: DiscountCreatePayload, user=Depends(require_admin)) -> dict:
+    """Create a repeating percent-off coupon and customer-entered promotion code."""
+    code = payload.code.strip()
+    if not code.isascii() or not code.isalnum():
+        raise HTTPException(status_code=400, detail="Use letters and numbers only for a discount code.")
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    name = payload.name.strip() or code
+    expiry = None
+    if payload.redeem_by:
+        try:
+            expiry = datetime.strptime(payload.redeem_by, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Choose a valid last redemption date.") from exc
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="The last redemption date must be in the future.")
+    try:
+        existing = client.promotion_codes.list({"code": code, "active": True, "limit": 100})
+        if any(str(_stripe_attr(item, "code", "")).casefold() == code.casefold() for item in existing.data):
+            raise HTTPException(status_code=409, detail="An active discount already uses this code.")
+
+        plan_products = _configured_plan_products(client)
+        coupon_params = {
+            "name": name,
+            "percent_off": payload.percent_off,
+            "duration": payload.duration,
+            "applies_to": {"products": plan_products},
+            "metadata": {"created_by": "enterprateai_superadmin", "offer_name": name},
+        }
+        if payload.duration == "repeating":
+            coupon_params["duration_in_months"] = payload.duration_in_months
+        coupon = client.coupons.create(coupon_params)
+        promo_params = {
+            "coupon": coupon.id,
+            "code": code,
+            "metadata": {"created_by": "enterprateai_superadmin", "offer_name": name},
+        }
+        if payload.max_redemptions is not None:
+            promo_params["max_redemptions"] = payload.max_redemptions
+        if expiry:
+            promo_params["expires_at"] = int(expiry.timestamp())
+        promotion = client.promotion_codes.create(promo_params)
+        await _audit(user, "discount_created", {
+            "code": code, "coupon_id": coupon.id, "promotion_code_id": promotion.id,
+            "percent_off": payload.percent_off, "duration": payload.duration,
+            "duration_in_months": payload.duration_in_months,
+            "plan_products": plan_products, "livemode": livemode,
+        })
+        return _discount_response(promotion, coupon, livemode)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe discount could not be created")
+        raise HTTPException(status_code=502, detail="Discount could not be created in Stripe.") from exc
+
+
+@router.patch("/discounts/{promotion_code_id}")
+async def update_discount(promotion_code_id: str, payload: DiscountStatusPayload, user=Depends(require_admin)) -> dict:
+    """Activate or deactivate a promotion code without deleting its redemption history."""
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    try:
+        promotion = client.promotion_codes.update(promotion_code_id, {"active": payload.active})
+        coupon = _stripe_attr(promotion, "coupon")
+        if isinstance(coupon, str):
+            coupon = client.coupons.retrieve(coupon)
+        await _audit(user, "discount_status_changed", {
+            "code": _stripe_attr(promotion, "code"), "promotion_code_id": promotion_code_id,
+            "active": payload.active, "livemode": livemode,
+        })
+        return _discount_response(promotion, coupon, livemode)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe promotion code could not be updated")
+        raise HTTPException(status_code=502, detail="Discount status could not be changed in Stripe.") from exc
 
 
 @router.get("/contacts")
