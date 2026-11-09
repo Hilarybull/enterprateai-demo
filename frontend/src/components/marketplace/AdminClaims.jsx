@@ -3,7 +3,7 @@ import { AdminTable, Chip, KpiTile } from "../admin/AdminUI";
 import AddBusinesses, { EditBusinessForm, VISIBILITY_OPTION } from "./AddBusiness";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
 import {
-  createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile,
+  createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile, getProfileRfps, publishProfileRfp, closeProfileRfp, setHeldProposals,
   normaliseLocations, addTeamMember, getTeam, removeTeamMember, resolveReport, reviewListing, setProfileVisibility, setVisibility,
 } from "../../lib/directory";
 import { dateLabel } from "../../lib/readiness";
@@ -292,9 +292,10 @@ function WaitingRequests({ data, onClose }) {
           {data.items.map((r) => (
             <article key={r.id} className="rounded-xl border border-slate-200 p-3 text-[13px] dark:border-slate-800">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <Chip tone={r.kind === "quote" ? "sky" : "slate"}>{r.kind === "quote" ? "Quote request" : "Question"}</Chip>
+                <Chip tone={r.kind === "quote" ? "sky" : r.kind === "proposal" ? "emerald" : "slate"}>{r.kind === "quote" ? "Quote request" : r.kind === "proposal" ? (r.request_title ? "Reply to an RFP" : "Proposal") : "Question"}</Chip>
                 <span className="text-[12px] text-slate-500">Received {dateLabel(r.received_at)}{r.needed_by ? ` · Needed by ${dateLabel(r.needed_by)}` : ""}</span>
               </div>
+              {r.title && <p className="mt-2 break-words text-sm font-bold text-slate-900 dark:text-slate-100">{r.title}</p>}
               <p className="mt-2 break-words font-semibold text-slate-900 dark:text-slate-100">{r.name}{r.company ? ` · ${r.company}` : ""}</p>
               <p className="break-all text-slate-600 dark:text-slate-300">{r.email}</p>
               {r.items.length > 0 && <ul className="mt-2 space-y-1 text-slate-700 dark:text-slate-200">
@@ -321,6 +322,7 @@ function Unclaimed({ onChange }) {
   const [editing, setEditing] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [vis, setVis] = useState(null);            // { profiles: [...], value, reason } being set
+  const [writing, setWriting] = useState(null);    // { profile, rfps, title, description, budget_range, deadline, requirements, errors } an RFP being published
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => getUnclaimedProfiles().then((r) => { setList(r); setProblem(null); }).catch((e) => setProblem(directoryError(e, "The list couldn't be loaded.").message)), []);
   useEffect(() => { load(); }, [load]);
@@ -359,6 +361,41 @@ function Unclaimed({ onChange }) {
       await load(); onChange?.();
     } catch (e) { setProblem(directoryError(e).message); } finally { setBusy(false); }
   }
+  async function switchProposals(p) {
+    setNote(null); setProblem(null);
+    try {
+      await setHeldProposals(p.slug, !p.proposals_open);
+      setNote({ text: p.proposals_open ? `${p.name} is closed to proposals. Proposals already kept for it stay waiting.` : `${p.name} is open for proposals. They're kept for the business and go to its Proposals inbox once it claims the profile.` });
+      await load(); onChange?.();
+    } catch (e) { setProblem(directoryError(e).message); }
+  }
+  async function startRfp(p) {
+    setProblem(null);
+    const blank = { profile: p, rfps: [], title: "", description: "", budget_range: "", deadline: "", requirements: "", errors: {} };
+    setWriting(blank);
+    try { const r = await getProfileRfps(p.slug); setWriting((w) => (w && w.profile.id === p.id ? { ...w, rfps: r.items || [] } : w)); } catch { /* the form still works */ }
+  }
+  async function sendRfp() {
+    setBusy(true); setProblem(null);
+    try {
+      const made = await publishProfileRfp(writing.profile.slug, { title: writing.title, description: writing.description, budget_range: writing.budget_range || null,
+        deadline: writing.deadline || null, requirements: writing.requirements.split("\n").map((t) => t.trim()).filter(Boolean) });
+      setNote({ text: `RFP published for ${writing.profile.name}. It's listed under Requests on the Marketplace.`, link: `${window.location.origin}/marketplace/request/${made.id}` });
+      setWriting(null);
+      await load(); onChange?.();
+    } catch (e) {
+      const p = directoryError(e);
+      if (Object.keys(p.errors || {}).length) setWriting((w) => ({ ...w, errors: p.errors })); else setProblem(p.message);
+    } finally { setBusy(false); }
+  }
+  async function closeRfp(r) {
+    setProblem(null);
+    try {
+      await closeProfileRfp(writing.profile.slug, r.id);
+      const fresh = await getProfileRfps(writing.profile.slug);
+      setWriting((w) => (w ? { ...w, rfps: fresh.items || [] } : w));
+    } catch (e) { setProblem(directoryError(e).message); }
+  }
   const ask = (profile, action) => { setAsking({ profile, action }); setReason(""); };
   const chosen = (list?.items || []).filter((p) => selected.has(p.id));
 
@@ -393,6 +430,50 @@ function Unclaimed({ onChange }) {
             </label>
           </div>
           <div className="mt-2 flex flex-wrap gap-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "Saving…" : "Apply"}</Btn><Btn onClick={() => setVis(null)}>Cancel</Btn></div>
+        </form>
+      )}
+      {writing && (
+        <form onSubmit={(e) => { e.preventDefault(); sendRfp(); }} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900" aria-label={`Publish an RFP for ${writing.profile.name}`}>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Publish an RFP for {writing.profile.name}</p>
+          <p className="mt-0.5 text-[13px] text-slate-500">It's listed under Requests on the Marketplace in this business's name. Businesses reply with proposals, which are kept and go to its Proposals inbox once it claims the profile. The request goes to the business too, still open.</p>
+          {writing.rfps?.length > 0 && (
+            <ul aria-label={`RFPs for ${writing.profile.name}`} className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 text-[13px] dark:divide-slate-800 dark:border-slate-800">
+              {writing.rfps.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                  <span className="min-w-0"><span className="block break-words font-semibold text-slate-900 dark:text-slate-100">{r.title}</span>
+                    <span className="text-[12px] text-slate-500">{r.status === "PUBLISHED" ? "Open" : "Closed"} · published {dateLabel(r.published_at)}{r.deadline ? ` · deadline ${dateLabel(r.deadline)}` : ""} · {r.replies_waiting === 1 ? "1 reply waiting" : `${r.replies_waiting} replies waiting`}</span></span>
+                  <span className="flex gap-2">
+                    {r.status === "PUBLISHED" && <Btn kind="link" className="text-[12px]" onClick={() => window.open(`/marketplace/request/${r.id}`, "_blank", "noopener")}>View</Btn>}
+                    {r.status === "PUBLISHED" && <Btn kind="link" className="text-[12px]" onClick={() => closeRfp(r)}>Close</Btn>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200 sm:col-span-2">Title
+              <input className={`mt-1 ${inputClass}`} value={writing.title} maxLength={200} placeholder="What the business is looking for" onChange={(e) => setWriting({ ...writing, title: e.target.value })} />
+              {writing.errors?.title && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{writing.errors.title}</span>}
+            </label>
+            <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200 sm:col-span-2">What's needed
+              <textarea rows={5} className={`mt-1 ${inputClass}`} value={writing.description} maxLength={2000} onChange={(e) => setWriting({ ...writing, description: e.target.value })} />
+              {writing.errors?.description && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{writing.errors.description}</span>}
+            </label>
+            <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Budget (optional)
+              <input className={`mt-1 ${inputClass}`} value={writing.budget_range} maxLength={80} placeholder="5000 - 10000" onChange={(e) => setWriting({ ...writing, budget_range: e.target.value })} />
+            </label>
+            <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Deadline (optional)
+              <input type="date" className={`mt-1 ${inputClass}`} value={writing.deadline} onChange={(e) => setWriting({ ...writing, deadline: e.target.value })} />
+              {writing.errors?.deadline && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{writing.errors.deadline}</span>}
+            </label>
+            <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200 sm:col-span-2">Requirements (optional, one per line)
+              <textarea rows={3} className={`mt-1 ${inputClass}`} value={writing.requirements} onChange={(e) => setWriting({ ...writing, requirements: e.target.value })} />
+            </label>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Btn kind="primary" type="submit" disabled={busy || writing.title.trim().length < 3 || writing.description.trim().length < 20}>{busy ? "Publishing…" : "Publish RFP"}</Btn>
+            <Btn onClick={() => setWriting(null)}>Cancel</Btn>
+          </div>
         </form>
       )}
       {editing && <EditBusinessForm profile={editing} options={list?.options} onClose={() => setEditing(null)}
@@ -432,6 +513,8 @@ function Unclaimed({ onChange }) {
               ...(list.invites_enabled ? [{ label: "Send invitation", onClick: () => invite(p, true), disabled: !live || !p.has_contact }] : []),
               { label: "Open profile (moderator view)", onClick: () => window.open(`/marketplace/business/${p.slug}`, "_blank", "noopener"), disabled: gone || p.publication === "unpublished" },
               { label: "Change visibility", onClick: () => setVis({ profiles: [p], value: p.visibility || "inherit", reason: "" }) },
+              { label: p.proposals_open ? "Close to proposals" : "Open for proposals", onClick: () => switchProposals(p), disabled: gone && !p.proposals_open },
+              { label: "Publish an RFP", onClick: () => startRfp(p), disabled: !live },
               { label: "Edit", onClick: () => setEditing(p), disabled: gone },
               ...(gone ? [{ label: "Restore", onClick: () => ask(p, "restore") }] : [{ label: "Archive", onClick: () => ask(p, "archive") }, { label: "Suppress", danger: true, onClick: () => ask(p, "suppress") }]),
               { label: "View sources", onClick: () => showSources(p) },
@@ -451,6 +534,7 @@ function Unclaimed({ onChange }) {
               ? <button type="button" aria-label={`Read ${p.requests_waiting === 1 ? "1 request" : `${p.requests_waiting} requests`} for ${p.name}`} className="rounded-full hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600"
                 onClick={() => getWaitingRequests(p.slug).then(setRequests).catch((e) => setProblem(directoryError(e).message))}><Chip tone="amber"><span className="underline">{p.requests_waiting}</span></Chip></button>
               : 0) },
+            { key: "proposals", label: "Proposals", render: (p) => (p.proposals_open ? <Chip tone="emerald">Open</Chip> : <span className="text-slate-500">Closed</span>) },
             { key: "contact", label: "Contact on record", render: (p) => (p.has_contact ? "Yes" : "No") },
           ]} />
       )}

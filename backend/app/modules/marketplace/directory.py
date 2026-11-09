@@ -19,7 +19,7 @@ import re
 import secrets
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
@@ -753,6 +753,7 @@ class DirectoryService:
             pass
         items = [{"id": r["id"], "slug": r["data"].get("slug"), "name": r["data"].get("name"), "category": r["data"].get("category"), "location": r["data"].get("location"),
                   "requests_waiting": waiting.get(str(r["id"]), 0), "has_logo": bool(r["data"].get("logo_data_url")),
+                  "proposals_open": bool(r["data"].get("held_proposals_open")),
                   "publication": r["data"].get("publication"), "has_contact": bool(r["data"].get("contact_email")), "contact_email": r["data"].get("contact_email"), "contact_phone": r["data"].get("contact_phone"), "indexed_at": r["data"].get("indexed_at"),
                   "visibility": (r["data"] or {}).get("visibility") or "inherit", "effective_visibility": level_for(r["data"] or {}, level),
                   "visibility_label": VISIBILITY_WORDS[level_for(r["data"] or {}, level)] + (" (override)" if PROFILE_VISIBILITY.get((r["data"] or {}).get("visibility") or "inherit") else " (default)"),
@@ -803,6 +804,123 @@ class DirectoryService:
                 "edits": d.get("edits") or [], "visibility_history": d.get("visibility_history") or [],
                 "imports": [{"provider": ((s["data"] or {}).get("source") or {}).get("provider"), "record_id": ((s["data"] or {}).get("source") or {}).get("record_id"),
                              "retrieved_at": ((s["data"] or {}).get("source") or {}).get("retrieved_at"), "imported_at": s.get("created_at")} for s in snapshots]}
+
+    async def set_held_proposals(self, admin: dict, ref: str, enabled: bool) -> dict:
+        """A moderator opens (or closes) a profile nobody has claimed for proposals. Proposals sent to it are kept
+        the way quotes and questions are, and go to the business's Proposals inbox once its claim is verified."""
+        if not await self.can_moderate(admin):
+            raise Forbidden("Not available.")
+        profile = await self._profile(ref)
+        if await self._own_interest(admin, profile_id=profile["id"]):
+            raise Forbidden("You can't change a profile your own business is tied to. Another reviewer needs to do it.")
+        d = profile["data"] or {}
+        if d.get("linked_business_id") and d.get("claim_state") in HELD_STATES:
+            raise Conflict("claimed", "This business has claimed its profile. It chooses for itself whether it takes proposals.")
+        if bool(d.get("held_proposals_open")) != bool(enabled):
+            await self.store.update("profiles", profile["id"], {"updated_at": self.clock(), "data": {
+                **d, "held_proposals_open": bool(enabled), "held_proposals_changed": {"by": f"moderator:{admin['id']}", "at": self.clock().isoformat()}}}, bump=False)
+            await self.event("HeldProposalsOpened" if enabled else "HeldProposalsClosed", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={})
+        return {"id": profile["id"], "slug": d.get("slug"), "name": d.get("name"), "proposals_open": bool(enabled)}
+
+    async def _team_profile(self, admin: dict, ref: str) -> dict:
+        """A profile nobody has claimed, for a moderator with no interest in it."""
+        if not await self.can_moderate(admin):
+            raise Forbidden("Not available.")
+        profile = await self._profile(ref)
+        if await self._own_interest(admin, profile_id=profile["id"]):
+            raise Forbidden("You can't change a profile your own business is tied to. Another reviewer needs to do it.")
+        d = profile["data"] or {}
+        if d.get("linked_business_id") and d.get("claim_state") in HELD_STATES:
+            raise Conflict("claimed", "This business has claimed its profile. It publishes its own requests now.")
+        return profile
+
+    async def publish_rfp(self, admin: dict, ref: str, raw: dict) -> dict:
+        """A request for proposals published by the team on behalf of a business that hasn't claimed its profile. It is
+        listed with every other RFP; replies are kept, and the request and its replies go to the business once it claims."""
+        profile = await self._team_profile(admin, ref)
+        d = profile["data"] or {}
+        if d.get("publication") not in ("published", "noindex"):
+            raise Conflict("not_live", "This profile isn't live. Make it ready before publishing a request for it.")
+        raw = raw if isinstance(raw, dict) else {}
+        title, description = _text(raw.get("title"), 200), _text(raw.get("description"), MAX_TEXT)
+        deadline = _text(raw.get("deadline"), 40) or None
+        errors: dict[str, str] = {}
+        if len(title) < 3:
+            errors["title"] = "Give the request a title."
+        if len(description) < 20:
+            errors["description"] = "Describe what the business needs (at least 20 characters)."
+        if deadline:
+            try:
+                if date.fromisoformat(deadline[:10]) < self.clock().date():
+                    errors["deadline"] = "The deadline can't be in the past."
+            except ValueError:
+                errors["deadline"] = "That date isn't valid."
+        if errors:
+            raise Invalid(errors)
+        now = self.clock().isoformat()
+        rfp = {"id": new_id(), "type": "general", "title": title, "description": description, "category": d.get("category"),
+               "budget_range": _text(raw.get("budget_range"), 80) or None, "budget_currency": _text(raw.get("budget_currency"), 3).upper() or "GBP",
+               "budget_visible": bool(_text(raw.get("budget_range"), 80)), "deadline": deadline, "submission_cap": None,
+               "requirements": [{"text": _text(t, 300), "mandatory": False, "weight": 1, "format": "text"} for t in (raw.get("requirements") or [])[:20] if len(_text(t, 300)) >= 3],
+               "accepted_modes": ["general"], "accepted_categories": None, "specific_criteria": None, "visibility": "marketplace",
+               "status": "PUBLISHED", "created_at": now, "published_at": now, "updated_at": now, "published_by_team": f"moderator:{admin['id']}"}
+        await self.store.update("profiles", profile["id"], {"updated_at": self.clock(), "data": {**d, "rfps": [rfp, *(d.get("rfps") or [])]}}, bump=False)
+        await self.event("DirectoryRfpPublished", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"rfp_id": rfp["id"]})
+        return {**rfp, "profile": d.get("slug")}
+
+    async def close_rfp(self, admin: dict, ref: str, rfp_id: str) -> dict:
+        profile = await self._team_profile(admin, ref)
+        d = profile["data"] or {}
+        rfps = [dict(r) for r in d.get("rfps") or []]
+        hit = next((r for r in rfps if r.get("id") == rfp_id), None)
+        if not hit:
+            raise NotFound()
+        if hit.get("status") == "PUBLISHED":
+            hit.update({"status": "CLOSED", "closed_at": self.clock().isoformat(), "updated_at": self.clock().isoformat()})
+            await self.store.update("profiles", profile["id"], {"updated_at": self.clock(), "data": {**d, "rfps": rfps}}, bump=False)
+            await self.event("DirectoryRfpClosed", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"rfp_id": rfp_id})
+        return hit
+
+    async def profile_rfps(self, admin: dict, ref: str) -> dict:
+        if not await self.can_moderate(admin):
+            raise Forbidden("Not available.")
+        profile = await self._profile(ref)
+        held = await self._held_requests(profile["id"])
+        return {"name": (profile["data"] or {}).get("name"), "slug": (profile["data"] or {}).get("slug"), "items": [
+            {**r, "replies_waiting": sum(1 for h in held if (h["data"] or {}).get("request_id") == r.get("id"))} for r in (profile["data"] or {}).get("rfps") or []]}
+
+    async def public_rfps(self) -> list[dict]:
+        """Open RFPs the team published for unclaimed profiles the public can see, shaped like any listed request."""
+        out = []
+        try:
+            rows = [r for r in await self.store.list("profiles", SCOPE, limit=5000) if (r["data"] or {}).get("rfps")]
+        except NotSetUp:
+            return []
+        for row in rows:
+            d = row["data"] or {}
+            if d.get("linked_business_id") and d.get("claim_state") in HELD_STATES:
+                continue      # handed to the business: listed from its own workspace now
+            if d.get("publication") not in ("published", "noindex") or not await self._may_see(row):
+                continue
+            for r in d.get("rfps") or []:
+                if r.get("status") == "PUBLISHED":
+                    out.append({**{k: v for k, v in r.items() if k != "published_by_team"}, "workspace_id": None, "directory_slug": d.get("slug"),
+                                "company_name": d.get("name"), "company_logo": d.get("logo_data_url"), "company_industry": d.get("category") or "",
+                                "company_country": d.get("country") or "", "location": d.get("location")})
+        return out
+
+    def _rfp_of(self, d: dict, rfp_id: str | None) -> dict | None:
+        """An RFP of this profile still taking replies."""
+        r = next((x for x in d.get("rfps") or [] if rfp_id and x.get("id") == rfp_id), None)
+        if not r or r.get("status") != "PUBLISHED":
+            return None
+        if r.get("deadline"):
+            try:
+                if date.fromisoformat(str(r["deadline"])[:10]) < self.clock().date():
+                    return None
+            except ValueError:
+                pass
+        return r
 
     async def moderate_profile(self, admin: dict, ref: str, *, action: str, reason: str) -> dict:
         """suppress | restore, by a moderator, with a reason that is kept. Never on a profile their own business is tied to."""
@@ -1284,6 +1402,8 @@ class DirectoryService:
                 "claim": {"eligible": d.get("publication") in ("published", "noindex"), "cta": "Claim this Business for Free"},
                 # A quote or a question can be left here and is kept for whoever claims it. Its own settings start after a claim.
                 "held_requests_open": d.get("publication") in ("published", "noindex"),
+                # A proposal too, when the team has opened this profile for proposals
+                "held_proposals_open": d.get("publication") in ("published", "noindex") and bool(d.get("held_proposals_open")),
             })
             if full:
                 base["legal_identifier"] = d.get("company_number")
@@ -1436,8 +1556,9 @@ class DirectoryService:
             return []
 
     async def hold_request(self, ref: str, raw: dict, *, viewer: dict | None = None, via: dict | None = None, sender_workspace_id: str | None = None) -> dict:
-        """A quote or a question for a business that hasn't claimed its profile. Kept privately until a claim
-        on this profile is verified, then handed to that business. Nobody sees the sender's details before that."""
+        """A quote, a question or a proposal for a business that hasn't claimed its profile. Kept privately until a claim
+        on this profile is verified, then handed to that business. Nobody sees the sender's details before that.
+        A proposal is taken when the team opened the profile for proposals, or in reply to an RFP the team published for it."""
         row = await self._profile(ref)
         d = row["data"] or {}
         if not await self._may_see(row, viewer, via) or d.get("publication") not in ("published", "noindex"):
@@ -1445,7 +1566,13 @@ class DirectoryService:
         if d.get("linked_business_id") and d.get("claim_state") in HELD_STATES:
             raise Conflict("claimed", "This business has claimed its profile. Contact it from its listing.")
         raw = raw if isinstance(raw, dict) else {}
-        kind = raw.get("kind") if raw.get("kind") in ("quote", "enquiry") else "enquiry"
+        kind = raw.get("kind") if raw.get("kind") in ("quote", "enquiry", "proposal") else "enquiry"
+        rfp = self._rfp_of(d, _text(raw.get("request_id"), 64)) if kind == "proposal" and raw.get("request_id") else None
+        if kind == "proposal" and raw.get("request_id") and not rfp:
+            raise Conflict("request_closed", "This request isn't taking proposals any more.")
+        if kind == "proposal" and not rfp and not d.get("held_proposals_open"):
+            raise Conflict("proposals_closed", "This business isn't taking proposals here. You can ask a question instead.")
+        title = (_text(raw.get("title"), 200) or (rfp or {}).get("title") or "") if kind == "proposal" else ""
         name, email = _text(raw.get("name"), 120), _text(raw.get("email"), 200).lower()
         details = _text(raw.get("details"), MAX_TEXT)
         items = []
@@ -1466,6 +1593,11 @@ class DirectoryService:
             errors["items"] = "Choose at least one product or service."
         if kind == "enquiry" and len(details) < 5:
             errors["details"] = "Write your question."
+        if kind == "proposal":
+            if len(title) < 3:
+                errors["title"] = "Give your proposal a title."
+            if len(details) < 20:
+                errors["details"] = "Describe what you're proposing (at least 20 characters)."
         if errors:
             raise Invalid(errors)
         waiting = await self.store.list("requests", SCOPE, subject_id=row["id"], limit=500)
@@ -1482,7 +1614,8 @@ class DirectoryService:
             "id": new_id(), "business_id": SCOPE, "kind": kind, "subject_id": row["id"], "status": "held", "revision": 1, "key": None,
             "created_by": (viewer or {}).get("id"), "created_at": now, "updated_at": now,
             "data": {"customer_name": name, "customer_email": email, "customer_company": _text(raw.get("company"), 200) or None, "items": items, "details": details,
-                     "needed_by": _text(raw.get("needed_by"), 40) or None, "sender_workspace_id": sender_workspace_id}})
+                     "needed_by": _text(raw.get("needed_by"), 40) or None, "sender_workspace_id": sender_workspace_id,
+                     **({"title": title} if kind == "proposal" else {}), **({"request_id": rfp["id"], "request_title": rfp["title"]} if rfp else {})}})
         await self.event("HeldRequestReceived", profile_id=row["id"], payload={"kind": kind, "request_id": saved["id"]})      # nothing about the sender
         return {"id": saved["id"], "status": "held", "new": True, "business_name": d.get("name")}
 
@@ -1498,7 +1631,8 @@ class DirectoryService:
         await self.event("HeldRequestsViewed", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"count": len(rows)})
         return {"name": (profile["data"] or {}).get("name"), "slug": (profile["data"] or {}).get("slug"), "items": [
             {"id": r["id"], "kind": r.get("kind"), "received_at": r.get("created_at"), "name": (r["data"] or {}).get("customer_name"), "email": (r["data"] or {}).get("customer_email"),
-             "company": (r["data"] or {}).get("customer_company"), "items": (r["data"] or {}).get("items") or [], "details": (r["data"] or {}).get("details") or "", "needed_by": (r["data"] or {}).get("needed_by")} for r in rows]}
+             "company": (r["data"] or {}).get("customer_company"), "items": (r["data"] or {}).get("items") or [], "details": (r["data"] or {}).get("details") or "", "needed_by": (r["data"] or {}).get("needed_by"),
+             "title": (r["data"] or {}).get("title"), "request_title": (r["data"] or {}).get("request_title")} for r in rows]}
 
     async def _delivered_count(self, profile_id: str, business_id: str | None) -> int:
         return len([r for r in await self.store.list("requests", SCOPE, subject_id=profile_id, limit=500)
@@ -1525,6 +1659,13 @@ class DirectoryService:
                         keep.append(x)
                 fin["rfq_requests"] = keep
                 data["financials"] = fin
+                inbox = []
+                for x in data.get("proposal_inbox") or []:
+                    if isinstance(x, dict) and str(x.get("id")) in ids and x.get("status") == "SUBMITTED" and not x.get("viewed_at"):
+                        back.append(str(x["id"]))
+                    else:
+                        inbox.append(x)
+                data["proposal_inbox"] = inbox
             await self.business.mutate(business_id, take)
             for r in sent:
                 if str(r["id"]) in back:
@@ -1536,11 +1677,25 @@ class DirectoryService:
             logger.warning("Requests could not be taken back after a revocation", exc_info=True)
             return 0
 
+    async def _hand_over_rfps(self, profile_id: str, business_id: str) -> None:
+        """RFPs the team published for this profile become the business's own requests, still open, so replies keep coming."""
+        profile = await self.store.get("profiles", profile_id)
+        rfps = [r for r in ((profile or {}).get("data") or {}).get("rfps") or [] if isinstance(r, dict)]
+        if not rfps:
+            return
+
+        def put(data: dict) -> None:
+            have = list(data.get("proposal_requests") or [])
+            known = {str(x.get("id")) for x in have if isinstance(x, dict)}
+            data["proposal_requests"] = [*[{**r, "workspace_id": business_id} for r in rfps if str(r.get("id")) not in known], *have]
+        await self.business.mutate(business_id, put)
+
     async def _deliver_held(self, profile_id: str, business_id: str) -> int:
         """Authority is established: everything left on this profile goes to the business's own requests, in the shape
         any request has, with the date it was really sent. Safe to run again. A failure here never undoes a claim."""
         try:
             waiting = await self._held_requests(profile_id)
+            await self._hand_over_rfps(profile_id, business_id)
             if not waiting:
                 return 0
             profile = await self.store.get("profiles", profile_id)
@@ -1553,12 +1708,27 @@ class DirectoryService:
                         "status": "pending", "created_at": str(r.get("created_at")), "quote_id": None, "sender_workspace_id": h.get("sender_workspace_id"),
                         "customer_company": h.get("customer_company"), "needed_by": h.get("needed_by"), "listing": listing, "kept_until_claimed": True}
 
+            def as_proposal(r: dict, recipient: str | None) -> dict:
+                h = r["data"] or {}
+                at = str(r.get("created_at"))
+                return {"id": r["id"], "status": "SUBMITTED", "version": 1, "request_id": h.get("request_id"), "request_title": h.get("request_title"),
+                        "proposer_workspace_id": h.get("sender_workspace_id"), "proposer_name": h.get("customer_company") or h.get("customer_name"),
+                        "proposer_email": h.get("customer_email"), "proposer_contact_name": h.get("customer_name"),
+                        "recipient_workspace_id": business_id, "recipient_name": recipient or listing, "title": h.get("title"), "summary": h.get("details") or "",
+                        "sections": [], "requirement_responses": [], "attachments": [],
+                        "events": [{"event_type": "submitted", "actor": "proposer", "created_at": at}],
+                        "submitted_at": at, "updated_at": at, "viewed_at": None, "kept_until_claimed": True, "listing": listing}
+
             def put(data: dict) -> None:
                 fin = dict(data.get("financials") or {})
                 have = list(fin.get("rfq_requests") or [])
                 known = {str(x.get("id")) for x in have if isinstance(x, dict)}
-                fin["rfq_requests"] = [*have, *[as_request(r) for r in waiting if str(r["id"]) not in known]]
+                fin["rfq_requests"] = [*have, *[as_request(r) for r in waiting if r.get("kind") != "proposal" and str(r["id"]) not in known]]
                 data["financials"] = fin
+                inbox = list(data.get("proposal_inbox") or [])
+                there = {str(x.get("id")) for x in inbox if isinstance(x, dict)}
+                recipient = (data.get("workspace_profile") or {}).get("company_name")
+                data["proposal_inbox"] = [*[as_proposal(r, recipient) for r in waiting if r.get("kind") == "proposal" and str(r["id"]) not in there], *inbox]
             await self.business.mutate(business_id, put)
             at = self.clock()
             for r in waiting:

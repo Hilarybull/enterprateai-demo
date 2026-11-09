@@ -2273,6 +2273,21 @@ export default function AdminPage() {
     });
   }
 
+  // The business's own "Open for proposals" setting. Never publishes its Marketplace listing.
+  function switchProposals(ws) {
+    const name = ws.name || "Unnamed";
+    const opening = !ws.proposals_open;
+    askConfirm({
+      title: opening ? "Open for proposals?" : "Close to proposals?",
+      description: opening
+        ? `Businesses on the Marketplace will be able to send proposals to "${name}". Its Marketplace listing isn't changed${ws.listing_live ? "." : ": it isn't live, so proposals reach it only once the owner publishes it."}`
+        : `"${name}" will stop receiving new proposals. Proposals it already has are kept.`,
+      label: opening ? "Open for proposals" : "Close to proposals",
+      successMsg: opening ? `"${name}" is open for proposals.` : `"${name}" is closed to proposals.`,
+      action: () => apiRequest(`/admin/workspaces/${ws.id}/proposals`, "PATCH", { enabled: opening }),
+    });
+  }
+
   function deleteWorkspace(workspaceId, workspaceName) {
     askConfirm({
       title: "Delete workspace?",
@@ -3138,6 +3153,15 @@ export default function AdminPage() {
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "member_count", label: "Members", render: (r) => <span className="text-xs tabular-nums">{r.member_count ?? 0}</span> },
                 { key: "created_at", label: "Created", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "proposals", label: "Proposals", render: (r) => (
+                  <div className="flex flex-col items-start gap-0.5">
+                    <button type="button" onClick={() => switchProposals(r)} aria-pressed={Boolean(r.proposals_open)} aria-label={`${r.proposals_open ? "Close" : "Open"} ${r.name || "Unnamed"} for proposals`}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${r.proposals_open ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+                      {r.proposals_open ? "Open" : "Closed"}
+                    </button>
+                    {r.proposals_open && !r.listing_live && <span className="text-[10px] text-amber-700">Listing not live</span>}
+                  </div>
+                )},
                 { key: "actions", label: "", tdClass: "w-20", render: (r) => (
                   <div className="flex items-center gap-1">
                     <ActionBtn variant="view" title="View details" onClick={() => openDetail(r.id)} disabled={detailLoading} />

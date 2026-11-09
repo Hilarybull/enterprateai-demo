@@ -341,7 +341,7 @@ async def do_nothing_run(
         state=state,
         timeline_months=payload.timeline_months,
     )
-    return DoNothingResponse(**result)
+    return DoNothingResponse(**{**result, "starting_cash": float(state.starting_cash or 0)})
 
 
 @router.post("/scenario-runs/{scenario_run_id}/decision", response_model=ScenarioDecisionResponse)

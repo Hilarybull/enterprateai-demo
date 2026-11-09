@@ -455,9 +455,22 @@ async def list_public_proposal_requests(*, search: str | None = None, page: int 
                 "company_industry": profile.get("primary_industry", ""),
                 "company_country": profile.get("country", ""),
             })
+    for req in await _directory_rfps():      # RFPs the team published for businesses that haven't claimed their profile
+        if search and search.strip().lower() not in " ".join([req.get("title") or "", req.get("description") or "", req.get("category") or "", req.get("company_name") or ""]).lower():
+            continue
+        results.append(req)
     total = len(results)
     start = (page - 1) * page_size
     return {"items": results[start: start + page_size], "total": total}
+
+
+async def _directory_rfps() -> list[dict]:
+    try:
+        from app.modules.marketplace.directory_router import enabled, get_service
+        return await get_service().public_rfps() if enabled() else []
+    except Exception:      # noqa: BLE001 - the directory's requests are an addition; the rest still lists
+        logger.warning("Directory RFPs could not be listed", exc_info=True)
+        return []
 
 
 async def get_public_proposal_request(*, request_id: str) -> dict:
@@ -497,6 +510,9 @@ async def get_public_proposal_request(*, request_id: str) -> dict:
                 "company_industry": profile.get("primary_industry", ""),
                 "company_country": profile.get("country", ""),
             }
+    for req in await _directory_rfps():
+        if req.get("id") == request_id:
+            return req
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
 
 

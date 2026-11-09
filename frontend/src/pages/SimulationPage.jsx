@@ -483,7 +483,9 @@ export default function SimulationPage() {
         scenario_metrics: {},
         deltas: {},
         state_result: "neutral",
-        timeline_summary: {}
+        timeline_summary: {},
+        // The cash the projection starts from (your recorded payments in and out, or what you told the Agent)
+        baseline_snapshot: { starting_cash: Number(res?.starting_cash ?? stateSnapshot?.starting_cash ?? 0) },
       };
       setProjectionRun(projectionPayload);
       setProjectionTimeline(res?.forecast || []);

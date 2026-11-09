@@ -189,6 +189,7 @@ class DoNothingResponse(BaseModel):
     projection_id: str
     timeline_months: int
     forecast: List[Dict[str, Any]]
+    starting_cash: Optional[float] = None      # the cash the projection starts from, so the table opens on it
 
 
 class ScenarioDecisionRequest(BaseModel):

@@ -292,6 +292,9 @@ async def get_system_stats(days: int = AI_WINDOW_DAYS, user=Depends(require_admi
                 "owner_id": ws.get("user_id"),
                 "owner_email": user_email_map.get(ws.get("user_id") or "", ""),
                 "created_at": ws.get("created_at"),
+                # "Open for proposals", and whether the Marketplace listing is live (proposals reach only a live listing)
+                "proposals_open": bool(((ws.get("data") or {}).get("proposal_preferences") or {}).get("enabled")) if isinstance(ws.get("data"), dict) else False,
+                "listing_live": bool(((ws.get("data") or {}).get("marketplace") or {}).get("is_active")) if isinstance(ws.get("data"), dict) else False,
             }
             for ws in workspaces
         ],
@@ -1302,6 +1305,32 @@ async def restore_workspace_snapshot(
         raise HTTPException(status_code=500, detail="Restore wrote to MongoDB but Supabase update returned no rows — workspace ID may not exist in Supabase.")
 
     return {"restored": True, "ws_name": restored_name, "saved_at": snap.get("created_at")}
+
+
+class WorkspaceProposalsIn(BaseModel):
+    enabled: bool
+
+
+def open_for_proposals(data: dict, enabled: bool, now: str) -> dict:
+    """The owner's own "Open for proposals" setting, switched by the superadmin. The listing is never published by this:
+    a business that isn't live stays as its owner left it (the owner, 9 Nov)."""
+    from app.modules.proposals.service import apply_proposal_preferences
+    apply_proposal_preferences(data, {"enabled": enabled}, now, auto_publish=False)
+    return {"enabled": enabled, "listing_live": bool((data.get("marketplace") or {}).get("is_active"))}
+
+
+@router.patch("/workspaces/{workspace_id}/proposals")
+async def set_workspace_proposals(workspace_id: str, body: WorkspaceProposalsIn, user=Depends(require_admin)) -> dict:
+    from app.modules.agent.business import BusinessAccessDenied
+    from app.modules.agent.router import get_orchestrator
+    out: dict = {}
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        await get_orchestrator().rt.business.mutate(workspace_id, lambda data: out.update(open_for_proposals(data, body.enabled, now)))
+    except BusinessAccessDenied:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    await _audit(user, "workspace_proposals_changed", {"workspace_id": workspace_id, "enabled": body.enabled})
+    return out
 
 
 @router.delete("/workspaces/{workspace_id}", status_code=204, response_class=Response)

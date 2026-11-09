@@ -78,6 +78,21 @@ class HeldRequestIn(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     details: str = Field(default="", max_length=2000)
     needed_by: str | None = Field(default=None, max_length=40)
+    title: str | None = Field(default=None, max_length=200)      # a proposal's title
+    request_id: str | None = Field(default=None, max_length=64)      # the RFP it answers
+
+
+class HeldProposalsIn(BaseModel):
+    enabled: bool
+
+
+class TeamRfpIn(BaseModel):
+    title: str = Field(max_length=200)
+    description: str = Field(max_length=2000)
+    budget_range: str | None = Field(default=None, max_length=80)
+    budget_currency: str | None = Field(default=None, max_length=3)
+    deadline: str | None = Field(default=None, max_length=40)
+    requirements: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TeamMemberIn(BaseModel):
@@ -274,7 +289,7 @@ async def leave_a_request(ref: str, body: HeldRequestIn, request: Request, user=
         except Exception:      # noqa: BLE001 - their own copy is a convenience; the request still goes in
             sender_workspace_id = None
     saved = await _run(get_service().hold_request(ref, body.model_dump(), viewer=user, via=via, sender_workspace_id=sender_workspace_id))
-    if saved.pop("new") and user and sender_workspace_id:
+    if saved.pop("new") and user and sender_workspace_id and body.kind != "proposal":
         from app.modules.marketplace.service import note_sent_request
         await note_sent_request(user["id"], sender_workspace_id, saved["id"], saved["business_name"], body.items or [{"name": "A question", "quantity": 1, "notes": None}], body.details or None)
     return saved
@@ -600,6 +615,28 @@ async def review_listing(ref: str, body: ListingReviewIn, user=Depends(get_curre
 @router.get("/admin/marketplace/directory-profiles/{ref}/requests")
 async def waiting_requests(ref: str, user=Depends(get_current_user)):
     return await _run(get_service().waiting_requests(user, ref))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/proposals-open")
+async def held_proposals_open(ref: str, body: HeldProposalsIn, user=Depends(get_current_user)):
+    """Open (or close) a profile nobody has claimed for proposals. Changes are kept in the directory's event log."""
+    return await _run(get_service().set_held_proposals(user, ref, body.enabled))
+
+
+@router.get("/admin/marketplace/directory-profiles/{ref}/rfps")
+async def profile_rfps(ref: str, user=Depends(get_current_user)):
+    return await _run(get_service().profile_rfps(user, ref))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/rfps", status_code=201)
+async def publish_rfp(ref: str, body: TeamRfpIn, user=Depends(get_current_user)):
+    """Publish a request for proposals on behalf of a business that hasn't claimed its profile."""
+    return await _run(get_service().publish_rfp(user, ref, body.model_dump()))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/rfps/{rfp_id}/close")
+async def close_rfp(ref: str, rfp_id: str, user=Depends(get_current_user)):
+    return await _run(get_service().close_rfp(user, ref, rfp_id))
 
 
 @router.get("/admin/marketplace/directory-profiles/{ref}/sources")

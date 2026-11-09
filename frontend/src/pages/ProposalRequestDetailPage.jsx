@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
 import { ApplyModal, BusinessProfileModal } from "./MarketplaceListings";
+import LeaveARequest from "../components/marketplace/LeaveARequest";
 
 function fmt(str) {
   if (!str) return "";
@@ -167,6 +168,7 @@ export default function ProposalRequestDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [applyTarget, setApplyTarget] = useState(null); // { listing, request }
+  const [replying, setReplying] = useState(false);      // an RFP published for a business that hasn't claimed its profile
   const [applyLoading, setApplyLoading] = useState(false);
   const [profileListing, setProfileListing] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -181,6 +183,7 @@ export default function ProposalRequestDetailPage() {
 
   async function handleApply() {
     if (!req) return;
+    if (req.directory_slug) { setReplying(true); return; }      // replies are kept for the business until it claims its profile
     setApplyLoading(true);
     try {
       const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
@@ -194,6 +197,7 @@ export default function ProposalRequestDetailPage() {
 
   async function handleViewCompany() {
     if (!req) return;
+    if (req.directory_slug) { window.open(`/marketplace/business/${req.directory_slug}`, "_blank", "noopener"); return; }
     setProfileLoading(true);
     try {
       const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
@@ -440,6 +444,9 @@ export default function ProposalRequestDetailPage() {
                     )}
                     {deadlinePassed ? "Deadline Passed" : applyLoading ? "Loading…" : "Submit Proposal"}
                   </button>
+                  {replying && req.directory_slug && !deadlinePassed && (
+                    <LeaveARequest slug={req.directory_slug} name={req.company_name} rfp={{ id: req.id, title: req.title }} />
+                  )}
                 </div>
               )}
 

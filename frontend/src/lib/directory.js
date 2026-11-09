@@ -92,6 +92,10 @@ export const suggestIndexField = (field, record) => apiRequest("/admin/marketpla
 export const addBusiness = (record, allowDuplicate = false) => apiRequest("/admin/marketplace/directory/businesses", "POST", { record, allow_duplicate: allowDuplicate });
 export const importBusinesses = (records, commit = false) => apiRequest("/admin/marketplace/directory/import", "POST", { records, commit }, { timeoutMs: 120000 });
 export const editDirectoryProfile = (ref, changes, reason) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}`, "PATCH", { changes, reason: reason || "" });
+export const setHeldProposals = (ref, enabled) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/proposals-open`, "POST", { enabled });
+export const getProfileRfps = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps`, "GET");
+export const publishProfileRfp = (ref, body) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps`, "POST", body);
+export const closeProfileRfp = (ref, id) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps/${encodeURIComponent(id)}/close`, "POST", {});
 export const getWaitingRequests = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/requests`, "GET");
 export const getProfileSources = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/sources`, "GET");
 export const moderateProfile = (ref, action, reason) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/moderation`, "POST", { action, reason });

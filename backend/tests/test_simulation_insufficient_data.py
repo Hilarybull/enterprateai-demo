@@ -110,6 +110,8 @@ def test_a_what_if_runs_on_the_figures_the_risk_check_read(world, open_plan, mon
     f = figures.of(env.businesses["A"]["data"])
     filled = __import__("asyncio").run(si.shared_state({"id": OWNER, "email": OWNER}, "A", BusinessStateSnapshot(**EMPTY)))
     assert (filled.revenue_monthly, filled.expenses_monthly, filled.starting_cash, filled.top_client_share_pct) == (f["revenue_monthly"], f["costs_monthly"], f["cash"], 100.0)
+    # The baseline table opens on that cash, not on £0 (the owner, 9 Nov: a £300 part payment showed as £0)
+    assert base.json()["starting_cash"] == f["cash"] and f["cash"] != 0
 
 
 def test_losing_a_client_worth_all_the_revenue_is_judged_at_full_effect_never_neutral():

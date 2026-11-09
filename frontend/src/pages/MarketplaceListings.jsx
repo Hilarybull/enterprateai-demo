@@ -2892,8 +2892,8 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
-                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
-                  onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
+                  onApply={() => (req.directory_slug ? navigate(`/marketplace/request/${req.id}`) : setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }))}
+                  onCompanyClick={() => (req.directory_slug ? navigate(`/marketplace/business/${req.directory_slug}`) : apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {}))}
                   onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />
               ))}

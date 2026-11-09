@@ -355,7 +355,7 @@ export default function DirectoryProfilePage() {
           </Panel>
 
           <Panel title="How to work with us">
-            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
+            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} proposalsOpen={Boolean(b.held_proposals_open)} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
               : paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
               : ways.length > 0 ? (
                 <ul className="divide-y divide-slate-100 dark:divide-slate-800" data-ways>

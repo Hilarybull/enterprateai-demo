@@ -876,7 +876,7 @@ describe("admin area", () => {
     expect(within(table).getByText("Suppressed")).toBeTruthy();
     expect(within(table).getByText("Unpublished (quality)")).toBeTruthy();
     const menu = (name) => { fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` })); return screen.getByRole("menu"); };
-    expect(within(menu("Northwind Advisory Ltd")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Edit", "Archive", "Suppress", "View sources"]);
+    expect(within(menu("Northwind Advisory Ltd")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Archive", "Suppress", "View sources"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy invitation link" }));
     await screen.findByText("Invitation link for Northwind Advisory Ltd copied.");
     expect(copied[0]).toMatch(/\/marketplace\/claim\/northwind-advisory-ltd-leeds\?invite=tok-7$/);
@@ -897,7 +897,7 @@ describe("admin area", () => {
     expect(sent("POST", /moderation$/)[0].body).toEqual({ action: "suppress", reason: "Duplicate of another record." });
     // A suppressed row offers Restore, and can't be opened or invited.
     const items = within(menu("Harbour Legal LLP")).getAllByRole("menuitem");
-    expect(items.map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Edit", "Restore", "View sources"]);
+    expect(items.map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Restore", "View sources"]);
     expect(items[0].disabled && items[1].disabled).toBe(true);
   });
 
@@ -1262,7 +1262,7 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     expect(within(table).getByText("Public (override)")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Actions for Northwind Advisory Ltd" }));
     expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(
-      ["Copy invitation link", "Send invitation", "Open profile (moderator view)", "Change visibility", "Edit", "Archive", "Suppress", "View sources"]);
+      ["Copy invitation link", "Send invitation", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Archive", "Suppress", "View sources"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Change visibility" }));
     let form = screen.getByRole("form", { name: "Set visibility" });
     expect(within(form).getByText("Set visibility for Northwind Advisory Ltd")).toBeTruthy();

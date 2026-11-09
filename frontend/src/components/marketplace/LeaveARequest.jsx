@@ -12,6 +12,7 @@ const WAYS = [
   ["quote", "Request a quote", "Choose what you need and they can price it."],
   ["enquiry", "Ask a question", "Send a message for the business to answer."],
 ];
+const PROPOSAL = ["proposal", "Send a proposal", "Offer your products or services to this business."];
 const OTHER = "__other__";
 
 function Line({ label, error, children }) {
@@ -24,13 +25,13 @@ function Line({ label, error, children }) {
   );
 }
 
-export default function LeaveARequest({ slug, name, via, services = [], startQuoteFor = null }) {
+export default function LeaveARequest({ slug, name, via, services = [], startQuoteFor = null, proposalsOpen = false, rfp = null }) {
   const token = useAuthStore((st) => st.token);
   const signedInEmail = useAuthStore((st) => st.email);
-  const [kind, setKind] = useState(startQuoteFor ? "quote" : null);
+  const [kind, setKind] = useState(rfp ? "proposal" : startQuoteFor ? "quote" : null);
   const box = useRef(null);
   useEffect(() => { if (startQuoteFor) box.current?.scrollIntoView?.({ block: "center" }); }, []);      // arrived from a service's Request Quotation button
-  const [form, setForm] = useState({ name: "", email: signedInEmail || "", company: "", details: "" });
+  const [form, setForm] = useState({ name: "", email: signedInEmail || "", company: "", details: "", title: "" });
   const [items, setItems] = useState([{ name: startQuoteFor && (services.includes(startQuoteFor) || !services.length) ? startQuoteFor : services[0] || "", quantity: "1", custom: "" }]);
   const [state, setState] = useState({});
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -45,7 +46,7 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
       ? items.map((it) => ({ name: (it.name === OTHER ? it.custom : it.name).trim(), quantity: Number(it.quantity) || 1 })).filter((it) => it.name)
       : [];
     try {
-      await leaveRequest(slug, { kind, ...form, items: lines }, via, token ? undefined : await humanCheck());
+      await leaveRequest(slug, { kind, ...form, items: lines, ...(rfp ? { request_id: rfp.id } : {}) }, via, token ? undefined : await humanCheck());
       setState({ sent: true });
     } catch (err) {
       const p = directoryError(err, "Your request couldn't be sent. Please try again.");
@@ -57,7 +58,7 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
     return (
       <Notice tone="emerald" data-request-sent>
         <span className="block font-bold">Request sent!</span>
-        {kind === "quote" ? `${name} will review your request and send a quotation to your email.` : `${name} will review your question and reply to your email.`}
+        {kind === "quote" ? `${name} will review your request and send a quotation to your email.` : kind === "proposal" ? `${name} will review your proposal and reply to your email.` : `${name} will review your question and reply to your email.`}
       </Notice>
     );
   }
@@ -66,7 +67,7 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
     <div ref={box} data-leave-request>
       {!kind ? (
         <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
-          {WAYS.map(([key, label, line]) => (
+          {(proposalsOpen ? [...WAYS, PROPOSAL] : WAYS).map(([key, label, line]) => (
             <li key={key} className="flex flex-wrap items-center gap-3 py-3 last:pb-0">
               <span className="min-w-[12rem] flex-1">
                 <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{label}</span>
@@ -77,12 +78,13 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
           ))}
         </ul>
       ) : (
-        <form onSubmit={send} noValidate aria-label={kind === "quote" ? "Request a quote" : "Ask a question"} className="mt-3 space-y-3">
+        <form onSubmit={send} noValidate aria-label={kind === "quote" ? "Request a quote" : kind === "proposal" ? "Send a proposal" : "Ask a question"} className="mt-3 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <Line label="Your name" error={errors.name}><input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} autoComplete="name" /></Line>
             <Line label="Your email" error={errors.email}><input type="email" className={`mt-1 ${inputClass}`} value={form.email} onChange={set("email")} autoComplete="email" /></Line>
           </div>
           <Line label="Company (optional)"><input className={`mt-1 ${inputClass}`} value={form.company} onChange={set("company")} autoComplete="organization" /></Line>
+          {kind === "proposal" && !rfp && <Line label="Proposal title" error={errors.title}><input className={`mt-1 ${inputClass}`} value={form.title} maxLength={200} onChange={set("title")} /></Line>}
           {kind === "quote" && (
             <div>
               <div className="flex items-center justify-between">
@@ -110,12 +112,12 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
               {errors.items && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{errors.items}</p>}
             </div>
           )}
-          <Line label={kind === "quote" ? "Message (optional)" : "Your question"} error={errors.details}><textarea rows={3} className={`mt-1 ${inputClass}`} value={form.details} onChange={set("details")} /></Line>
+          <Line label={kind === "quote" ? "Message (optional)" : kind === "proposal" ? "Your proposal" : "Your question"} error={errors.details}><textarea rows={3} className={`mt-1 ${inputClass}`} value={form.details} onChange={set("details")} /></Line>
           <p className="text-[12px] text-slate-500">Your details are kept private and only shared with the business once it has proved it manages this profile.</p>
           {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
           <div className="flex flex-wrap gap-2">
-            <Btn kind="primary" type="submit" disabled={state.busy}>{state.busy ? "Sending…" : "Send request"}</Btn>
-            <Btn disabled={state.busy} onClick={() => { setKind(null); setState({}); }}>Back</Btn>
+            <Btn kind="primary" type="submit" disabled={state.busy}>{state.busy ? "Sending…" : kind === "proposal" ? "Send proposal" : "Send request"}</Btn>
+            {!rfp && <Btn disabled={state.busy} onClick={() => { setKind(null); setState({}); }}>Back</Btn>}
           </div>
         </form>
       )}
