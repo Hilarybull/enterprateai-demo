@@ -38,6 +38,7 @@ import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import InvoicePublicPage from "./pages/InvoicePublicPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import AdsPage from "./pages/AdsPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
 import JoinPage from "./pages/JoinPage";
@@ -167,6 +168,7 @@ export default function App() {
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
       <Route path="/r/:code" element={<ReferralClickPage />} />
+      <Route path="/ads" element={<AdsPage />} />
       <Route path="/book-demo" element={<BookDemoPage />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogArticlePage />} />
