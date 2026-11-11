@@ -302,13 +302,16 @@ describe("a service named in the request but not in the catalogue (the owner, 11
       { key: "customer_email", label: "Customer email", type: "email", required: false, hint: "You can add it later.", show_if: { customer_id: "new" } },
       { key: "items", label: "Items", type: "line_items", required: true,
         suggested: [{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: "" }],
-        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] }] } } };
+        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] },
+      { key: "discount", label: "Discount", type: "discount" },
+      { key: "notes", label: "Notes on the invoice", type: "textarea" }] } } };
     await act(async () => { render(<BusinessAssistant />); });
     fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "create a new invoice for Tosin Giwa. Service is SAP S4HANA Material Management" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
     expect((await screen.findAllByText("What is the customer's email address? You can add it later.")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/What should this invoice include\?/)).toBeNull();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Skip" })); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "later" } });      // never kept as the address
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
     expect(await screen.findByText(/What's the price for SAP S4HANA Material Management\?/)).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "1500" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
@@ -316,6 +319,9 @@ describe("a service named in the request but not in the catalogue (the owner, 11
     const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
     const given = sent.body.answers || sent.body;
     expect(given.customer_name).toBe("Tosin Giwa");
+    expect(given.customer_email).toBeUndefined();      // left for later: the draft is made, the address asked when it's sent
+    expect(screen.queryByText(/Any discount to give\?/)).toBeNull();      // extras are changed on the draft, not asked one by one
+    expect(screen.queryByText(/say to the customer/)).toBeNull();
     expect(given.items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
   });
 });

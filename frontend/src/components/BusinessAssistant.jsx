@@ -254,12 +254,16 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // A task's questions as ordinary messages with quick replies, answered from the box below, one at a time; what the
   // records already give is filled in and never asked (the owner, 29 Oct: "no separate box with its own Send button")
   const taskAsk = useRef(null);
+  const LATER = /^(skip|later|add it later|i'?ll add it later|not now|none|no|nope|n\/a|na|don'?t know|dont have it|i don'?t have it|no email|leave it|leave it blank)\.?$/i;
   const known = (f) => {
     if (f.confirm) return false;
     if (f.type === "checkbox") return true;      // its default stands
     if (f.type === "line_items") return !checkLines(f, f.default || []).error && (f.default || []).length > 0;
     return !questionIsEmpty(f, f.default);
   };
+  // Optional extras (a discount, a note on the document) aren't asked one by one in the chat: they're there to change on
+  // the draft with Edit (the owner, 11 Nov). Said in the request, they're filled in anyway.
+  const extra = (f) => !f.required && !f.said && !f.asked && (f.type === "discount" || f.type === "textarea");
   function startTaskQuestions({ question, answer, discard, run = null }) {
     const fields = question.fields || [];
     // Items the owner already named ("Service is SAP S4HANA Material Management") are kept, waiting only for their price (the owner, 11 Nov)
@@ -288,7 +292,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     // Skipped: what does not apply, what the records already give, and what an earlier answer here already said ("carl" as
     // the customer is the new customer's name too)
     while (a.at < a.fields.length && (!shows(a.fields[a.at], a.values) || a.filled.has(a.fields[a.at].key)
-      || (known(a.fields[a.at]) && !a.fields[a.at].asked))) a.at += 1;
+      || (known(a.fields[a.at]) && !a.fields[a.at].asked) || extra(a.fields[a.at]))) a.at += 1;
     if (a.at >= a.fields.length) return finishTask();
     const f = a.fields[a.at];
     const unpriced = f.type === "line_items" ? (a.values[f.key] || []).find((r) => !(Number(r.unit_price) > 0)) : null;
@@ -387,8 +391,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       a.values[f.key] = [...(a.values[f.key] || []).filter((r) => (r.product_id || r.name) && Number(r.unit_price) > 0), ...rows];
       say(`Added: ${questionSummary(f, rows)}. Anything else?`, chipsFor(f, a.values));
       return;
-    } else if (/^skip$/i.test(t) && !f.required) value = "";
-    else value = isName && /\d/.test(t) ? named.name : t;      // "mark, 2 fishes…": Mark; "food @ $500 for Luke": Luke
+    } else if (!f.required && LATER.test(t)) value = "";      // "later", "not now", "no email": left empty, never kept as the answer (the owner, 11 Nov)
+    else if (f.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t)) {
+      say(`That doesn't look like an email address. Type it, for example name@company.com${f.required ? "" : ", or say later"}.`, chipsFor(f, a.values)); return;
+    } else value = isName && /\d/.test(t) ? named.name : t;      // "mark, 2 fishes…": Mark; "food @ $500 for Luke": Luke
     if (f.required && questionIsEmpty(f, value)) { say(`${f.label} is needed. ${askFor(f)}`, chipsFor(f, a.values)); return; }
     a.values[f.key] = value;
     a.filled.add(f.key);
