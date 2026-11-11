@@ -10,7 +10,7 @@ import { noteCameFrom } from "../../lib/cameFrom";
 import UkDateInput from "../UkDateInput";
 import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, questionOf, useFollowRuns, agentErrorMessage, approveAction, continueConversation, doesItFirst, getChat, getConversation, replyText, saveChat, submitAgentRequest } from "../../lib/agent";
 import { sectionCounts } from "../../lib/caseSteps";
-import { attest, getPath, isReady, reviewDocument, saveForecast } from "../../lib/readiness";
+import { attest, getPath, isReady, milestoneWords, reviewDocument, saveForecast } from "../../lib/readiness";
 import { AddEvidence } from "./Evidence";
 import { useAuthStore } from "../../store/auth";
 import { PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "../agent/ChatActions";
@@ -300,7 +300,7 @@ function ProgressCard({ subject, steps, ctx, words, onReview, onRetry, draftsOnl
             <div>
               <p className="text-[16px] font-bold text-slate-900 dark:text-slate-50">{options ? (done ? "Funding options found" : "Searching for funding options") : done ? "Research complete" : words.progress}</p>
               {/* What came back, said as it is (the owner, 28 Oct: three areas "Drafted", one finding) */}
-              <p className="text-[13px] text-slate-500" data-research-found>{done ? drafts > 0 ? `${drafts} draft${drafts === 1 ? "" : "s"} to review before I use ${drafts === 1 ? "it" : "them"}.` : (!review && ctx?.research?.state === "adopted" ? "Your findings are reviewed and in use." : ctx?.research?.findings ? `${ctx.research.findings} finding${ctx.research.findings === 1 ? "" : "s"} to review before I use ${ctx.research.findings === 1 ? "it" : "them"}.` : "Nothing found this time. Nothing was charged for it.") : options ? "Programmes, lenders and investors that fit your case's country, kind of funding, amount and sector, each with its source." : "I'm completing your information from your records and trusted sources."}</p>
+              <p className="text-[13px] text-slate-500" data-research-found>{done && options ? ((ctx?.funding_options || []).length ? `${ctx.funding_options.length} option${ctx.funding_options.length === 1 ? "" : "s"} found, each with its source. They're below.` : "No options with a source I could check this time.") : done ? drafts > 0 ? `${drafts} draft${drafts === 1 ? "" : "s"} to review before I use ${drafts === 1 ? "it" : "them"}.` : (!review && ctx?.research?.state === "adopted" ? "Your findings are reviewed and in use." : ctx?.research?.findings ? `${ctx.research.findings} finding${ctx.research.findings === 1 ? "" : "s"} to review before I use ${ctx.research.findings === 1 ? "it" : "them"}.` : "Nothing found this time. Nothing was charged for it.") : options ? "Programmes, lenders and investors that fit your case's country, kind of funding, amount and sector, each with its source." : "I'm completing your information from your records and trusted sources."}</p>
             </div>
           </div>
           {!done && <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full w-1/3 animate-pulse rounded-full bg-brand-600" /></div>}
@@ -566,7 +566,7 @@ export function waitingDrafts(subject) {
       money: where[path]?.type === "money" || (!where[path] && /price|cost|budget|revenue|amount/i.test(path) && isAmount(d.value)) }));
 }
 // A row in words: never its ids, links or yes/no flags shown as "true" (the test run and the permit from the records, 29 Oct)
-const rowText = (r) => (r && typeof r === "object" ? [...new Set(Object.entries(r).filter(([k, v]) => k !== "id" && !/_id$|^source_reference$|^process_version$/.test(k)
+const rowText = (r) => milestoneWords(r) || (r && typeof r === "object" ? [...new Set(Object.entries(r).filter(([k, v]) => k !== "id" && !/_id$|^source_reference$|^process_version$/.test(k)
   && v !== null && v !== "" && typeof v !== "object" && typeof v !== "boolean").map(([, v]) => String(v).replace(/_/g, " ")))].join(": ") : String(r ?? ""));
 
 /** Spending lines as a table, in the workspace's currency, with their total against the amount asked (the owner's test,
@@ -1876,7 +1876,14 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     const found = ctx.research?.findings || 0;
     const noun = feature === "launch" ? "launch plan" : "funding case";
     let said = null;
+    // A search for funding options ends with the options it found, never with drafts that were already waiting (the owner, 11 Nov)
+    const searched = (started.cards || []).some((c) => c.type === "progress" && c.options);
+    const options = ctx.funding_options || [];
     if (ctx.failed) said = { content: `${String(ctx.failed).replace(/\.?$/, ".")} Next step: press Retry on the card above when you're ready.` };
+    else if (searched) said = options.length
+      ? { content: `Done. I found ${options.length} funding option${options.length === 1 ? "" : "s"} that fit${options.length === 1 ? "s" : ""} your case, each with its source. Next step: open the one that fits best and check its terms.`,
+        cards: [{ type: "options", case_id: subject.id, options }] }
+      : { content: "Done. I couldn't find a programme, lender or investor with a source I could check this time. Next step: try again later, or change the amount or kind of funding on your case." };
     else if (n) said = { content: `Done. I've drafted ${n} thing${n === 1 ? "" : "s"} for your ${noun} from your records and research, and they're open below. Next step: check them and press Approve all; your score goes up when you do.` };
     else if (ctx.research?.state === "review" && found && (started.cards || []).some((c) => c.options)) said = { content: `Done. I found ${found} thing${found === 1 ? "" : "s"} for your ${noun}. Next step: review ${found === 1 ? "it" : "them"} and accept what's right.`,
       links: [{ label: "Review findings", to: `/${feature === "launch" ? "launch" : "funding"}/${subject.id}?review=1` }] };
@@ -1884,7 +1891,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (!said) return;
     const next = messages.map((m, i) => (i === at ? { ...m, announced: true } : m));
     keep([...next, { role: "assistant", at: new Date().toISOString(), ...said }]);
-    if (n) setReviewing(true);
+    if (n && !searched) setReviewing(true);
   }, [ctx, drafts.length, messages?.length]);      // eslint-disable-line react-hooks/exhaustive-deps
   // A validation started here whose reply never arrived (the page was left while it ran): followed now, its result posted (31 Oct)
   const resumed = useRef(false);
@@ -2315,7 +2322,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
     if (c.type === "progress") return <ProgressCard key={key} options={Boolean(c.options)} onDecideAll={feature === "idea" ? decideAll : null}
       onResults={feature === "idea" ? () => send("Run the idea validation and fill the form") : null}
       onNext={feature === "idea" ? null : showNext} subject={subject} steps={steps} ctx={researching || ownResearch ? { ...ctx, working: true } : ctx} words={words} onReview={openReview}
-      onRetry={() => send(c.options ? "Search for funding options again" : "Help me complete it")} draftsOnly={feature !== "idea" && !c.options} justStarted={live} drafts={drafts.length} />;
+      onRetry={() => send(c.options ? "Search for funding options again" : "Help me complete it")} draftsOnly={feature !== "idea" && !c.options} justStarted={live} drafts={c.options ? 0 : drafts.length} />;
     // What is left on the plan, as the Checklist lists it, each with its own button, in the chat (the owner, 30 Oct:
     // "recommend these on the chat, lay users don't even know")
     // Funding options found by the research, one card each: name, amount, fit, link (QA, 30 Oct: one long block of text)

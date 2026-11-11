@@ -163,6 +163,14 @@ async def context(orch, user: dict, business_id: str, kind: str, case_id: str | 
         and (research.research_state(data, "need_funding" if kind == "funding" else "launch", **({"case_id": case_id, "answers": {}} if kind == "launch" else {})) or {}).get("state") in ("review", "adopted")
     extra = {**extra, "can_do_all": can_do_all, "draft_fields": list(fillable_fields("need_funding" if kind == "funding" else "launch")) if ran else [], "do_all_price": (FEATURES.get(f"research_{kind}_readiness") or (None, None))[1],
              "validated": any(isinstance(h, dict) for h in data.get("validation_history") or [])}
+    if kind == "funding" and case_id:
+        # What a search for funding options found, for the chat to show when it's done (the owner, 11 Nov: "what are the funding
+        # options" answered with drafts about winning customers)
+        from app.modules.agent import converse as _converse
+        try:
+            extra["funding_options"] = _converse.option_cards(_converse.options_found(data))
+        except Exception:      # noqa: BLE001 - the rest of the context never fails for it
+            extra["funding_options"] = []
     return {**extra, "business": business_card(name, data, now), "revenue": revenue(data, now), "records": records_check(data, kind),
             "activity": activity(data, now), "approvals": {"count": len(approvals), "items": [
                 {k: a.get(k) for k in ("approval_id", "run_id", "kind", "title", "subtitle", "age")} for a in approvals[:3]]},

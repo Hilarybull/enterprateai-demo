@@ -1,7 +1,7 @@
 import UkDateInput from "../UkDateInput";
 import { useState } from "react";
 import { getCurrencySymbol } from "../../lib/currencies";
-import { TONE, dateLabel, getPath, newKey } from "../../lib/readiness";
+import { TONE, dateLabel, getPath, milestoneWords, newKey } from "../../lib/readiness";
 
 // Small building blocks shared by the readiness screens, and the fields the guided sections
 // are drawn from. The sections themselves come from the checklist profile, so a new profile
@@ -228,7 +228,7 @@ export function DraftBox({ field, draft, data, onChange, inputId }) {
   const amount = field.type === "money" && /^\s*-?\d[\d,]*(\.\d+)?\s*$/.test(String(draft.value ?? ""));
   const sign = getCurrencySymbol(data?.currency) || "";
   const shown = Array.isArray(draft.value)
-    ? draft.value.map((r) => Object.entries(r || {}).filter(([k, v]) => k !== "id" && v).map(([, v]) => v).join(": ")).filter(Boolean)
+    ? draft.value.map((r) => milestoneWords(r) || Object.entries(r || {}).filter(([k, v]) => k !== "id" && v).map(([, v]) => v).join(": ")).filter(Boolean)
     : [amount ? `${sign}${Math.round(Number(String(draft.value).replace(/,/g, ""))).toLocaleString("en-GB")}` : String(draft.value)];
   const rest = () => Object.fromEntries(Object.entries(data?.agent_drafts || {}).filter(([k]) => k !== field.key));
   const use = (focus) => {

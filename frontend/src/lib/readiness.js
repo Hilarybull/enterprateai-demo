@@ -142,6 +142,19 @@ export function monthLabel(key) {
 }
 export const dateLabel = shortDate;
 
+/** A milestone in words (the owner, 11 Nov: "Hilary (owner): 10 paying customers: Paying customers: ..."): what it is,
+ *  from where to what, by when, and whose it is. Null for a row that isn't a milestone. */
+export function milestoneWords(r) {
+  if (!r || typeof r !== "object" || !r.outcome) return null;
+  const said = (v) => String(v ?? "").trim();
+  const from = said(r.baseline), to = said(r.target), how = said(r.measure);
+  const move = from && to ? `from ${from} to ${to}` : to ? `target ${to}` : "";
+  const due = said(r.due_date) ? `by ${dateLabel(r.due_date) || r.due_date}` : "";
+  const owner = said(r.owner).replace(/\s*\(owner\)\s*$/i, "");
+  return [`${said(r.outcome).replace(/\.$/, "")}.`, [how && `Measured by ${how.charAt(0).toLowerCase()}${how.slice(1)}`, move, due].filter(Boolean).join(", "),
+    owner && `Owner: ${owner}.`].map((x) => x && !/[.]$/.test(x) ? `${x}.` : x).filter(Boolean).join(" ");
+}
+
 /** Why a result is out of date, without telling the person to run the check: it is re-run for them. */
 export const staleReason = (reason) => String(reason || "").replace(/\s*Run the check again[^.]*\./g, "").trim();
 export function moneyLabel(value, currency) {

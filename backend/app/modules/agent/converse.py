@@ -103,6 +103,16 @@ def options_found(data: dict) -> dict | None:
     return {"at": state.get("at"), "options": options} if options else None
 
 
+def option_cards(found: dict | None) -> list[dict]:
+    """The options found, one card each: name, what it is, how well it fits, its amount and where it was found."""
+    from app.modules.agent.research import money_figures
+    return [{"title": str(o["title"])[:90], "route": o.get("route"), "text": str(o.get("text") or "").strip()[:240],
+             "fit": (o.get("fits") or {}).get("fit"), "why": (o.get("fits") or {}).get("why") or (o.get("fits") or {}).get("reason"),
+             "amount": next(iter(money_figures(str(o.get("text") or ""))), None),
+             "url": (o.get("source") or {}).get("url"), "site": (o.get("source") or {}).get("publisher") or (o.get("source") or {}).get("site")}
+            for o in (found or {}).get("options") or []]
+
+
 def records_of(data: dict) -> dict:
     """What the business's own records show, for the model to answer from (the owner, 28 Oct: called "pre-revenue" with
     ₦994,276 received)."""
@@ -378,13 +388,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
             return await _ask_do_all(orch, user, business_id, case, data, text, now, only=OPTIONS_ONLY)
         # One card each, never a block of scraped text with raw links (QA, 30 Oct): its name, what it is, how well it fits
         # and where it was found
-        from app.modules.agent.research import money_figures
-        cards = [{"type": "options", "case_id": str(case["id"]), "options": [
-            {"title": str(o["title"])[:90], "route": o.get("route"), "text": str(o.get("text") or "").strip()[:240],
-             "fit": (o.get("fits") or {}).get("fit"), "why": (o.get("fits") or {}).get("why") or (o.get("fits") or {}).get("reason"),
-             "amount": next(iter(money_figures(str(o.get("text") or ""))), None),
-             "url": (o.get("source") or {}).get("url"), "site": (o.get("source") or {}).get("publisher") or (o.get("source") or {}).get("site")}
-            for o in found["options"]]}]
+        cards = [{"type": "options", "case_id": str(case["id"]), "options": option_cards(found)}]
         n = len(found["options"])
         return await _said(orch, user, business_id, text, f"From your research of {found['at']}, {n} option{'s' if n != 1 else ''} fit{'s' if n == 1 else ''} your case. "
                            "Next step: open the one that fits best and check its terms.",

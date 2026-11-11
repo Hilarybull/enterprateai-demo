@@ -645,3 +645,26 @@ it("setup and running commitments are answered in the chat, never by leaving it 
   expect(JSON.stringify(saved)).toContain("assumption");
   expect(JSON.stringify(saved)).toContain("2026-12");
 });
+
+it("a search for funding options ends with the options it found, never with drafts already waiting (the owner, 11 Nov)", async () => {
+  const { getChat } = await import("../../lib/agent");
+  const options = [{ title: "Futurpreneur Canada Startup Program", route: "loan", text: "Up to $60,000 for owners aged 18 to 39.", fit: "Likely", url: "https://www.futurpreneur.ca", site: "futurpreneur.ca" }];
+  apiRequest.mockImplementation(async () => ({ business: { name: "Acme Innovations" }, records: [], activity: [], research: { state: "review", findings: 3 }, working: false,
+    approvals: { count: 0, items: [] }, draft_fields: [], funding_options: options }));
+  const data = { ...subject.data, agent_drafts: { purpose: { value: "Stock", source: "suggested by the Agent" }, "market.acquisition_owner": { value: "consulting team leader", source: "external research" } } };
+  getChat.mockImplementationOnce(async () => ({ messages: [{ role: "assistant", content: "Searching for programmes, lenders and investors that fit your case.", at: new Date(Date.now() - 1000).toISOString(),
+    cards: [{ type: "progress", case_id: subject.id, options: true }] }] }));
+  render(<MemoryRouter><CaseAssistant businessId="b1" feature="funding" subject={{ ...subject, data }} steps={[]} score={40} onTab={() => {}} /></MemoryRouter>);
+  expect(await screen.findByText(/^Done\. I found 1 funding option that fits your case/)).toBeTruthy();
+  expect(screen.getByText("Futurpreneur Canada Startup Program")).toBeTruthy();
+  expect(screen.queryByText(/^Done\. I've drafted/)).toBeNull();
+  expect(screen.queryByRole("button", { name: /Review drafts/ })).toBeNull();
+});
+
+it("a milestone draft reads as a sentence, never its values strung together with colons (the owner, 11 Nov)", async () => {
+  const { milestoneWords } = await import("../../lib/readiness");
+  expect(milestoneWords({ id: "m1", owner: "Hilary (owner)", target: "10 paying customers", measure: "Paying customers", outcome: "Equipment delivered and winning new customers",
+    baseline: "0 paying customers", due_date: "2027-10-28" }))
+    .toMatch(/^Equipment delivered and winning new customers\. Measured by paying customers, from 0 paying customers to 10 paying customers, by .*2027\. Owner: Hilary\.$/);
+  expect(milestoneWords({ name: "Not a milestone" })).toBeNull();
+});
