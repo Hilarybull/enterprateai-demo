@@ -59,7 +59,7 @@ def read_config() -> Config:
 
 async def _send(message: dict) -> SendResult:
     from app.shared.email.resend import send_email_via_resend
-    r = await send_email_via_resend(to_email=message["to"], subject=message["subject"], text_content=message["text"], html_content=message["html"],
+    r = await send_email_via_resend(kind="activation", to_email=message["to"], subject=message["subject"], text_content=message["text"], html_content=message["html"],
                                     reply_to_email=message.get("reply_to"), idempotency_key=message["idempotency_key"], headers=message.get("headers"), marketing=message.get("marketing", True))
     return SendResult(sent=bool(r.sent), message_id=getattr(r, "message_id", None), uncertain=bool(getattr(r, "uncertain", False)),
                       recipient_rejected=bool(getattr(r, "recipient_rejected", False)), error=getattr(r, "error", None))
@@ -214,6 +214,10 @@ async def resend_webhook(request: Request):
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not JSON.")
     data = event.get("data") or {}
+    # Every email's own record (the superadmin's Emails area): delivered, opened, clicked, bounced, complained
+    from app.shared.email import catalog
+    await catalog.record_event(event_id=msg_id, type_=str(event.get("type") or ""), message_id=data.get("email_id") or data.get("id"),
+                               at=str(event.get("created_at") or datetime.now(timezone.utc).isoformat()), data=data)
     return await _run(get_service().delivery_event(event_id=msg_id, type_=str(event.get("type") or ""), message_id=data.get("email_id") or data.get("id"),
                                               at=rules.parse(event.get("created_at")) or datetime.now(timezone.utc)))
 
@@ -263,3 +267,53 @@ async def record_permission(user_id: str, body: PermissionIn, user=Depends(requi
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No account with that email.")
     return await _run(svc.user_journey(user_id.strip().lower()))
+
+
+# ── opting out of other optional emails (the link in their footer; no sign-in needed) ──
+
+def _optout_from(token: str) -> tuple[str, str]:
+    from app.shared.email import catalog
+    found = catalog.read_optout_token(token)
+    if not found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This link isn't valid.")
+    return found
+
+
+async def _optout_state(email: str, kind: str) -> dict:
+    from app.core.supabase import sb_select
+    from app.shared.email import catalog
+    try:
+        rows = await sb_select("email_optouts", filters=[("email", "eq", email)]) or []
+    except Exception:
+        rows = []
+    kinds = {r.get("kind") for r in rows}
+    masked = email[0] + "***" + email[email.index("@"):] if "@" in email and email.index("@") > 1 else email
+    return {"email": masked, "kind": kind, "label": catalog.label(kind), "this": kind in kinds, "all": "all" in kinds}
+
+
+@router.get("/email/opt-out")
+async def read_optout(t: str = Query(max_length=600)):
+    return await _optout_state(*_optout_from(t))
+
+
+@router.post("/email/opt-out")
+async def do_optout(t: str = Query(max_length=600), scope: str = Query(default="this", max_length=10), one_click: int = Query(default=0)):
+    """From the email's link, or the mail app's own unsubscribe button (one click). Effective at once."""
+    from app.shared.email import catalog
+    email, kind = _optout_from(t)
+    try:
+        await catalog.opt_out(email, "all" if scope == "all" else kind, "one_click" if one_click else "unsubscribe_link")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="That couldn't be saved just now. Please try again in a few minutes.")
+    return await _optout_state(email, kind)
+
+
+@router.post("/email/opt-in")
+async def undo_optout(t: str = Query(max_length=600), scope: str = Query(default="this", max_length=10)):
+    from app.shared.email import catalog
+    email, kind = _optout_from(t)
+    try:
+        await catalog.opt_in(email, None if scope == "all" else kind)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="That couldn't be saved just now. Please try again in a few minutes.")
+    return await _optout_state(email, kind)

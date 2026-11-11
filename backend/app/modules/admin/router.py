@@ -1528,3 +1528,212 @@ async def research_diagnostics(business_id: str, limit: int = 10, user=Depends(r
     return {"business_id": business_id, "health": research.health(),
             "runs": [{k: r.get(k) for k in ("id", "goal", "status", "created_at", "seconds", "error", "unavailable", "charged", "counts", "context", "diagnostics")}
                      for r in runs]}
+
+
+# ── Emails: what was sent, which kinds are on, their wording, and one-off emails ───────────────
+
+_EMAIL_SAMPLES = {
+    "email_verification": {"greeting": "Hi Ada,", "app_name": "EnterprateAI", "link": "https://example.com/verify"},
+    "password_reset": {"app_name": "EnterprateAI", "email": "ada@example.com", "minutes": 60, "link": "https://example.com/reset"},
+    "password_otp": {"app_name": "EnterprateAI", "code": "482913"},
+    "task_code": {"app_name": "EnterprateAI", "code": "482913", "saving": " and carry on with: your business plan"},
+    "workspace_invitation": {"inviter_email": "owner@example.com", "app_name": "EnterprateAI", "access_level": "module access", "expires": "7 days", "link": "https://example.com/invite"},
+    "proposal_invite": {"sender_name": "Apex Consulting Ltd", "request_title": "Office fit-out", "request_description": "A 2,000 sq ft office in Leeds.",
+                        "requirements": "What you'll need to provide:\nRequired: Insurance certificate", "link": "https://example.com/request"},
+    "document_share": {"sender_label": "Apex Consulting Ltd", "article": "a", "doc_label": "business plan", "app_name": "EnterprateAI", "expires": "7 days", "link": "https://example.com/doc"},
+}
+
+
+class EmailKindIn(BaseModel):
+    enabled: Optional[bool] = None
+    subject: Optional[str] = Field(default=None, max_length=300)
+    body: Optional[str] = Field(default=None, max_length=8000)
+    button_label: Optional[str] = Field(default=None, max_length=80)
+
+
+class EmailPreviewIn(BaseModel):
+    subject: str = Field(default="", max_length=300)
+    body: str = Field(default="", max_length=8000)
+    button_label: str = Field(default="", max_length=80)
+
+
+class EmailSendIn(BaseModel):
+    to: str = Field(max_length=4000)                 # addresses, separated by commas, spaces or new lines
+    subject: str = Field(min_length=3, max_length=300)
+    body: str = Field(min_length=5, max_length=8000)
+    reply_to: Optional[str] = Field(default=None, max_length=200)
+
+
+def _email_tables_missing() -> HTTPException:
+    return HTTPException(status_code=503, detail="The Emails area isn't set up yet: run migration 047_email_admin.sql in Supabase.")
+
+
+@router.get("/emails/kinds")
+async def email_kinds(user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    try:
+        rows = {r["kind"]: r for r in (await sb_select("email_settings") or [])}
+        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        try:
+            recent = await sb_select("email_log", columns="kind,status,opened_at,clicked_at", filters=[("created_at", "gte", since)], limit=20000) or []
+        except Exception:      # before migration 048: no tracking columns yet
+            recent = await sb_select("email_log", columns="kind,status", filters=[("created_at", "gte", since)], limit=20000) or []
+        set_up = True
+    except Exception:
+        rows, recent, set_up = {}, [], False
+    counts: dict[str, dict[str, int]] = {}
+    for r in recent:
+        c = counts.setdefault(r.get("kind") or "other", {})
+        c[r.get("status") or "sent"] = c.get(r.get("status") or "sent", 0) + 1
+        for seen in ("opened", "clicked"):
+            if r.get(f"{seen}_at"):
+                c[seen] = c.get(seen, 0) + 1
+    items = []
+    for key, k in catalog.KINDS.items():
+        row = rows.get(key) or {}
+        t = catalog.TEMPLATES.get(key)
+        items.append({
+            "key": key, "label": k["label"], "description": k["description"], "essential": k["essential"], "editable": bool(t),
+            "enabled": row.get("enabled", True) is not False, "edited": bool(row.get("subject") or row.get("body")),
+            "subject": row.get("subject") or (t or {}).get("subject"), "body": row.get("body") or (t or {}).get("body"),
+            "button_label": row.get("button_label") or (t or {}).get("button"),
+            "default": {"subject": t["subject"], "body": t["body"], "button_label": t["button"]} if t else None,
+            "variables": (t or {}).get("variables", []), "required": (t or {}).get("required", []),
+            "updated_by": row.get("updated_by"), "updated_at": row.get("updated_at"), "last_30_days": counts.get(key, {}),
+        })
+    return {"set_up": set_up, "items": items}
+
+
+@router.put("/emails/kinds/{kind}")
+async def save_email_kind(kind: str, body: EmailKindIn, user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    if kind not in catalog.KINDS:
+        raise HTTPException(status_code=404, detail="No such email.")
+    try:
+        current = await sb_select("email_settings", filters=[("kind", "eq", kind)], single=True) or {}
+    except Exception:
+        raise _email_tables_missing()
+    row = {"kind": kind, "enabled": current.get("enabled", True), "subject": current.get("subject"), "body": current.get("body"),
+           "button_label": current.get("button_label")}
+    if body.enabled is not None:
+        if body.enabled is False and catalog.KINDS[kind]["essential"]:
+            raise HTTPException(status_code=400, detail="This email can't be switched off: people need it to get into their account, or asked for it themselves.")
+        row["enabled"] = body.enabled
+    if body.subject is not None or body.body is not None or body.button_label is not None:
+        t = catalog.TEMPLATES.get(kind)
+        subject = body.subject if body.subject is not None else (row["subject"] or (t or {}).get("subject", ""))
+        text = body.body if body.body is not None else (row["body"] or (t or {}).get("body", ""))
+        button = body.button_label if body.button_label is not None else (row["button_label"] or (t or {}).get("button", ""))
+        errors = catalog.problems(kind, subject, text, button)
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors, "message": " ".join(errors.values())})
+        row.update({"subject": subject.strip(), "body": text.strip(), "button_label": button.strip()})
+    row.update({"updated_by": user.get("email"), "updated_at": datetime.now(timezone.utc).isoformat()})
+    try:
+        await sb_upsert("email_settings", payload=row, on_conflict="kind")
+    except Exception:
+        raise _email_tables_missing()
+    catalog.forget(kind)
+    await _audit(user, "email_setting_changed", {"kind": kind, "enabled": row["enabled"], "wording_edited": bool(row.get("body"))})
+    return {"kind": kind, "enabled": row["enabled"], "edited": bool(row.get("subject") or row.get("body"))}
+
+
+@router.delete("/emails/kinds/{kind}/wording")
+async def reset_email_wording(kind: str, user=Depends(require_admin)) -> dict:
+    """Back to the wording written in the product. Whether it is switched on is kept."""
+    from app.shared.email import catalog
+    if kind not in catalog.KINDS:
+        raise HTTPException(status_code=404, detail="No such email.")
+    try:
+        await sb_update("email_settings", filters=[("kind", "eq", kind)],
+                        payload={"subject": None, "body": None, "button_label": None, "updated_by": user.get("email"), "updated_at": datetime.now(timezone.utc).isoformat()})
+    except Exception:
+        raise _email_tables_missing()
+    catalog.forget(kind)
+    await _audit(user, "email_wording_reset", {"kind": kind})
+    return {"kind": kind, "edited": False}
+
+
+@router.post("/emails/kinds/{kind}/preview")
+async def preview_email(kind: str, body: EmailPreviewIn, user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    from app.shared.email.resend import _FOOTER_HTML, _FOOTER_TEXT
+    if kind not in catalog.TEMPLATES:
+        raise HTTPException(status_code=404, detail="This email's wording can't be edited here.")
+    errors = catalog.problems(kind, body.subject, body.body, body.button_label)
+    subject, text, html = catalog.render(kind, {"subject": body.subject, "body": body.body, "button_label": body.button_label},
+                                         _EMAIL_SAMPLES.get(kind, {}), footer_html=_FOOTER_HTML, footer_text=_FOOTER_TEXT)
+    return {"subject": subject, "text": text, "html": html, "errors": errors}
+
+
+@router.get("/emails/log")
+async def email_log(kind: Optional[str] = None, status_is: Optional[str] = None, q: Optional[str] = None, tracked: Optional[str] = None,
+                    limit: int = 300, user=Depends(require_admin)) -> dict:
+    filters = []
+    if kind:
+        filters.append(("kind", "eq", kind))
+    if status_is:
+        filters.append(("status", "eq", status_is))
+    cap = max(1, min(limit, 1000))
+    try:
+        rows = await sb_select("email_log", filters=filters, order="created_at", desc=True, limit=3000 if (q or tracked) else cap) or []
+    except Exception:
+        raise _email_tables_missing()
+    if q:
+        needle = q.strip().lower()
+        rows = [r for r in rows if needle in str(r.get("to_email") or "").lower() or needle in str(r.get("subject") or "").lower()]
+    if tracked in ("opened", "clicked", "bounced", "delivered", "complained"):
+        rows = [r for r in rows if r.get(f"{tracked}_at")]
+    elif tracked == "not_opened":
+        rows = [r for r in rows if r.get("status") == "sent" and not r.get("opened_at")]
+    return {"items": rows[:cap]}
+
+
+@router.post("/emails/send")
+async def send_one_off_email(body: EmailSendIn, user=Depends(require_admin)) -> dict:
+    """A one-off email to named addresses, each sent on its own so nobody sees the others. Not for the mailing list:
+    a bulk email needs an unsubscribe link first."""
+    import re as _re
+    from html import escape as _escape
+    from app.shared.email.resend import _FOOTER_HTML, send_email_via_resend
+    addresses: list[str] = []
+    for a in _re.split(r"[\s,;]+", body.to.strip()):
+        a = a.strip().lower()
+        if a and a not in addresses:
+            addresses.append(a)
+    bad = [a for a in addresses if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", a)]
+    if not addresses or bad:
+        raise HTTPException(status_code=422, detail=f"Check these addresses: {', '.join(bad)}." if bad else "Add at least one address.")
+    if len(addresses) > 20:
+        raise HTTPException(status_code=422, detail="Up to 20 addresses at a time.")
+    paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", body.body.strip()) if p.strip()]
+    html = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+            + "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
+            + _FOOTER_HTML + "</div>")
+    results = []
+    for a in addresses:
+        r = await send_email_via_resend(to_email=a, subject=body.subject.strip(), text_content=body.body.strip(), html_content=html,
+                                        reply_to_email=(body.reply_to or "").strip() or None, kind="manual", sent_by=user.get("email"))
+        results.append({"to": a, "sent": r.sent, "error": None if r.sent else r.error})
+    await _audit(user, "email_sent_from_admin", {"to": addresses, "subject": body.subject.strip(), "sent": sum(1 for r in results if r["sent"])})
+    return {"results": results, "sent": sum(1 for r in results if r["sent"]), "failed": sum(1 for r in results if not r["sent"])}
+
+
+@router.get("/emails/optouts")
+async def email_optouts(user=Depends(require_admin)) -> dict:
+    try:
+        rows = await sb_select("email_optouts", order="created_at", desc=True, limit=2000) or []
+    except Exception:
+        raise _email_tables_missing()
+    return {"items": rows}
+
+
+@router.delete("/emails/optouts")
+async def remove_email_optout(email: str, kind: str, user=Depends(require_admin)) -> dict:
+    """Undo an opt-out, for example when someone asks by phone to get these emails again. Kept in the audit log."""
+    try:
+        await sb_delete("email_optouts", filters=[("email", "eq", email.strip().lower()), ("kind", "eq", kind)])
+    except Exception:
+        raise _email_tables_missing()
+    await _audit(user, "email_optout_removed", {"email": email.strip().lower(), "kind": kind})
+    return {"ok": True}

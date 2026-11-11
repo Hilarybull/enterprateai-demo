@@ -274,3 +274,24 @@ describe("on the dashboard, a typed message goes to the Agent Centre", () => {
     expect(await screen.findByTestId("centre")).toBeTruthy();
   });
 });
+
+describe("a service named in the request but not in the catalogue (the owner, 11 Nov)", () => {
+  it("is kept as the line, and only its price is asked for", async () => {
+    started = { kind: "workflow", run: { ...asking, pending_question: { question: "What should this invoice include?", fields: [
+      { key: "customer_id", label: "Customer", type: "customer", required: true, default: "c2", options: [{ value: "c2", label: "Tosin Giwa", email: "t@g.test" }] },
+      { key: "items", label: "Items", type: "line_items", required: true,
+        suggested: [{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: "" }],
+        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] }] } } };
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "create a new invoice for Tosin Giwa. Service is SAP S4HANA Material Management" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(await screen.findByText(/What's the price for SAP S4HANA Material Management\?/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Website Domain & Hosting" })).toBeNull();      // not asked what to include again
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "£1,500" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(await screen.findByText(/Added: .*SAP S4HANA Material Management/)).toBeTruthy();
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    expect((sent.body.answers || sent.body).items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
+  });
+});

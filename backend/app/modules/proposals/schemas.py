@@ -83,7 +83,8 @@ class StatusTransitionIn(BaseModel):
 
 class ProposalSubmitIn(BaseModel):
     request_id: str | None = None
-    recipient_workspace_id: str
+    recipient_workspace_id: str | None = None
+    directory_slug: str | None = None      # an RFP the team published for a business that hasn't claimed its profile
     title: str | None = None
     summary: str | None = None
     sections: list[dict] | None = None

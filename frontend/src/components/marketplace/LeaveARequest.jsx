@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import { directoryError, leaveRequest } from "../../lib/directory";
 import { humanCheck } from "../../lib/turnstile";
@@ -13,6 +13,8 @@ const WAYS = [
   ["enquiry", "Ask a question", "Send a message for the business to answer."],
 ];
 const PROPOSAL = ["proposal", "Send a proposal", "Offer your products or services to this business."];
+// A proposal goes through the same Submit Proposal flow as anywhere on the Marketplace (EnterprateAI or manual), kept until a claim.
+const ApplyModal = lazy(() => import("../../pages/MarketplaceListings").then((m) => ({ default: m.ApplyModal })));
 const OTHER = "__other__";
 
 function Line({ label, error, children }) {
@@ -34,6 +36,7 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
   const [form, setForm] = useState({ name: "", email: signedInEmail || "", company: "", details: "", title: "" });
   const [items, setItems] = useState([{ name: startQuoteFor && (services.includes(startQuoteFor) || !services.length) ? startQuoteFor : services[0] || "", quantity: "1", custom: "" }]);
   const [state, setState] = useState({});
+  const [proposing, setProposing] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const errors = state.errors || {};
   const change = (at, patch) => setItems((all) => all.map((it, i) => (i === at ? { ...it, ...patch } : it)));
@@ -65,6 +68,11 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
 
   return (
     <div ref={box} data-leave-request>
+      {proposing && (
+        <Suspense fallback={null}>
+          <ApplyModal listing={{ workspace_id: null, directory_slug: slug, company_name: name }} request={null} onClose={() => setProposing(false)} />
+        </Suspense>
+      )}
       {!kind ? (
         <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
           {(proposalsOpen ? [...WAYS, PROPOSAL] : WAYS).map(([key, label, line]) => (
@@ -73,7 +81,7 @@ export default function LeaveARequest({ slug, name, via, services = [], startQuo
                 <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{label}</span>
                 <span className="block text-[13px] text-slate-600 dark:text-slate-300">{line}</span>
               </span>
-              <Btn className="!py-2 max-sm:w-full" onClick={() => setKind(key)}>{label}</Btn>
+              <Btn className="!py-2 max-sm:w-full" onClick={() => (key === "proposal" ? setProposing(true) : setKind(key))}>{label}</Btn>
             </li>
           ))}
         </ul>

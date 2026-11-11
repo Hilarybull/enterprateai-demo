@@ -76,7 +76,7 @@ async def book_demo(payload: BookDemoRequest) -> dict:
             f"Role / Interest: {record['role'] or '—'}\n"
             f"Message: {record['message'] or '—'}\n"
         )
-        await send_email_via_resend(
+        await send_email_via_resend(kind="demo_request", 
             to_email=notify_email,
             subject=f"[EnterprateAI] Demo Request – {record['name']} ({record['company']})",
             text_content=text,

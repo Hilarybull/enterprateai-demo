@@ -694,7 +694,21 @@ class Orchestrator:
             state = run.get("state") or {}
             understood = state.get("understood") or {}
             if understood.get("by") == "model":
-                return extraction_defaults(fields, understood.get("fields") or {}, state.get("answers") or {})
+                # A successful model response can still miss a field. Let the deterministic
+                # reader fill only those gaps, while model answers remain authoritative.
+                model_fields = understood.get("fields") or {}
+                answered = state.get("answers") or {}
+                filled = extraction_defaults(fields, model_fields, answered)
+                text = str((state.get("params") or {}).get("body") or run.get("goal") or "")
+                if not text.strip():
+                    return filled
+                data = await self.rt.business.load(run["business_id"]) or {}
+                policy = await self.rt.store.get_policy(run["business_id"]) or {}
+                rate = policy.get("default_vat_rate")
+                return said.apply(filled, text, bz.local_now(data, self.rt.clock()).date(),
+                                  default_currency=bz.currency_of(data), answered=answered,
+                                  default_vat=None if rate is None else float(rate),
+                                  extras=("valid_until", "discount") if run.get("workflow_key") == "enquiry_to_quote" else ())
             text = str((state.get("params") or {}).get("body") or run.get("goal") or "")
             if not text.strip():
                 return fields

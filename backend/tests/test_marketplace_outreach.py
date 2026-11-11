@@ -179,3 +179,26 @@ def test_the_emails_read_properly_and_are_safe(monkeypatch, reason):
     assert 'text-align:center' in sent["html_content"] and "background:#4f46e5" in sent["html_content"]      # a centred button, not a bare link
     for dash in ("\u2013", "\u2014"):
         assert dash not in sent["text_content"] and dash not in sent["subject"]
+
+
+@pytest.mark.parametrize("typed,name", [("blue", "Blue Shark Design Limited"), ("shark", "Blue Shark Design Limited"), ("blu shrak", "Blue Shark Design Limited"),
+                                        ("birmingam brewing", "Birmingham Brewing Company Limited"), ("bidmrk", "Bidmark Limited"), ("Liverpol", "Liverpool Media")])
+def test_a_close_spelling_fits(typed, name):
+    assert d.name_likeness(typed, name) >= 0.62
+
+
+@pytest.mark.parametrize("typed,name", [("re", "Blue Shark Design Limited"), ("bakery", "Blue Shark Design Limited"), ("zzz", "Bidmark Limited"), ("x", "Xenon")])
+def test_an_unrelated_name_doesnt(typed, name):
+    assert d.name_likeness(typed, name) < 0.62
+
+
+def test_suggestions_are_only_listed_businesses_closest_first_and_show_nothing_private(world):
+    env, s = world
+    index(env)
+    found = run(s.suggest_names("Northwnd Advisry"))
+    assert [b["slug"] for b in found] == [SLUG]
+    assert set(found[0]) == {"id", "slug", "name", "location", "claimed"}
+    assert run(s.suggest_names("Northwind"))[0]["slug"] == SLUG
+    assert run(s.suggest_names("n")) == []
+    run(s.set_visibility(ADMIN, "admin_only"))
+    assert run(s.suggest_names("Northwind")) == []

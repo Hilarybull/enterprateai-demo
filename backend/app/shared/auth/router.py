@@ -238,6 +238,7 @@ async def accept_marketplace_team_invite(payload: dict, request: Request) -> dic
         try:
             await sb_insert("users", user)
         except Exception:
+            # A simultaneous click may have created the same email account after our first read.
             user = await sb_select("users", filters=[("id", "eq", email)], single=True)
             if not user:
                 raise

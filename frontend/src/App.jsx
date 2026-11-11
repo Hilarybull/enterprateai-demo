@@ -63,6 +63,7 @@ import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
 import MarketplaceTeamInvitePage from "./pages/MarketplaceTeamInvitePage";
 import EmailPreferencesPage, { UnsubscribePage } from "./pages/EmailPreferencesPage";
+import EmailOptOutPage from "./pages/EmailOptOutPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
@@ -164,6 +165,7 @@ export default function App() {
       <Route path="/marketplace/team-invite" element={<MarketplaceTeamInvitePage />} />
       <Route path="/email/unsubscribe" element={<UnsubscribePage />} />
       <Route path="/email/preferences" element={<EmailPreferencesPage />} />
+      <Route path="/email/opt-out" element={<EmailOptOutPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />

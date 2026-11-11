@@ -1597,7 +1597,8 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
     }
 
     const res = await submitProposal({
-      recipient_workspace_id: listing.workspace_id,
+      recipient_workspace_id: listing.workspace_id || null,
+      ...(listing.directory_slug ? { directory_slug: listing.directory_slug } : {}),      // kept until the business claims its profile
       request_id: request?.id || null,
       title: title.trim(),
       summary: summary.trim() || null,
@@ -1783,7 +1784,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
                 if (!isPaid) { setStep("upgrade"); return; }
                 try {
                   sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
-                    listing: { workspace_id: listing.workspace_id, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
+                    listing: { workspace_id: listing.workspace_id, directory_slug: listing.directory_slug || null, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
                     request: request ? { id: request.id, title: request.title, description: request.description, requirements: request.requirements } : null,
                     proposal_title: defaultTitle,
                     request_title: request?.title || null,
@@ -2408,6 +2409,62 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
   );
 }
 
+function ProposalStartModal({ listing, onChoose, onClose }) {
+  const [state, setState] = useState({ loading: true, requests: [] });
+  useEffect(() => {
+    let alive = true;
+    apiRequest("/marketplace/proposal-requests?page=1&page_size=100", "GET")
+      .then((res) => {
+        if (!alive) return;
+        setState({ loading: false, requests: (res?.items || []).filter((r) => String(r.workspace_id) === String(listing.workspace_id)) });
+      })
+      .catch(() => { if (alive) setState({ loading: false, requests: [], error: "Open proposal requests couldn't be loaded. You can still send an unsolicited proposal." }); });
+    return () => { alive = false; };
+  }, [listing.workspace_id]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[85] flex items-end justify-center p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <section role="dialog" aria-modal="true" aria-labelledby="proposal-start-title" className="ea-dialog relative z-10 w-full max-w-lg rounded-t-3xl p-5 sm:rounded-2xl sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="proposal-start-title" className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Send a proposal to {listing.company_name}</h2>
+            <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">Choose what your proposal is responding to. Both options use the same proposal form.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">×</button>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+            <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Open proposal</h3>
+            {state.loading ? <p className="mt-2 text-[12px] text-slate-500">Loading this business's open requests…</p>
+              : state.requests.length ? <div className="mt-2 space-y-2">
+                {state.requests.map((request) => (
+                  <button key={request.id} type="button" onClick={() => onChoose(request)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left text-[13px] font-medium text-brand-700 hover:border-brand-300 hover:bg-brand-50 dark:border-slate-700 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                    <span className="min-w-0 truncate">{request.title || "Untitled request"}</span><span className="shrink-0 text-[11px]">Respond →</span>
+                  </button>
+                ))}
+              </div> : <p className="mt-2 text-[12px] text-slate-500">There are no open proposal requests from this business right now.</p>}
+          </div>
+          <button type="button" onClick={() => onChoose(null)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-brand-300 hover:bg-brand-50 dark:border-slate-700 dark:hover:bg-brand-900/20">
+            <span className="block text-[13px] font-semibold text-slate-800 dark:text-slate-200">Other (unsolicited)</span>
+            <span className="mt-0.5 block text-[12px] text-slate-500 dark:text-slate-400">Send a proposal that isn't tied to an open request.</span>
+          </button>
+          {state.error && <p role="status" className="text-[12px] text-amber-700 dark:text-amber-300">{state.error}</p>}
+        </div>
+        <button type="button" onClick={onClose} className="mt-4 w-full rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+export function MarketplaceProposalFlow({ listing, onClose, onSuccess }) {
+  const [request, setRequest] = useState(undefined); // undefined: choose open request or unsolicited; null: unsolicited
+  if (request === undefined) return <ProposalStartModal listing={listing} onClose={onClose} onChoose={setRequest} />;
+  return <ApplyModal listing={listing} request={request} onClose={onClose} onSuccess={onSuccess} />;
+}
+
 // ─── main page ──────────────────────────────────────────────────────────────────
 
 // The Products & Services and Proposal Requests tabs of the Marketplace. The page shell
@@ -2892,7 +2949,7 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
-                  onApply={() => (req.directory_slug ? navigate(`/marketplace/request/${req.id}`) : setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req }))}
+                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, directory_slug: req.directory_slug || null, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
                   onCompanyClick={() => (req.directory_slug ? navigate(`/marketplace/business/${req.directory_slug}`) : apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {}))}
                   onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />

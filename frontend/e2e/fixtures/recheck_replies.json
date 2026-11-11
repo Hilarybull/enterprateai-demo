@@ -1,52 +1,30 @@
 {
  "Please change who owns customer acquisition to Hilary": {
   "kind": "answer",
-  "message": "Here's the change I'd make to your case. Apply it?",
+  "message": "Updated Who owns customer acquisition: Not set → Hilary.",
   "actions": [
    {
-    "label": "Apply",
+    "label": "Undo",
     "kind": "explain",
-    "prompt": "Apply"
-   },
-   {
-    "label": "Cancel",
-    "kind": "explain",
-    "prompt": "Cancel"
+    "prompt": "Undo"
    }
   ],
-  "conversational": true,
-  "cards": [
-   {
-    "type": "change",
-    "case_id": "087c0d85-7daf-45c3-b03c-b044efca9286",
-    "rows": [
-     {
-      "label": "Who owns customer acquisition",
-      "before": "Not set",
-      "after": "Hilary"
-     }
-    ],
-    "replace": false,
-    "create": false
-   }
-  ]
- },
- "Apply": {
-  "kind": "answer",
-  "message": "Saved. Who owns customer acquisition: Hilary.",
-  "actions": [],
   "conversational": true,
   "changed": [
    "updated"
   ],
-  "case_id": "087c0d85-7daf-45c3-b03c-b044efca9286"
+  "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1"
+ },
+ "Apply": {
+  "kind": "answer",
+  "message": "I couldn't write an answer just now. Nothing was charged; please ask again."
  },
  "any loan or grant that i can apply to at the moment?": {
   "kind": "answer",
-  "message": "I'll research market size and growth (United Kingdom), equity schemes (United Kingdom) and monthly fixed costs for your case, and draft what I can. This one is free. Shall I start?",
+  "message": "I'll search for programmes, lenders and investors that fit your case (its country, kind of funding, amount and sector), each with its source. This one is free. Shall I start?",
   "actions": [
    {
-    "label": "Start",
+    "label": "Search",
     "kind": "explain",
     "prompt": "Yes, start"
    },
@@ -60,14 +38,13 @@
   "cards": [
    {
     "type": "choose",
-    "case_id": "087c0d85-7daf-45c3-b03c-b044efca9286",
+    "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1",
     "price": 0,
     "topics": [
-     "Market size and growth (United Kingdom)",
-     "Equity schemes (United Kingdom)",
-     "Monthly fixed costs",
-     "Sales a month"
-    ]
+     "Equity schemes (United Kingdom)"
+    ],
+    "reuse": false,
+    "options": true
    }
   ]
  },
@@ -90,14 +67,16 @@
   "cards": [
    {
     "type": "choose",
-    "case_id": "087c0d85-7daf-45c3-b03c-b044efca9286",
+    "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1",
     "price": 0,
     "topics": [
      "Market size and growth (United Kingdom)",
      "Equity schemes (United Kingdom)",
      "Monthly fixed costs",
      "Sales a month"
-    ]
+    ],
+    "reuse": false,
+    "fixed": true
    }
   ]
  }

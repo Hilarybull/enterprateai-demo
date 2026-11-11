@@ -924,7 +924,7 @@ async def _approve_rfq(
                 "filename": f"Quotation-{quote['quotation_id']}.pdf",
                 "content": base64.b64encode(pdf_bytes).decode(),
             }]
-        await send_email_via_resend(
+        await send_email_via_resend(kind="quote_sent", 
             to_email=rfq["customer_email"],
             subject=f"Quotation received from {company_name}",
             text_content=(
@@ -1194,7 +1194,7 @@ async def ask_about_quote(*, token: str, viewer_email: str, message: str) -> dic
             cta=("Open the quotation", link),
             note=f"Reply to this email to answer {escape(customer)} directly. The quotation stays open until they accept or decline it.",
         )
-        await send_email_via_resend(
+        await send_email_via_resend(kind="quote_question", 
             to_email=owner_email, subject=f"Question about quotation {ref} from {customer}",
             text_content=(f"{customer} has a question about quotation {ref}:\n\n{text}\n\n"
                           f"Reply to this email to answer them directly.\n{link}\n"),
@@ -1323,7 +1323,7 @@ async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, tit
     link = f"{get_settings().frontend_url.rstrip('/')}/operations?tab=Sales"
     html = _email(company=company, title=title, preheader=intro, intro=intro, blocks=[body_html] if body_html else [],
                   cta=("Open in Business Operations", link))
-    res = await send_email_via_resend(to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
+    res = await send_email_via_resend(kind="quote_customer_action", to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
                                       html_content=html, sender_name="EnterprateAI",
                                       reply_to_email=reply_to if reply_to and "@" in reply_to else None)
     return bool(res.sent)

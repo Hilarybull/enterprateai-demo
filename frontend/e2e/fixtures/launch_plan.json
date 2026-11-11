@@ -1,5 +1,5 @@
 {
- "id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+ "id": "7ba1de22-7f24-4c34-95f4-94415b90a10d",
  "business_id": "A",
  "type": "launch_initiative",
  "status": "preparing",
@@ -49,6 +49,7 @@
   "launch.decide": true
  },
  "checklist_updated": null,
+ "score_why": null,
  "has_products": true,
  "related_done": {
   "marketplace": false,
@@ -793,8 +794,8 @@
  "forecast_draft": null,
  "evidence": [],
  "assessment": {
-  "id": "a2386656-3e2e-475c-b972-87bc40991940",
-  "subject_id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+  "id": "af717244-94b1-4638-ab57-727515af160d",
+  "subject_id": "7ba1de22-7f24-4c34-95f4-94415b90a10d",
   "subject_type": "launch_initiative",
   "execution_status": "succeeded",
   "profile": "launch.commercial_service.uk@0.2",
@@ -1595,7 +1596,7 @@
  },
  "actions": [
   {
-   "id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+   "id": "866af2d0-9b16-42e3-92b1-910d86407909",
    "code": "C1.A",
    "status": "open",
    "revision": 1,
@@ -1614,7 +1615,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1624,7 +1625,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "4e953344-7c5c-4b9a-951e-5e8c1f24cdb4",
+   "id": "94ced5fc-ce2a-4bd8-9e33-dca35515396b",
    "code": "C1.B",
    "status": "open",
    "revision": 1,
@@ -1643,7 +1644,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1653,7 +1654,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "e41962c6-d7bf-4bff-b66e-4022385ad73d",
+   "id": "0cd11fc8-2448-496c-a938-cd2d0cdece6c",
    "code": "C2.B",
    "status": "open",
    "revision": 1,
@@ -1672,7 +1673,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1682,7 +1683,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "dc21901a-6941-43f5-93ee-7f8626d72ca5",
+   "id": "ee92ff66-d87b-46ab-8805-d7614bea1d92",
    "code": "C3.A",
    "status": "open",
    "revision": 1,
@@ -1701,7 +1702,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1711,7 +1712,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "6837d506-5186-411a-bd2d-03215e120ca3",
+   "id": "34af99c4-f37b-4334-8834-578cf3fc3943",
    "code": "C3.B",
    "status": "open",
    "revision": 1,
@@ -1730,7 +1731,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1740,7 +1741,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "83e37f64-8f55-4dcc-9961-a66d88f6c1d5",
+   "id": "f8480fd2-5c39-4b52-a274-d99ac76b475f",
    "code": "C4.A",
    "status": "open",
    "revision": 1,
@@ -1759,7 +1760,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1769,7 +1770,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "268e093c-afaf-4d0d-86c2-c6c2039ea1ce",
+   "id": "a142aec1-10ac-44d2-8f75-8f1233cde310",
    "code": "C4.B",
    "status": "open",
    "revision": 1,
@@ -1788,7 +1789,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1798,7 +1799,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "744d1d64-6a85-4a63-a38e-03e061dccc51",
+   "id": "0aee0b9c-c987-470d-9875-a744c2ee25e9",
    "code": "C5.A",
    "status": "open",
    "revision": 1,
@@ -1817,7 +1818,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1827,7 +1828,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "d71cf3f8-15f8-4b5f-8b6c-61f1d79963a2",
+   "id": "6415957f-15df-47a5-9b37-347f8c074a8b",
    "code": "C5.B",
    "status": "open",
    "revision": 1,
@@ -1846,7 +1847,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1856,7 +1857,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "963f9d61-d708-4d17-9b4f-fb44c532ad61",
+   "id": "dc8937a3-dce6-450a-889a-c3b57bc4382d",
    "code": "C6.A",
    "status": "open",
    "revision": 1,
@@ -1875,7 +1876,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1885,7 +1886,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "d646d757-7da7-4dd0-8a7f-d7ab77acc643",
+   "id": "21d379db-627c-453f-b35a-fe3a7b08c48d",
    "code": "C6.B",
    "status": "open",
    "revision": 1,
@@ -1904,7 +1905,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1914,7 +1915,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "752e6b2b-9649-41a1-be8e-514bf4ce4c98",
+   "id": "acfa6899-55a0-4dea-9a45-bc3710e2b786",
    "code": "C7.A",
    "status": "open",
    "revision": 1,
@@ -1933,7 +1934,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1943,7 +1944,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "68506bc0-4838-48a1-bac9-f675bfb910d8",
+   "id": "1d514c19-cf37-4639-9be3-72fe552c9eb0",
    "code": "C7.B",
    "status": "open",
    "revision": 1,
@@ -1962,7 +1963,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -1972,7 +1973,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "ca05f08d-ca40-4139-a34b-859064614d75",
+   "id": "8859a0f8-07e8-491f-a094-1038b528bbb7",
    "code": "C8.A",
    "status": "open",
    "revision": 1,
@@ -1991,7 +1992,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -2001,7 +2002,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "18d97c36-de6b-4e84-9986-3e25c9837789",
+   "id": "62d67e63-16bd-4c16-b0a2-618c3cc73b82",
    "code": "C8.B",
    "status": "open",
    "revision": 1,
@@ -2020,7 +2021,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -2030,7 +2031,7 @@
    "updated_at": "2026-10-01T09:00:00+00:00"
   },
   {
-   "id": "f1e853f3-1a25-4326-9895-fb82b1007aa2",
+   "id": "bcb03cac-9f65-43b9-b073-6752ea895246",
    "code": "C2.A",
    "status": "open",
    "revision": 1,
@@ -2049,7 +2050,7 @@
    "due_date": null,
    "due_date_source": null,
    "proposed_due_date": null,
-   "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+   "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
    "completion": null,
    "dismissal": null,
    "resolved_by_assessment_id": null,
@@ -2061,7 +2062,7 @@
  ],
  "summary": {
   "business_id": "A",
-  "assessment_id": "a2386656-3e2e-475c-b972-87bc40991940",
+  "assessment_id": "af717244-94b1-4638-ab57-727515af160d",
   "profile_version": "launch.commercial_service.uk@0.2",
   "classification": "insufficient_evidence",
   "score": 0,
@@ -2070,12 +2071,12 @@
   "freshness": "current",
   "freshness_reason": null,
   "blocker_count": 0,
-  "next_action_id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+  "next_action_id": "866af2d0-9b16-42e3-92b1-910d86407909",
   "title": "Mobile car detailing",
   "headline": "Not enough evidence to assess yet.",
   "as_of": "2026-10-01",
   "next_action": {
-   "id": "56b694c3-31b4-44dd-9347-7ec73522c29a",
+   "id": "866af2d0-9b16-42e3-92b1-910d86407909",
    "title": "Describe your target customer and their problem, and attach dated demand evidence.",
    "section": "customers"
   },
@@ -2085,7 +2086,7 @@
   "execution_status": "succeeded",
   "score_partial": true,
   "not_ready_why": "15 things still to add, starting with: target segment, problem and dated demand evidence are documented.",
-  "initiative_id": "87b1e71c-8ea5-436e-a338-0de3d0453bd5",
+  "initiative_id": "7ba1de22-7f24-4c34-95f4-94415b90a10d",
   "launch_type": "initial_business",
   "scope": "commercial",
   "target_date": null,

@@ -215,13 +215,22 @@ export function useGoalFlow({ inApp = false } = {}) {
         if (asked?.converse) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }      // the one general chat
         if (asked?.kind) { navigate(`/dashboard?ask=${encodeURIComponent(said)}`); return true; }
       }
-      keep(await retryOnce(async () => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws }, here ? undefined : await humanCheck())));
+      const startTask = (check) => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws }, check);
+      try {
+        keep(await retryOnce(async () => startTask(here ? undefined : await humanCheck())));
+      } catch (e) {
+        // A one-use Turnstile token can be rejected or expire before it reaches the server.
+        // Ask for a fresh check once on 403, then retry the same task request.
+        if (here || e?.status !== 403) throw e;
+        keep(await startTask(await humanCheck()));
+      }
       // Time to the first question, measured and logged (the target is under 1.5 seconds).
       const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - began);
       trackGoal("first_question_shown", { ms });
       return true;
     } catch (e) {
-      setProblem(e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please try again and tick the box when it appears. If it keeps happening, turn off any ad blocker or VPN." : "Couldn't continue. Try again.");
+      setProblem(e?.code === "PERSON_CHECK_UNAVAILABLE" ? "The person check didn't load on this browser. Refresh the page or try another browser, then send again."
+        : e?.status === 429 ? "That's a lot of tasks started from here. Please try again in a little while." : e?.status === 403 ? "We couldn't confirm this came from a person. Please try again and tick the box when it appears. If it keeps happening, turn off any ad blocker or VPN." : "Couldn't continue. Try again.");
       return false;
     } finally {
       setBusy(false);
@@ -734,7 +743,7 @@ function Field({ f, value, onChange, at = "card" }) {
 const FREE_CHECK_GO = { business_risks: ["Check my risks", "Checking your risks…"], more_customers: ["See my customer plan", "Working it out…"] };
 
 export function GoalTaskCard({ flow, placement = "column", compact = false }) {
-  const { session, busy, answer, startOver, carryOn, here, closed, setClosed } = flow;
+  const { session, busy, answer, begin, startOver, carryOn, here, closed, setClosed } = flow;
   // Never "Working…" for more than 10 seconds without saying so.
   const [slow, setSlow] = useState(false);
   useEffect(() => {
@@ -758,6 +767,8 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     try { if (window.history.state?.eaSheet === sessionId) window.history.back(); } catch { /* the sheet is closed either way */ }
   };
   const [values, setValues] = useState({});
+  const [otherRequest, setOtherRequest] = useState("");
+  const otherInput = useRef(null);
   const [editing, setEditing] = useState(() => new Set());
   const [answeredHere, setAnsweredHere] = useState(() => new Set());
   // The question a reply is being read for: the card stays on it until the server answers (the owner's QA, 17 Oct: the next
@@ -772,6 +783,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const risky = FREE_CHECK_GO[session?.goal_key] !== undefined;
   const [awaitingText, setAwaitingText] = useState("");      // what was sent, shown at once while it is read      // turns taken in this card (before the server's reply is in)
   useEffect(() => { setAnsweredHere(new Set()); }, [session?.id]);      // said-chips that were clicked: their fields are open to change
+  useEffect(() => { setOtherRequest(""); }, [session?.id]);
   const [currency, setCurrency] = useState(null);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -1091,6 +1103,12 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     }).finally(() => { setAwaitingKey(null); setAwaitingText(""); });
   }
 
+  async function sendOtherRequest() {
+    const request = otherRequest.trim();
+    if (!request || busy) return;
+    if (await begin({ text: request, entry_mode: "free_text" })) setOtherRequest("");
+  }
+
   function submit(e) {
     e?.preventDefault();
     if (askingNow) {      // a question, or one asked again at the recap
@@ -1177,15 +1195,38 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
           )}
 
           {step === "clarify" && session.clarify && (
-            // One question, answered with one tap (PRD s8.2.2).
-            <div className="flex flex-wrap gap-2" role="group" aria-label={session.clarify.label} data-clarify>
-              {session.clarify.options.map((o) => (
-                <button key={o.value} type="button" disabled={busy} onClick={() => answer({ goal_key: o.value })}
-                  className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${o.value === "other"
-                    ? "border-slate-200 bg-white text-slate-600 hover:border-slate-300" : "border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-400 hover:bg-brand-100"}`}>
-                  {o.label}
-                </button>
-              ))}
+            // Suggestions are shortcuts, never the only way to reply: the user can describe any task here.
+            <div className="space-y-3" data-clarify>
+              <p className="text-[14px] text-slate-800">{session.clarify.label}</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label={session.clarify.label}>
+                {session.clarify.options.map((o) => (
+                  <button key={o.value} type="button" disabled={busy}
+                    onClick={() => o.value === "other" ? otherInput.current?.focus() : answer({ goal_key: o.value })}
+                    className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-60 ${o.value === "other"
+                      ? "border-slate-200 bg-white text-slate-600 hover:border-slate-300" : "border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-400 hover:bg-brand-100"}`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2" data-clarify-composer>
+                <input ref={otherInput} aria-label="Describe what you need" placeholder="Or describe what you need in your own words"
+                  value={otherRequest} onChange={(e) => setOtherRequest(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendOtherRequest(); } }}
+                  className={`${inputCls} min-w-0 flex-1`} />
+                <button type="button" disabled={busy || !otherRequest.trim()} onClick={sendOtherRequest}
+                  className="shrink-0 rounded-lg bg-[#1F5BFF] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1747CC] disabled:opacity-60">Send</button>
+              </div>
+            </div>
+          )}
+
+          {step === "none" && (
+            <div className="flex items-center gap-2" data-clarify-composer>
+              <input ref={otherInput} aria-label="Describe what you need" placeholder="Tell me what you want done"
+                value={otherRequest} onChange={(e) => setOtherRequest(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendOtherRequest(); } }}
+                className={`${inputCls} min-w-0 flex-1`} />
+              <button type="button" disabled={busy || !otherRequest.trim()} onClick={sendOtherRequest}
+                className="shrink-0 rounded-lg bg-[#1F5BFF] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1747CC] disabled:opacity-60">Send</button>
             </div>
           )}
 

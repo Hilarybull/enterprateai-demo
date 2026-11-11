@@ -942,6 +942,19 @@ describe("admin area", () => {
     expect(screen.getAllByRole("button", { name: "Request Quotation" }).length).toBe(24);
   });
 
+  it("typing a business name suggests matching listings, and choosing one starts its claim", async () => {
+    routes = [{ method: "GET", match: /^\/marketplace\/business-suggestions\?q=red$/, reply: () => ({ body: { items: [
+      { id: "1", slug: "red-ltd", name: "Red Ltd", location: "Leeds", claimed: false }, { id: "2", slug: "redwood", name: "Redwood", claimed: true }] } }) }];
+    mount("/", <FindToClaim defaultOpen />, "/");
+    fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "r" } });
+    fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "red" } });
+    const list = await screen.findByRole("list", { name: "Matching businesses" }, { timeout: 2000 });
+    expect(within(list).getByText("Redwood")).toBeTruthy();
+    expect(within(list).getByText("Already claimed")).toBeTruthy();
+    fireEvent.click(within(list).getByText("Red Ltd"));
+    expect(screen.getByTestId("where").textContent).toBe("/marketplace/claim/red-ltd");
+  });
+
   it("Products & Services lists the services of a public, unclaimed profile, and a quote goes through its profile", async () => {
     const francal = { id: "p7", slug: "francal", name: "Francal", category: "Construction & Trades", location: "Florida", description: "Francal sells fashion accessories", service_tags: ["Suits", "Shoes"], held_requests_open: true };
     const closed = { id: "p8", slug: "closed", name: "Closed Ltd", service_tags: ["Hidden service"], held_requests_open: false };

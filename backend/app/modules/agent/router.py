@@ -894,7 +894,7 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         # A receipt, an invoice, a quotation or another document is its own task, never the open funding or launch chat's (the
         # owner, 29 Oct: "receipt" became "I'll attach it to your pot selling launch plan")
         from app.modules.agent.intent import _GOAL_RULES as _task_rules
-        _TASKS = {"receipt_send", "new_invoice", "enquiry_to_quote", "quote_to_cash", "payment_followup", "new_contract", "new_proposal", "new_purchase_order"}
+        _TASKS = {"receipt_send", "new_invoice", "enquiry_to_quote", "quote_to_cash", "payment_followup", "new_contract", "new_proposal", "new_purchase_order", "business_plan_draft"}
         if any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules) and not converse.wants_funding(body.text):
             other = True
             if body.page:

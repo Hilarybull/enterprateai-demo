@@ -48,6 +48,7 @@ export const ADMIN_NAV = [
     { key: "module-interest", label: "Module interest", subtitle: "Tools people asked about", icon: "puzzle" },
     { key: "referrals", label: "Referrals", subtitle: "Referral links and rewards", icon: "share" },
     { key: "activation", label: "Activation emails", subtitle: "Getting-started journeys", icon: "mail" },
+    { key: "emails", label: "Emails", subtitle: "Sent, switched on, wording", icon: "mail" },
     { key: "contacts", label: "Contacts", subtitle: "Names, emails and consent", icon: "list" },
     { key: "mailing-list", label: "Mailing list", subtitle: "Newsletter sign-ups", icon: "list" },
     { key: "demo-requests", label: "Demo requests", subtitle: "People who asked for a demo", icon: "calendar" },

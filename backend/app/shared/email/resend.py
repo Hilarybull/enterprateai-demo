@@ -72,7 +72,59 @@ def email_button(url: str, label: str) -> str:
             f"{escape(label)}</a></p>")
 
 
+MSG_SWITCHED_OFF = "This email is switched off, so nothing was sent."
+MSG_OPTED_OUT = "This person asked not to get these emails, so nothing was sent."
+
+
 async def send_email_via_resend(
+    *,
+    to_email: str | list[str],
+    subject: str,
+    text_content: str,
+    html_content: str,
+    sender_name: str | None = None,
+    reply_to_email: str | None = None,
+    attachments: list[dict] | None = None,
+    idempotency_key: str | None = None,
+    headers: dict | None = None,
+    marketing: bool = False,
+    kind: str = "other",
+    values: dict | None = None,
+    sent_by: str | None = None,
+) -> EmailDeliveryResult:
+    """Every email goes through here. The superadmin's Emails area can switch a kind off (not an essential one) and
+    edit the wording of some; each email is logged with what happened to it."""
+    from app.shared.email import catalog
+    chosen = await catalog.setting(kind)
+    if chosen and chosen.get("enabled") is False and not (catalog.KINDS.get(kind) or catalog.KINDS["other"])["essential"]:
+        await catalog.log(kind=kind, to=to_email, subject=subject, status="switched_off", sent_by=sent_by)
+        return EmailDeliveryResult(sent=False, error=MSG_SWITCHED_OFF)
+    one = to_email if isinstance(to_email, str) else (to_email[0] if len(to_email) == 1 else None)
+    if one and await catalog.opted_out(one, kind):
+        await catalog.log(kind=kind, to=to_email, subject=subject, status="opted_out", sent_by=sent_by)
+        return EmailDeliveryResult(sent=False, error=MSG_OPTED_OUT)
+    if chosen and values is not None and kind in catalog.TEMPLATES and (chosen.get("subject") or chosen.get("body")):
+        try:
+            subject, text_content, html_content = catalog.render(kind, chosen, values, footer_html=_FOOTER_HTML, footer_text=_FOOTER_TEXT)
+        except Exception:      # noqa: BLE001 - an edit that can't be filled never stops the email: it goes as written in the product
+            logger.warning("Edited wording for %s could not be used", kind, exc_info=True)
+    if one and kind in catalog.OPT_OUT_LINKED:
+        # Every optional email says how to stop it, and gives mail apps their own unsubscribe button.
+        page, one_click = catalog.optout_links(one, kind)
+        text_content = f"{text_content}\n\nDon't want these emails? Unsubscribe: {page}"
+        line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;\">Don't want these emails? "
+                f"<a href=\"{escape(page, quote=True)}\" style=\"color:#64748b;\">Unsubscribe</a></p>")
+        html_content = html_content[:html_content.rfind("</div>")] + line + "</div>" if html_content.rstrip().endswith("</div>") else html_content + line
+        headers = {**(headers or {}), "List-Unsubscribe": f"<{one_click or page}>", **({"List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if one_click else {})}
+    result = await _deliver(to_email=to_email, subject=subject, text_content=text_content, html_content=html_content, sender_name=sender_name,
+                            reply_to_email=reply_to_email, attachments=attachments, idempotency_key=idempotency_key, headers=headers, marketing=marketing)
+    status = "sent" if result.sent else "uncertain" if result.uncertain else "not_configured" if result.error == MSG_NOT_CONFIGURED else "failed"
+    await catalog.log(kind=kind, to=to_email, subject=subject, status=status, error=None if result.sent else result.error,
+                      message_id=result.message_id, sent_by=sent_by)
+    return result
+
+
+async def _deliver(
     *,
     to_email: str | list[str],
     subject: str,
@@ -196,6 +248,9 @@ async def send_workspace_invitation_email_with_link(
         text_content=text_content,
         html_content=html_content,
         sender_name=sender_name,
+        kind="workspace_invitation",
+        values={"inviter_email": inviter_email, "app_name": app_name, "access_level": access_label,
+                "expires": f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}", "link": invite_url},
     )
 
 
@@ -233,6 +288,8 @@ async def send_password_reset_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="password_reset",
+        values={"app_name": app_name, "email": to_email, "minutes": expires_in_minutes, "link": reset_url},
     )
 
 
@@ -261,7 +318,8 @@ async def send_task_code_email(*, to_email: str, code: str, saving: str = "") ->
         + _FOOTER_HTML
         + "</div>"
     )
-    return await send_email_via_resend(to_email=to_email, subject=subject, html_content=html_content, text_content=text_content)
+    return await send_email_via_resend(to_email=to_email, subject=subject, html_content=html_content, text_content=text_content,
+                                       kind="task_code", values={"app_name": app_name, "code": code, "saving": what})
 
 
 async def send_password_otp_email(
@@ -296,6 +354,8 @@ async def send_password_otp_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="password_otp",
+        values={"app_name": app_name, "code": otp_code},
     )
 
 
@@ -335,6 +395,8 @@ async def send_email_verification_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="email_verification",
+        values={"greeting": f"Hi {name}," if name else "Hi,", "app_name": app_name, "link": verify_url},
     )
 
 
@@ -418,6 +480,12 @@ async def send_proposal_request_invite_email(
         html_content=html_content,
         sender_name=sender_name,
         reply_to_email=sender_email,
+        kind="proposal_invite",
+        values={"sender_name": sender_name, "request_title": request_title, "request_description": request_description or "",
+                "requirements": ("What you'll need to provide:\n" + "\n".join(
+                    f"{'Required' if (isinstance(r, dict) and r.get('mandatory')) else 'Optional'}: {r.get('text', r) if isinstance(r, dict) else r}"
+                    for r in req_list)) if req_list else "",
+                "link": invite_url},
     )
 
 
@@ -464,4 +532,7 @@ async def send_document_share_email(
         html_content=html_content,
         sender_name=sender_label,
         reply_to_email=sender_email,
+        kind="document_share",
+        values={"sender_label": sender_label, "article": article, "doc_label": doc_label, "app_name": app_name,
+                "expires": f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}", "link": share_url},
     )

@@ -269,7 +269,8 @@ def _norm_name(name: str) -> str:
 
 
 def name_likeness(typed: str, name: str) -> float:
-    """How well what someone is typing fits a business name, 0 to 1."""
+    """How well what someone is typing fits a business name, 0 to 1. Starting or containing it counts most; from three
+    letters, a close spelling counts too, word by word ("blu shrak" finds Blue Shark Design)."""
     wanted, have = _norm_name(typed), _norm_name(name)
     if len(wanted) < 2 or not have:
         return 0.0
@@ -280,11 +281,12 @@ def name_likeness(typed: str, name: str) -> float:
     if len(wanted) < 3:
         return 0.0
     words = have.split()
+
     def fit(word: str) -> float:
         return max((1.0 if w.startswith(word) else SequenceMatcher(None, word, w).ratio()) for w in words)
     typed_words = wanted.split()
-    return max(sum(fit(w) for w in typed_words) / len(typed_words) * 0.85,
-               SequenceMatcher(None, wanted, have[:len(wanted) + 2]).ratio() * 0.85)
+    # Only as much of a long name as was typed: "bluee sh" is still on its way to "blue shark design"
+    return max(sum(fit(w) for w in typed_words) / len(typed_words) * 0.85, SequenceMatcher(None, wanted, have[:len(wanted) + 2]).ratio() * 0.85)
 
 
 def country_code(value: Any) -> str:
@@ -774,6 +776,14 @@ class DirectoryService:
             return False
 
     @staticmethod
+    def _reminders_enabled() -> bool:
+        try:
+            from app.core.config import get_settings
+            return bool(get_settings().marketplace_claim_reminders_enabled)
+        except Exception:      # noqa: BLE001
+            return False
+
+    @staticmethod
     def _effective_state(d: dict, level: str) -> dict:
         """What the public can see of an unclaimed profile: its own publication state together with the visibility level."""
         publication = d.get("publication")
@@ -949,6 +959,8 @@ class DirectoryService:
         else:
             raise Invalid({"action": "Choose suppress, archive or restore."})
         fresh = await self.store.get("profiles", profile["id"])
+        if action == "restore":
+            await self._ensure_first_claim_invite(fresh)
         return {"id": fresh["id"], "slug": fresh["data"].get("slug"), "publication": fresh["data"].get("publication"),
                 **self._effective_state(fresh["data"], level_for(fresh["data"], await self.visibility()))}
 
@@ -1153,8 +1165,7 @@ class DirectoryService:
             except Duplicate:
                 pass
         await self.event("DirectoryProfileEdited", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"fields": sorted(c)})
-        if saved["data"].get("contact_email") and not d.get("contact_email"):      # listed before there was anyone to tell
-            await self._email_claim_invite(saved, "listed")
+        await self._ensure_first_claim_invite(saved)
         return {"id": saved["id"], "slug": saved["data"].get("slug"), "publication": saved["data"].get("publication"), "quality": saved["data"].get("quality"),
                 "reasons": saved["data"].get("index_reasons") or [], **self._effective_state(saved["data"], level_for(saved["data"], await self.visibility()))}
 
@@ -1327,8 +1338,7 @@ class DirectoryService:
             await self.event("DirectoryProfileIndexed", profile_id=profile_id, actor=actor, payload={"publication": saved["data"]["publication"], "band": verdict["band"]})
         else:
             await self.event("DirectoryProfileSuppressed", profile_id=profile_id, actor=actor, payload={"reason": "index_rules", "publication": saved["data"]["publication"]})
-        if result == "created":
-            await self._email_claim_invite(saved, "listed")      # told the moment it is listed; a failure never undoes the listing
+        await self._ensure_first_claim_invite(saved)      # send when the record first becomes eligible, even if it was imported earlier
         return {"result": result, "id": profile_id, "slug": saved["data"]["slug"], "publication": saved["data"]["publication"], "band": verdict["band"],
                 "quality": verdict["quality"], "reasons": verdict["reasons"], "location": saved["data"].get("location"), "notes": notes,
                 "visibility": saved["data"].get("visibility") or "inherit",
@@ -1482,7 +1492,7 @@ class DirectoryService:
                 "categories": sorted({(r["data"] or {}).get("category") for r in shown if (r["data"] or {}).get("category")})}
 
     async def suggest_names(self, typed: str = "", *, company_number: str = "", website: str = "", limit: int = 6) -> list[dict]:
-        """Suggest public matches by name, or by exact registered number/domain."""
+        """Fast name suggestions, or an exact public match by registered number/domain."""
         if company_number or website:
             key = next(iter(identity_keys({"name": "", "company_number": company_number, "website": website, "country": ""})), None)
             if not key:
@@ -1497,10 +1507,9 @@ class DirectoryService:
         if len(str(typed or "").strip()) < 2:
             return []
         items = (await self.search(page_size=5000))["items"]
-        scored = [(max(name_likeness(typed, item.get("name")), name_likeness(typed, item.get("trading_name"))), item) for item in items]
+        scored = [(max(name_likeness(typed, b.get("name")), name_likeness(typed, b.get("trading_name"))), b) for b in items]
         scored = sorted((x for x in scored if x[0] >= 0.62), key=lambda x: (-x[0], str(x[1].get("name")).lower()))
-        return [{"id": item["id"], "slug": item.get("slug"), "name": item.get("name"), "location": item.get("location"), "claimed": bool(item.get("claimed"))}
-                for _score, item in scored[:limit]]
+        return [{"id": b["id"], "slug": b.get("slug"), "name": b.get("name"), "location": b.get("location"), "claimed": bool(b.get("claimed"))} for _s, b in scored[:limit]]
 
     async def public_profile(self, ref: str, viewer: dict | None = None, via: dict | None = None) -> dict:
         row = await self._profile(ref)
@@ -1596,7 +1605,7 @@ class DirectoryService:
         if kind == "proposal":
             if len(title) < 3:
                 errors["title"] = "Give your proposal a title."
-            if len(details) < 20:
+            if len(details) < 20 and not rfp and not isinstance(raw.get("proposal"), dict):      # the full flow may carry a document instead
                 errors["details"] = "Describe what you're proposing (at least 20 characters)."
         if errors:
             raise Invalid(errors)
@@ -1615,9 +1624,10 @@ class DirectoryService:
             "created_by": (viewer or {}).get("id"), "created_at": now, "updated_at": now,
             "data": {"customer_name": name, "customer_email": email, "customer_company": _text(raw.get("company"), 200) or None, "items": items, "details": details,
                      "needed_by": _text(raw.get("needed_by"), 40) or None, "sender_workspace_id": sender_workspace_id,
-                     **({"title": title} if kind == "proposal" else {}), **({"request_id": rfp["id"], "request_title": rfp["title"]} if rfp else {})}})
+                     **({"title": title} if kind == "proposal" else {}), **({"request_id": rfp["id"], "request_title": rfp["title"]} if rfp else {}),
+                     **({"proposal": raw["proposal"]} if kind == "proposal" and isinstance(raw.get("proposal"), dict) else {})}})
         await self.event("HeldRequestReceived", profile_id=row["id"], payload={"kind": kind, "request_id": saved["id"]})      # nothing about the sender
-        return {"id": saved["id"], "status": "held", "new": True, "business_name": d.get("name")}
+        return {"id": saved["id"], "status": "held", "new": True, "business_name": d.get("name"), "request_title": (rfp or {}).get("title")}
 
     async def waiting_requests(self, admin: dict, ref: str) -> dict:
         """The requests kept for a profile nobody has claimed, in full, for the team. Who looked is kept.
@@ -1715,7 +1725,8 @@ class DirectoryService:
                         "proposer_workspace_id": h.get("sender_workspace_id"), "proposer_name": h.get("customer_company") or h.get("customer_name"),
                         "proposer_email": h.get("customer_email"), "proposer_contact_name": h.get("customer_name"),
                         "recipient_workspace_id": business_id, "recipient_name": recipient or listing, "title": h.get("title"), "summary": h.get("details") or "",
-                        "sections": [], "requirement_responses": [], "attachments": [],
+                        "sections": (h.get("proposal") or {}).get("sections") or [], "requirement_responses": (h.get("proposal") or {}).get("requirement_responses") or [],
+                        "attachments": (h.get("proposal") or {}).get("attachments") or [],
                         "events": [{"event_type": "submitted", "actor": "proposer", "created_at": at}],
                         "submitted_at": at, "updated_at": at, "viewed_at": None, "kept_until_claimed": True, "listing": listing}
 
@@ -3338,14 +3349,20 @@ class DirectoryService:
         await self.event("ClaimInvitationSent" if status == "sent" else "ClaimInvitationCreated", profile_id=profile["id"], actor=admin["id"], payload={"reason": reason, "status": status, "invitation_id": row["id"]})
         return {"id": row["id"], "status": status, "link": link, "reason": reason}
 
+    async def _ensure_first_claim_invite(self, profile: dict) -> bool:
+        """Send the first listing email when a profile first becomes eligible; never repeat a successful send."""
+        sent = await self.store.list("invitations", SCOPE, subject_id=profile["id"], limit=200)
+        if any(i.get("kind") == "listed" and i.get("status") == "sent" for i in sent):
+            return False
+        return await self._email_claim_invite(profile, "listed")
+
     async def _email_claim_invite(self, profile: dict, reason: str, *, week: str | None = None) -> bool:
-        """Tell a listed business about its profile: when it is listed, then each week until it is claimed. Only a business
-        that is really public, unclaimed, reachable and hasn't asked us to stop. Never a reason for anything else to fail."""
+        """Tell a listed business about its profile, including invite-only profiles opened by this link. Only a business
+        that is unclaimed, reachable and hasn't asked us to stop. Never a reason for anything else to fail."""
         d = profile["data"] or {}
         try:
             if (not self._send_invitation or not d.get("contact_email") or d.get("outreach_opt_out") or d.get("linked_business_id")
-                    or d.get("claim_state") != "unclaimed" or d.get("publication") not in ("published", "noindex")
-                    or level_for(d, await self.visibility()) != "public"):
+                    or d.get("claim_state") != "unclaimed" or d.get("publication") not in ("published", "noindex")):
                 return False
             token = secrets.token_urlsafe(24)
             now = self.clock()
@@ -3369,7 +3386,7 @@ class DirectoryService:
         Run often: outside that hour it does nothing, and a business already told this week is skipped, so a restart never sends twice."""
         now = self.clock()
         london = now.astimezone(ZoneInfo("Europe/London"))
-        if london.weekday() != 0 or london.hour != 7 or not self._invites_enabled():
+        if london.weekday() != 0 or london.hour != 7 or not self._invites_enabled() or not self._reminders_enabled():
             return 0
         import asyncio
         week, done = london.strftime("%G-W%V"), 0
@@ -3378,6 +3395,10 @@ class DirectoryService:
             if not d.get("contact_email") or d.get("linked_business_id"):
                 continue
             sent = [i for i in await self.store.list("invitations", SCOPE, subject_id=profile["id"], limit=200) if i.get("status") == "sent" and i.get("kind") in ("listed", "weekly_reminder")]
+            # A reminder is a follow-up to the original listing email, never a substitute for one.
+            # A created/failed invitation doesn't count: the main email must have been accepted by the mailer.
+            if not any(i.get("kind") == "listed" for i in sent):
+                continue
             if any((i["data"] or {}).get("week") == week for i in sent) or any(str((i["data"] or {}).get("sent_at") or "") >= (now - REMINDER_GAP).isoformat() for i in sent):
                 continue
             if await self._email_claim_invite(profile, "weekly_reminder", week=week):
@@ -3454,7 +3475,7 @@ async def _email_team_invite(message: dict) -> bool:
             "<p>Open the secure link to verify your email and access Marketplace Claims. It expires in 48 hours.</p>"
             + email_button(url, "Verify email and open Claims")
             + f"<p style='font-size:12px;color:#64748b'>Sent to {escape(message['email'])}. If you weren't expecting this, ignore this email.</p>")
-    result = await send_email_via_resend(to_email=message["email"], subject="Your EnterprateAI Marketplace team invitation",
+    result = await send_email_via_resend(kind="marketplace_team_invite", to_email=message["email"], subject="Your EnterprateAI Marketplace team invitation",
                                          text_content=text, html_content=html, idempotency_key=f"marketplace-team-invite/{message['token']}")
     return bool(getattr(result, "sent", True))
 
@@ -3493,7 +3514,7 @@ async def _email_decision(message: dict) -> bool:
     lines = [lead, *([f"Reason: {reason}"] if reason else []), *([waiting] if waiting else []), step]
     text = "\n\n".join([*lines, f"{button}: {url}"])
     html = "".join(f"<p>{escape(line)}</p>" for line in lines) + email_button(url, button)
-    result = await send_email_via_resend(to_email=message["to"], subject=subject, text_content=text, html_content=html, idempotency_key=message.get("key"))
+    result = await send_email_via_resend(kind="claim_decision", to_email=message["to"], subject=subject, text_content=text, html_content=html, idempotency_key=message.get("key"))
     return bool(getattr(result, "sent", True))
 
 
@@ -3510,7 +3531,7 @@ async def _email_code(address: str, code: str, business_name: str) -> None:
     html = (f"<p>Your EnterprateAI verification code is</p><p style='font-size:28px;font-weight:700;letter-spacing:4px'>{code}</p>"
             f"<p>Enter it to confirm that you manage <strong>{business_name}</strong> on the EnterprateAI Marketplace. It works for 30 minutes.</p>"
             "<p>If you didn't ask for this, you can ignore this email: nothing changes without the code.</p>")
-    await send_email_via_resend(to_email=address, subject="Your EnterprateAI verification code", text_content=text, html_content=html)
+    await send_email_via_resend(kind="claim_code", to_email=address, subject="Your EnterprateAI verification code", text_content=text, html_content=html)
 
 
 async def _email_invitation(message: dict) -> bool:
@@ -3532,7 +3553,7 @@ async def _email_invitation(message: dict) -> bool:
     text = f"{lead}\n\nNext step: claim your profile: {base}{message['link']}\n\nNot interested? Stop these emails: {base}{message['opt_out']}"
     html = (f"<p>{escape(lead)}</p>" + email_button(base + message["link"], f"Claim {name}")
             + f"<p style='font-size:12px;color:#64748b;text-align:center'>Not interested? <a href='{escape(base + message['opt_out'], quote=True)}'>Stop these emails</a>.</p>")
-    result = await send_email_via_resend(to_email=message["to"], subject=automatic[0] if automatic else f"{name} on the EnterprateAI Marketplace", text_content=text, html_content=html,
+    result = await send_email_via_resend(kind="claim_invitation", to_email=message["to"], subject=automatic[0] if automatic else f"{name} on the EnterprateAI Marketplace", text_content=text, html_content=html,
                                          idempotency_key=message.get("key"))
     return bool(getattr(result, "sent", True))
 

@@ -111,3 +111,60 @@ def test_the_marketplace_rfp_list_and_page_show_it(monkeypatch):
     assert listed["total"] == 1 and listed["items"][0]["id"] == rfp["id"] and listed["items"][0]["directory_slug"] == SLUG
     assert run(mp.list_public_proposal_requests(search="plumbing"))["total"] == 0
     assert run(mp.get_public_proposal_request(request_id=rfp["id"]))["title"] == "Office fit-out in Leeds"
+
+
+def test_the_standard_submit_proposal_flow_answers_it_and_the_full_proposal_reaches_the_business(monkeypatch):
+    """The owner, 9 Nov: replies go through the same Submit Proposal flow as any RFP, not a short form."""
+    from app.modules.marketplace import directory_router
+    from app.modules.proposals import service as ps
+
+    env, s = public_env()
+    rfp = run(s.publish_rfp(ADMIN, SLUG, RFP))
+    proposer = {"id": "ws-sup", "data": {"workspace_profile": {"company_name": "Supplier Ltd"}}}
+    saved = {}
+
+    async def load_ws(_user_id, _workspace_id=None):
+        return proposer
+
+    async def save(ws_id, _user_id, data):
+        saved[ws_id] = data
+    monkeypatch.setattr(ps, "_load_ws", load_ws)
+    monkeypatch.setattr(ps, "_save_data", save)
+    monkeypatch.setattr(directory_router, "get_service", lambda: s)
+    body = {"recipient_workspace_id": None, "directory_slug": SLUG, "request_id": rfp["id"], "title": "Fit-out by Supplier Ltd", "summary": "",
+            "proposer_email": "bids@supplier.test", "requirement_responses": [{"requirement": "Insurance certificate", "response": "Attached, £5m cover."}],
+            "attachments": [{"name": "insurance.pdf", "url": "https://files.test/insurance.pdf"}]}
+    sent = run(ps.submit_proposal("u-sup", None, body))
+    assert (sent["status"], sent["recipient_name"], sent["request_title"], sent["kept_until_claimed"]) == ("SUBMITTED", "Northwind Advisory Ltd", "Office fit-out in Leeds", True)
+    assert saved["ws-sup"]["proposal_activity"][0]["id"] == sent["id"]      # the sender's own Proposals activity
+    assert run(ps.submit_proposal("u-sup", None, body))["id"] == sent["id"]      # a double click is one proposal
+    claim = verified_claim(env)
+    got = next(x for x in proposals(env, claim["business_id"]) if x["id"] == sent["id"])
+    assert (got["title"], got["request_id"], got["proposer_workspace_id"], got["proposer_email"]) == ("Fit-out by Supplier Ltd", rfp["id"], "ws-sup", "bids@supplier.test")
+    assert got["requirement_responses"] == body["requirement_responses"] and got["attachments"] == body["attachments"]
+
+
+def test_a_proposal_without_an_rfp_uses_the_same_flow_once_the_profile_is_open(monkeypatch):
+    from fastapi import HTTPException
+    from app.modules.marketplace import directory_router
+    from app.modules.proposals import service as ps
+
+    env, s = public_env()
+    proposer = {"id": "ws-sup", "data": {"workspace_profile": {"company_name": "Supplier Ltd"}}}
+
+    async def load_ws(_user_id, _workspace_id=None):
+        return proposer
+
+    async def save(_ws_id, _user_id, data):
+        proposer["data"] = data
+    monkeypatch.setattr(ps, "_load_ws", load_ws)
+    monkeypatch.setattr(ps, "_save_data", save)
+    monkeypatch.setattr(directory_router, "get_service", lambda: s)
+    body = {"recipient_workspace_id": None, "directory_slug": SLUG, "request_id": None, "title": "Managed IT", "summary": "",
+            "proposer_email": "bids@supplier.test", "attachments": [{"name": "proposal.pdf", "url": "https://files.test/p.pdf"}]}
+    with pytest.raises(HTTPException) as e:      # not opened for proposals yet
+        run(ps.submit_proposal("u-sup", None, body))
+    assert e.value.status_code == 400
+    run(s.set_held_proposals(ADMIN, SLUG, True))
+    sent = run(ps.submit_proposal("u-sup", None, body))      # a document, no cover letter: still a proposal
+    assert sent["status"] == "SUBMITTED" and sent["request_id"] is None and proposer["data"]["proposal_activity"][0]["id"] == sent["id"]

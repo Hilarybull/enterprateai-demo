@@ -214,6 +214,7 @@ async def business_suggestions(q: str = Query(default="", max_length=120), compa
         return {"items": []}
     return {"items": await _run(get_service().suggest_names(q, company_number=company_number, website=website))}
 
+
 @router.get("/marketplace/businesses")
 async def search_businesses(q: str = Query(default="", max_length=120), category: str = Query(default="", max_length=80),
                             location: str = Query(default="", max_length=80), trust: str = Query(default="", max_length=20),

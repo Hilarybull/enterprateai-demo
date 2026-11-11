@@ -82,6 +82,13 @@ async function freshToken(siteKey) {
 /** Request options carrying a new token; empty with no key set, so nothing changes until it is turned on. */
 export async function humanCheck(siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY) {
   if (!siteKey) return {};
-  const token = await freshToken(siteKey).catch(() => "");
-  return token ? { headers: { "X-Turnstile-Token": token } } : {};
+  let token = "";
+  try { token = await freshToken(siteKey); } catch { /* reported below; never send an empty check */ }
+  if (!token) {
+    const error = new Error("The verification check did not load. Refresh the page or try another browser.");
+    error.code = "PERSON_CHECK_UNAVAILABLE";
+    error.status = 400;
+    throw error;
+  }
+  return { headers: { "X-Turnstile-Token": token } };
 }

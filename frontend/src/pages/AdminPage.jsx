@@ -13,6 +13,7 @@ import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
+import EmailsAdmin from "../components/admin/EmailsAdmin";
 import DiscountsAdmin from "../components/admin/DiscountsAdmin";
 import AgentSpend from "../components/admin/AgentSpend";
 import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
@@ -3466,6 +3467,7 @@ export default function AdminPage() {
         )}
 
         {tab === "activation" && isAdmin && <ActivationAdmin />}
+        {tab === "emails" && isAdmin && <EmailsAdmin />}
         {tab === "discounts" && isAdmin && <DiscountsAdmin />}
 
         {tab === "contacts" && isAdmin && <ContactsSection />}

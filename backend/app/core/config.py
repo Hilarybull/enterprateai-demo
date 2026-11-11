@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # Sending claim invitations by email. Off by default: outreach channels, templates and
     # cadence are a policy decision. Invitation links can still be created and shared by hand.
     marketplace_claim_invites_enabled: bool = Field(default=False, validation_alias=AliasChoices("MARKETPLACE_CLAIM_INVITES_ENABLED",))
+    # Follow-up claim reminders can be disabled independently of the first email.
+    marketplace_claim_reminders_enabled: bool = Field(default=True, validation_alias=AliasChoices("MARKETPLACE_CLAIM_REMINDERS_ENABLED",))
     # Who can see a directory profile nobody has claimed yet: admin_only | invite_only | public.
     # This is the starting value; a moderator can change it on the moderation page, and that
     # choice (kept with who made it and when) then wins. Claimed profiles are never affected.

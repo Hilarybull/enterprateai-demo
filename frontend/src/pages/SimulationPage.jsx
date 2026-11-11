@@ -206,6 +206,7 @@ export default function SimulationPage() {
   const [pendingPrefill, setPendingPrefill] = useState(null);
   const [riskSignals, setRiskSignals] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
+  const [recsLocked, setRecsLocked] = useState(false);      // AI recommendations are on Starter and above: said in the panel, never as an error
   const [history, setHistory] = useState([]);
 
   const [loading, setLoading] = useState(false);
@@ -391,15 +392,24 @@ export default function SimulationPage() {
       });
       const risks = riskRes?.risk_signals?.length ? riskRes.risk_signals : financialInsights.riskItems;
       setRiskSignals(risks);
-      const recRes = await apiRequest("/v1/scenario-intelligence/recommendations/generate", "POST", {
-        tenant_id: tenantId,
-        business_id: businessId,
-        state_version: stateVersion,
-        risk_signal_ids: risks
-          .map((r) => (typeof r?.risk_signal_id === "string" ? r.risk_signal_id.trim() : ""))
-          .filter(Boolean),
-        state: stateSnapshot
-      });
+      let recRes;
+      try {
+        recRes = await apiRequest("/v1/scenario-intelligence/recommendations/generate", "POST", {
+          tenant_id: tenantId,
+          business_id: businessId,
+          state_version: stateVersion,
+          risk_signal_ids: risks
+            .map((r) => (typeof r?.risk_signal_id === "string" ? r.risk_signal_id.trim() : ""))
+            .filter(Boolean),
+          state: stateSnapshot
+        });
+      } catch (e) {
+        if (e?.status !== 403) throw e;
+        setRecsLocked(true);      // not on this plan: the panel says so; nothing went wrong
+        setRecommendations([]);
+        return;
+      }
+      setRecsLocked(false);
       setRecommendations(recRes?.recommended_scenarios?.length ? recRes.recommended_scenarios : financialInsights.recommendations);
     } catch (e) {
       setRiskSignals(financialInsights.riskItems);
@@ -1059,6 +1069,11 @@ export default function SimulationPage() {
                         </div>
                       );
                     })
+                  ) : recsLocked ? (
+                    <div className="text-sm text-slate-600">
+                      Recommended scenarios come with the Starter plan. Your Baseline Continuity projection stays free.
+                      <button type="button" className="mt-2 block text-xs font-semibold text-brand-700 underline" onClick={handleUpgradeClick}>See plans</button>
+                    </div>
                   ) : (
                     <div className="text-sm text-slate-600">No recommendations yet.</div>
                   )}

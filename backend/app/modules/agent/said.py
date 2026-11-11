@@ -233,6 +233,18 @@ def read(text: str, today: date) -> dict[str, Any]:
         out["phone"] = re.sub(r"\s+", " ", m.group(0)).strip()
         take(m)
 
+    # Explicitly labelled line items are strong, local evidence. Extract them before
+    # identifying the party so a sentence such as "invoice for Alex. Service is X"
+    # cannot accidentally turn the service into part of the customer's name.
+    labelled_items = None
+    labelled = re.search(r"\b(?:service|item|product|work)(?:\s+to\s+invoice)?\s+(?:is|:|=)\s*(?P<value>[^.;\n]+)", rest, re.I)
+    if labelled:
+        value = labelled.group("value").strip(" ,;:-")
+        if value:
+            line_money = [x for x in money if x.get("span") and x["span"].lower() in value.lower()]
+            labelled_items = _lines(value, line_money)
+        rest = rest[:labelled.start()] + " , " + rest[labelled.end():]
+
     # Who it is for, and what for.
     body = _LEAD.sub("", re.sub(r"\s+", " ", rest), count=1)
     # "a business proposal", "a formal quotation", "a quick invoice": the word before the document's name describes it; it is nobody's name.
@@ -310,6 +322,8 @@ def read(text: str, today: date) -> dict[str, Any]:
         out["note"] = ", ".join(extra)
     if out.get("work"):
         out["items"] = _lines(out["work"], money)
+    elif labelled_items:
+        out["items"] = labelled_items
     elif money and (party or add is None):
         # An amount with nothing said about what it is for: one line at that amount, the description left for the owner.
         out["items"] = [{"name": "", "quantity": 1, "unit_price": money[0]["value"]}]

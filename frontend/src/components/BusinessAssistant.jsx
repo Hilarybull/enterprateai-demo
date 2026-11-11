@@ -262,7 +262,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   };
   function startTaskQuestions({ question, answer, discard, run = null }) {
     const fields = question.fields || [];
-    const values = Object.fromEntries(fields.map((f) => [f.key, f.type === "line_items" ? (known(f) ? f.default : []) : questionDefault(f)]));
+    // Items the owner already named ("Service is SAP S4HANA Material Management") are kept, waiting only for their price (the owner, 11 Nov)
+    const said = (f) => (f.suggested || []).filter((r) => r.product_id || String(r.name || "").trim())
+      .map((r) => ({ product_id: r.product_id || null, name: r.product_id ? "" : String(r.name).trim(), quantity: Number(r.quantity) || 1, unit_price: r.unit_price ?? "", other: !r.product_id, label: r.name }));
+    const values = Object.fromEntries(fields.map((f) => [f.key, f.type === "line_items" ? (known(f) ? f.default : said(f)) : questionDefault(f)]));
     taskAsk.current = { fields, values, answer, discard, at: 0, lead: question.question || "", filled: new Set(), runId: run?.id || null };
     setWorking(false);      // waiting for the owner now, never "Working on it…" (the owner, 29 Oct)
     askTaskNext(true);
@@ -288,6 +291,12 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       || (known(a.fields[a.at]) && !a.fields[a.at].asked))) a.at += 1;
     if (a.at >= a.fields.length) return finishTask();
     const f = a.fields[a.at];
+    const unpriced = f.type === "line_items" ? (a.values[f.key] || []).find((r) => !(Number(r.unit_price) > 0)) : null;
+    if (unpriced) {
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), prompts: [],
+        content: `What's the price for ${unpriced.label || unpriced.name}${Number(unpriced.quantity) > 1 ? ` (each, ${unpriced.quantity} of them)` : ""}? Type the amount, for example 1500.` }]);
+      return;
+    }
     const head = first && a.lead && a.lead !== askFor(f) ? `${a.lead} ` : "";
     const ask = head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}` : askFor(f);
     const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
@@ -359,9 +368,18 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         if (checked.error) { say(checked.error, chipsFor(f, a.values)); return; }
         a.at += 1; askTaskNext(); return;
       }
+      const waiting = (a.values[f.key] || []).find((r) => !(Number(r.unit_price) > 0));
+      const amount = /^\s*(?:[£$€₦]\s*)?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:each|ea|per\s+\w+)?\s*$/i.exec(t);
+      if (waiting && amount) {
+        waiting.unit_price = Number(amount[1].replace(/,/g, "")) * (amount[2] ? 1000 : 1);
+        if ((a.values[f.key] || []).some((r) => !(Number(r.unit_price) > 0))) { askTaskNext(); return; }
+        say(`Added: ${questionSummary(f, a.values[f.key])}. Anything else?`, chipsFor(f, a.values));
+        return;
+      }
       const rows = linesFromText(t, f.catalogue || []);
-      if (!rows.length) { say("I couldn't read an item there. Try: 3 x office deep clean at 150.", chipsFor(f, a.values)); return; }
-      a.values[f.key] = [...(a.values[f.key] || []).filter((r) => r.product_id || r.name), ...rows];
+      if (!rows.length) { say(waiting ? `What's the price for ${waiting.label || waiting.name}? Type the amount, for example 1500.` : "I couldn't read an item there. Try: 3 x office deep clean at 150.", waiting ? [] : chipsFor(f, a.values)); return; }
+      // Lines typed in full replace the one still waiting for its price
+      a.values[f.key] = [...(a.values[f.key] || []).filter((r) => (r.product_id || r.name) && Number(r.unit_price) > 0), ...rows];
       say(`Added: ${questionSummary(f, rows)}. Anything else?`, chipsFor(f, a.values));
       return;
     } else if (/^skip$/i.test(t) && !f.required) value = "";

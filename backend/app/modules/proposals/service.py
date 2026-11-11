@@ -461,6 +461,8 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
     proposer_id, proposer_data = _ws_fields(proposer_ws)
 
     recipient_ws_id = payload.get("recipient_workspace_id")
+    if not recipient_ws_id and payload.get("directory_slug"):
+        return await _submit_to_unclaimed(user_id, proposer_id, proposer_data, payload)
     if not recipient_ws_id:
         raise HTTPException(status_code=422, detail="recipient_workspace_id is required")
 
@@ -571,6 +573,44 @@ async def submit_proposal(user_id: str, workspace_id: str | None, payload: dict)
     except Exception:
         pass
 
+    return submission
+
+
+async def _submit_to_unclaimed(user_id: str, proposer_id: str, proposer_data: dict, payload: dict) -> dict:
+    """A proposal for an RFP the team published on behalf of a business that hasn't claimed its profile. The same
+    proposal as any other; it is kept (in full) and goes to the business's inbox once its claim is verified."""
+    from app.modules.marketplace import directory as dir_mod
+    from app.modules.marketplace.directory_router import get_service
+    proposer_name = (proposer_data.get("workspace_profile") or {}).get("company_name") or "Unknown Business"
+    try:
+        saved = await get_service().hold_request(payload["directory_slug"], {
+            "kind": "proposal", "name": proposer_name, "email": payload.get("proposer_email") or "", "company": proposer_name,
+            "title": payload.get("title") or "", "details": payload.get("summary") or "", "request_id": payload.get("request_id"),
+            "proposal": {"sections": payload.get("sections") or [], "requirement_responses": payload.get("requirement_responses") or [],
+                         "attachments": payload.get("attachments") or []}}, viewer={"id": user_id}, sender_workspace_id=proposer_id)
+    except dir_mod.Invalid as e:
+        raise HTTPException(status_code=422, detail=" ".join(e.errors.values()))
+    except dir_mod.Conflict as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    except (dir_mod.NotFound, dir_mod.Forbidden):
+        raise HTTPException(status_code=404, detail="Request not found")
+    except dir_mod.RateLimited:
+        raise HTTPException(status_code=429, detail="That's been tried too many times. Please wait a while and try again.")
+    if not saved.get("new"):
+        return next((p for p in proposer_data.get("proposal_activity") or [] if p.get("id") == saved["id"]), {"id": saved["id"], "status": "SUBMITTED"})
+    now = _now()
+    submission = {
+        "id": saved["id"], "status": "SUBMITTED", "version": 1, "request_id": payload.get("request_id"), "request_title": saved.get("request_title"),
+        "proposer_workspace_id": proposer_id, "proposer_name": proposer_name, "proposer_email": payload.get("proposer_email"),
+        "recipient_workspace_id": None, "recipient_name": saved.get("business_name"), "directory_slug": payload["directory_slug"],
+        "title": payload.get("title"), "summary": payload.get("summary"), "sections": payload.get("sections") or [],
+        "requirement_responses": payload.get("requirement_responses") or [], "attachments": payload.get("attachments") or [],
+        "events": [{"event_type": "submitted", "actor": "proposer", "created_at": now}],
+        "submitted_at": now, "updated_at": now, "viewed_at": None, "kept_until_claimed": True,
+    }
+    merged = dict(proposer_data)
+    merged["proposal_activity"] = [submission] + (proposer_data.get("proposal_activity") or [])
+    await _save_data(proposer_id, user_id, merged)
     return submission
 
 

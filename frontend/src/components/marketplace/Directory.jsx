@@ -138,16 +138,16 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
 
 // ── find and claim your business ──────────────────────────────────────────────
 
-/** An exact name with its company number or website: no browsing and no suggestions. A match
- *  goes to the claim introduction; a miss offers to create a profile instead. */
+/** Find a listed business by name, registered number, or website. A match goes to its profile;
+ *  the exact company-number/domain match is shown as the user enters it. */
 export function FindToClaim({ defaultOpen = false }) {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const [open, setOpen] = useState(defaultOpen);
   const [form, setForm] = useState({ name: "", company_number: "", website: "" });
   const [state, setState] = useState({});
-  const [suggestions, setSuggestions] = useState({ name: [], company_number: [], website: [] });
   const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setSuggestions((s) => ({ ...s, [k]: [] })); setState({}); };
+  const [suggestions, setSuggestions] = useState({ name: [], company_number: [], website: [] });
   useEffect(() => {
     let live = true;
     const timers = [];

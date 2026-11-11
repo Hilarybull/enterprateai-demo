@@ -138,7 +138,7 @@ def _recipient_message(to_email: str) -> str:
 class ResendComms(Comms):
     async def send(self, *, to_email, subject, text, html, sender_name, reply_to, idempotency_key, attachments=None):
         from app.shared.email.resend import send_email_via_resend
-        res = await send_email_via_resend(
+        res = await send_email_via_resend(kind="agent_document", 
             to_email=to_email, subject=subject, text_content=text, html_content=html,
             sender_name=sender_name, reply_to_email=reply_to, attachments=attachments,
             idempotency_key=idempotency_key,

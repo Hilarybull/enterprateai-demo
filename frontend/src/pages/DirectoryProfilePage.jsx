@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ReportBox, TrustBadge } from "../components/marketplace/Directory";
 import LeaveARequest from "../components/marketplace/LeaveARequest";
@@ -8,6 +8,8 @@ import { activateMarketplaceProfile, directoryError, getBusinessProfile, myClaim
 import { useAuthStore } from "../store/auth";
 import { confirmDialog } from "../lib/dialog";
 import { SkeletonBlock, SkeletonCard, SkeletonRegion, SkeletonText } from "../components/Skeleton";
+
+const MarketplaceProposalFlow = lazy(() => import("./MarketplaceListings").then((module) => ({ default: module.MarketplaceProposalFlow })));
 
 // W02 and W12: a business's public Marketplace profile. Before a claim it shows what public
 // sources say, labelled as such, with a clear way to claim it. After a claim it shows what
@@ -169,6 +171,7 @@ export default function DirectoryProfilePage() {
   const [owner, setOwner] = useState({});      // the owner's controls: what is running, or what went wrong
   const [asVisitor, setAsVisitor] = useState(false);
   const [shared, setShared] = useState("");
+  const [proposalFlowOpen, setProposalFlowOpen] = useState(false);
   const b = state.profile;
   // QA P2-11: someone who has already claimed this profile is told where their claim stands, not offered a new one.
   const signedIn = useAuthStore((st) => Boolean(st.token)) || (() => { try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; } })();
@@ -261,7 +264,7 @@ export default function DirectoryProfilePage() {
   const toListing = b.listing_id ? `/marketplace?tab=products&business=${b.listing_id}` : null;
   const quoteLink = (offering) => `${toListing}&quote=1${offering ? `&offering=${encodeURIComponent(offering)}` : ""}`;
   const open = b.claimed && !paused && toListing ? (b.opportunities || {}) : {};
-  const goTo = { enquiries: toListing, rfqs: toListing && quoteLink(), proposals: toListing, partnerships: toListing, subcontracting: toListing };
+  const goTo = { enquiries: toListing, rfqs: toListing && quoteLink(), proposals: null, partnerships: toListing, subcontracting: toListing };
   const ways = WAYS.filter(([key]) => open[key]).map(([key, label, line]) => ({ key, label, line, to: goTo[key] }));
   const mail = !paused && b.contact?.email ? `mailto:${b.contact.email}` : null;
   // One main button: a quote where quotes are on, otherwise the way to get in touch.
@@ -368,7 +371,7 @@ export default function DirectoryProfilePage() {
                         <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{w.label}</span>
                         <span className="block text-[13px] text-slate-600 dark:text-slate-300">{w.line}</span>
                       </span>
-                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => navigate(w.to)}>{w.label}</Btn>
+                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => w.key === "proposals" ? setProposalFlowOpen(true) : navigate(w.to)}>{w.label}</Btn>
                     </li>
                   ))}
                 </ul>
@@ -420,6 +423,11 @@ export default function DirectoryProfilePage() {
         <div data-sticky-action className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-sm md:hidden dark:border-slate-800 dark:bg-slate-950/95">
           <Btn kind="primary" className="w-full !py-3" aria-label={`${main.label} (${b.name})`} onClick={main.go}>{main.label}</Btn>
         </div>
+      )}
+      {proposalFlowOpen && b.listing_id && (
+        <Suspense fallback={<div role="status" className="fixed inset-0 z-[85] grid place-items-center bg-black/30 text-sm text-white">Loading proposal form…</div>}>
+          <MarketplaceProposalFlow listing={{ workspace_id: b.listing_id, company_name: b.name, logo_data_url: b.logo_data_url }} onClose={() => setProposalFlowOpen(false)} />
+        </Suspense>
       )}
     </PublicFrame>
   );

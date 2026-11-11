@@ -744,7 +744,7 @@ async def share_invoice_email(
         f"Open {type_label}:\n{body.share_url}"
     )
 
-    result = await send_email_via_resend(
+    result = await send_email_via_resend(kind="invoice_share", 
         to_email=body.to_email,
         subject=subject,
         text_content=text_content,
