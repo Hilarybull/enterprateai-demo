@@ -1754,3 +1754,158 @@ async def remove_email_optout(email: str, kind: str, user=Depends(require_admin)
         raise _email_tables_missing()
     await _audit(user, "email_optout_removed", {"email": email.strip().lower(), "kind": kind})
     return {"ok": True}
+
+
+
+# ── Bulk email (the owner, 11 Nov): many people at once, picked from users, workspaces and Marketplace profiles,
+# or typed in. Each person gets their own copy with an unsubscribe link; opt-outs and marketing unsubscribes are skipped.
+
+_BULK_JOBS: dict[str, dict] = {}
+_BULK_CAP = 2000
+_BULK_GAP_SECONDS = 0.6      # our email provider takes about two a second
+
+
+def _marketing_state(c: dict | None) -> str:
+    if not c:
+        return "unknown"
+    if c.get("unsubscribed"):
+        return "unsubscribed"
+    return "agreed" if may_be_sent_marketing(c) else "not_agreed"
+
+
+async def _bulk_audience(source: str) -> list[dict]:
+    """Everyone in one source, with what the filters need. Rows without an email are listed but can't be picked."""
+    if source == "users":
+        return [{"key": f"user:{c['id']}", "email": c["email"] if "@" in str(c.get("email") or "") else "", "name": c["name"], "plan": c["plan"],
+                 "marketing": _marketing_state(c), "since": str(c.get("created_at") or "")[:10]} for c in await _contacts()]
+    if source == "workspaces":
+        people = {str(c["id"]): c for c in await _contacts()}
+        rows = await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at", desc=True) or []
+        out = []
+        for w in rows:
+            c = people.get(str(w.get("user_id")))
+            email = str((c or {}).get("email") or "")
+            out.append({"key": f"workspace:{w['id']}", "email": email if "@" in email else "", "name": w.get("name") or "Unnamed workspace",
+                        "owner": (c or {}).get("name") or "", "plan": (c or {}).get("plan") or "explorer", "marketing": _marketing_state(c),
+                        "since": str(w.get("created_at") or "")[:10]})
+        return out
+    if source in ("claimed", "unclaimed"):
+        from app.modules.marketplace.directory import SCOPE
+        from app.modules.marketplace.directory_router import get_service
+        rows = [r for r in await get_service().store.list("profiles", SCOPE, limit=5000) if (r.get("data") or {}).get("publication") != "merged"]
+        owners: dict[str, str] = {}
+        if source == "claimed":
+            people = {str(c["id"]): c.get("email") for c in await _contacts()}
+            for w in await sb_select("workspaces", columns="id,user_id") or []:
+                owners[str(w["id"])] = str(people.get(str(w.get("user_id"))) or "")
+        out = []
+        for r in rows:
+            d = r.get("data") or {}
+            linked = d.get("linked_business_id")
+            if bool(linked) != (source == "claimed"):
+                continue
+            email = str((owners.get(str(linked)) if linked else "") or d.get("contact_email") or "")
+            out.append({"key": f"profile:{r['id']}", "email": email if "@" in email else "", "name": d.get("name") or "Unnamed business",
+                        "category": d.get("category") or "", "location": d.get("location") or "", "since": str(r.get("created_at") or "")[:10]})
+        return out
+    raise HTTPException(status_code=422, detail="Choose users, workspaces, claimed or unclaimed profiles.")
+
+
+@router.get("/emails/audience")
+async def email_audience(source: str = "users", user=Depends(require_admin)) -> dict:
+    items = await _bulk_audience(source)
+    return {"items": items, "total": len(items)}
+
+
+class BulkRecipient(BaseModel):
+    email: str = Field(max_length=320)
+    name: str = Field(default="", max_length=200)
+
+
+class BulkEmailIn(BaseModel):
+    recipients: list[BulkRecipient] = Field(default_factory=list, max_length=5000)
+    subject: str = Field(min_length=3, max_length=300)
+    body: str = Field(min_length=5, max_length=8000)
+    reply_to: Optional[str] = Field(default=None, max_length=200)
+    test: bool = False      # one copy to the superadmin, filled with the first person's details
+
+
+def _bulk_message(subject: str, body: str, name: str) -> tuple[str, str, str]:
+    """{name} becomes the person's or business's name ("there" when it isn't known). Typed text is escaped."""
+    from html import escape as _escape
+    import re as _re
+    from app.shared.email.resend import _FOOTER_HTML
+    who = (name or "").strip() or "there"
+    subject = " ".join(subject.replace("{name}", who).split())
+    text = body.strip().replace("{name}", who)
+    paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
+    html = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+            + "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
+            + _FOOTER_HTML + "</div>")
+    return subject, text, html
+
+
+async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, reply_to: str | None, sent_by: str | None) -> None:
+    from app.shared.email.resend import MSG_OPTED_OUT, send_email_via_resend
+    job = _BULK_JOBS[job_id]
+    for p in people:
+        try:
+            s, t, h = _bulk_message(subject, body, p["name"])
+            r = await send_email_via_resend(kind="bulk", to_email=p["email"], subject=s, text_content=t, html_content=h, reply_to_email=reply_to,
+                                            sent_by=sent_by, idempotency_key=f"bulk/{job_id}/{p['email']}")
+            job["sent" if r.sent else "opted_out" if r.error == MSG_OPTED_OUT else "failed"] += 1
+        except Exception:      # noqa: BLE001 - one bad address never stops the rest
+            logging.getLogger(__name__).warning("Bulk email to one address failed", exc_info=True)
+            job["failed"] += 1
+        job["done"] += 1
+        await asyncio.sleep(_BULK_GAP_SECONDS)
+    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/emails/bulk")
+async def send_bulk_email(body: BulkEmailIn, user=Depends(require_admin)) -> dict:
+    import re as _re
+    from app.shared.email.resend import send_email_via_resend
+    people, seen, invalid = [], set(), []
+    for r in body.recipients:
+        email = r.email.strip().lower()
+        if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            invalid.append(r.email)
+            continue
+        if email in seen:
+            continue
+        seen.add(email)
+        people.append({"email": email, "name": r.name.strip()})
+    duplicates = len(body.recipients) - len(people) - len(invalid)
+    if not people:
+        raise HTTPException(status_code=422, detail="Pick or add at least one person with an email address.")
+    reply_to = (body.reply_to or "").strip() or None
+    if body.test:
+        s, t, h = _bulk_message(body.subject, body.body, people[0]["name"])
+        r = await send_email_via_resend(kind="manual", to_email=user.get("email"), subject=f"[Test] {s}", text_content=t, html_content=h,
+                                        reply_to_email=reply_to, sent_by=user.get("email"))
+        return {"test": True, "to": user.get("email"), "sent": bool(r.sent), "error": None if r.sent else r.error}
+    if len(people) > _BULK_CAP:
+        raise HTTPException(status_code=422, detail=f"Up to {_BULK_CAP:,} people at a time. Narrow the filters and send in parts.")
+    # Account holders who unsubscribed from our marketing are left out; Unsubscribe-link opt-outs are skipped as each one is sent.
+    unsubscribed = {str(c["email"]).lower() for c in await _contacts() if c.get("unsubscribed")}
+    kept = [p for p in people if p["email"] not in unsubscribed]
+    job_id = uuid4().hex[:12]
+    _BULK_JOBS[job_id] = {"id": job_id, "total": len(kept), "done": 0, "sent": 0, "failed": 0, "opted_out": 0, "subject": body.subject.strip(),
+                          "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None if kept else datetime.now(timezone.utc).isoformat()}
+    if kept:
+        _BULK_JOBS[job_id]["_task"] = asyncio.create_task(_send_bulk(job_id, kept, body.subject, body.body, reply_to, user.get("email")))
+    await _audit(user, "bulk_email_started", {"job": job_id, "subject": body.subject.strip(), "people": len(kept), "unsubscribed_left_out": len(people) - len(kept)})
+    return {**_bulk_status(job_id), "left_out": {"invalid": invalid, "duplicates": duplicates, "unsubscribed": len(people) - len(kept)}}
+
+
+def _bulk_status(job_id: str) -> dict:
+    job = _BULK_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="That send isn't running on this server any more. The Sent tab shows every email it sent.")
+    return {k: v for k, v in job.items() if not k.startswith("_")}
+
+
+@router.get("/emails/bulk/{job_id}")
+async def bulk_email_status(job_id: str, user=Depends(require_admin)) -> dict:
+    return _bulk_status(job_id)

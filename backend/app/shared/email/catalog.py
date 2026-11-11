@@ -38,6 +38,7 @@ KINDS: dict[str, dict[str, Any]] = {
     "activation": {"label": "Activation and tips", "description": "Getting-started emails and tips, only to people who agreed to them.", "essential": False},
     "demo_request": {"label": "Demo request notice", "description": "Tells the team someone asked for a demo.", "essential": False},
     "manual": {"label": "Sent from the superadmin", "description": "One-off emails written in this Emails area.", "essential": True},
+    "bulk": {"label": "Bulk email", "description": "Sent to many people at once from this Emails area, each with an unsubscribe link.", "essential": False},
     "other": {"label": "Other", "description": "Anything not listed above.", "essential": True},
 }
 
@@ -114,6 +115,7 @@ WRITTEN_ELSEWHERE: dict[str, str] = {
     "activation": "activation",      # its own area: Activation emails
     "agent_document": "each_time",   # the owner approves the exact words of each one
     "manual": "each_time",           # written here, in Send an email
+    "bulk": "each_time",             # written here, in Bulk email
     "other": "none",
 }
 
@@ -261,7 +263,7 @@ async def record_event(*, event_id: str, type_: str, message_id: str | None, at:
 # ── Opting out ──────────────────────────────────────────────────────────────────────────────────
 # Optional emails carry an unsubscribe link (and the one-click header mail apps show as a button). Activation tips and
 # claim invitations have their own unsubscribe already; an opt-out from "all" stops them too. Essential emails never stop.
-OPT_OUT_LINKED = {"workspace_invitation", "proposal_invite", "quote_question", "quote_customer_action", "claim_decision", "marketplace_team_invite", "manual"}
+OPT_OUT_LINKED = {"workspace_invitation", "proposal_invite", "quote_question", "quote_customer_action", "claim_decision", "marketplace_team_invite", "manual", "bulk"}
 OPT_OUT_HONOURED = OPT_OUT_LINKED | {"activation", "claim_invitation"}
 
 

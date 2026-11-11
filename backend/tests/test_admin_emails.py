@@ -256,3 +256,70 @@ def test_the_unsubscribe_page_stops_one_kind_or_all_and_can_undo(monkeypatch):
     assert client.post(f"/email/opt-out?t={t}&scope=all&one_click=1").json()["all"] is True and store[-1] == ("bo@example.com", "all", "one_click")
     assert client.post(f"/email/opt-in?t={t}&scope=all").json() == {**page, "this": False, "all": False}
     assert client.get("/email/opt-out?t=nonsense").status_code == 404
+
+
+# ── Bulk email (the owner, 11 Nov): pick users, workspaces, claimed and unclaimed profiles, or type addresses ──
+
+PEOPLE = [{"id": "u1", "email": "ada@example.com", "name": "Ada", "plan": "starter", "unsubscribed": False, "marketing_consent": True, "created_at": "2026-10-01"},
+          {"id": "u2", "email": "bo@example.com", "name": "", "plan": "explorer", "unsubscribed": True, "marketing_consent": False, "created_at": "2026-11-01"}]
+
+
+def test_bulk_lists_people_workspaces_and_profiles_with_their_emails(admin_client, monkeypatch):
+    from types import SimpleNamespace
+    from app.modules.marketplace import directory_router
+    client, _ = admin_client
+
+    async def contacts():
+        return PEOPLE
+
+    async def sb_select(table, **_kw):
+        return [{"id": "w1", "name": "Apex Ltd", "user_id": "u1", "created_at": "2026-10-02"}] if table == "workspaces" else []
+
+    class Store:
+        async def list(self, *_a, **_k):
+            return [{"id": "p1", "created_at": "2026-09-01", "data": {"name": "Blue Shark", "contact_email": "hi@blue.test", "category": "Design", "location": "Leeds"}},
+                    {"id": "p2", "created_at": "2026-09-02", "data": {"name": "Apex Ltd", "linked_business_id": "w1", "contact_email": "old@apex.test"}},
+                    {"id": "p3", "created_at": "2026-09-03", "data": {"name": "No Mail Co"}}]
+    monkeypatch.setattr(admin, "_contacts", contacts)
+    monkeypatch.setattr(admin, "sb_select", sb_select)
+    monkeypatch.setattr(directory_router, "get_service", lambda: SimpleNamespace(store=Store()))
+    users = client.get("/admin/emails/audience?source=users").json()["items"]
+    assert [(u["email"], u["marketing"]) for u in users] == [("ada@example.com", "agreed"), ("bo@example.com", "unsubscribed")]
+    ws = client.get("/admin/emails/audience?source=workspaces").json()["items"]
+    assert ws[0]["name"] == "Apex Ltd" and ws[0]["email"] == "ada@example.com" and ws[0]["plan"] == "starter"
+    unclaimed = client.get("/admin/emails/audience?source=unclaimed").json()["items"]
+    assert [(p["name"], p["email"]) for p in unclaimed] == [("Blue Shark", "hi@blue.test"), ("No Mail Co", "")]
+    claimed = client.get("/admin/emails/audience?source=claimed").json()["items"]
+    assert [(p["name"], p["email"]) for p in claimed] == [("Apex Ltd", "ada@example.com")]      # the owner, not the old public address
+    assert client.get("/admin/emails/audience?source=everyone").status_code == 422
+
+
+def test_bulk_sends_each_their_own_copy_with_their_name_and_leaves_out_unsubscribes(admin_client, mail, monkeypatch):
+    client, store = admin_client
+    sent, logged, _ = mail
+    started = []
+
+    async def contacts():
+        return PEOPLE
+
+    async def opted_out(email, kind):
+        return email == "gone@example.com"
+    monkeypatch.setattr(admin, "_contacts", contacts)
+    monkeypatch.setattr(catalog, "opted_out", opted_out)
+    monkeypatch.setattr(admin, "_BULK_GAP_SECONDS", 0)
+    monkeypatch.setattr(admin.asyncio, "create_task", lambda coro: started.append(coro) or None)
+    message = {"subject": "News for {name}", "body": "Hi {name},\n\n<b>New</b> things."}
+    test = client.post("/admin/emails/bulk", json={**message, "recipients": [{"email": "ada@example.com", "name": "Ada"}], "test": True}).json()
+    assert test["sent"] and sent[-1]["to_email"] == "tech.support@enterprateai.com" and sent[-1]["subject"] == "[Test] News for Ada"
+    sent.clear(); logged.clear()      # the test copy is logged as one of yours ("Sent from the superadmin")
+    r = client.post("/admin/emails/bulk", json={**message, "recipients": [
+        {"email": "Ada@example.com", "name": "Ada"}, {"email": "ada@example.com", "name": "Ada"}, {"email": "bo@example.com"},
+        {"email": "gone@example.com"}, {"email": "new@example.com", "name": ""}, {"email": "nope"}]}).json()
+    assert r["total"] == 3 and r["left_out"] == {"invalid": ["nope"], "duplicates": 1, "unsubscribed": 1}
+    run(started[0])
+    assert [m["to_email"] for m in sent] == ["ada@example.com", "new@example.com"]
+    assert sent[0]["subject"] == "News for Ada" and sent[1]["subject"] == "News for there"
+    assert "&lt;b&gt;New&lt;/b&gt;" in sent[0]["html_content"] and "Unsubscribe" in sent[0]["html_content"] and "List-Unsubscribe" in sent[0]["headers"]
+    status = client.get(f"/admin/emails/bulk/{r['id']}").json()
+    assert (status["sent"], status["opted_out"], status["failed"], status["done"]) == (2, 1, 0, 3) and status["finished_at"]
+    assert all(e["kind"] == "bulk" for e in logged if e["status"] == "sent") and "bulk_email_started" in store["audit"]

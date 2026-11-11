@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
+import BulkEmail from "./BulkEmail";
 
 // The superadmin's Emails area (the owner, 10 Nov): what was sent, which kinds of email are on, their wording, and
 // one-off emails. Essential emails (getting into an account, things a person asked for) can't be switched off.
@@ -180,7 +181,7 @@ function SendOne() {
   }
   return (
     <form onSubmit={send} aria-label="Send an email" className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-      <p className="text-[13px] text-slate-500">Each address gets its own copy, so nobody sees the others. Up to 20 at a time. Not for newsletters: a bulk email needs an unsubscribe link first.</p>
+      <p className="text-[13px] text-slate-500">Each address gets its own copy, so nobody sees the others. Up to 20 at a time. To write to many people, use Bulk email.</p>
       <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">To (separate addresses with commas or new lines)
         <textarea rows={2} className={`mt-1 ${inputClass}`} value={form.to} onChange={set("to")} /></label>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -240,12 +241,12 @@ export default function EmailsAdmin({ onOpenTab }) {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Emails</h1>
-        <p className="text-[13px] text-slate-500">Everything the platform emails: what was sent, which kinds are switched on, their wording, and one-off emails from you.</p>
+        <p className="text-[13px] text-slate-500">Everything the platform emails: what was sent, which kinds are switched on, their wording, and emails from you to one person or many.</p>
       </div>
       {data && !data.set_up && <Notice tone="amber">The Emails area isn't set up yet: run migration 047_email_admin.sql in Supabase. Until then nothing is logged and every email goes out as written in the product.</Notice>}
       {problem && <Notice tone="rose" role="alert">{problem}</Notice>}
       <div role="tablist" aria-label="Emails" className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800">
-        {[["sent", "Sent"], ["kinds", "Kinds of email"], ["optouts", "Opted out"], ["send", "Send an email"]].map(([k, l]) => (
+        {[["sent", "Sent"], ["kinds", "Kinds of email"], ["optouts", "Opted out"], ["send", "Send an email"], ["bulk", "Bulk email"]].map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k)}
             className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold ${view === k ? "border-brand-600 text-brand-700 dark:text-brand-300" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{l}</button>
         ))}
@@ -254,6 +255,7 @@ export default function EmailsAdmin({ onOpenTab }) {
       {view === "kinds" && (data ? <Kinds data={data} reload={load} onOpenTab={onOpenTab} /> : !problem && <p role="status" className="text-sm text-slate-500">Loading…</p>)}
       {view === "optouts" && <OptedOut kinds={data?.items || []} />}
       {view === "send" && <SendOne />}
+      {view === "bulk" && <BulkEmail />}
     </div>
   );
 }
