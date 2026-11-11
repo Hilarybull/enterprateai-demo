@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
+import { confirmDialog } from "../../lib/dialog";
 
 // Bulk email (the owner, 11 Nov): pick people from users, workspaces, claimed and unclaimed Marketplace profiles, filter
 // them, add addresses by hand, and send one message. Each person gets their own copy with an unsubscribe link.
@@ -86,7 +87,9 @@ export default function BulkEmail() {
     } catch (e) { setState({ problem: problemOf(e) }); }
   }
   async function send() {
-    if (!window.confirm(`Send "${form.subject.trim()}" to ${recipients.length.toLocaleString()} ${recipients.length === 1 ? "person" : "people"}? This can't be stopped once it starts.`)) return;
+    const who = `${recipients.length.toLocaleString()} ${recipients.length === 1 ? "person" : "people"}`;
+    if (!await confirmDialog(`"${form.subject.trim()}" goes to ${who}, each with their own copy. Once it starts it can't be stopped.`,
+      { title: `Send to ${who}?`, confirmLabel: `Send to ${who}` })) return;
     setState({ busy: true });
     try {
       const r = await apiRequest("/admin/emails/bulk", "POST", payload(false));

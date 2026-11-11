@@ -21,13 +21,14 @@ vi.mock("../../api/client", () => ({
   }),
 }));
 
+vi.mock("../../lib/dialog", () => ({ confirmDialog: vi.fn(async () => true) }));
+
 import BulkEmail from "./BulkEmail";
 
 beforeEach(() => { calls.length = 0; });
 
 describe("Bulk email", () => {
   it("filters, picks from users and unclaimed profiles, adds an address by hand and sends once to everyone", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<BulkEmail />);
     await screen.findByText("ada@example.com");
     fireEvent.change(screen.getByLabelText("Plan"), { target: { value: "starter" } });

@@ -3,6 +3,7 @@ import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import BulkEmail from "./BulkEmail";
+import { confirmDialog } from "../../lib/dialog";
 
 // The superadmin's Emails area (the owner, 10 Nov): what was sent, which kinds of email are on, their wording, and
 // one-off emails. Essential emails (getting into an account, things a person asked for) can't be switched off.
@@ -209,7 +210,7 @@ function OptedOut({ kinds }) {
   useEffect(() => { load(); }, [load]);
   const labelOf = (k) => (k === "all" ? "Every optional email" : kinds.find((x) => x.key === k)?.label || k);
   async function undo(r) {
-    if (!window.confirm(`Send "${labelOf(r.kind)}" emails to ${r.email} again? Only do this if they asked.`)) return;
+    if (!await confirmDialog(`Only do this if ${r.email} asked for them again.`, { title: `Send "${labelOf(r.kind)}" emails to ${r.email} again?`, confirmLabel: "Send them again" })) return;
     try { await apiRequest(`/admin/emails/optouts?email=${encodeURIComponent(r.email)}&kind=${encodeURIComponent(r.kind)}`, "DELETE"); setNote(`${r.email} gets "${labelOf(r.kind)}" emails again.`); load(); }
     catch (e) { setProblem(problemOf(e).message); }
   }
