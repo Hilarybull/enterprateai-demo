@@ -76,9 +76,10 @@ async def book_demo(payload: BookDemoRequest) -> dict:
             f"Role / Interest: {record['role'] or '—'}\n"
             f"Message: {record['message'] or '—'}\n"
         )
-        await send_email_via_resend(kind="demo_request", 
+        await send_email_via_resend(kind="demo_request",
+            values={k: record.get(k) or "Not given" for k in ("name", "email", "company", "phone", "role", "message")},
             to_email=notify_email,
-            subject=f"[EnterprateAI] Demo Request – {record['name']} ({record['company']})",
+            subject=f"[EnterprateAI] Demo request from {record['name']} ({record['company']})",
             text_content=text,
             html_content=html,
             sender_name="EnterprateAI",

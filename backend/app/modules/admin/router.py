@@ -1541,6 +1541,23 @@ _EMAIL_SAMPLES = {
     "proposal_invite": {"sender_name": "Apex Consulting Ltd", "request_title": "Office fit-out", "request_description": "A 2,000 sq ft office in Leeds.",
                         "requirements": "What you'll need to provide:\nRequired: Insurance certificate", "link": "https://example.com/request"},
     "document_share": {"sender_label": "Apex Consulting Ltd", "article": "a", "doc_label": "business plan", "app_name": "EnterprateAI", "expires": "7 days", "link": "https://example.com/doc"},
+    "invoice_share": {"business_name": "Apex Consulting Ltd", "article": "an", "doc_type": "Invoice", "link": "https://example.com/invoice"},
+    "quote_sent": {"customer_name": "Ada Lovelace", "business_name": "Apex Consulting Ltd", "reference": "Q-1A2B3C4D", "total": "\u00a31,500.00", "valid_days": 30},
+    "quote_question": {"customer_name": "Ada Lovelace", "reference": "Q-1A2B3C4D", "question": "Does the price include delivery?", "business_name": "Apex Consulting Ltd",
+                       "link": "https://example.com/operations"},
+    "quote_customer_action": {"customer_name": "Ada Lovelace", "outcome": "accepted", "reference": "Q-1A2B3C4D", "detail": "Signed by Ada Lovelace.",
+                              "business_name": "Apex Consulting Ltd", "link": "https://example.com/operations"},
+    "claim_code": {"app_name": "EnterprateAI", "business_name": "Apex Consulting Ltd", "code": "482913"},
+    "claim_invitation": {"headline": "Apex Consulting Ltd is now listed on the EnterprateAI Marketplace", "business_name": "Apex Consulting Ltd", "waiting": "2 requests are waiting for you.",
+                         "message": "Apex Consulting Ltd is now listed on the EnterprateAI Marketplace, based on public information. 2 requests are waiting for you. Claim it for free to correct the details, reply to customers and choose the work you want.",
+                         "link": "https://example.com/claim", "opt_out": "https://example.com/stop"},
+    "claim_decision": {"headline": "You now manage Apex Consulting Ltd on EnterprateAI", "business_name": "Apex Consulting Ltd",
+                       "message": "We've reviewed your claim and you now manage Apex Consulting Ltd on the EnterprateAI Marketplace.", "reason": "",
+                       "waiting": "", "next_step": "Next step: check what the public sees and choose the opportunities you want.",
+                       "action": "Finish setting up your profile", "link": "https://example.com/profile"},
+    "marketplace_team_invite": {"app_name": "EnterprateAI", "email": "reviewer@example.com", "link": "https://example.com/team-invite"},
+    "demo_request": {"name": "Ada Lovelace", "email": "ada@example.com", "company": "Apex Consulting Ltd", "phone": "Not given", "role": "Founder",
+                     "message": "We'd like to see the Agent."},
 }
 
 
@@ -1593,7 +1610,7 @@ async def email_kinds(user=Depends(require_admin)) -> dict:
         row = rows.get(key) or {}
         t = catalog.TEMPLATES.get(key)
         items.append({
-            "key": key, "label": k["label"], "description": k["description"], "essential": k["essential"], "editable": bool(t),
+            "key": key, "label": k["label"], "description": k["description"], "essential": k["essential"], "editable": bool(t), "written": catalog.WRITTEN_ELSEWHERE.get(key),
             "enabled": row.get("enabled", True) is not False, "edited": bool(row.get("subject") or row.get("body")),
             "subject": row.get("subject") or (t or {}).get("subject"), "body": row.get("body") or (t or {}).get("body"),
             "button_label": row.get("button_label") or (t or {}).get("button"),

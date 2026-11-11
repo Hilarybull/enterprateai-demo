@@ -3475,7 +3475,7 @@ async def _email_team_invite(message: dict) -> bool:
             "<p>Open the secure link to verify your email and access Marketplace Claims. It expires in 48 hours.</p>"
             + email_button(url, "Verify email and open Claims")
             + f"<p style='font-size:12px;color:#64748b'>Sent to {escape(message['email'])}. If you weren't expecting this, ignore this email.</p>")
-    result = await send_email_via_resend(kind="marketplace_team_invite", to_email=message["email"], subject="Your EnterprateAI Marketplace team invitation",
+    result = await send_email_via_resend(kind="marketplace_team_invite", values={"app_name": "EnterprateAI", "email": message["email"], "link": url}, to_email=message["email"], subject="Your EnterprateAI Marketplace team invitation",
                                          text_content=text, html_content=html, idempotency_key=f"marketplace-team-invite/{message['token']}")
     return bool(getattr(result, "sent", True))
 
@@ -3514,7 +3514,9 @@ async def _email_decision(message: dict) -> bool:
     lines = [lead, *([f"Reason: {reason}"] if reason else []), *([waiting] if waiting else []), step]
     text = "\n\n".join([*lines, f"{button}: {url}"])
     html = "".join(f"<p>{escape(line)}</p>" for line in lines) + email_button(url, button)
-    result = await send_email_via_resend(kind="claim_decision", to_email=message["to"], subject=subject, text_content=text, html_content=html, idempotency_key=message.get("key"))
+    result = await send_email_via_resend(kind="claim_decision", values={"headline": subject, "message": lead, "business_name": name, "reason": f"Reason: {reason}" if reason else "",
+                                                                       "waiting": waiting, "next_step": step, "action": button, "link": url},
+                                         to_email=message["to"], subject=subject, text_content=text, html_content=html, idempotency_key=message.get("key"))
     return bool(getattr(result, "sent", True))
 
 
@@ -3531,7 +3533,7 @@ async def _email_code(address: str, code: str, business_name: str) -> None:
     html = (f"<p>Your EnterprateAI verification code is</p><p style='font-size:28px;font-weight:700;letter-spacing:4px'>{code}</p>"
             f"<p>Enter it to confirm that you manage <strong>{business_name}</strong> on the EnterprateAI Marketplace. It works for 30 minutes.</p>"
             "<p>If you didn't ask for this, you can ignore this email: nothing changes without the code.</p>")
-    await send_email_via_resend(kind="claim_code", to_email=address, subject="Your EnterprateAI verification code", text_content=text, html_content=html)
+    await send_email_via_resend(kind="claim_code", values={"app_name": "EnterprateAI", "business_name": business_name, "code": code}, to_email=address, subject="Your EnterprateAI verification code", text_content=text, html_content=html)
 
 
 async def _email_invitation(message: dict) -> bool:
@@ -3553,7 +3555,10 @@ async def _email_invitation(message: dict) -> bool:
     text = f"{lead}\n\nNext step: claim your profile: {base}{message['link']}\n\nNot interested? Stop these emails: {base}{message['opt_out']}"
     html = (f"<p>{escape(lead)}</p>" + email_button(base + message["link"], f"Claim {name}")
             + f"<p style='font-size:12px;color:#64748b;text-align:center'>Not interested? <a href='{escape(base + message['opt_out'], quote=True)}'>Stop these emails</a>.</p>")
-    result = await send_email_via_resend(kind="claim_invitation", to_email=message["to"], subject=automatic[0] if automatic else f"{name} on the EnterprateAI Marketplace", text_content=text, html_content=html,
+    headline = automatic[0] if automatic else f"{name} on the EnterprateAI Marketplace"
+    result = await send_email_via_resend(kind="claim_invitation", values={"headline": headline, "message": lead, "business_name": name, "waiting": waiting.strip(),
+                                                                         "link": base + message["link"], "opt_out": base + message["opt_out"]},
+                                         to_email=message["to"], subject=headline, text_content=text, html_content=html,
                                          idempotency_key=message.get("key"))
     return bool(getattr(result, "sent", True))
 

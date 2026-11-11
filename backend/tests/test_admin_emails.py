@@ -70,7 +70,33 @@ def test_wording_without_its_link_or_with_unknown_details_is_refused():
     assert "subject" in catalog.problems("password_reset", "Hi {first_name}", "{link}", "Go")
     assert "body" in catalog.problems("password_otp", "Code", "No code", "")
     assert catalog.problems("password_reset", "Reset your password", "Hi\n\n{link}", "Go") == {}
-    assert "kind" in catalog.problems("claim_invitation", "x", "y", "z")      # wording set in the product
+    assert "kind" in catalog.problems("agent_document", "x", "y", "z")      # the owner approves each one's words
+    assert "body" in catalog.problems("claim_invitation", "Hi", "{message}\n\n{link}", "Claim")      # its own stop link must stay
+
+
+def test_every_email_can_be_worded_here_or_says_where_its_words_come_from():
+    """The owner, 11 Nov: all emails should be edited and set from the Emails area."""
+    for kind in catalog.KINDS:
+        assert kind in catalog.TEMPLATES or kind in catalog.WRITTEN_ELSEWHERE, kind
+    for kind, t in catalog.TEMPLATES.items():
+        assert catalog.problems(kind, t["subject"], t["body"], t["button"]) == {}, kind
+        subject, text, _ = catalog.render(kind, {}, admin._EMAIL_SAMPLES[kind], footer_html="", footer_text="")
+        assert "{" not in subject + text, kind
+
+
+def test_an_edited_claim_decision_and_claim_code_go_out_with_the_real_details(mail, monkeypatch):
+    from app.core.config import get_settings
+    from app.modules.marketplace import directory
+    sent, _, settings = mail
+    monkeypatch.setattr(get_settings(), "frontend_url", "https://app.test")
+    settings["claim_decision"] = {"enabled": True, "subject": "Good news: {headline}", "body": "Dear owner,\n\n{message}\n\n{next_step}\n\n{link}", "button_label": "{action}"}
+    run(directory._email_decision({"kind": "claim_approved", "business_name": "Apex Ltd", "to": "ada@example.com", "link": "/profile"}))
+    msg = sent[-1]
+    assert msg["subject"] == "Good news: You now manage Apex Ltd on EnterprateAI"
+    assert "Dear owner," in msg["text_content"] and "https://app.test/profile" in msg["html_content"] and "Finish setting up your profile" in msg["html_content"]
+    settings["claim_code"] = {"enabled": True, "subject": "Code for {business_name}", "body": "Here it is:\n\n{code}", "button_label": ""}
+    run(directory._email_code("ada@example.com", "482913", "Apex Ltd"))
+    assert sent[-1]["subject"] == "Code for Apex Ltd" and "482913" in sent[-1]["html_content"]
 
 
 @pytest.fixture
@@ -111,7 +137,7 @@ def admin_client(monkeypatch):
 def test_the_admin_lists_switches_edits_and_resets(admin_client, mail):
     client, store = admin_client
     kinds = {k["key"]: k for k in client.get("/admin/emails/kinds").json()["items"]}
-    assert kinds["password_reset"]["essential"] and kinds["password_reset"]["editable"] and kinds["claim_invitation"]["editable"] is False
+    assert kinds["password_reset"]["essential"] and kinds["password_reset"]["editable"] and kinds["claim_invitation"]["editable"] and kinds["agent_document"]["editable"] is False and kinds["agent_document"]["written"] == "each_time"
     assert kinds["workspace_invitation"]["default"]["body"].count("{link}") == 1
     assert client.put("/admin/emails/kinds/password_reset", json={"enabled": False}).status_code == 400
     assert client.put("/admin/emails/kinds/claim_invitation", json={"enabled": False}).json()["enabled"] is False

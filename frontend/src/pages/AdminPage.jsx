@@ -3467,7 +3467,7 @@ export default function AdminPage() {
         )}
 
         {tab === "activation" && isAdmin && <ActivationAdmin />}
-        {tab === "emails" && isAdmin && <EmailsAdmin />}
+        {tab === "emails" && isAdmin && <EmailsAdmin onOpenTab={setTab} />}
         {tab === "discounts" && isAdmin && <DiscountsAdmin />}
 
         {tab === "contacts" && isAdmin && <ContactsSection />}

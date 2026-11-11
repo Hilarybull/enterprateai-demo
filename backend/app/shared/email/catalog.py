@@ -71,6 +71,50 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "subject": "{sender_label} shared {article} {doc_label} with you",
         "body": "{sender_label} shared {article} {doc_label} with you via {app_name}.\n\nThis link expires in {expires}.\n\n{link}",
         "button": "Open {doc_label}", "variables": ["sender_label", "article", "doc_label", "app_name", "expires", "link"], "required": ["link"]},
+    "invoice_share": {
+        "subject": "{business_name} shared {article} {doc_type} with you",
+        "body": "{business_name} shared {article} {doc_type} with you via EnterprateAI.\n\n{link}\n\nYou received this email because a document was shared with you via EnterprateAI. If you were not expecting this, you can safely ignore this email.",
+        "button": "Open {doc_type}", "variables": ["business_name", "article", "doc_type", "link"], "required": ["link"]},
+    "quote_sent": {
+        "subject": "Quotation received from {business_name}",
+        "body": "Hi {customer_name},\n\n{business_name} has responded to your request for quotation.\n\nReference: {reference}\nTotal: {total}\nValid for: {valid_days} days\n\nPlease find the quotation PDF attached to this email.",
+        "button": "", "variables": ["customer_name", "business_name", "reference", "total", "valid_days"], "required": []},
+    "quote_question": {
+        "subject": "Question about quotation {reference} from {customer_name}",
+        "body": "{customer_name} has a question about quotation {reference} before deciding:\n\n{question}\n\n{link}\n\nReply to this email to answer {customer_name} directly. The quotation stays open until they accept or decline it.",
+        "button": "Open the quotation", "variables": ["customer_name", "reference", "question", "business_name", "link"], "required": ["question", "link"]},
+    "quote_customer_action": {
+        "subject": "{customer_name} {outcome} quotation {reference}",
+        "body": "{customer_name} {outcome} quotation {reference}. {detail}\n\n{link}",
+        "button": "Open in Business Operations", "variables": ["customer_name", "outcome", "reference", "detail", "business_name", "link"], "required": ["link"]},
+    "claim_code": {
+        "subject": "Your {app_name} verification code",
+        "body": "Your {app_name} verification code is\n\n{code}\n\nEnter it to confirm that you manage {business_name} on the EnterprateAI Marketplace. It works for 30 minutes.\n\nIf you didn't ask for this, you can ignore this email: nothing changes without the code.",
+        "button": "", "variables": ["app_name", "business_name", "code"], "required": ["code"]},
+    "claim_invitation": {
+        "subject": "{headline}",
+        "body": "{message}\n\n{link}\n\nNot interested? Stop these emails: {opt_out}",
+        "button": "Claim {business_name}", "variables": ["headline", "message", "business_name", "waiting", "link", "opt_out"], "required": ["link", "opt_out"]},
+    "claim_decision": {
+        "subject": "{headline}",
+        "body": "{message}\n\n{reason}\n\n{waiting}\n\n{next_step}\n\n{link}",
+        "button": "{action}", "variables": ["headline", "message", "business_name", "reason", "waiting", "next_step", "action", "link"], "required": ["link"]},
+    "marketplace_team_invite": {
+        "subject": "Your {app_name} Marketplace team invitation",
+        "body": "You've been invited to help review business profiles and claims on the EnterprateAI Marketplace.\n\nOpen the secure link to verify your email and access Marketplace Claims. It expires in 48 hours.\n\n{link}\n\nSent to {email}. If you weren't expecting this, ignore this email.",
+        "button": "Verify email and open Claims", "variables": ["app_name", "email", "link"], "required": ["link"]},
+    "demo_request": {
+        "subject": "[EnterprateAI] Demo request from {name} ({company})",
+        "body": "New demo request\n\nName: {name}\nEmail: {email}\nCompany: {company}\nPhone: {phone}\nRole or interest: {role}\nMessage: {message}",
+        "button": "", "variables": ["name", "email", "company", "phone", "role", "message"], "required": []},
+}
+
+# The ones with no single wording to edit here, and where their words come from instead.
+WRITTEN_ELSEWHERE: dict[str, str] = {
+    "activation": "activation",      # its own area: Activation emails
+    "agent_document": "each_time",   # the owner approves the exact words of each one
+    "manual": "each_time",           # written here, in Send an email
+    "other": "none",
 }
 
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")

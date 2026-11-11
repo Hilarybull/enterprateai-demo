@@ -924,7 +924,9 @@ async def _approve_rfq(
                 "filename": f"Quotation-{quote['quotation_id']}.pdf",
                 "content": base64.b64encode(pdf_bytes).decode(),
             }]
-        await send_email_via_resend(kind="quote_sent", 
+        await send_email_via_resend(kind="quote_sent",
+            values={"customer_name": rfq.get("customer_name") or "there", "business_name": company_name, "reference": quote["quotation_id"],
+                    "total": f"\xa3{quote['total_amount']:,.2f}", "valid_days": validity_days},
             to_email=rfq["customer_email"],
             subject=f"Quotation received from {company_name}",
             text_content=(
@@ -1194,7 +1196,8 @@ async def ask_about_quote(*, token: str, viewer_email: str, message: str) -> dic
             cta=("Open the quotation", link),
             note=f"Reply to this email to answer {escape(customer)} directly. The quotation stays open until they accept or decline it.",
         )
-        await send_email_via_resend(kind="quote_question", 
+        await send_email_via_resend(kind="quote_question",
+            values={"customer_name": customer, "reference": ref, "question": text, "business_name": company, "link": link},
             to_email=owner_email, subject=f"Question about quotation {ref} from {customer}",
             text_content=(f"{customer} has a question about quotation {ref}:\n\n{text}\n\n"
                           f"Reply to this email to answer them directly.\n{link}\n"),
@@ -1311,7 +1314,7 @@ async def quote_status_for_customer(*, token: str, viewer_email: str = "") -> di
 
 
 async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, title: str, intro: str, body_html: str = "",
-                         reply_to: str | None = None) -> bool:
+                         reply_to: str | None = None, values: dict | None = None) -> bool:
     """Tell the business what its customer did. Replies go to the customer where known."""
     from app.core.config import get_settings
     from app.modules.agent.documents import _email
@@ -1323,7 +1326,7 @@ async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, tit
     link = f"{get_settings().frontend_url.rstrip('/')}/operations?tab=Sales"
     html = _email(company=company, title=title, preheader=intro, intro=intro, blocks=[body_html] if body_html else [],
                   cta=("Open in Business Operations", link))
-    res = await send_email_via_resend(kind="quote_customer_action", to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
+    res = await send_email_via_resend(kind="quote_customer_action", values={**(values or {}), "business_name": company, "link": link}, to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
                                       html_content=html, sender_name="EnterprateAI",
                                       reply_to_email=reply_to if reply_to and "@" in reply_to else None)
     return bool(res.sent)
@@ -1389,10 +1392,12 @@ async def respond_to_quote(*, token: str, viewer_email: str, action: str, signer
             pass
         _in_background(_notify_seller(ws, data, quote, subject=f"{customer} accepted quotation {ref}", title=f"Quotation {ref} accepted",
                                       intro=f"{escape(customer)} accepted quotation {escape(str(ref))}, signed by {escape(quote['acceptance']['name'])}.",
-                                      reply_to=quote.get("customer_email")))
+                                      reply_to=quote.get("customer_email"),
+                                      values={"customer_name": customer, "outcome": "accepted", "reference": ref, "detail": f"Signed by {quote['acceptance']['name']}."}))
     else:
         why = quote.get("declined_reason")
         _in_background(_notify_seller(ws, data, quote, subject=f"{customer} declined quotation {ref}", title=f"Quotation {ref} declined",
                                       intro=f"{escape(customer)} declined quotation {escape(str(ref))}." + (f" Their reason: {escape(why)}" if why else ""),
-                                      reply_to=quote.get("customer_email")))
+                                      reply_to=quote.get("customer_email"),
+                                      values={"customer_name": customer, "outcome": "declined", "reference": ref, "detail": f"Their reason: {why}" if why else ""}))
     return {"action": new_status, "quote_id": quote_id}

@@ -68,7 +68,7 @@ function Sent({ kinds }) {
           { key: "after", label: "After sending", render: (r) => <Tracking r={r} /> },
         ]} />
       )}
-      <p className="text-[12px] text-slate-500">"Sent" means our email provider accepted it; "Delivered" means the recipient's mail server took it. Opens and clicks show only while tracking is on in Resend, and an open is the email's images loading: some mail apps load them unread, others block them. Hover a row's chips for times. Up to 300 are shown; search or filter to find older ones.</p>
+      <p className="text-[12px] text-slate-500">Sent: the email left us. Delivered: it reached the person's inbox. Opened and clicked are a good guide, not exact, because some mail apps hide or fake opens. Point at a label to see when it happened. The latest 300 are listed; search to find older ones.</p>
     </div>
   );
 }
@@ -129,7 +129,7 @@ function Wording({ kind, onSaved, onClose }) {
   );
 }
 
-function Kinds({ data, reload }) {
+function Kinds({ data, reload, onOpenTab }) {
   const [editing, setEditing] = useState(null);
   const [note, setNote] = useState(null);
   const [problem, setProblem] = useState(null);
@@ -155,7 +155,9 @@ function Kinds({ data, reload }) {
             className={`rounded-full px-2.5 py-1 text-[12px] font-semibold ${k.enabled ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{k.enabled ? "On" : "Off"}</button>) },
         { key: "wording", label: "Wording", render: (k) => (k.editable
           ? <Btn kind="link" className="text-[13px]" onClick={() => setEditing(k)}>{k.edited ? "Edited · change" : "Edit"}</Btn>
-          : <span className="text-[12px] text-slate-500">Set in the product</span>) },
+          : k.written === "activation" && onOpenTab
+            ? <Btn kind="link" className="text-[13px]" onClick={() => onOpenTab("activation")}>Edit in Activation emails</Btn>
+            : <span className="text-[12px] text-slate-500">{k.written === "each_time" ? "Written for each email" : k.written === "none" ? "Not one email" : "Set in the product"}</span>) },
         { key: "month", label: "Last 30 days", render: (k) => <span className="text-[12px] text-slate-600 dark:text-slate-300">{count(k, "sent")} sent{count(k, "opened") ? ` · ${count(k, "opened")} opened` : ""}{count(k, "clicked") ? ` · ${count(k, "clicked")} clicked` : ""}{count(k, "failed") ? ` · ${count(k, "failed")} failed` : ""}{count(k, "switched_off") ? ` · ${count(k, "switched_off")} held back` : ""}{count(k, "opted_out") ? ` · ${count(k, "opted_out")} opted out` : ""}</span> },
         { key: "by", label: "Changed", render: (k) => (k.updated_by ? <span className="text-[12px] text-slate-500">{k.updated_by}<br />{when(k.updated_at)}</span> : <span className="text-[12px] text-slate-400">Never</span>) },
       ]} />
@@ -228,7 +230,7 @@ function OptedOut({ kinds }) {
   );
 }
 
-export default function EmailsAdmin() {
+export default function EmailsAdmin({ onOpenTab }) {
   const [view, setView] = useState("sent");
   const [data, setData] = useState(null);
   const [problem, setProblem] = useState(null);
@@ -249,7 +251,7 @@ export default function EmailsAdmin() {
         ))}
       </div>
       {view === "sent" && <Sent kinds={data?.items || []} />}
-      {view === "kinds" && (data ? <Kinds data={data} reload={load} /> : !problem && <p role="status" className="text-sm text-slate-500">Loading…</p>)}
+      {view === "kinds" && (data ? <Kinds data={data} reload={load} onOpenTab={onOpenTab} /> : !problem && <p role="status" className="text-sm text-slate-500">Loading…</p>)}
       {view === "optouts" && <OptedOut kinds={data?.items || []} />}
       {view === "send" && <SendOne />}
     </div>
