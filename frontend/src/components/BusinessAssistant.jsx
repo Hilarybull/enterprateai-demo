@@ -297,8 +297,13 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         content: `What's the price for ${unpriced.label || unpriced.name}${Number(unpriced.quantity) > 1 ? ` (each, ${unpriced.quantity} of them)` : ""}? Type the amount, for example 1500.` }]);
       return;
     }
-    const head = first && a.lead && a.lead !== askFor(f) ? `${a.lead} ` : "";
-    const ask = head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}` : askFor(f);
+    // The task's own question ("What should this invoice include?") stands in only for the field it is about. Asking for
+    // something else first (the new customer's email), its question is asked, never hidden behind it (the owner, 11 Nov).
+    const fits = (f.type === "line_items" && /\binclude\b/i.test(a.lead)) || ((f.type === "customer" || f.key === "customer_name") && /\bwho\b/i.test(a.lead));
+    const lead = !first || !a.lead || a.lead === askFor(f) ? "" : fits ? a.lead : a.lead.replace(/[^.!?]*\?\s*$/, "").trim();
+    const head = lead ? `${lead} ` : "";
+    const ask = fits && head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}`
+      : `${askFor(f)}${!f.required && f.hint ? ` ${f.hint}` : ""}`;
     const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
     setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`.trim(),
       prompts: f.confirm ? [{ label: "Yes", prompt: "Yes" }, { label: "Change it", prompt: "Change it" }] : chipsFor(f, a.values) }]);

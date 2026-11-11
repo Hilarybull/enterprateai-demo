@@ -294,4 +294,28 @@ describe("a service named in the request but not in the catalogue (the owner, 11
     const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
     expect((sent.body.answers || sent.body).items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
   });
+
+  it("for a new customer, asks their email (skippable) as itself, never behind \"What should this invoice include?\"", async () => {
+    started = { kind: "workflow", run: { ...asking, pending_question: { question: "What should this invoice include?", fields: [
+      { key: "customer_id", label: "Customer", type: "customer", required: true, default: "new", said: true, options: [{ value: "c1", label: "Alberto", email: "a@x.test" }] },
+      { key: "customer_name", label: "Customer name", type: "text", required: true, default: "Tosin Giwa", show_if: { customer_id: "new" } },
+      { key: "customer_email", label: "Customer email", type: "email", required: false, hint: "You can add it later.", show_if: { customer_id: "new" } },
+      { key: "items", label: "Items", type: "line_items", required: true,
+        suggested: [{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: "" }],
+        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] }] } } };
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "create a new invoice for Tosin Giwa. Service is SAP S4HANA Material Management" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect((await screen.findAllByText("What is the customer's email address? You can add it later.")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/What should this invoice include\?/)).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Skip" })); });
+    expect(await screen.findByText(/What's the price for SAP S4HANA Material Management\?/)).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "1500" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    const given = sent.body.answers || sent.body;
+    expect(given.customer_name).toBe("Tosin Giwa");
+    expect(given.items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
+  });
 });
