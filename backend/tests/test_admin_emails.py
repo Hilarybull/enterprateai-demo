@@ -338,6 +338,9 @@ def test_formatting_variables_links_and_attachments_go_to_each_person(admin_clie
         if source == "unclaimed":
             return [{"key": "profile:p1", "email": "hi@blue.test", "values": admin._person_values(email="hi@blue.test", business="Blue Shark",
                                                                                                 slug="blue-shark", claimed=False)}]
+        if source == "users":      # an account with its own claimed profile
+            return [{"key": "user:u1", "email": "ada@example.com", "values": admin._person_values(name="Ada Lovelace", email="ada@example.com",
+                                                                                                 business="Ada Ltd", slug="ada-ltd", claimed=True)}]
         return []
     monkeypatch.setattr(admin, "_contacts", contacts)
     monkeypatch.setattr(admin, "_bulk_audience", audience)
@@ -347,7 +350,8 @@ def test_formatting_variables_links_and_attachments_go_to_each_person(admin_clie
     monkeypatch.setattr(admin, "_BULK_GAP_SECONDS", 0)
     pdf = {"filename": "offer.pdf", "content": base64.b64encode(b"%PDF-1.4 hello").decode()}
     html = ('<h2>Hi {first_name}</h2><p onclick="x()">Claim <a href="{claim_link}">your page</a> for <b>{business}</b>.'
-            '<a href="javascript:alert(1)">bad</a></p><script>alert(1)</script>')
+            '<a href="javascript:alert(1)">bad</a></p><script>alert(1)</script>'
+            '<p><a href="{profile_link}" data-button="1" style="position:fixed">See your profile</a></p>')
     msg = {"subject": "{business}: claim it", "body": "Hi {first_name}, claim {claim_link}", "html": html, "attachments": [pdf]}
     r = client.post("/admin/emails/bulk", json={**msg, "recipients": [{"email": "hi@blue.test", "name": "Blue Shark", "key": "profile:p1"}]})
     assert r.status_code == 200, r.text
@@ -355,6 +359,8 @@ def test_formatting_variables_links_and_attachments_go_to_each_person(admin_clie
     one = sent[-1]
     assert one["subject"] == "Blue Shark: claim it" and "Hi Blue" in one["html_content"]
     assert 'href="https://app.test/marketplace/claim/blue-shark"' in one["html_content"] and "<b>Blue Shark</b>" in one["html_content"]
+    assert 'href="https://app.test/marketplace/business/blue-shark" target="_blank" rel="noopener" style="display:inline-block;background:#4f46e5' in one["html_content"]
+    assert "position:fixed" not in one["html_content"]      # a button keeps only our own style
     assert "javascript" not in one["html_content"] and "<script" not in one["html_content"] and "onclick" not in one["html_content"]
     assert one["text_content"].startswith("Hi Blue, claim https://app.test/marketplace/claim/blue-shark")
     assert one["attachments"] == [pdf]
@@ -366,5 +372,8 @@ def test_formatting_variables_links_and_attachments_go_to_each_person(admin_clie
     ok = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Hello {first_name}", "body": "Sign in: {login_link}",
                                                  "html": "<p>Sign in: <a href=\"{login_link}\">here</a></p>"})
     assert ok.status_code == 200 and sent[0]["subject"] == "Hello Ada" and 'href="https://app.test/login"' in sent[0]["html_content"]
+    sent.clear()      # a typed-in address that is an account gets its own profile link
+    mine = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Your page", "body": "See {profile_link}"})
+    assert mine.status_code == 200 and sent[0]["text_content"].startswith("See https://app.test/marketplace/business/ada-ltd")
     bad = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Hello", "body": "{message} {link}"})
     assert bad.status_code == 422 and "{link}, {message}" in bad.json()["detail"] and len(sent) == 1

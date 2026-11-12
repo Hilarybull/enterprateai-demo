@@ -46,7 +46,7 @@ describe("Bulk email", () => {
     // A claim link only unclaimed profiles have: the send waits until the others are taken out or the variable is
     box.innerHTML = "<p>Hi {name}, claim yours: {claim_link}</p>";
     fireEvent.input(box);
-    expect(screen.getByText(/\{claim_link\} is empty for 2 of the people picked/)).toBeTruthy();
+    expect(screen.getByText(/\{claim_link\} is empty for 1 of the people picked/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send to 3 people" }).disabled).toBe(true);
     box.innerHTML = "<p>Hi <b>{name}</b>, some news. {message}</p>";
     fireEvent.input(box);

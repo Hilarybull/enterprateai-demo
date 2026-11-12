@@ -83,10 +83,10 @@ export default function BulkEmail() {
       .filter((r) => { const k = r.email.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   }, [picked, typed]); // eslint-disable-line react-hooks/exhaustive-deps
   // Variables that can't be filled: unknown ones, and ones some picked people have no value for (a name falls back to "there";
-  // someone typed in by hand still gets their email and the sign in link).
+  // someone typed in by hand is checked by the server, which matches them to their account).
   const unknown = unknownVariables(form.subject, form.body);
   const used = [...new Set([...`${form.subject} ${form.body}`.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]))].filter((k) => !["name", "first_name", "email"].includes(k));
-  const gaps = used.map((k) => [k, recipients.filter((r) => !(r.values || {})[k] && !(k === "login_link" && !r.key)).length]).filter(([, n]) => n > 0);
+  const gaps = used.map((k) => [k, recipients.filter((r) => r.key && !(r.values || {})[k]).length]).filter(([, n]) => n > 0);
   const blocked = unknown.length > 0 || gaps.length > 0;
   const ready = recipients.length > 0 && form.subject.trim().length >= 3 && form.body.trim().length >= 5;
   const payload = (test) => ({ recipients: recipients.map(({ email, name, key }) => ({ email, name, key: key || "" })), subject: form.subject, body: form.body,

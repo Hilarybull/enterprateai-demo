@@ -1602,6 +1602,8 @@ _STYLE = {"p": "margin:0 0 14px;", "div": "margin:0 0 6px;", "h2": "margin:18px 
           "h3": "margin:16px 0 8px;font-size:17px;", "ul": "margin:0 0 14px;padding-left:22px;", "ol": "margin:0 0 14px;padding-left:22px;",
           "li": "margin:0 0 4px;", "blockquote": "margin:0 0 14px;padding:4px 0 4px 12px;border-left:3px solid #cbd5e1;color:#475569;",
           "a": "color:#4f46e5;text-decoration:underline;"}
+_BUTTON_STYLE = ("display:inline-block;background:#4f46e5;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;"
+                 "font-weight:600;font-size:15px;line-height:1.2;")
 
 
 def _clean_email_html(raw: str) -> str:
@@ -1632,7 +1634,8 @@ def _clean_email_html(raw: str) -> str:
                     return
                 extra = f' href="{_escape(href, quote=True)}" target="_blank" rel="noopener"'
             self.open.append(tag)
-            self.out.append(f'<{tag}{extra} style="{_STYLE.get(tag, "")}">' if _STYLE.get(tag) else f"<{tag}{extra}>")
+            style = _BUTTON_STYLE if tag == "a" and dict(attrs).get("data-button") else _STYLE.get(tag, "")      # a button from the editor
+            self.out.append(f'<{tag}{extra} style="{style}">' if style else f"<{tag}{extra}>")
 
         def handle_endtag(self, tag):
             if tag in ("script", "style", "head", "title"):
@@ -1919,17 +1922,45 @@ def _marketing_state(c: dict | None) -> str:
     return "agreed" if may_be_sent_marketing(c) else "not_agreed"
 
 
+async def _profile_slugs() -> dict[str, str]:
+    """Each workspace's own Marketplace profile (the one it claimed), by workspace: its page's address name."""
+    try:
+        from app.modules.marketplace.directory import SCOPE
+        from app.modules.marketplace.directory_router import get_service
+        rows = await get_service().store.list("profiles", SCOPE, limit=5000)
+    except Exception:      # noqa: BLE001 - no Marketplace: no profile links, everything else still works
+        logging.getLogger(__name__).info("Marketplace profiles not read for email links", exc_info=True)
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        d = r.get("data") or {}
+        if d.get("linked_business_id") and d.get("slug") and d.get("publication") != "merged":
+            out.setdefault(str(d["linked_business_id"]), str(d["slug"]))
+    return out
+
+
 async def _bulk_audience(source: str) -> list[dict]:
     """Everyone in one source, with what the filters need. Rows without an email are listed but can't be picked."""
     if source == "users":
+        # A user's business and profile link come from their workspace (the first one that has a profile, else the first)
+        slugs = await _profile_slugs()
+        theirs: dict[str, dict] = {}
+        for w in await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at") or []:
+            uid = str(w.get("user_id") or "")
+            if uid and (uid not in theirs or (not slugs.get(str(theirs[uid]["id"])) and slugs.get(str(w["id"])))):
+                theirs[uid] = w
         out = []
         for c in await _contacts():
             email = c["email"] if "@" in str(c.get("email") or "") else ""
+            w = theirs.get(str(c["id"])) or {}
             out.append({"key": f"user:{c['id']}", "email": email, "name": c["name"], "plan": c["plan"], "marketing": _marketing_state(c),
-                        "since": str(c.get("created_at") or "")[:10], "values": _person_values(name=c.get("name") or "", email=email)})
+                        "since": str(c.get("created_at") or "")[:10],
+                        "values": _person_values(name=c.get("name") or "", email=email, business=w.get("name") or "",
+                                                 slug=slugs.get(str(w.get("id") or ""), ""), claimed=True)})
         return out
     if source == "workspaces":
         people = {str(c["id"]): c for c in await _contacts()}
+        slugs = await _profile_slugs()
         rows = await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at", desc=True) or []
         out = []
         for w in rows:
@@ -1938,7 +1969,8 @@ async def _bulk_audience(source: str) -> list[dict]:
             out.append({"key": f"workspace:{w['id']}", "email": email if "@" in email else "", "name": w.get("name") or "Unnamed workspace",
                         "owner": (c or {}).get("name") or "", "plan": (c or {}).get("plan") or "explorer", "marketing": _marketing_state(c),
                         "since": str(w.get("created_at") or "")[:10],
-                        "values": _person_values(name=(c or {}).get("name") or "", email=email if "@" in email else "", business=w.get("name") or "")})
+                        "values": _person_values(name=(c or {}).get("name") or "", email=email if "@" in email else "", business=w.get("name") or "",
+                                                 slug=slugs.get(str(w["id"]), ""), claimed=True)})
         return out
     if source in ("claimed", "unclaimed"):
         from app.modules.marketplace.directory import SCOPE
@@ -1990,14 +2022,14 @@ async def _values_for(people: list[dict]) -> None:
         if p.get("key") in known:
             p["values"] = {**known[p["key"]], "email": p["email"]}
             continue
-        if accounts is None:
+        if accounts is None:      # typed in: an account's own details and links, when the address has one
             try:
-                accounts = {str(c.get("email") or "").lower(): c for c in await _contacts()}
+                accounts = {str(r.get("email") or "").lower(): r.get("values") or {} for r in await _bulk_audience("users")}
             except Exception:      # noqa: BLE001 - names fall back to "there"; the email still goes
-                logging.getLogger(__name__).info("Names for typed-in addresses not looked up", exc_info=True)
+                logging.getLogger(__name__).info("Details for typed-in addresses not looked up", exc_info=True)
                 accounts = {}
-        c = accounts.get(p["email"])
-        p["values"] = _person_values(name=(c or {}).get("name") or p.get("name") or "", email=p["email"])
+        found = accounts.get(p["email"])
+        p["values"] = {**found, "email": p["email"]} if found else _person_values(name=p.get("name") or "", email=p["email"])
 
 
 class BulkEmailIn(BaseModel):

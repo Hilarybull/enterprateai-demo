@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 
 // The message box for emails written in the superadmin (the owner, 12 Nov): formatting, links and attachments.
@@ -7,7 +7,7 @@ import DOMPurify from "dompurify";
 
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;      // all files together
-const ALLOWED = { ALLOWED_TAGS: ["p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"], ALLOWED_ATTR: ["href"] };
+const ALLOWED = { ALLOWED_TAGS: ["p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"], ALLOWED_ATTR: ["href", "data-button", "style"] };
 
 // Each person's own details, filled in as each copy is sent. "who" says which lists have it.
 export const EMAIL_VARIABLES = [
@@ -15,8 +15,8 @@ export const EMAIL_VARIABLES = [
   { key: "first_name", label: "First name", hint: "Their first name, or \"there\"", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "email", label: "Email address", hint: "The address this copy goes to", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "login_link", label: "Sign in link", hint: "Our sign in page", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
-  { key: "business", label: "Business name", hint: "Their workspace or business", who: ["workspaces", "claimed", "unclaimed"] },
-  { key: "profile_link", label: "Profile link", hint: "Their own Marketplace profile page", who: ["claimed", "unclaimed"] },
+  { key: "business", label: "Business name", hint: "Their workspace or business", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
+  { key: "profile_link", label: "Profile link", hint: "Their own Marketplace profile page, for anyone whose business has one", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "claim_link", label: "Claim link", hint: "Their own page to claim their business", who: ["unclaimed"] },
 ];
 const KNOWN = new Set(EMAIL_VARIABLES.map((v) => v.key));
@@ -37,17 +37,37 @@ const TOOLS = [
   ["strikeThrough", "S", "Strikethrough", "line-through"], null,
   ["h2", "H", "Heading", "font-bold"], ["p", "¶", "Normal text", ""], null,
   ["insertUnorderedList", "•", "Bulleted list", ""], ["insertOrderedList", "1.", "Numbered list", ""], ["blockquote", "❝", "Quote", ""], null,
-  ["link", "Link", "Insert link", ""], ["unlink", "Unlink", "Remove link", ""], ["removeFormat", "Clear", "Clear formatting", ""], null,
+  ["link", "Link", "Insert link", ""], ["button", "▭ Button", "Insert button", "font-medium"], ["unlink", "Unlink", "Remove link", ""], ["removeFormat", "Clear", "Clear formatting", ""], null,
   ["undo", "↶", "Undo", ""], ["redo", "↷", "Redo", ""],
 ];
+
+// How a button looks while writing; the server gives the sent email its own button style.
+const BUTTON_STYLE = "display:inline-block;background:#4f46e5;color:#ffffff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;";
+const escapeHtml = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** A typed address made usable: a link variable stays as it is, an email becomes mailto:, anything else gets https://. */
+const asUrl = (raw) => {
+  const url = String(raw || "").trim();
+  if (!url || /^(https?:|mailto:)/i.test(url) || /^\{[a-z_]*_link\}$/.test(url)) return url;
+  return url.includes("@") && !url.includes("/") ? `mailto:${url}` : `https://${url}`;
+};
 
 const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = "Message", files, onFiles, variables = EMAIL_VARIABLES }, ref) {
   const box = useRef(null);
   const saved = useRef(null);
   const picker = useRef(null);
   const [link, setLink] = useState(null);      // the address being typed for a link, or null when closed
+  const [button, setButton] = useState(null);      // { text, url } for a button being made, or null
   const [problem, setProblem] = useState(null);
   const [menu, setMenu] = useState(false);
+  const menuArea = useRef(null);
+  useEffect(() => {      // the Variables menu closes on a click elsewhere or Escape
+    if (!menu) return undefined;
+    const away = (e) => { if (!menuArea.current?.contains(e.target)) setMenu(false); };
+    const key = (e) => { if (e.key === "Escape") setMenu(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", key); };
+  }, [menu]);
 
   const report = () => {
     const el = box.current;
@@ -67,7 +87,8 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
     s.addRange(saved.current);
   };
   function run(cmd) {
-    if (cmd === "link") { keepSelection(); setLink(""); return; }
+    if (cmd === "link") { keepSelection(); setButton(null); setLink(""); return; }
+    if (cmd === "button") { keepSelection(); setLink(null); setButton({ text: (saved.current?.toString() || "").trim(), url: "" }); return; }
     box.current?.focus();
     if (cmd === "h2" || cmd === "p" || cmd === "blockquote") document.execCommand("formatBlock", false, cmd);
     else document.execCommand(cmd, false, null);
@@ -75,9 +96,8 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
   }
   function addLink(e) {
     e?.preventDefault();
-    let url = (link || "").trim();
+    const url = asUrl(link);
     if (!url) { setLink(null); return; }
-    if (!/^(https?:|mailto:)/i.test(url) && !/^\{[a-z_]*_link\}$/.test(url)) url = url.includes("@") && !url.includes("/") ? `mailto:${url}` : `https://${url}`;
     restoreSelection();
     const s = window.getSelection();
     if (s && s.isCollapsed) document.execCommand("insertHTML", false, `<a href="${url.replace(/"/g, "&quot;")}">${url.replace(/^mailto:/, "").replace(/</g, "&lt;")}</a>`);
@@ -85,6 +105,22 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
     setLink(null);
     report();
   }
+  function addButton(e) {
+    e?.preventDefault();
+    const url = asUrl(button?.url);
+    const text = (button?.text || "").trim();
+    if (!url || !text) return;
+    restoreSelection();      // a selected piece of text becomes the button
+    document.execCommand("insertHTML", false, `<p><a href="${escapeHtml(url)}" data-button="1" style="${BUTTON_STYLE}">${escapeHtml(text)}</a></p><p><br></p>`);
+    setButton(null);
+    report();
+  }
+  const linkVariables = variables.filter((v) => v.key.endsWith("_link"));
+  const LinkChoices = ({ pick }) => (linkVariables.length > 0 && (
+    <span className="flex w-full flex-wrap items-center gap-1 text-[11px] text-slate-500">Or each person's own:
+      {linkVariables.map((v) => <button key={v.key} type="button" onClick={() => pick(`{${v.key}}`)} className="rounded-full border border-slate-200 px-2 py-0.5 text-brand-700 hover:bg-brand-50 dark:border-slate-700">{v.label}</button>)}
+    </span>
+  ));
   function insertVariable(key) {
     restoreSelection();
     document.execCommand("insertText", false, `{${key}}`);
@@ -110,18 +146,18 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
   return (
     <div>
       <span className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">{label}</span>
-      <div className="mt-1 overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950">
-        <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50 px-1.5 py-1 dark:border-slate-800 dark:bg-slate-900">
+      <div className="mt-1 rounded-xl border border-slate-300 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950">
+        <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 rounded-t-xl border-b border-slate-200 bg-slate-50 px-1.5 py-1 dark:border-slate-800 dark:bg-slate-900">
           {TOOLS.map((t, i) => (t ? (
             <button key={t[0]} type="button" title={t[2]} aria-label={t[2]} onMouseDown={(e) => { e.preventDefault(); keepSelection(); }} onClick={() => run(t[0])}
               className={`min-w-[30px] rounded-md px-2 py-1 text-[13px] text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800 ${t[3]}`}>{t[1]}</button>
           ) : <span key={`gap${i}`} aria-hidden="true" className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />))}
           <span aria-hidden="true" className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
-          <span className="relative">
+          <span ref={menuArea} className="relative">
             <button type="button" aria-haspopup="menu" aria-expanded={menu} onMouseDown={(e) => { e.preventDefault(); keepSelection(); }} onClick={() => setMenu((m) => !m)}
               className="rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800">{"{ }"} Variables</button>
             {menu && (
-              <span role="menu" aria-label="Variables" className="absolute left-0 top-full z-20 mt-1 block w-72 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+              <span role="menu" aria-label="Variables" className="absolute left-0 top-full z-50 mt-1 block max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
                 {variables.map((v) => (
                   <button key={v.key} type="button" role="menuitem" onMouseDown={(e) => e.preventDefault()} onClick={() => insertVariable(v.key)}
                     className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -143,6 +179,20 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
               className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
             <button type="button" onClick={addLink} className="rounded-md bg-brand-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-brand-700">Add link</button>
             <button type="button" onClick={() => setLink(null)} className="rounded-md px-2 py-1 text-[12px] text-slate-600 hover:bg-slate-100 dark:text-slate-300">Cancel</button>
+            <LinkChoices pick={setLink} />
+          </div>
+        )}
+        {button !== null && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
+            <input autoFocus aria-label="Button text" placeholder="Button text, like Claim your page" value={button.text} onChange={(e) => setButton({ ...button, text: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") addButton(e); if (e.key === "Escape") setButton(null); }}
+              className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
+            <input aria-label="Button link" placeholder="Where it goes: a web address or {claim_link}" value={button.url} onChange={(e) => setButton({ ...button, url: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") addButton(e); if (e.key === "Escape") setButton(null); }}
+              className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
+            <button type="button" onClick={addButton} disabled={!button.text.trim() || !button.url.trim()} className="rounded-md bg-brand-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Add button</button>
+            <button type="button" onClick={() => setButton(null)} className="rounded-md px-2 py-1 text-[12px] text-slate-600 hover:bg-slate-100 dark:text-slate-300">Cancel</button>
+            <LinkChoices pick={(url) => setButton((b) => ({ ...b, url }))} />
           </div>
         )}
         <div ref={box} role="textbox" aria-multiline="true" aria-label={label} contentEditable suppressContentEditableWarning
