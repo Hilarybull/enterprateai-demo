@@ -174,7 +174,7 @@ export function planAllowsScenario(planKey, scenarioTemplateId, status) {
   return true;
 }
 
-const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];
+export const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];
 
 export function planRank(planKey) {
   const idx = PLAN_ORDER.indexOf(normalisePlanKey(planKey));

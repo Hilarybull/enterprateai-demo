@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -1574,11 +1575,154 @@ class EmailPreviewIn(BaseModel):
     button_label: str = Field(default="", max_length=80)
 
 
+class EmailAttachment(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=14_000_000)      # base64, the way Resend takes it
+
+
 class EmailSendIn(BaseModel):
     to: str = Field(max_length=4000)                 # addresses, separated by commas, spaces or new lines
     subject: str = Field(min_length=3, max_length=300)
-    body: str = Field(min_length=5, max_length=8000)
+    body: str = Field(min_length=5, max_length=8000)      # the message as plain words (mail apps without formatting)
     reply_to: Optional[str] = Field(default=None, max_length=200)
+    html: Optional[str] = Field(default=None, max_length=200_000)      # the same message with its formatting, from the editor
+    attachments: list[EmailAttachment] = Field(default_factory=list, max_length=10)
+
+
+# ── Writing an email in the superadmin (the owner, 12 Nov): formatting, links, attachments and variables ──────────────
+
+EMAIL_VARIABLES = {"name": "Their name", "first_name": "Their first name", "email": "Their email address", "login_link": "The sign in page",
+                   "business": "Their business or workspace name", "profile_link": "Their Marketplace profile page",
+                   "claim_link": "The page to claim their unclaimed profile"}
+_GREETING = {"name", "first_name"}      # "there" when the name isn't known, so "Hi {name}" still reads well
+_VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_ATTACHMENT_BYTES = 10 * 1024 * 1024
+_TAGS = {"p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"}
+_STYLE = {"p": "margin:0 0 14px;", "div": "margin:0 0 6px;", "h2": "margin:18px 0 10px;font-size:20px;line-height:1.3;",
+          "h3": "margin:16px 0 8px;font-size:17px;", "ul": "margin:0 0 14px;padding-left:22px;", "ol": "margin:0 0 14px;padding-left:22px;",
+          "li": "margin:0 0 4px;", "blockquote": "margin:0 0 14px;padding:4px 0 4px 12px;border-left:3px solid #cbd5e1;color:#475569;",
+          "a": "color:#4f46e5;text-decoration:underline;"}
+
+
+def _clean_email_html(raw: str) -> str:
+    """Only plain formatting goes out: the tags the editor makes, links to web or email addresses, nothing else
+    (no scripts, styles, images or event handlers). Each tag gets the inline style mail apps need."""
+    from html import escape as _escape
+    from html.parser import HTMLParser
+
+    class _Clean(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.out, self.open, self.skip = [], [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style", "head", "title"):
+                self.skip += 1
+                return
+            if self.skip or tag not in _TAGS:
+                return
+            if tag == "br":
+                self.out.append("<br/>")
+                return
+            extra = ""
+            if tag == "a":
+                href = (dict(attrs).get("href") or "").strip()
+                # A web or email address, or one of our link variables ({claim_link}), filled in with our own address later
+                if not re.match(r"^(https?://|mailto:)", href, re.I) and not re.fullmatch(r"\{[a-z_]*_link\}", href):
+                    return
+                extra = f' href="{_escape(href, quote=True)}" target="_blank" rel="noopener"'
+            self.open.append(tag)
+            self.out.append(f'<{tag}{extra} style="{_STYLE.get(tag, "")}">' if _STYLE.get(tag) else f"<{tag}{extra}>")
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style", "head", "title"):
+                self.skip = max(0, self.skip - 1)
+                return
+            if tag in self.open:
+                while self.open:
+                    t = self.open.pop()
+                    self.out.append(f"</{t}>")
+                    if t == tag:
+                        break
+
+        def handle_data(self, data):
+            if not self.skip:
+                self.out.append(_escape(data))
+
+    c = _Clean()
+    c.feed(raw or "")
+    c.close()
+    return "".join(c.out) + "".join(f"</{t}>" for t in reversed(c.open))
+
+
+def _unknown_variables(*parts: str | None) -> list[str]:
+    return sorted({"{" + m + "}" for p in parts for m in _VARIABLE.findall(p or "") if m not in EMAIL_VARIABLES})
+
+
+def _check_message(subject: str, body: str, html: str | None, attachments: list) -> list[dict]:
+    """What can't go out, said plainly; otherwise the attachments as Resend takes them."""
+    import base64
+    unknown = _unknown_variables(subject, body, html)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"These can't be filled in: {', '.join(unknown)}. Use "
+                                                    + ", ".join("{" + k + "}" for k in EMAIL_VARIABLES) + ", or take them out.")
+    files, total = [], 0
+    for a in attachments:
+        try:
+            size = len(base64.b64decode(a.content, validate=True))
+        except Exception:      # noqa: BLE001
+            raise HTTPException(status_code=422, detail=f"{a.filename} couldn't be read. Attach it again.")
+        total += size
+        files.append({"filename": a.filename.strip()[:200], "content": a.content})
+    if total > _ATTACHMENT_BYTES:
+        raise HTTPException(status_code=422, detail="Attachments can add up to 10 MB at most.")
+    return files
+
+
+def _site() -> str:
+    return str(getattr(get_settings(), "frontend_url", "") or "").split(",")[0].strip().rstrip("/")
+
+
+def _person_values(*, name: str = "", email: str = "", business: str = "", slug: str = "", claimed: bool | None = None) -> dict:
+    """Every variable for one person. A link they don't have is left out, so a message that needs it is stopped."""
+    who = " ".join((name or "").split()) or " ".join((business or "").split())
+    site = _site()
+    values = {"name": who, "first_name": who.split(" ")[0] if who else "", "email": email, "login_link": f"{site}/login" if site else "",
+              "business": " ".join((business or "").split())}
+    if slug and site:
+        values["profile_link"] = f"{site}/marketplace/business/{slug}"
+        if claimed is False:
+            values["claim_link"] = f"{site}/marketplace/claim/{slug}"
+    return {k: v for k, v in values.items() if v}
+
+
+def _missing_for(people: list[dict], subject: str, body: str, html: str | None) -> str | None:
+    """Plain words for the variables some picked people have no value for (names fall back to "there")."""
+    used = {m for p in (subject, body, html) for m in _VARIABLE.findall(p or "")} - _GREETING
+    gaps = []
+    for var in sorted(used):
+        short = [p["email"] for p in people if not p["values"].get(var)]
+        if short:
+            gaps.append(f"{{{var}}} is empty for {len(short)} of {len(people)} ({', '.join(short[:3])}{'…' if len(short) > 3 else ''})")
+    return "; ".join(gaps) + ". Take those people out or the variable." if gaps else None
+
+
+def _compose(subject: str, body: str, html: str | None, values: dict | None = None) -> tuple[str, str, str]:
+    """The email one person gets: variables filled with their details. With formatting from the editor it goes out as
+    written (cleaned); without, each paragraph of the plain words becomes one."""
+    from html import escape as _escape
+    from app.shared.email.resend import _FOOTER_HTML
+    values = {**{k: "there" for k in _GREETING}, **(values or {})}
+    fill = lambda s, esc=False: _VARIABLE.sub(lambda m: (_escape(values[m.group(1)]) if esc else values[m.group(1)]) if m.group(1) in values else m.group(0), s or "")      # noqa: E731
+    text = fill(body.strip())
+    if (html or "").strip():
+        inner = fill(_clean_email_html(html), esc=True)
+    else:
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        inner = "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
+    page = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+            + inner + _FOOTER_HTML + "</div>")
+    return " ".join(fill(subject).split()), text, page
 
 
 def _email_tables_missing() -> HTTPException:
@@ -1711,8 +1855,7 @@ async def send_one_off_email(body: EmailSendIn, user=Depends(require_admin)) -> 
     """A one-off email to named addresses, each sent on its own so nobody sees the others. Not for the mailing list:
     a bulk email needs an unsubscribe link first."""
     import re as _re
-    from html import escape as _escape
-    from app.shared.email.resend import _FOOTER_HTML, send_email_via_resend
+    from app.shared.email.resend import send_email_via_resend
     addresses: list[str] = []
     for a in _re.split(r"[\s,;]+", body.to.strip()):
         a = a.strip().lower()
@@ -1723,15 +1866,18 @@ async def send_one_off_email(body: EmailSendIn, user=Depends(require_admin)) -> 
         raise HTTPException(status_code=422, detail=f"Check these addresses: {', '.join(bad)}." if bad else "Add at least one address.")
     if len(addresses) > 20:
         raise HTTPException(status_code=422, detail="Up to 20 addresses at a time.")
-    paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", body.body.strip()) if p.strip()]
-    html = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
-            + "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
-            + _FOOTER_HTML + "</div>")
+    files = _check_message(body.subject, body.body, body.html, body.attachments)
+    people = [{"email": a, "name": "", "key": ""} for a in addresses]
+    await _values_for(people)
+    gaps = _missing_for(people, body.subject, body.body, body.html)
+    if gaps:
+        raise HTTPException(status_code=422, detail=gaps)
     results = []
-    for a in addresses:
-        r = await send_email_via_resend(to_email=a, subject=body.subject.strip(), text_content=body.body.strip(), html_content=html,
+    for p in people:
+        s, t, h = _compose(body.subject, body.body, body.html, p["values"])
+        r = await send_email_via_resend(to_email=p["email"], subject=s, text_content=t, html_content=h, attachments=files or None,
                                         reply_to_email=(body.reply_to or "").strip() or None, kind="manual", sent_by=user.get("email"))
-        results.append({"to": a, "sent": r.sent, "error": None if r.sent else r.error})
+        results.append({"to": p["email"], "sent": r.sent, "error": None if r.sent else r.error})
     await _audit(user, "email_sent_from_admin", {"to": addresses, "subject": body.subject.strip(), "sent": sum(1 for r in results if r["sent"])})
     return {"results": results, "sent": sum(1 for r in results if r["sent"]), "failed": sum(1 for r in results if not r["sent"])}
 
@@ -1776,8 +1922,12 @@ def _marketing_state(c: dict | None) -> str:
 async def _bulk_audience(source: str) -> list[dict]:
     """Everyone in one source, with what the filters need. Rows without an email are listed but can't be picked."""
     if source == "users":
-        return [{"key": f"user:{c['id']}", "email": c["email"] if "@" in str(c.get("email") or "") else "", "name": c["name"], "plan": c["plan"],
-                 "marketing": _marketing_state(c), "since": str(c.get("created_at") or "")[:10]} for c in await _contacts()]
+        out = []
+        for c in await _contacts():
+            email = c["email"] if "@" in str(c.get("email") or "") else ""
+            out.append({"key": f"user:{c['id']}", "email": email, "name": c["name"], "plan": c["plan"], "marketing": _marketing_state(c),
+                        "since": str(c.get("created_at") or "")[:10], "values": _person_values(name=c.get("name") or "", email=email)})
+        return out
     if source == "workspaces":
         people = {str(c["id"]): c for c in await _contacts()}
         rows = await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at", desc=True) or []
@@ -1787,7 +1937,8 @@ async def _bulk_audience(source: str) -> list[dict]:
             email = str((c or {}).get("email") or "")
             out.append({"key": f"workspace:{w['id']}", "email": email if "@" in email else "", "name": w.get("name") or "Unnamed workspace",
                         "owner": (c or {}).get("name") or "", "plan": (c or {}).get("plan") or "explorer", "marketing": _marketing_state(c),
-                        "since": str(w.get("created_at") or "")[:10]})
+                        "since": str(w.get("created_at") or "")[:10],
+                        "values": _person_values(name=(c or {}).get("name") or "", email=email if "@" in email else "", business=w.get("name") or "")})
         return out
     if source in ("claimed", "unclaimed"):
         from app.modules.marketplace.directory import SCOPE
@@ -1806,7 +1957,9 @@ async def _bulk_audience(source: str) -> list[dict]:
                 continue
             email = str((owners.get(str(linked)) if linked else "") or d.get("contact_email") or "")
             out.append({"key": f"profile:{r['id']}", "email": email if "@" in email else "", "name": d.get("name") or "Unnamed business",
-                        "category": d.get("category") or "", "location": d.get("location") or "", "since": str(r.get("created_at") or "")[:10]})
+                        "category": d.get("category") or "", "location": d.get("location") or "", "since": str(r.get("created_at") or "")[:10],
+                        "values": _person_values(email=email if "@" in email else "", business=d.get("name") or "", slug=d.get("slug") or "",
+                                                 claimed=bool(linked))})
         return out
     raise HTTPException(status_code=422, detail="Choose users, workspaces, claimed or unclaimed profiles.")
 
@@ -1820,6 +1973,31 @@ async def email_audience(source: str = "users", user=Depends(require_admin)) -> 
 class BulkRecipient(BaseModel):
     email: str = Field(max_length=320)
     name: str = Field(default="", max_length=200)
+    key: str = Field(default="", max_length=120)      # where they were picked from ("user:…", "workspace:…", "profile:…"); empty when typed in
+
+
+async def _values_for(people: list[dict]) -> None:
+    """Each person's variables, from the list they were picked from; someone typed in is matched to an account by email."""
+    keys = {p["key"] for p in people if p.get("key")}
+    sources = {"user": ["users"], "workspace": ["workspaces"], "profile": ["claimed", "unclaimed"]}
+    known: dict[str, dict] = {}
+    for prefix, names in sources.items():
+        if any(k.startswith(prefix + ":") for k in keys):
+            for source in names:
+                known.update({r["key"]: r.get("values") or {} for r in await _bulk_audience(source)})
+    accounts = None
+    for p in people:
+        if p.get("key") in known:
+            p["values"] = {**known[p["key"]], "email": p["email"]}
+            continue
+        if accounts is None:
+            try:
+                accounts = {str(c.get("email") or "").lower(): c for c in await _contacts()}
+            except Exception:      # noqa: BLE001 - names fall back to "there"; the email still goes
+                logging.getLogger(__name__).info("Names for typed-in addresses not looked up", exc_info=True)
+                accounts = {}
+        c = accounts.get(p["email"])
+        p["values"] = _person_values(name=(c or {}).get("name") or p.get("name") or "", email=p["email"])
 
 
 class BulkEmailIn(BaseModel):
@@ -1828,31 +2006,19 @@ class BulkEmailIn(BaseModel):
     body: str = Field(min_length=5, max_length=8000)
     reply_to: Optional[str] = Field(default=None, max_length=200)
     test: bool = False      # one copy to the superadmin, filled with the first person's details
+    html: Optional[str] = Field(default=None, max_length=200_000)
+    attachments: list[EmailAttachment] = Field(default_factory=list, max_length=10)
 
 
-def _bulk_message(subject: str, body: str, name: str) -> tuple[str, str, str]:
-    """{name} becomes the person's or business's name ("there" when it isn't known). Typed text is escaped."""
-    from html import escape as _escape
-    import re as _re
-    from app.shared.email.resend import _FOOTER_HTML
-    who = (name or "").strip() or "there"
-    subject = " ".join(subject.replace("{name}", who).split())
-    text = body.strip().replace("{name}", who)
-    paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
-    html = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
-            + "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
-            + _FOOTER_HTML + "</div>")
-    return subject, text, html
-
-
-async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, reply_to: str | None, sent_by: str | None) -> None:
+async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, html: str | None, files: list[dict], reply_to: str | None,
+                     sent_by: str | None) -> None:
     from app.shared.email.resend import MSG_OPTED_OUT, send_email_via_resend
     job = _BULK_JOBS[job_id]
     for p in people:
         try:
-            s, t, h = _bulk_message(subject, body, p["name"])
+            s, t, h = _compose(subject, body, html, p["values"])
             r = await send_email_via_resend(kind="bulk", to_email=p["email"], subject=s, text_content=t, html_content=h, reply_to_email=reply_to,
-                                            sent_by=sent_by, idempotency_key=f"bulk/{job_id}/{p['email']}")
+                                            attachments=files or None, sent_by=sent_by, idempotency_key=f"bulk/{job_id}/{p['email']}")
             job["sent" if r.sent else "opted_out" if r.error == MSG_OPTED_OUT else "failed"] += 1
         except Exception:      # noqa: BLE001 - one bad address never stops the rest
             logging.getLogger(__name__).warning("Bulk email to one address failed", exc_info=True)
@@ -1864,38 +2030,43 @@ async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, r
 
 @router.post("/emails/bulk")
 async def send_bulk_email(body: BulkEmailIn, user=Depends(require_admin)) -> dict:
-    import re as _re
     from app.shared.email.resend import send_email_via_resend
+    files = _check_message(body.subject, body.body, body.html, body.attachments)
     people, seen, invalid = [], set(), []
     for r in body.recipients:
         email = r.email.strip().lower()
-        if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
             invalid.append(r.email)
             continue
         if email in seen:
             continue
         seen.add(email)
-        people.append({"email": email, "name": r.name.strip()})
+        people.append({"email": email, "name": r.name.strip(), "key": r.key.strip()})
     duplicates = len(body.recipients) - len(people) - len(invalid)
     if not people:
         raise HTTPException(status_code=422, detail="Pick or add at least one person with an email address.")
+    await _values_for(people)
     reply_to = (body.reply_to or "").strip() or None
     if body.test:
-        s, t, h = _bulk_message(body.subject, body.body, people[0]["name"])
+        s, t, h = _compose(body.subject, body.body, body.html, people[0]["values"])
         r = await send_email_via_resend(kind="manual", to_email=user.get("email"), subject=f"[Test] {s}", text_content=t, html_content=h,
-                                        reply_to_email=reply_to, sent_by=user.get("email"))
+                                        reply_to_email=reply_to, attachments=files or None, sent_by=user.get("email"))
         return {"test": True, "to": user.get("email"), "sent": bool(r.sent), "error": None if r.sent else r.error}
     if len(people) > _BULK_CAP:
         raise HTTPException(status_code=422, detail=f"Up to {_BULK_CAP:,} people at a time. Narrow the filters and send in parts.")
     # Account holders who unsubscribed from our marketing are left out; Unsubscribe-link opt-outs are skipped as each one is sent.
     unsubscribed = {str(c["email"]).lower() for c in await _contacts() if c.get("unsubscribed")}
     kept = [p for p in people if p["email"] not in unsubscribed]
+    gaps = _missing_for(kept, body.subject, body.body, body.html)
+    if gaps:
+        raise HTTPException(status_code=422, detail=gaps)
     job_id = uuid4().hex[:12]
     _BULK_JOBS[job_id] = {"id": job_id, "total": len(kept), "done": 0, "sent": 0, "failed": 0, "opted_out": 0, "subject": body.subject.strip(),
                           "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None if kept else datetime.now(timezone.utc).isoformat()}
     if kept:
-        _BULK_JOBS[job_id]["_task"] = asyncio.create_task(_send_bulk(job_id, kept, body.subject, body.body, reply_to, user.get("email")))
-    await _audit(user, "bulk_email_started", {"job": job_id, "subject": body.subject.strip(), "people": len(kept), "unsubscribed_left_out": len(people) - len(kept)})
+        _BULK_JOBS[job_id]["_task"] = asyncio.create_task(_send_bulk(job_id, kept, body.subject, body.body, body.html, files, reply_to, user.get("email")))
+    await _audit(user, "bulk_email_started", {"job": job_id, "subject": body.subject.strip(), "people": len(kept), "attachments": len(files),
+                                              "unsubscribed_left_out": len(people) - len(kept)})
     return {**_bulk_status(job_id), "left_out": {"invalid": invalid, "duplicates": duplicates, "unsubscribed": len(people) - len(kept)}}
 
 

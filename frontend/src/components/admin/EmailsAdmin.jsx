@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import BulkEmail from "./BulkEmail";
+import RichEmailEditor, { EMAIL_VARIABLES, unknownVariables } from "./RichEmailEditor";
 import { confirmDialog } from "../../lib/dialog";
 
 // The superadmin's Emails area (the owner, 10 Nov): what was sent, which kinds of email are on, their wording, and
@@ -168,16 +169,20 @@ function Kinds({ data, reload, onOpenTab }) {
 }
 
 function SendOne() {
-  const [form, setForm] = useState({ to: "", subject: "", body: "", reply_to: "" });
+  const BLANK = { to: "", subject: "", body: "", html: "", reply_to: "", attachments: [] };
+  const [form, setForm] = useState(BLANK);
   const [state, setState] = useState({});
+  const editor = useRef(null);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const unknown = unknownVariables(form.subject, form.body);
   async function send(e) {
     e.preventDefault();
     setState({ busy: true });
     try {
-      const r = await apiRequest("/admin/emails/send", "POST", { ...form, reply_to: form.reply_to || null });
+      const r = await apiRequest("/admin/emails/send", "POST", { ...form, reply_to: form.reply_to || null,
+        attachments: form.attachments.map(({ filename, content }) => ({ filename, content })) });
       setState({ result: r });
-      if (!r.failed) setForm({ to: "", subject: "", body: "", reply_to: "" });
+      if (!r.failed) { setForm(BLANK); editor.current?.clear(); }
     } catch (err) { setState({ problem: problemOf(err).message }); }
   }
   return (
@@ -189,7 +194,9 @@ function SendOne() {
         <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Subject<input className={`mt-1 ${inputClass}`} value={form.subject} maxLength={300} onChange={set("subject")} /></label>
         <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Replies go to (optional)<input type="email" className={`mt-1 ${inputClass}`} value={form.reply_to} onChange={set("reply_to")} placeholder="Our usual address" /></label>
       </div>
-      <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Message<textarea rows={8} className={`mt-1 ${inputClass}`} value={form.body} maxLength={8000} onChange={set("body")} /></label>
+      <RichEmailEditor ref={editor} variables={EMAIL_VARIABLES.filter((v) => v.who.includes("one"))} files={form.attachments}
+        onFiles={(attachments) => setForm((f) => ({ ...f, attachments }))} onChange={({ html, text }) => setForm((f) => ({ ...f, html, body: text }))} />
+      {unknown.length > 0 && <p role="alert" className="text-[12px] font-medium text-amber-700">{unknown.join(", ")} can't be filled in. Pick from Variables, or take {unknown.length > 1 ? "them" : "it"} out.</p>}
       {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
       {state.result && (
         <Notice tone={state.result.failed ? "amber" : "emerald"}>
@@ -197,7 +204,7 @@ function SendOne() {
           {state.result.failed > 0 && <ul className="mt-1 list-disc pl-5">{state.result.results.filter((r) => !r.sent).map((r) => <li key={r.to}>{r.to}: {r.error}</li>)}</ul>}
         </Notice>
       )}
-      <Btn kind="primary" type="submit" disabled={state.busy || !form.to.trim() || form.subject.trim().length < 3 || form.body.trim().length < 5}>{state.busy ? "Sending…" : "Send"}</Btn>
+      <Btn kind="primary" type="submit" disabled={state.busy || unknown.length > 0 || !form.to.trim() || form.subject.trim().length < 3 || form.body.trim().length < 5}>{state.busy ? "Sending…" : "Send"}</Btn>
     </form>
   );
 }

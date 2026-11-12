@@ -323,3 +323,48 @@ def test_bulk_sends_each_their_own_copy_with_their_name_and_leaves_out_unsubscri
     status = client.get(f"/admin/emails/bulk/{r['id']}").json()
     assert (status["sent"], status["opted_out"], status["failed"], status["done"]) == (2, 1, 0, 3) and status["finished_at"]
     assert all(e["kind"] == "bulk" for e in logged if e["status"] == "sent") and "bulk_email_started" in store["audit"]
+
+
+def test_formatting_variables_links_and_attachments_go_to_each_person(admin_client, mail, monkeypatch):
+    # The owner, 12 Nov: formatting, links and attachments in the message, and variables that become each person's own details and links
+    import base64
+    client, _ = admin_client
+    sent, _, _ = mail
+
+    async def contacts():
+        return [{"id": "u1", "email": "ada@example.com", "name": "Ada Lovelace", "plan": "starter"}]
+
+    async def audience(source):
+        if source == "unclaimed":
+            return [{"key": "profile:p1", "email": "hi@blue.test", "values": admin._person_values(email="hi@blue.test", business="Blue Shark",
+                                                                                                slug="blue-shark", claimed=False)}]
+        return []
+    monkeypatch.setattr(admin, "_contacts", contacts)
+    monkeypatch.setattr(admin, "_bulk_audience", audience)
+    monkeypatch.setattr(admin, "_site", lambda: "https://app.test")
+    started = []
+    monkeypatch.setattr(admin.asyncio, "create_task", lambda coro: started.append(coro) or None)
+    monkeypatch.setattr(admin, "_BULK_GAP_SECONDS", 0)
+    pdf = {"filename": "offer.pdf", "content": base64.b64encode(b"%PDF-1.4 hello").decode()}
+    html = ('<h2>Hi {first_name}</h2><p onclick="x()">Claim <a href="{claim_link}">your page</a> for <b>{business}</b>.'
+            '<a href="javascript:alert(1)">bad</a></p><script>alert(1)</script>')
+    msg = {"subject": "{business}: claim it", "body": "Hi {first_name}, claim {claim_link}", "html": html, "attachments": [pdf]}
+    r = client.post("/admin/emails/bulk", json={**msg, "recipients": [{"email": "hi@blue.test", "name": "Blue Shark", "key": "profile:p1"}]})
+    assert r.status_code == 200, r.text
+    run(started[0])
+    one = sent[-1]
+    assert one["subject"] == "Blue Shark: claim it" and "Hi Blue" in one["html_content"]
+    assert 'href="https://app.test/marketplace/claim/blue-shark"' in one["html_content"] and "<b>Blue Shark</b>" in one["html_content"]
+    assert "javascript" not in one["html_content"] and "<script" not in one["html_content"] and "onclick" not in one["html_content"]
+    assert one["text_content"].startswith("Hi Blue, claim https://app.test/marketplace/claim/blue-shark")
+    assert one["attachments"] == [pdf]
+    # Someone with no claim link (an account, typed in) stops the send, and says who
+    gap = client.post("/admin/emails/bulk", json={**msg, "recipients": [{"email": "hi@blue.test", "key": "profile:p1"}, {"email": "ada@example.com"}]})
+    assert gap.status_code == 422 and "{claim_link} is empty for 1 of 2 (ada@example.com)" in gap.json()["detail"]
+    # A one-off: an account's own name, and an unknown variable is refused before anything goes
+    sent.clear()
+    ok = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Hello {first_name}", "body": "Sign in: {login_link}",
+                                                 "html": "<p>Sign in: <a href=\"{login_link}\">here</a></p>"})
+    assert ok.status_code == 200 and sent[0]["subject"] == "Hello Ada" and 'href="https://app.test/login"' in sent[0]["html_content"]
+    bad = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Hello", "body": "{message} {link}"})
+    assert bad.status_code == 422 and "{link}, {message}" in bad.json()["detail"] and len(sent) == 1
