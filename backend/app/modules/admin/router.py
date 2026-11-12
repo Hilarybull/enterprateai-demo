@@ -1635,6 +1635,12 @@ def _clean_email_html(raw: str) -> str:
                 extra = f' href="{_escape(href, quote=True)}" target="_blank" rel="noopener"'
             self.open.append(tag)
             style = _BUTTON_STYLE if tag == "a" and dict(attrs).get("data-button") else _STYLE.get(tag, "")      # a button from the editor
+            if tag in ("p", "div", "h2", "h3", "li", "blockquote"):      # alignment from the editor is the one style kept
+                given = dict(attrs)
+                found = re.search(r"text-align\s*:\s*(left|center|right|justify)", given.get("style") or "", re.I)
+                align = (found.group(1) if found else str(given.get("align") or "")).lower()
+                if align in ("left", "center", "right", "justify"):
+                    style += f"text-align:{align};"
             self.out.append(f'<{tag}{extra} style="{style}">' if style else f"<{tag}{extra}>")
 
         def handle_endtag(self, tag):
@@ -1649,8 +1655,8 @@ def _clean_email_html(raw: str) -> str:
                         break
 
         def handle_data(self, data):
-            if not self.skip:
-                self.out.append(_escape(data))
+            if not self.skip:      # a non-breaking space from the editor goes out as &nbsp;, which every mail app shows
+                self.out.append(_escape(data, quote=False).replace(" ", "&nbsp;"))
 
     c = _Clean()
     c.feed(raw or "")

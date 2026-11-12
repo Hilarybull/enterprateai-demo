@@ -3,7 +3,7 @@ import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import BulkEmail from "./BulkEmail";
-import RichEmailEditor, { EMAIL_VARIABLES, unknownVariables } from "./RichEmailEditor";
+import RichEmailEditor, { EMAIL_VARIABLES, VariableSpacing, unknownVariables } from "./RichEmailEditor";
 import { confirmDialog } from "../../lib/dialog";
 
 // The superadmin's Emails area (the owner, 10 Nov): what was sent, which kinds of email are on, their wording, and
@@ -196,6 +196,7 @@ function SendOne() {
       </div>
       <RichEmailEditor ref={editor} variables={EMAIL_VARIABLES.filter((v) => v.who.includes("one"))} files={form.attachments}
         onFiles={(attachments) => setForm((f) => ({ ...f, attachments }))} onChange={({ html, text }) => setForm((f) => ({ ...f, html, body: text }))} />
+      <VariableSpacing texts={[form.subject, form.body]} />
       {unknown.length > 0 && <p role="alert" className="text-[12px] font-medium text-amber-700">{unknown.join(", ")} can't be filled in. Pick from Variables, or take {unknown.length > 1 ? "them" : "it"} out.</p>}
       {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
       {state.result && (

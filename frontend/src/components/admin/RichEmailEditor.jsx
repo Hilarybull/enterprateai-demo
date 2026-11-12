@@ -7,12 +7,12 @@ import DOMPurify from "dompurify";
 
 export const MAX_ATTACHMENTS = 10;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;      // all files together
-const ALLOWED = { ALLOWED_TAGS: ["p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"], ALLOWED_ATTR: ["href", "data-button", "style"] };
+const ALLOWED = { ALLOWED_TAGS: ["p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"], ALLOWED_ATTR: ["href", "data-button", "style", "align"] };
 
 // Each person's own details, filled in as each copy is sent. "who" says which lists have it.
 export const EMAIL_VARIABLES = [
-  { key: "name", label: "Name", hint: "Their name, or \"there\" when it isn't known", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
-  { key: "first_name", label: "First name", hint: "Their first name, or \"there\"", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
+  { key: "name", label: "Name", hint: "Their full name. If we don't know it, \"Hi {name}\" reads \"Hi there\"", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
+  { key: "first_name", label: "First name", hint: "Their first name. If we don't know it, \"Hi {first_name}\" reads \"Hi there\"", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "email", label: "Email address", hint: "The address this copy goes to", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "login_link", label: "Sign in link", hint: "Our sign in page", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
   { key: "business", label: "Business name", hint: "Their workspace or business", who: ["one", "users", "workspaces", "claimed", "unclaimed"] },
@@ -22,6 +22,30 @@ export const EMAIL_VARIABLES = [
 const KNOWN = new Set(EMAIL_VARIABLES.map((v) => v.key));
 /** Variables typed in that can't be filled in, like {message}. */
 export const unknownVariables = (...parts) => [...new Set(parts.flatMap((p) => [...String(p || "").matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1])))].filter((k) => !KNOWN.has(k)).map((k) => `{${k}}`);
+
+/** Variables stuck to a word ("Hi{name}" sends as "HiAda"), each with the same words spaced out as a suggestion. */
+export const gluedVariables = (...parts) => {
+  const found = [];
+  for (const text of parts) {
+    for (const m of String(text || "").matchAll(/([\p{L}\p{N}]*[\p{L}\p{N}])(\{[A-Za-z_][A-Za-z0-9_]*\})|(\{[A-Za-z_][A-Za-z0-9_]*\})([\p{L}\p{N}][\p{L}\p{N}]*)/gu)) {
+      const [seen] = m;
+      const fixed = m[2] ? `${m[1]} ${m[2]}` : `${m[3]} ${m[4]}`;
+      if (!found.some((f) => f.seen === seen)) found.push({ seen, fixed });
+    }
+  }
+  return found;
+};
+
+/** The red note under a message: which variables have no space next to them, and how they would read spaced out. */
+export function VariableSpacing({ texts }) {
+  const glued = gluedVariables(...texts);
+  if (!glued.length) return null;
+  return (
+    <p role="alert" className="text-[12px] font-medium text-rose-600">
+      {glued.map((g) => <span key={g.seen} className="block">"{g.seen}" has no space, so the name or link will join onto the word. Did you mean "{g.fixed}"?</span>)}
+    </p>
+  );
+}
 
 export const cleanHtml = (html) => DOMPurify.sanitize(html || "", ALLOWED);
 const sizeWords = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -36,6 +60,7 @@ const TOOLS = [
   ["bold", "B", "Bold", "font-bold"], ["italic", "I", "Italic", "italic"], ["underline", "U", "Underline", "underline"],
   ["strikeThrough", "S", "Strikethrough", "line-through"], null,
   ["h2", "H", "Heading", "font-bold"], ["p", "¶", "Normal text", ""], null,
+  ["justifyLeft", "⇤", "Align left", ""], ["justifyCenter", "↔", "Align center", ""], ["justifyRight", "⇥", "Align right", ""], null,
   ["insertUnorderedList", "•", "Bulleted list", ""], ["insertOrderedList", "1.", "Numbered list", ""], ["blockquote", "❝", "Quote", ""], null,
   ["link", "Link", "Insert link", ""], ["button", "▭ Button", "Insert button", "font-medium"], ["unlink", "Unlink", "Remove link", ""], ["removeFormat", "Clear", "Clear formatting", ""], null,
   ["undo", "↶", "Undo", ""], ["redo", "↷", "Redo", ""],

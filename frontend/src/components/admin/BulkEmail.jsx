@@ -3,7 +3,7 @@ import { apiRequest } from "../../api/client";
 import { AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import { confirmDialog } from "../../lib/dialog";
-import RichEmailEditor, { EMAIL_VARIABLES, unknownVariables } from "./RichEmailEditor";
+import RichEmailEditor, { EMAIL_VARIABLES, VariableSpacing, unknownVariables } from "./RichEmailEditor";
 import { PLAN_ORDER, normalisePlanKey, planLabel } from "../../lib/plans";
 
 // Bulk email (the owner, 11 Nov): pick people from users, workspaces, claimed and unclaimed Marketplace profiles, filter
@@ -211,6 +211,7 @@ export default function BulkEmail() {
         <RichEmailEditor ref={editor} files={form.attachments} onFiles={(attachments) => setForm((f) => ({ ...f, attachments }))}
           onChange={({ html, text }) => setForm((f) => ({ ...f, html, body: text }))}
           variables={EMAIL_VARIABLES.map((v) => ({ ...v, note: v.who.includes("users") ? "" : `Only for ${v.who.map((w) => SOURCES.find(([k]) => k === w)?.[1].toLowerCase()).filter(Boolean).join(" and ")}` }))} />
+        <VariableSpacing texts={[form.subject, form.body]} />
         {unknown.length > 0 && <p role="alert" className="text-[12px] font-medium text-amber-700">{unknown.join(", ")} can't be filled in. Pick from Variables, or take {unknown.length > 1 ? "them" : "it"} out.</p>}
         {gaps.map(([k, n]) => <p key={k} role="alert" className="text-[12px] font-medium text-amber-700">{`{${k}}`} is empty for {n.toLocaleString()} of the people picked. Take them out, or the variable.</p>)}
         <p className="text-[12px] text-slate-500">Variables fill in each person's own details and links. Up to 2,000 people at a time; they go out at about two a second.</p>

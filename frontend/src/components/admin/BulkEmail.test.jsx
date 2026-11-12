@@ -51,6 +51,9 @@ describe("Bulk email", () => {
     box.innerHTML = "<p>Hi <b>{name}</b>, some news. {message}</p>";
     fireEvent.input(box);
     expect(screen.getByText(/\{message\} can't be filled in/)).toBeTruthy();
+    box.innerHTML = "<p>Hi{name}, some news.</p>";      // stuck to the word: flagged with a suggestion, never changed for them
+    fireEvent.input(box);
+    expect(screen.getByText(/"Hi\{name\}" has no space.*Did you mean "Hi \{name\}"\?/)).toBeTruthy();
     box.innerHTML = "<p>Hi <b>{name}</b>, some news.</p>";
     fireEvent.input(box);
     fireEvent.click(screen.getByRole("button", { name: "Send to 3 people" }));
