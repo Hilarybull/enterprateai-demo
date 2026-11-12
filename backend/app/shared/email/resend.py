@@ -58,6 +58,14 @@ _FOOTER_HTML = (
     "</div>"
 )
 
+# Emails the superadmin writes (Send an email, Bulk email): their own footer, not the account one above (the owner, 12 Nov)
+WRITTEN_BY_US = ("manual", "bulk")
+_WRITTEN_FOOTER_LINES = ("This email was sent by EnterprateAI Marketplace",
+                         "If you would prefer not to receive further communications from us, you can unsubscribe at any time.")
+WRITTEN_FOOTER_HTML = ("<div style=\"margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;\">"
+                       + "<br/><br/>".join(_WRITTEN_FOOTER_LINES) + "</div>")
+WRITTEN_FOOTER_TEXT = "\n\n" + "\n\n".join(_WRITTEN_FOOTER_LINES)
+
 _FOOTER_TEXT = (
     "\n\n"
     "You received this email because an action was requested for your EnterprateAI account.\n"
@@ -111,9 +119,14 @@ async def send_email_via_resend(
     if one and kind in catalog.OPT_OUT_LINKED:
         # Every optional email says how to stop it, and gives mail apps their own unsubscribe button.
         page, one_click = catalog.optout_links(one, kind)
-        text_content = f"{text_content}\n\nDon't want these emails? Unsubscribe: {page}"
-        line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;\">Don't want these emails? "
-                f"<a href=\"{escape(page, quote=True)}\" style=\"color:#64748b;\">Unsubscribe</a></p>")
+        if kind in WRITTEN_BY_US:      # their footer already says they can unsubscribe: the link alone, under it
+            text_content = f"{text_content}\nUnsubscribe: {page}"
+            line = (f"<p style=\"margin:8px 0 0;font-size:11px;line-height:1.5;\"><a href=\"{escape(page, quote=True)}\" "
+                    "style=\"color:#64748b;\">Unsubscribe</a></p>")
+        else:
+            text_content = f"{text_content}\n\nDon't want these emails? Unsubscribe: {page}"
+            line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;\">Don't want these emails? "
+                    f"<a href=\"{escape(page, quote=True)}\" style=\"color:#64748b;\">Unsubscribe</a></p>")
         html_content = html_content[:html_content.rfind("</div>")] + line + "</div>" if html_content.rstrip().endswith("</div>") else html_content + line
         headers = {**(headers or {}), "List-Unsubscribe": f"<{one_click or page}>", **({"List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if one_click else {})}
     result = await _deliver(to_email=to_email, subject=subject, text_content=text_content, html_content=html_content, sender_name=sender_name,

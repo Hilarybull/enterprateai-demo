@@ -101,7 +101,7 @@ describe("the homepage launcher", () => {
     // Who it is: avatar, name, "Online" in words, and what it does.
     const who = launcher.querySelector("[data-agent-identity]");
     expect(who.querySelector("[data-agent-avatar]").style.width).toBe("32px");
-    expect(who.textContent).toBe("EnterprateAIOnlineTell it the job. It does the work and asks only for what it needs.");
+    expect(who.textContent).toBe("EnterprateAIOnline");      // no subtitle under the name (the owner, 12 Nov)
     expect(screen.getByText(PROMPT).className).toContain("text-white");
     const promptField = container.querySelector("[data-prompt-field]");
     for (const cls of ["bg-white", "h-14"]) expect(promptField.className.split(" ")).toContain(cls);      // 56px tall, white on the card
@@ -430,8 +430,9 @@ describe("the hero", () => {
     expect([...grid.children].map((c) => (c.hasAttribute("data-hero-copy") ? "copy" : c.hasAttribute("data-hero-right") ? "right" : "?"))).toEqual(["copy", "right"]);
     const copy = grid.querySelector("[data-hero-copy]");
     expect(copy.className).toContain("lg:text-left");
-    // Left column, in order: eyebrow, headline, supporting line, launcher card, buttons, ticks.
-    const order = [within(copy).getByText("AI-Native Business Decision Intelligence"), within(copy).getByRole("heading", { level: 1 }),
+    // Left column, in order: headline, supporting line, launcher card, buttons, ticks. No eyebrow line above the headline (the owner, 12 Nov).
+    expect(within(copy).queryByText("AI-Native Business Decision Intelligence")).toBeNull();
+    const order = [within(copy).getByRole("heading", { level: 1 }),
       within(copy).getByText("Plan, operate, sell and grow from one intelligent business workspace."), copy.querySelector("[data-goal-launcher]")];
     for (let i = 1; i < order.length; i += 1) expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const h1 = within(copy).getByRole("heading", { level: 1 });

@@ -600,7 +600,7 @@ export function GoalLauncherView({ className = "", flow, children = null, onWatc
     <AgentShell className={className} data-goal-launcher
       onPointerDownCapture={(e) => { if (onTouch && !e.target.closest?.("[data-watch-demo]")) onTouch(); }}>
       <div data-launcher-body>
-        <AgentIdentity working={busy} subtitle="Tell it the job. It does the work and asks only for what it needs." />
+        <AgentIdentity working={busy} />
 
         <form onSubmit={submit} className="mt-4">
           <label htmlFor="goal-prompt" className="block text-base font-bold text-white sm:text-lg">{offer.prompt}</label>

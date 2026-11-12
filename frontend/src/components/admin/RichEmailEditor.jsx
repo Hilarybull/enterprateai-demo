@@ -56,6 +56,7 @@ const asBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
+const EVERYDAY = new Set(["bold", "italic", "underline", "link", "button"]);      // always shown, even on a phone
 const TOOLS = [
   ["bold", "B", "Bold", "font-bold"], ["italic", "I", "Italic", "italic"], ["underline", "U", "Underline", "underline"],
   ["strikeThrough", "S", "Strikethrough", "line-through"], null,
@@ -84,6 +85,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
   const [button, setButton] = useState(null);      // { text, url } for a button being made, or null
   const [problem, setProblem] = useState(null);
   const [menu, setMenu] = useState(false);
+  const [more, setMore] = useState(false);      // on a phone: the rest of the formatting tools
   const menuArea = useRef(null);
   useEffect(() => {      // the Variables menu closes on a click elsewhere or Escape
     if (!menu) return undefined;
@@ -173,11 +175,14 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
       <span className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">{label}</span>
       <div className="mt-1 rounded-xl border border-slate-300 bg-white focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950">
         <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 rounded-t-xl border-b border-slate-200 bg-slate-50 px-1.5 py-1 dark:border-slate-800 dark:bg-slate-900">
+          {/* On a phone only the everyday tools show; "More" opens the rest. From 640px wide every tool shows. */}
           {TOOLS.map((t, i) => (t ? (
             <button key={t[0]} type="button" title={t[2]} aria-label={t[2]} onMouseDown={(e) => { e.preventDefault(); keepSelection(); }} onClick={() => run(t[0])}
-              className={`min-w-[30px] rounded-md px-2 py-1 text-[13px] text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800 ${t[3]}`}>{t[1]}</button>
-          ) : <span key={`gap${i}`} aria-hidden="true" className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />))}
-          <span aria-hidden="true" className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
+              className={`min-h-[32px] min-w-[32px] rounded-md px-2 py-1 text-[13px] text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800 ${t[3]} ${EVERYDAY.has(t[0]) || more ? "" : "hidden sm:inline-block"}`}>{t[1]}</button>
+          ) : <span key={`gap${i}`} aria-hidden="true" className={`mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700 ${more ? "" : "hidden sm:block"}`} />))}
+          <button type="button" aria-expanded={more} onClick={() => setMore((m) => !m)}
+            className="min-h-[32px] rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-200 sm:hidden dark:text-slate-200 dark:hover:bg-slate-800">{more ? "Fewer" : "More"}</button>
+          <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-slate-200 sm:block dark:bg-slate-700" />
           <span ref={menuArea} className="relative">
             <button type="button" aria-haspopup="menu" aria-expanded={menu} onMouseDown={(e) => { e.preventDefault(); keepSelection(); }} onClick={() => setMenu((m) => !m)}
               className="rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800">{"{ }"} Variables</button>

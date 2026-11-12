@@ -1720,7 +1720,7 @@ def _compose(subject: str, body: str, html: str | None, values: dict | None = No
     """The email one person gets: variables filled with their details. With formatting from the editor it goes out as
     written (cleaned); without, each paragraph of the plain words becomes one."""
     from html import escape as _escape
-    from app.shared.email.resend import _FOOTER_HTML
+    from app.shared.email.resend import WRITTEN_FOOTER_HTML, WRITTEN_FOOTER_TEXT
     values = {**{k: "there" for k in _GREETING}, **(values or {})}
     fill = lambda s, esc=False: _VARIABLE.sub(lambda m: (_escape(values[m.group(1)]) if esc else values[m.group(1)]) if m.group(1) in values else m.group(0), s or "")      # noqa: E731
     text = fill(body.strip())
@@ -1730,8 +1730,8 @@ def _compose(subject: str, body: str, html: str | None, values: dict | None = No
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
         inner = "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
     page = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
-            + inner + _FOOTER_HTML + "</div>")
-    return " ".join(fill(subject).split()), text, page
+            + inner + WRITTEN_FOOTER_HTML + "</div>")
+    return " ".join(fill(subject).split()), text + WRITTEN_FOOTER_TEXT, page
 
 
 def _email_tables_missing() -> HTTPException:

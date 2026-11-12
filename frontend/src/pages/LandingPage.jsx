@@ -418,8 +418,7 @@ export default function LandingPage() {
           {/* Two columns from 1024px: the way in on the left, the product on the right. Below that, one column. */}
           <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,60fr)_minmax(0,40fr)] xl:grid-cols-[minmax(0,55fr)_minmax(0,45fr)]" data-hero-grid>
             <div className="min-w-0 text-center lg:text-left" data-hero-copy>
-              <span {...enter("fadeUp", 0)} className="inline-block text-xs font-bold uppercase tracking-widest text-brand-600">AI-Native Business Decision Intelligence</span>
-              <h1 {...enter("fadeUp", 1)} className="mt-3 text-3xl font-extrabold leading-tight tracking-tight text-slate-900 md:text-4xl lg:text-[2.35rem]">
+              <h1 {...enter("fadeUp", 1)} className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 md:text-4xl lg:text-[2.35rem]">
                 Build a More Resilient<br />Business with <span className="bg-gradient-to-r from-accent-500 to-purple-600 bg-clip-text text-transparent">Intelligence.</span>
               </h1>
               <p {...enter("fadeUp", 2)} className="mt-2 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
