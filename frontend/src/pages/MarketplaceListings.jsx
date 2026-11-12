@@ -11,6 +11,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import { useProposalStore } from "../store/proposal";
 import Spinner from "../components/Spinner";
+import RequestText from "../components/marketplace/RequestText";
 import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -2126,7 +2127,7 @@ function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
 
           {/* Description */}
           {req.description && (
-            <p className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+            <RequestText text={req.description} className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400" />
           )}
 
           {/* Meta row */}

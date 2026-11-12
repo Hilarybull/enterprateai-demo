@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
+import RequestText from "../components/marketplace/RequestText";
 import { ApplyModal, BusinessProfileModal } from "./MarketplaceListings";
 
 function fmt(str) {
@@ -325,7 +326,7 @@ export default function ProposalRequestDetailPage() {
                 </div>
 
                 {req.description && (
-                  <p className="mt-5 text-[14px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+                  <RequestText text={req.description} className="mt-5 text-[14px] leading-relaxed text-slate-600 dark:text-slate-400" />
                 )}
 
                 {/* Meta */}
