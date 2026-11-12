@@ -1068,6 +1068,23 @@ describe("admin area", () => {
     await screen.findByText("Access restricted");
   });
 
+  it("Users: the superadmin opens every business a user owns for proposals", async () => {
+    useAuthStore.setState({ token: "t", email: "tech.support@enterprateai.com", hydrated: true });
+    const stats = { users: [{ id: "u1", email: "ada@example.test", created_at: "2026-11-01T10:00:00Z" }, { id: "u2", email: "bo@example.test", created_at: "2026-11-02T10:00:00Z" }],
+      workspaces: [{ id: "w1", name: "Ada One", owner_id: "u1", proposals_open: false }, { id: "w2", name: "Ada Two", owner_id: "u1", proposals_open: false }],
+      members: [], invitations: [], ai_usage: {} };
+    routes = [{ method: "GET", match: /\/admin\/stats$/, reply: () => ({ body: stats }) },
+      { method: "PATCH", match: /\/workspaces\/w\d\/proposals$/, reply: () => ({ body: { enabled: true, listing_live: false } }) }];
+    mount("/ent-admin?tab=users", <AdminPage />, "/ent-admin");
+    const open = await screen.findByRole("button", { name: "Open ada@example.test for proposals" });
+    expect(screen.getAllByText("No business").length).toBeGreaterThan(0);          // bo owns no business
+    fireEvent.click(open);
+    expect(await screen.findByText("their 2 businesses will be open for proposals. Marketplace listings aren't changed.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open for proposals" }));
+    await waitFor(() => expect(sent("PATCH", /\/workspaces\/w\d\/proposals$/).map((c) => [c.path.split("/").slice(-2)[0], c.body])).toEqual([["w1", { enabled: true }], ["w2", { enabled: true }]]));
+    expect(await screen.findByText("ada@example.test is open for proposals.")).toBeTruthy();
+  });
+
   it("design 5 and A-1: one table with an empty state and pages, and tiles with sentence-case labels and a trend line", () => {
     const rows = Array.from({ length: 30 }, (_, i) => ({ id: i, name: `Row ${i + 1}` }));
     const { container } = mount("/", <><AdminTable columns={[{ key: "name", label: "Name" }]} rows={rows} pageSize={25} rowActions={(r) => [{ label: "Open", onClick: () => {} }]} />

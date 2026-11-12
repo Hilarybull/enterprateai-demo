@@ -50,3 +50,29 @@ def test_the_route_switches_a_business_and_only_admins_can(monkeypatch):
         assert client.patch("/admin/workspaces/A/proposals", json={"enabled": False}).status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_any_plan_posts_a_request_for_proposal_but_answering_one_still_needs_its_plan(monkeypatch):
+    from app.modules.proposals import router as proposals_router
+    from app.modules.proposals import service as proposals_service
+
+    async def not_paid(user_id, plan, grant_module=None):
+        return False
+
+    async def refusal(user_id, plan, action):
+        return f"{action} needs a paid plan."
+
+    async def create(user_id, workspace_id, payload):
+        return {"id": "R1", "title": payload["title"], "status": "DRAFT"}
+    monkeypatch.setattr(proposals_router, "plan_meets", not_paid)
+    monkeypatch.setattr("app.modules.plans.access.refusal", refusal)
+    monkeypatch.setattr(proposals_service, "create_request", create)
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        app.dependency_overrides[get_current_user] = lambda: {"id": "u", "email": "someone@example.test"}
+        r = client.post("/proposals/requests", json={"title": "Office cleaning contract", "description": "Weekly cleaning for a two floor office in Leeds."})
+        assert r.status_code == 200 and r.json()["id"] == "R1"           # Explorer posts an RFP
+        r = client.post("/proposals/submit", json={"recipient_workspace_id": "W2", "request_id": "R9", "title": "Our offer"})
+        assert r.status_code == 403 and "paid plan" in r.text             # sending a proposal keeps its plan
+    finally:
+        app.dependency_overrides.clear()

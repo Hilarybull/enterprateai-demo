@@ -2289,6 +2289,22 @@ export default function AdminPage() {
     });
   }
 
+  // The same switch for a user: every business they own opens or closes together.
+  function switchUserProposals(u, owned) {
+    const opening = !owned.some((w) => w.proposals_open);
+    const who = u.email || "this user";
+    const count = owned.length === 1 ? `"${owned[0].name || "Unnamed"}"` : `their ${owned.length} businesses`;
+    askConfirm({
+      title: opening ? "Open for proposals?" : "Close to proposals?",
+      description: opening
+        ? `${count} will be open for proposals. Marketplace listings aren't changed.`
+        : `${count} will stop receiving new proposals. Proposals already received are kept.`,
+      label: opening ? "Open for proposals" : "Close to proposals",
+      successMsg: opening ? `${who} is open for proposals.` : `${who} is closed to proposals.`,
+      action: () => Promise.all(owned.map((w) => apiRequest(`/admin/workspaces/${w.id}/proposals`, "PATCH", { enabled: opening }))),
+    });
+  }
+
   function deleteWorkspace(workspaceId, workspaceName) {
     askConfirm({
       title: "Delete workspace?",
@@ -3217,6 +3233,17 @@ export default function AdminPage() {
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "created_at", label: "Joined", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "proposals", label: "Proposals", render: (r) => {
+                  const owned = (stats?.workspaces || []).filter((w) => w.owner_id === r.id);
+                  if (!owned.length) return <span className="text-[11px] text-slate-400">No business</span>;
+                  const open = owned.some((w) => w.proposals_open);
+                  return (
+                    <button type="button" onClick={() => switchUserProposals(r, owned)} aria-pressed={open} aria-label={`${open ? "Close" : "Open"} ${r.email} for proposals`}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${open ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+                      {open ? "Open" : "Closed"}
+                    </button>
+                  );
+                }},
                 { key: "actions", label: "", tdClass: "w-40", render: (r) => (
                   <div className="flex items-center gap-1.5">
                     <button

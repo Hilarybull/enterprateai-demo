@@ -61,7 +61,7 @@ async def create_request(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
-    await _require_paid_for_proposals(user["id"], "Posting a proposal request")
+    # Posting a Request for Proposal is open to every plan, Explorer included (the owner, 12 Nov).
     return await service.create_request(user["id"], workspace_id, body.model_dump())
 
 
