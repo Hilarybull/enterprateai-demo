@@ -421,8 +421,8 @@ export default function ProposalRequestDetailPage() {
               )}
             </div>
 
-            {/* Sidebar */}
-            <div className="space-y-4">
+            {/* Sidebar: stays beside a long request on wide screens, below it on phones */}
+            <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
               {/* CTA */}
               {isOwn ? (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center dark:border-slate-700 dark:bg-slate-800">
