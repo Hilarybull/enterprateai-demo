@@ -128,6 +128,20 @@ def label(kind: str) -> str:
     return (KINDS.get(kind) or KINDS["other"])["label"]
 
 
+# What the people who get them call these emails, on the unsubscribe page: never our own admin names (the owner, 12 Nov).
+PUBLIC_NAMES = {
+    "bulk": "news and updates", "manual": "news and updates",
+    "claim_invitation": "invitations to claim your business profile", "claim_decision": "updates about your business claim",
+    "marketplace_team_invite": "Marketplace team invitations", "proposal_invite": "proposal invitations",
+    "quote_customer_action": "updates on your quotations", "quote_question": "questions about your quotations",
+    "workspace_invitation": "workspace invitations",
+}
+
+
+def public_name(kind: str) -> str:
+    return PUBLIC_NAMES.get(kind, "these emails")
+
+
 def problems(kind: str, subject: str, body: str, button: str) -> dict[str, str]:
     """What is wrong with an edited wording, field by field. Nothing is saved while anything is."""
     t = TEMPLATES.get(kind)
@@ -155,12 +169,65 @@ def _fill(text: str, values: dict[str, Any]) -> str:
     return _PLACEHOLDER.sub(lambda m: str(values.get(m.group(1), "")), text or "")
 
 
+def is_formatted(body: str | None) -> bool:
+    """Wording saved from the formatting editor is HTML; wording written before it is plain lines."""
+    return (body or "").lstrip().startswith("<")
+
+
+def _html_text(html: str) -> str:
+    """Formatted wording as plain lines, for mail apps that show no formatting: a link keeps its address."""
+    from html import unescape
+    def link(m: re.Match) -> str:
+        href, words = unescape(m.group(1)), m.group(2)
+        shown = unescape(re.sub(r"<[^>]+>", "", words)).strip()
+        return words if shown == href.removeprefix("mailto:") else f"{words} ({href})"
+    out = re.sub(r"<a\b[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>", link, html, flags=re.I | re.S)
+    out = re.sub(r"<br\s*/?>", "\n", out, flags=re.I)
+    out = re.sub(r"<li\b[^>]*>", "\n- ", out, flags=re.I)
+    out = re.sub(r"</(p|div|h2|h3|blockquote|ul|ol)>", "\n\n", out, flags=re.I)
+    out = unescape(re.sub(r"<[^>]+>", "", out)).replace("\xa0", " ")
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in out.split("\n"))).strip()
+
+
+def _button_html(url: str, label: str) -> str:
+    return (f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(url, quote=True)}\" "
+            "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
+            f"{escape(label)}</a></p>")
+
+
+def _code_html(code: str) -> str:
+    return ("<div style=\"text-align:center;margin:28px 0;\"><span style=\"display:inline-block;padding:16px 32px;border-radius:12px;background:#f1f5f9;"
+            f"font-size:32px;font-weight:800;letter-spacing:8px;color:#0f172a;\">{escape(code)}</span></div>")
+
+
 def render(kind: str, setting: dict, values: dict[str, Any], *, footer_html: str, footer_text: str) -> tuple[str, str, str]:
     """subject, text, html for an edited email."""
     t = TEMPLATES[kind]
     subject = " ".join(_fill(setting.get("subject") or t["subject"], values).split())
     body = setting.get("body") or t["body"]
     button = _fill(setting.get("button_label") or t["button"], values)
+    if is_formatted(body):
+        # Formatted in the editor (the owner, 12 Nov): only the editor's plain formatting goes out, each detail filled in
+        # and made safe; {link} or {code} on a line of its own becomes the button or the code box, as in plain wording.
+        from app.modules.admin.router import _clean_email_html
+        clean = _clean_email_html(body, hrefs=r"\{[a-z_]+\}")
+        clean = re.sub(r"<(p|div|h2|h3|blockquote)\b[^>]*>\s*(?:<(?:b|strong|i|em|u)>\s*)*\{link\}\s*(?:</(?:b|strong|i|em|u)>\s*)*</\1>",
+                       lambda _m: _button_html(str(values.get("link", "")), button), clean)
+        clean = re.sub(r"<(p|div|h2|h3|blockquote)\b[^>]*>\s*\{code\}\s*</\1>", lambda _m: _code_html(str(values.get("code", ""))), clean)
+        filled = _PLACEHOLDER.sub(lambda m: escape(str(values.get(m.group(1), "")), quote=True), clean)
+        plain = _html_text(body)
+        text_lines = []
+        for para in re.split(r"\n\s*\n", plain):
+            stripped = para.strip()
+            if stripped == "{link}":
+                text_lines.append(f"{button}:\n{values.get('link', '')}")
+            elif stripped == "{code}":
+                text_lines.append(f"Your code: {values.get('code', '')}")
+            elif _fill(para, values).strip():
+                text_lines.append(_fill(para, values).strip())
+        html = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+                + filled + footer_html + "</div>")
+        return subject, "\n\n".join(text_lines) + footer_text, html
     text_lines, html_parts = [], []
     for para in re.split(r"\n\s*\n", body.strip()):
         stripped = para.strip()

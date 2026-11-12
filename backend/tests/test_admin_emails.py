@@ -251,7 +251,7 @@ def test_the_unsubscribe_page_stops_one_kind_or_all_and_can_undo(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
     t = catalog.optout_token("Bo@Example.com", "proposal_invite")
     page = client.get(f"/email/opt-out?t={t}").json()
-    assert page == {"email": "b***@example.com", "kind": "proposal_invite", "label": "Proposal invitation", "this": False, "all": False}
+    assert page == {"email": "b***@example.com", "kind": "proposal_invite", "label": "proposal invitations", "this": False, "all": False}
     assert client.post(f"/email/opt-out?t={t}&scope=this").json()["this"] is True and store == [("bo@example.com", "proposal_invite", "unsubscribe_link")]
     assert client.post(f"/email/opt-out?t={t}&scope=all&one_click=1").json()["all"] is True and store[-1] == ("bo@example.com", "all", "one_click")
     assert client.post(f"/email/opt-in?t={t}&scope=all").json() == {**page, "this": False, "all": False}
@@ -377,3 +377,37 @@ def test_formatting_variables_links_and_attachments_go_to_each_person(admin_clie
     assert mine.status_code == 200 and sent[0]["text_content"].startswith("See https://app.test/marketplace/business/ada-ltd")
     bad = client.post("/admin/emails/send", json={"to": "ada@example.com", "subject": "Hello", "body": "{message} {link}"})
     assert bad.status_code == 422 and "{link}, {message}" in bad.json()["detail"] and len(sent) == 1
+
+
+def test_formatted_wording_keeps_its_formatting_and_makes_the_button_and_plain_lines():
+    body = ('<p style="text-align:center"><b>Hello</b> {business_name}</p><p>{message}</p><p>{link}</p>'
+            '<ul><li>One</li><li>Two</li></ul><p><a href="https://enterprate.ai/help">Help</a> or <a href="{opt_out}">stop</a></p>'
+            '<script>alert(1)</script><p onclick="x()">Thanks</p>')
+    values = {"business_name": "Bo & Co <Ltd>", "message": "2 requests are waiting.", "link": "https://enterprate.ai/claim/bo?x=1&y=2",
+              "opt_out": "https://enterprate.ai/stop/t", "headline": "Hi"}
+    subject, text, html = catalog.render("claim_invitation", {"subject": "{headline}", "body": body, "button_label": "Claim {business_name}"},
+                                         values, footer_html="<p>foot</p>", footer_text="\n\nfoot")
+    assert subject == "Hi"
+    assert "text-align:center" in html and "<b>Hello</b> Bo &amp; Co &lt;Ltd&gt;" in html          # formatting kept, details made safe
+    assert 'href="https://enterprate.ai/claim/bo?x=1&amp;y=2"' in html and ">Claim Bo &amp; Co &lt;Ltd&gt;</a>" in html      # {link} is the button
+    assert 'href="https://enterprate.ai/stop/t"' in html and "<li" in html
+    assert "script" not in html and "alert" not in html and "onclick" not in html
+    assert text.startswith("Hello Bo & Co <Ltd>\n\n2 requests are waiting.\n\nClaim Bo & Co <Ltd>:\nhttps://enterprate.ai/claim/bo?x=1&y=2")
+    assert "- One\n- Two" in text and "Help (https://enterprate.ai/help) or stop (https://enterprate.ai/stop/t)" in text and text.endswith("foot")
+    assert catalog.problems("claim_invitation", "{headline}", body, "Claim") == {}
+    assert "body" in catalog.problems("claim_invitation", "{headline}", "<p>{message}</p>", "Claim")      # {link} and {opt_out} must stay
+
+
+def test_plain_wording_is_unchanged():
+    t = catalog.TEMPLATES["claim_invitation"]
+    _, text, html = catalog.render("claim_invitation", {}, {"message": "Hi", "link": "https://x.test/c", "opt_out": "https://x.test/o", "business_name": "Bo"},
+                                   footer_html="", footer_text="")
+    assert not catalog.is_formatted(t["body"]) and html.count("<p style=\"margin:0 0 14px;\">") >= 1 and "Claim Bo" in html
+
+
+
+def test_the_unsubscribe_page_never_shows_our_admin_names():
+    assert catalog.public_name("bulk") == catalog.public_name("manual") == "news and updates"
+    for kind in catalog.OPT_OUT_LINKED | {"claim_invitation"}:
+        assert catalog.public_name(kind) != "these emails" and "superadmin" not in catalog.public_name(kind).lower()
+        assert catalog.public_name(kind) != catalog.label(kind)

@@ -76,8 +76,32 @@ function Sent({ kinds }) {
   );
 }
 
-function Wording({ kind, onSaved, onClose }) {
+// What each detail of a platform email is, for the Variables menu of its wording.
+const KIND_VARIABLES = {
+  headline: "The email's headline", message: "The main message, written for each business", business_name: "The business's name",
+  waiting: "How many requests are waiting, when there are any", link: "Their own link. On a line of its own it becomes the button",
+  opt_out: "Their own link to stop these emails", reason: "Why it was decided", next_step: "What to do next", action: "The button's words",
+  app_name: "EnterprateAI", code: "The code. On a line of its own it shows as a code box", saving: "What saving the code does",
+  email: "Their email address", minutes: "How many minutes the link works", article: "\"a\" or \"an\"", doc_type: "The kind of document",
+  customer_name: "The customer's name", reference: "The document's reference", total: "The total", valid_days: "How many days it is valid",
+  outcome: "The outcome", detail: "More detail", question: "Their question", greeting: "The greeting with their name",
+  inviter_email: "Who invited them", access_level: "Their access level", expires: "When it expires", name: "Their name",
+  company: "Their company", phone: "Their phone number", role: "Their role or interest", sender_label: "Who sent it",
+  doc_label: "The document's name", sender_name: "Who sent it", request_title: "The request's title",
+  request_description: "The request's description", requirements: "The requirements",
+};
+const titleOf = (key) => key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
+const isFormatted = (body) => String(body || "").trimStart().startsWith("<");
+const escapeText = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** Plain wording, as written before the formatting tools, opened in the editor: one paragraph per block of lines. */
+const asEditorHtml = (body) => (isFormatted(body) ? body
+  : String(body || "").trim().split(/\n\s*\n/).map((para) => `<p>${escapeText(para.trim()).replace(/\n/g, "<br>")}</p>`).join(""));
+
+export function Wording({ kind, onSaved, onClose }) {
   const [form, setForm] = useState({ subject: kind.subject || "", body: kind.body || "", button_label: kind.button_label || "" });
+  const [plain, setPlain] = useState(kind.body || "");      // the message as words, for the spacing check
+  const editor = useRef(null);
+  const variables = kind.variables.map((key) => ({ key, label: titleOf(key), hint: KIND_VARIABLES[key] || "Filled in for each email" }));
   const [preview, setPreview] = useState(null);
   const [state, setState] = useState({});
   useEffect(() => {
@@ -109,12 +133,17 @@ function Wording({ kind, onSaved, onClose }) {
       <div className="mt-3 grid gap-4 lg:grid-cols-2">
         <div className="space-y-2">
           {field("subject", "Subject", <input className={`mt-1 ${inputClass}`} value={form.subject} maxLength={300} onChange={(e) => setForm({ ...form, subject: e.target.value })} />)}
-          {field("body", "Message", <textarea rows={10} className={`mt-1 font-mono text-[13px] ${inputClass}`} value={form.body} maxLength={8000} onChange={(e) => setForm({ ...form, body: e.target.value })} />)}
+          <div>
+            <RichEmailEditor ref={editor} variables={variables} initialHtml={asEditorHtml(form.body)} variablesNote="Filled in for each email as it is sent. You can type these in the subject too."
+              onChange={({ html, text }) => { setForm((f) => ({ ...f, body: html })); setPlain(text); }} />
+            <VariableSpacing texts={[form.subject, plain]} />
+            {errors.body && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{errors.body}</span>}
+          </div>
           {kind.required.includes("link") && field("button", "Button label", <input className={`mt-1 ${inputClass}`} value={form.button_label} maxLength={80} onChange={(e) => setForm({ ...form, button_label: e.target.value })} />)}
           {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
           <div className="flex flex-wrap gap-2">
             <Btn kind="primary" disabled={state.busy || Object.keys(preview?.errors || {}).length > 0} onClick={save}>{state.busy ? "Saving…" : "Save wording"}</Btn>
-            <Btn disabled={state.busy} onClick={() => setForm({ ...kind.default })}>Use the product's wording</Btn>
+            <Btn disabled={state.busy} onClick={() => { setForm({ ...kind.default }); editor.current?.setHtml(asEditorHtml(kind.default.body)); }}>Use the product's wording</Btn>
             {kind.edited && <Btn kind="link" disabled={state.busy} onClick={reset}>Reset to the product's wording</Btn>}
           </div>
         </div>

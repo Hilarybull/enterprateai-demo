@@ -1565,13 +1565,13 @@ _EMAIL_SAMPLES = {
 class EmailKindIn(BaseModel):
     enabled: Optional[bool] = None
     subject: Optional[str] = Field(default=None, max_length=300)
-    body: Optional[str] = Field(default=None, max_length=8000)
+    body: Optional[str] = Field(default=None, max_length=60000)      # plain lines, or HTML from the formatting editor
     button_label: Optional[str] = Field(default=None, max_length=80)
 
 
 class EmailPreviewIn(BaseModel):
     subject: str = Field(default="", max_length=300)
-    body: str = Field(default="", max_length=8000)
+    body: str = Field(default="", max_length=60000)
     button_label: str = Field(default="", max_length=80)
 
 
@@ -1606,9 +1606,10 @@ _BUTTON_STYLE = ("display:inline-block;background:#4f46e5;color:#ffffff;padding:
                  "font-weight:600;font-size:15px;line-height:1.2;")
 
 
-def _clean_email_html(raw: str) -> str:
+def _clean_email_html(raw: str, hrefs: str = r"\{[a-z_]*_link\}") -> str:
     """Only plain formatting goes out: the tags the editor makes, links to web or email addresses, nothing else
-    (no scripts, styles, images or event handlers). Each tag gets the inline style mail apps need."""
+    (no scripts, styles, images or event handlers). Each tag gets the inline style mail apps need. `hrefs` is which
+    variables may stand for a link's address: the *_link ones here, any of an email kind's own in its wording."""
     from html import escape as _escape
     from html.parser import HTMLParser
 
@@ -1630,7 +1631,7 @@ def _clean_email_html(raw: str) -> str:
             if tag == "a":
                 href = (dict(attrs).get("href") or "").strip()
                 # A web or email address, or one of our link variables ({claim_link}), filled in with our own address later
-                if not re.match(r"^(https?://|mailto:)", href, re.I) and not re.fullmatch(r"\{[a-z_]*_link\}", href):
+                if not re.match(r"^(https?://|mailto:)", href, re.I) and not re.fullmatch(hrefs, href):
                     return
                 extra = f' href="{_escape(href, quote=True)}" target="_blank" rel="noopener"'
             self.open.append(tag)

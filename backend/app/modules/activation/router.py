@@ -288,7 +288,7 @@ async def _optout_state(email: str, kind: str) -> dict:
         rows = []
     kinds = {r.get("kind") for r in rows}
     masked = email[0] + "***" + email[email.index("@"):] if "@" in email and email.index("@") > 1 else email
-    return {"email": masked, "kind": kind, "label": catalog.label(kind), "this": kind in kinds, "all": "all" in kinds}
+    return {"email": masked, "kind": kind, "label": catalog.public_name(kind), "this": kind in kinds, "all": "all" in kinds}
 
 
 @router.get("/email/opt-out")

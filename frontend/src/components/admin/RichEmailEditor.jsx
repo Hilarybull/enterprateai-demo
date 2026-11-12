@@ -73,11 +73,12 @@ const escapeHtml = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 /** A typed address made usable: a link variable stays as it is, an email becomes mailto:, anything else gets https://. */
 const asUrl = (raw) => {
   const url = String(raw || "").trim();
-  if (!url || /^(https?:|mailto:)/i.test(url) || /^\{[a-z_]*_link\}$/.test(url)) return url;
+  if (!url || /^(https?:|mailto:)/i.test(url) || /^\{[a-z_]+\}$/.test(url)) return url;      // a variable like {claim_link} or {link}
   return url.includes("@") && !url.includes("/") ? `mailto:${url}` : `https://${url}`;
 };
 
-const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = "Message", files, onFiles, variables = EMAIL_VARIABLES }, ref) {
+const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = "Message", files, onFiles, variables = EMAIL_VARIABLES, initialHtml = "",
+  variablesNote = "Each person gets their own. You can type these in the subject too." }, ref) {
   const box = useRef(null);
   const saved = useRef(null);
   const picker = useRef(null);
@@ -100,7 +101,11 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
     const el = box.current;
     onChange?.({ html: cleanHtml(el?.innerHTML), text: (el?.innerText ?? el?.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim() });
   };
-  useImperativeHandle(ref, () => ({ clear() { if (box.current) box.current.innerHTML = ""; report(); } }));
+  useImperativeHandle(ref, () => ({
+    clear() { if (box.current) box.current.innerHTML = ""; report(); },
+    setHtml(html) { if (box.current) box.current.innerHTML = cleanHtml(html); report(); },      // e.g. back to the product's wording
+  }));
+  useEffect(() => { if (box.current && initialHtml) box.current.innerHTML = cleanHtml(initialHtml); }, []);      // eslint-disable-line react-hooks/exhaustive-deps
 
   const keepSelection = () => {
     const s = window.getSelection();
@@ -195,12 +200,14 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
                     <span className="block text-[11px] text-slate-500">{v.hint}{v.note ? `. ${v.note}` : ""}</span>
                   </button>
                 ))}
-                <span className="block px-2.5 pb-1 pt-1.5 text-[11px] text-slate-400">Each person gets their own. You can type these in the subject too.</span>
+                <span className="block px-2.5 pb-1 pt-1.5 text-[11px] text-slate-400">{variablesNote}</span>
               </span>
             )}
           </span>
-          <button type="button" onClick={() => picker.current?.click()} className="rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800">📎 Attach files</button>
-          <input ref={picker} type="file" multiple hidden aria-label="Attach files" onChange={(e) => attach(e.target.files)} />
+          {onFiles && <>
+            <button type="button" onClick={() => picker.current?.click()} className="rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800">📎 Attach files</button>
+            <input ref={picker} type="file" multiple hidden aria-label="Attach files" onChange={(e) => attach(e.target.files)} />
+          </>}
         </div>
         {link !== null && (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
@@ -227,7 +234,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
         )}
         <div ref={box} role="textbox" aria-multiline="true" aria-label={label} contentEditable suppressContentEditableWarning
           onInput={report} onBlur={keepSelection} onKeyUp={keepSelection} onMouseUp={keepSelection}
-          onDrop={(e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files); } }}
+          onDrop={(e) => { if (onFiles && e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files); } }}
           className="rich-email min-h-[180px] max-h-[460px] overflow-y-auto px-3 py-2 text-[14px] leading-relaxed text-slate-800 outline-none dark:text-slate-100 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600 [&_h2]:text-[18px] [&_h2]:font-bold [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6" />
       </div>
       {problem && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{problem}</p>}

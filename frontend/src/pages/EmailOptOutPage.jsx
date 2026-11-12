@@ -39,7 +39,7 @@ export default function EmailOptOutPage() {
               </>
             ) : state.this ? (
               <>
-                <p role="status" className="rounded-xl bg-emerald-50 p-3 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300">You're unsubscribed from "{state.label}" emails.</p>
+                <p role="status" className="rounded-xl bg-emerald-50 p-3 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300">You won't get {state.label} from EnterprateAI any more.</p>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={() => act("opt-out", "all")} className={`${btn} bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900`}>Stop all optional emails too</button>
                   <button type="button" disabled={busy} onClick={() => act("opt-in", "this")} className={`${btn} border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200`}>Undo</button>
@@ -47,7 +47,7 @@ export default function EmailOptOutPage() {
               </>
             ) : (
               <>
-                <p>Don't want "{state.label}" emails from EnterprateAI?</p>
+                <p>Would you rather not get {state.label} from EnterprateAI?</p>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={() => act("opt-out", "this")} className={`${btn} bg-brand-600 text-white hover:bg-brand-700`}>Stop these emails</button>
                   <button type="button" disabled={busy} onClick={() => act("opt-out", "all")} className={`${btn} border border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200`}>Stop all optional emails</button>
