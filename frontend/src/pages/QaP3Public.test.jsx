@@ -14,9 +14,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("the public homepage", () => {
-  it("keeps the Marketplace out of the nav for now, and every support link is the real address", () => {
+  it("shows the Marketplace in the nav, and every support link is the real address", () => {
     render(<MemoryRouter><LandingPage /></MemoryRouter>);
-    expect(document.querySelector("[data-nav-marketplace]")).toBeNull();      // hidden from the navbar (the owner, 16 Oct)
+    expect(document.querySelector("[data-nav-marketplace]").getAttribute("href")).toBe("/marketplace");      // back on the navbar (the owner, 13 Nov)
     const mails = [...document.querySelectorAll('a[href^="mailto:"]')].map((a) => a.getAttribute("href"));
     expect(mails.length).toBeGreaterThan(0);
     expect(mails.every((m) => m === "mailto:support@enterprate.ai")).toBe(true);

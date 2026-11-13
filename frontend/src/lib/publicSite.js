@@ -104,8 +104,8 @@ export const TOP_NAV = [
   { key: "testimonials", label: "Testimonials", to: "/testimonials", when: () => shownTestimonials().length > 0 },
   { key: "pricing", label: "Pricing", to: "/pricing" },
   { key: "articles", label: "Articles", to: "/articles", menu: "articles" },
-  // Hidden from the navbar for now (the owner, 16 Oct); the /marketplace page itself still works.
-  // { key: "marketplace", label: "Marketplace", to: "/marketplace" },
+  // Back on the navbar (the owner, 13 Nov), after being hidden from 16 Oct.
+  { key: "marketplace", label: "Marketplace", to: "/marketplace" },
   { key: "research", label: "R&D", to: "/research" },
 ];
 

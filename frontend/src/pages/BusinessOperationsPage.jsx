@@ -15,7 +15,7 @@ import ErrorBoundary, { Guarded } from "../components/ErrorBoundary";
 import Spinner from "../components/Spinner";
 import { SkeletonKpi, SkeletonRegion, SkeletonTable } from "../components/Skeleton";
 import FinancialOverviewCards from "../components/FinancialOverviewCards";
-import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
+import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, recordManualReceipt, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
 import { InboxTab, ActivityTab, RequestsTab } from "./ProposalsPage";
 import { useProposalStore } from "../store/proposal";
 
@@ -389,7 +389,7 @@ function SelectInput({ value, onChange, options }) {
   );
 }
 
-function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose }) {
+function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose, businessId = null, onSent = null }) {
   const effectiveType = receiptMode ? "receipt" : type;
   const typeLabel = effectiveType === "receipt" ? "Receipt" : effectiveType === "invoice" ? "Invoice" : effectiveType === "quote" ? "Quotation" : effectiveType === "expense" ? "Expense" : "Contract";
   const rawRef = record?.invoice_number || record?.reference || "";
@@ -445,12 +445,17 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
     if (!emails.length || !emails[0].includes("@")) { setSendErr("Enter at least one valid email address."); return; }
     setSending(true); setSendErr("");
     try {
-      await apiRequest("/integrations/share-invoice", "POST", {
+      const res = await apiRequest("/integrations/share-invoice", "POST", {
         to_email: emails, share_url: shareUrl, ref,
         party, amount_fmt: fmtAmt, workspace_name: workspaceName || "",
         document_type: effectiveType,
       });
       setSent(true);
+      // A receipt sent by hand is issued and marked sent, the same as one the Agent sends (the owner, 13 Nov).
+      if (effectiveType === "receipt" && businessId && record?.id && (record.payments || []).length) {
+        try { await recordManualReceipt(businessId, record.id, emails, res?.message_id); onSent?.(); }
+        catch { setSendErr("The receipt was emailed, but its status couldn't be updated. Refresh the page to check."); }
+      }
     } catch (e) {
       setSendErr(e?.message || "Failed to send. Please try again.");
     } finally { setSending(false); }
@@ -3664,6 +3669,8 @@ export default function BusinessOperationsPage() {
           workspaceName={workspaceName}
           customers={customers}
           onClose={() => setShareItem(null)}
+          businessId={workspaceId}
+          onSent={refreshWorkspace}
         />
       )}
 

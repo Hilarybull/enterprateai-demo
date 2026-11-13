@@ -2319,6 +2319,52 @@ class Orchestrator:
             logger.warning("wake after invoice state change failed: %s", e)
         return result
 
+    async def record_manual_receipt(self, business_id: str, invoice_id: str, user_id: str, sent_to: list[str],
+                                    message_id: str | None = None, email: str | None = None) -> list[dict]:
+        """The owner emailed a receipt themselves (Share Receipt): each payment on the invoice without a sent receipt
+        gets its number from the same ledger the Agent uses, and is marked sent to those addresses (the owner, 13 Nov)."""
+        actor, _policy = await self.actor_for(user_id, business_id, email)
+        if not actor.can_prepare:
+            raise AccessDenied("Your role can't send receipts.")
+        to = ", ".join(a.strip() for a in sent_to if a and "@" in a)[:500]
+        if not to:
+            raise Conflict("email_needed", "Give the address the receipt was sent to.")
+        now = self.rt.clock()
+        data = await self.rt.business.load(business_id)
+        inv = bz.find(bz.records(data, "invoices"), invoice_id)
+        if not inv:
+            raise Conflict("invoice_not_found", "That invoice no longer exists.")
+        from app.modules.agent.tools import _currency
+        waiting = [p for p in inv.get("payments") or [] if isinstance(p, dict) and p.get("id") and not (p.get("receipt") or {}).get("sent_at")]
+        issued: dict[str, dict] = {}
+        for p in waiting:
+            have = (p.get("receipt") or {}).get("number")
+            issued[str(p["id"])] = {"number": have} if have else await self.rt.store.issue_receipt(
+                business_id, invoice_id, str(p["id"]), now, {"amount": bz.money(p.get("amount")), "currency": _currency(inv, data), "manual_by": user_id})
+        sent = {"sent_at": now.isoformat(), "sent_to": to, "message_id": message_id}
+
+        def _apply(d: dict) -> list[dict]:
+            inv = bz.find(bz.records(d, "invoices"), invoice_id)
+            out = []
+            for p in (inv or {}).get("payments") or []:
+                got = issued.get(str((p or {}).get("id")))
+                if not got or (p.get("receipt") or {}).get("sent_at"):
+                    continue
+                receipt = p.get("receipt") or {"number": got["number"], "created_at": got.get("created_at") or now.isoformat()}
+                receipt.update({**sent, "sent_by": user_id, "manual": True})
+                p["receipt"] = receipt
+                out.append({"payment_id": p["id"], "receipt_number": receipt["number"]})
+            if out:
+                inv["updated_at"] = now.isoformat()
+            return out
+        done = await self.rt.business.mutate(business_id, _apply)
+        for r in done:
+            try:
+                await self.rt.store.mark_receipt_sent(business_id, r["receipt_number"], invoice_id, r["payment_id"], sent)
+            except Exception:      # noqa: BLE001 - it is recorded on the payment either way
+                logger.warning("could not mark receipt %s as sent in the ledger", r["receipt_number"], exc_info=True)
+        return done
+
     async def _close_unsent_quote(self, run: dict, status: str, actor_id: str) -> None:
         """When a quotation's task is declined or cancelled before the quote was sent, the draft
         is marked the same way, so it doesn't sit in the pipeline as a live draft."""

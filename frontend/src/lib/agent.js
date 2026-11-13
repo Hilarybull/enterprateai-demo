@@ -132,6 +132,9 @@ export const fixCustomerEmail = (runId, email) => announce(apiRequest(`/workflow
 // Mark an invoice disputed, voided, cancelled or credited (with a reason and date), or reopen it.
 export const setInvoiceState = (businessId, invoiceId, state, reason, date) =>
   announce(apiRequest(`/businesses/${businessId}/invoices/${encodeURIComponent(invoiceId)}/state`, "POST", { state, reason: reason || null, date: date || null }));
+// A receipt the owner emailed themselves (Share Receipt): issued and marked sent, like one the Agent sends.
+export const recordManualReceipt = (businessId, invoiceId, sentTo, messageId) =>
+  announce(apiRequest(`/businesses/${businessId}/invoices/${encodeURIComponent(invoiceId)}/receipt-sent`, "POST", { sent_to: sentTo, message_id: messageId || null }));
 // A send that couldn't be confirmed and is unsafe to retry: the user says whether it arrived
 // ("delivered": recorded as sent, nothing goes out) or not ("resend").
 export const resolveDelivery = (runId, outcome) => announce(apiRequest(`/workflow-runs/${runId}/delivery`, "POST", { outcome }, { timeoutMs: 120000 }));

@@ -754,7 +754,7 @@ async def share_invoice_email(
     )
     if not result.sent:
         raise HTTPException(status_code=500, detail=result.error or "Failed to send email")
-    return {"sent": True}
+    return {"sent": True, "message_id": result.message_id}
 
 
 _INVOICE_SHARES_BUCKET = "invoice-shares"
