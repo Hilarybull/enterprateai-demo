@@ -236,6 +236,14 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
     }
 
 
+def _listing_views(data) -> dict:
+    """How many visits a workspace's Marketplace listing had: in all, and in the last 30 days."""
+    views = ((data or {}).get("marketplace") or {}).get("profile_views") if isinstance(data, dict) else None
+    views = [v for v in views or [] if isinstance(v, dict)]
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    return {"views": len(views), "views_30": sum(1 for v in views if str(v.get("viewed_at") or "") >= since)}
+
+
 @router.get("/stats")
 async def get_system_stats(days: int = AI_WINDOW_DAYS, user=Depends(require_admin)) -> dict:
     days = max(1, min(int(days or AI_WINDOW_DAYS), 365))
@@ -296,6 +304,8 @@ async def get_system_stats(days: int = AI_WINDOW_DAYS, user=Depends(require_admi
                 # "Open for proposals", and whether the Marketplace listing is live (proposals reach only a live listing)
                 "proposals_open": bool(((ws.get("data") or {}).get("proposal_preferences") or {}).get("enabled")) if isinstance(ws.get("data"), dict) else False,
                 "listing_live": bool(((ws.get("data") or {}).get("marketplace") or {}).get("is_active")) if isinstance(ws.get("data"), dict) else False,
+                # Visits to its Marketplace listing, as recorded for its owner (one per visitor a day, the owner's own never counted)
+                **_listing_views(ws.get("data")),
             }
             for ws in workspaces
         ],
@@ -1115,6 +1125,12 @@ async def delete_user(user_id: str, user=Depends(require_admin)) -> Response:
     # "I'm deleting users... it should clear everything he owns")
     from app.shared.auth.purge import purge_account
     target = await sb_select("users", filters=[("id", "eq", user_id)], columns="id,email", single=True)
+    try:      # Release Marketplace control before the workspaces are removed; self-service deletion does the same.
+        from app.modules.marketplace.directory_router import get_service
+        for ws in await sb_select("workspaces", filters=[("user_id", "eq", user_id)], columns="id") or []:
+            await get_service().release_workspace(str(ws["id"]), actor=user_id)
+    except Exception:      # noqa: BLE001 - account removal must finish even if the directory is unavailable
+        logger.warning("admin account delete: Marketplace profiles not released for %s", user_id, exc_info=True)
     await purge_account(user_id, (target or {}).get("email"))
     await sb_delete("users", filters=[("id", "eq", user_id)])
     return Response(status_code=204)
@@ -2049,12 +2065,28 @@ class BulkEmailIn(BaseModel):
     attachments: list[EmailAttachment] = Field(default_factory=list, max_length=10)
 
 
+async def _one_click_claim(profile_id: str, email: str, sent_by: str | None) -> str | None:
+    """Sent to the address an unclaimed profile lists: its own one-click claim link (the owner, 14 Nov). Otherwise None,
+    and the claim page link stays."""
+    try:
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.marketplace.directory import service_for
+        path = await service_for(get_orchestrator()).email_claim_link(profile_id, email, actor=f"superadmin:{sent_by or ''}")
+        return f"{_site()}{path}" if path and _site() else None
+    except Exception:      # noqa: BLE001 - the ordinary claim link still works
+        logging.getLogger(__name__).warning("A one-click claim link could not be made", exc_info=True)
+        return None
+
+
 async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, html: str | None, files: list[dict], reply_to: str | None,
                      sent_by: str | None) -> None:
     from app.shared.email.resend import MSG_OPTED_OUT, send_email_via_resend
     job = _BULK_JOBS[job_id]
+    uses_claim = any("{claim_link}" in (x or "") for x in (subject, body, html))
     for p in people:
         try:
+            if uses_claim and str(p.get("key") or "").startswith("profile:") and p["values"].get("claim_link"):
+                p["values"] = {**p["values"], "claim_link": await _one_click_claim(p["key"].split(":", 1)[1], p["email"], sent_by) or p["values"]["claim_link"]}
             s, t, h = _compose(subject, body, html, p["values"])
             r = await send_email_via_resend(kind="bulk", to_email=p["email"], subject=s, text_content=t, html_content=h, reply_to_email=reply_to,
                                             attachments=files or None, sent_by=sent_by, idempotency_key=f"bulk/{job_id}/{p['email']}")

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // The admin area's shared pieces, in the same design language as the Adaptive Dashboard:
 // the grouped sidebar (the app sidebar's item style), the page header, KPI tiles with a small
@@ -277,16 +277,95 @@ export function RowMenu({ label, items }) {
   );
 }
 
+const DATE_KEY = /(_at$|^date$|_date$|^since$|^when$|joined)/;
+const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(new Date(v).getTime());
+const asWord = (v) => (v === true ? "Yes" : v === false ? "No" : v == null ? "" : String(v));
+/** Empty values last either way; numbers as numbers, dates and words as text (ISO dates sort as text). */
+function compare(a, b, dir) {
+  const empty = (v) => v == null || v === "";
+  if (empty(a) || empty(b)) return empty(a) && empty(b) ? 0 : empty(a) ? 1 : -1;
+  const n = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  return dir === "desc" ? -n : n;
+}
+
 /** One table for every admin section: a white rounded card, a header that stays put, status chips
  *  (use <Chip>), a row actions menu, an empty state and pages.
  *  columns: [{ key, label, render?(row), className?, tdClass? }] · rowActions?(row) -> [{ label, onClick, danger?, disabled? }]
  *  expanded?(row) -> content shown under that row, or null. */
-export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", rowKey = (r, i) => r.id ?? i, rowActions, rowLabel = (r) => r.name || r.email || "this row", expanded, pageSize = 25, minWidth = 640, caption,
-  selection = null }) {      // selection: { selected: Set of row keys, onChange(Set) } for an action on many rows
+export function AdminTable({ columns, rows: allRows, emptyText = "Nothing here yet.", rowKey = (r, i) => r.id ?? i, rowActions, rowLabel = (r) => r.name || r.email || "this row", expanded, pageSize = 25, minWidth = 640, caption,
+  selection = null, defaultSort, filters = true }) {      // selection: { selected: Set of row keys, onChange(Set) } for an action on many rows
+  // Sorting, newest first and filters, on every admin table (the owner, 14 Nov: rows were in no order, with no way to sort or filter).
+  // A column sorts by c.sortValue(row), or else by row[c.key]; it filters by c.filterValue(row), or else by row[c.key] when that
+  // has a few repeating values. defaultSort: { key, dir } or null for the order given; by default the date column, newest first.
+  const source = allRows || [];
+  const valueOf = (c, r) => (c.sortValue ? c.sortValue(r) : r[c.key]);
+  const sortable = (c) => c.sortable !== false && c.label && (c.sortValue || source.some((r) => ["string", "number", "boolean"].includes(typeof r[c.key])));
+  const dateCol = columns.find((c) => DATE_KEY.test(c.key) && source.some((r) => isDate(valueOf(c, r))));
+  const [sort, setSort] = useState(() => (defaultSort !== undefined ? defaultSort : dateCol ? { key: dateCol.key, dir: "desc" } : null));
+  const [picked, setPicked] = useState({});      // column key -> the value it is filtered to
+  const [within, setWithin] = useState(0);      // days back on the date column; 0 is any time
+  const choices = !filters || source.length < 4 ? [] : columns.flatMap((c) => {
+    if (c.filterable === false || !c.label || c === dateCol) return [];
+    const raw = source.map((r) => (c.filterValue ? c.filterValue(r) : r[c.key]));
+    const vals = [...new Set(raw.map(asWord).filter((v) => v !== ""))];
+    // Only a column whose values repeat (a status, a source, a plan): never names, emails or dates, which are all different.
+    const repeats = vals.length >= 2 && vals.length <= (c.filterValue ? 12 : 8) && vals.length < raw.filter((v) => asWord(v) !== "").length
+      && raw.every((v) => v == null || ["string", "number", "boolean"].includes(typeof v)) && !raw.some(isDate);
+    return repeats ? [{ c, vals: vals.sort((a, b) => a.localeCompare(b)) }] : [];
+  });
+  const rows = useMemo(() => {
+    let out = source.filter((r) => choices.every(({ c }) => !picked[c.key] || asWord(c.filterValue ? c.filterValue(r) : r[c.key]) === picked[c.key]));
+    if (within && dateCol) {
+      const since = Date.now() - within * 86400000;
+      out = out.filter((r) => isDate(valueOf(dateCol, r)) && new Date(valueOf(dateCol, r)).getTime() >= since);
+    }
+    const col = sort && columns.find((c) => c.key === sort.key);
+    if (col) out = [...out].sort((a, b) => compare(valueOf(col, a), valueOf(col, b), sort.dir));
+    return out;
+  }, [source, picked, within, sort, columns]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [page, setPage] = useState(1);
-  const total = rows?.length || 0;
+  const total = rows.length;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   useEffect(() => { if (page > pages) setPage(pages); }, [page, pages]);
+  useEffect(() => { setPage(1); }, [picked, within, sort]);
+  const narrowed = Object.values(picked).some(Boolean) || within > 0;
+  const toolbar = (choices.length > 0 || (filters && dateCol && source.length >= 4)) && (
+    <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-[12px] dark:border-slate-700 dark:bg-slate-900">
+      {dateCol && (
+        <label className="flex items-center gap-1.5 text-slate-500">{dateCol.label}
+          <select value={within} onChange={(e) => setWithin(Number(e.target.value))} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <option value={0}>Any time</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+          </select></label>
+      )}
+      {choices.map(({ c, vals }) => (
+        <label key={c.key} className="flex items-center gap-1.5 text-slate-500">{c.label}
+          <select value={picked[c.key] || ""} onChange={(e) => setPicked((p) => ({ ...p, [c.key]: e.target.value }))} className="max-w-[12rem] rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <option value="">All</option>{vals.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select></label>
+      ))}
+      {narrowed && <button type="button" onClick={() => { setPicked({}); setWithin(0); }} className="font-semibold text-brand-600 hover:underline">Clear filters</button>}
+      <span className="ml-auto text-slate-400">{total === source.length ? `${total} ${total === 1 ? "row" : "rows"}` : `${total} of ${source.length}`}</span>
+    </div>
+  );
+  const header = (c) => {
+    if (!sortable(c)) return c.label;
+    const on = sort?.key === c.key ? sort.dir : null;
+    return (
+      <button type="button" onClick={() => setSort({ key: c.key, dir: on ? (on === "asc" ? "desc" : "asc") : (DATE_KEY.test(c.key) ? "desc" : "asc") })}
+        aria-label={`Sort by ${c.label}${on ? (on === "asc" ? ", now lowest first" : ", now highest or newest first") : ""}`}
+        className="inline-flex items-center gap-1 font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+        {c.label}<span aria-hidden="true" className={on ? "text-brand-600" : "text-slate-300"}>{on === "asc" ? "▲" : on === "desc" ? "▼" : "↕"}</span>
+      </button>
+    );
+  };
+  if (!total && narrowed) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        {toolbar}
+        <p className="px-4 py-8 text-center text-sm text-slate-500">Nothing matches these filters.</p>
+      </div>
+    );
+  }
   if (!total) {
     return (
       <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-10 text-center dark:border-slate-800 dark:bg-slate-900">
@@ -303,6 +382,7 @@ export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", row
   const tickAll = (on) => { const next = new Set(selection.selected); keys.forEach((k) => (on ? next.add(k) : next.delete(k))); selection.onChange(next); };
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      {toolbar}
       {/* A visible scrollbar: the table scrolls in its own box, and a hidden one left no sign there were more rows. */}
       <div className="ea-scroll max-h-[70vh] overflow-auto">
         <table className="w-full border-collapse text-sm" style={{ minWidth }}>
@@ -310,7 +390,8 @@ export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", row
           <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800">
             <tr>
               {selection && <th scope="col" className="w-10 border-b border-slate-200 px-3 py-2.5 dark:border-slate-700"><input type="checkbox" aria-label="Select all on this page" checked={allTicked} onChange={(e) => tickAll(e.target.checked)} /></th>}
-              {columns.map((c) => <th key={c.key} scope="col" className={`whitespace-nowrap border-b border-slate-200 px-4 py-2.5 text-left text-[12px] font-semibold text-slate-500 dark:border-slate-700 ${c.className || ""}`}>{c.label}</th>)}
+              {columns.map((c) => <th key={c.key} scope="col" className={`whitespace-nowrap border-b border-slate-200 px-4 py-2.5 text-left text-[12px] font-semibold text-slate-500 dark:border-slate-700 ${c.className || ""}`}
+                aria-sort={sort?.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}>{header(c)}</th>)}
               {rowActions && <th scope="col" className="border-b border-slate-200 px-2 py-2.5 dark:border-slate-700"><span className="sr-only">Actions</span></th>}
             </tr>
           </thead>
