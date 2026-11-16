@@ -81,6 +81,7 @@ export const getFunnel = () => apiRequest("/admin/marketplace/funnel", "GET");
 export const restoreClaimWorkspace = (id) => apiRequest(`/business-claims/${id}/restore-workspace`, "POST", {});
 export const getDecisions = () => apiRequest("/admin/marketplace/decisions", "GET");
 export const addProfileViews = (ref, additionalViews) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/views`, "POST", { additional_views: additionalViews });
+export const setProfileViews = (ref, totalViews) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/views`, "PUT", { total_views: totalViews });
 export const normaliseLocations = () => apiRequest("/admin/marketplace/directory/normalise-locations", "POST", {});
 export const getVisibility = () => apiRequest("/admin/marketplace/settings", "GET");
 export const setVisibility = (level) => apiRequest("/admin/marketplace/settings", "PUT", { unclaimed_visibility: level });

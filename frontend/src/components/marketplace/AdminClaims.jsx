@@ -3,7 +3,7 @@ import { AdminTable, Chip, KpiTile } from "../admin/AdminUI";
 import AddBusinesses, { EditBusinessForm, VISIBILITY_OPTION } from "./AddBusiness";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
 import {
-  addProfileViews, createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile, getProfileRfps, publishProfileRfp, closeProfileRfp, setHeldProposals,
+  setProfileViews, createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile, getProfileRfps, publishProfileRfp, closeProfileRfp, setHeldProposals,
   normaliseLocations, addTeamMember, getTeam, removeTeamMember, resolveReport, reviewListing, setProfileVisibility, setVisibility,
 } from "../../lib/directory";
 import { dateLabel } from "../../lib/readiness";
@@ -21,10 +21,10 @@ function AddViews({ profile, total, secondary, onDone }) {
   async function submit(event) {
     event.preventDefault();
     const n = Number(amount);
-    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) { setState({ problem: "Enter a whole number from 1 to 1,000,000." }); return; }
+    if (!Number.isInteger(n) || n < 0 || n > 1_000_000) { setState({ problem: "Enter a whole number from 0 to 1,000,000." }); return; }
     setState({ busy: true });
     try {
-      await addProfileViews(profile, n);
+      await setProfileViews(profile, n);
       setAmount(""); setOpen(false); setState({}); onDone?.();
     } catch (e) { setState({ problem: directoryError(e, "The view count couldn't be updated.").message }); }
   }
@@ -32,11 +32,11 @@ function AddViews({ profile, total, secondary, onDone }) {
     <div className="min-w-36 space-y-1">
       <span className="block whitespace-nowrap"><span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{Number(total || 0).toLocaleString()}</span>
         {secondary && <span className="block text-[11px] text-slate-500">{secondary}</span>}</span>
-      <button type="button" className="text-[11px] font-semibold text-brand-700 hover:underline dark:text-brand-300" aria-expanded={open} onClick={() => { setOpen((v) => !v); setState({}); }}>{open ? "Cancel" : "Add views"}</button>
+      <button type="button" className="text-[11px] font-semibold text-brand-700 hover:underline dark:text-brand-300" aria-expanded={open} onClick={() => { setOpen((v) => !v); setAmount(String(total ?? 0)); setState({}); }}>{open ? "Cancel" : "Set views"}</button>
       {open && <form className="flex items-center gap-1" onSubmit={submit}>
-        <label className="sr-only" htmlFor={`add-views-${profile}`}>Number of views to add</label>
-        <input id={`add-views-${profile}`} type="number" min="1" max="1000000" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" className={`${inputClass} !w-24 !py-1 !text-[12px]`} />
-        <Btn kind="primary" type="submit" disabled={state.busy || !amount} className="!px-2 !py-1 !text-[11px]">{state.busy ? "…" : "Add"}</Btn>
+        <label className="sr-only" htmlFor={`set-views-${profile}`}>Total profile views</label>
+        <input id={`set-views-${profile}`} type="number" min="0" max="1000000" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Total" className={`${inputClass} !w-24 !py-1 !text-[12px]`} />
+        <Btn kind="primary" type="submit" disabled={state.busy || amount === ""} className="!px-2 !py-1 !text-[11px]">{state.busy ? "…" : "Save"}</Btn>
       </form>}
       {state.problem && <p role="alert" className="max-w-40 text-[11px] text-rose-600">{state.problem}</p>}
     </div>

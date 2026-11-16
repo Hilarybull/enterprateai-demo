@@ -201,6 +201,10 @@ class AddProfileViewsIn(BaseModel):
     additional_views: int = Field(gt=0, le=1_000_000)
 
 
+class SetProfileViewsIn(BaseModel):
+    total_views: int = Field(ge=0, le=1_000_000)
+
+
 class InvitationIn(BaseModel):
     by_hand: bool = False      # a link the moderator copies to pass on personally: nothing is sent
     reason: str = "profile_control"
@@ -556,6 +560,11 @@ async def decisions(user=Depends(get_current_user)):
 @router.post("/admin/marketplace/directory-profiles/{ref}/views")
 async def add_profile_views(ref: str, body: AddProfileViewsIn, user=Depends(get_current_user)):
     return await _run(get_service().add_profile_views(user, ref, body.additional_views))
+
+
+@router.put("/admin/marketplace/directory-profiles/{ref}/views")
+async def set_profile_views(ref: str, body: SetProfileViewsIn, user=Depends(get_current_user)):
+    return await _run(get_service().set_profile_views(user, ref, body.total_views))
 
 
 @router.post("/business-claims/{claim_id}/separate")

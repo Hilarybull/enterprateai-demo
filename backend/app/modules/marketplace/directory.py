@@ -1584,7 +1584,33 @@ class DirectoryService:
         days = d.get("days") or {}
         today = self.clock().date()
         within = lambda n: sum(v for k, v in days.items() if k > (today - timedelta(days=n)).isoformat())      # noqa: E731
-        return {"total": int(d.get("total") or 0) + int(d.get("admin_added") or 0), "last_7_days": within(7), "last_30_days": within(30), "last_viewed_at": d.get("last_viewed_at")}
+        tracked = int(d.get("total") or 0)
+        return {"total": tracked + int(d.get("admin_added") or 0), "tracked_total": tracked, "last_7_days": within(7), "last_30_days": within(30), "last_viewed_at": d.get("last_viewed_at")}
+
+    async def set_profile_views(self, admin: dict, ref: str, total_views: int) -> dict:
+        """Set the displayed count while preserving measured visits and their dates."""
+        if not await self.can_moderate(admin):
+            raise Forbidden("Not available.")
+        profile = await self._profile(ref)
+        counter = await self._views_counter(profile["id"])
+        now = self.clock()
+        data = dict((counter or {}).get("data") or {})
+        tracked = int(data.get("total") or 0)
+        if total_views < tracked:
+            raise Invalid({"total_views": f"The total can't be lower than the {tracked} tracked visits."})
+        data["schema_version"] = 1
+        data["correlation_id"] = f"views:{profile['id']}"
+        data["admin_added"] = int(total_views) - tracked
+        changes = list(data.get("admin_additions") or [])
+        changes.append({"action": "set_total", "total": int(total_views), "by": str(admin.get("email") or admin.get("id") or "admin"), "at": now.isoformat()})
+        data["admin_additions"] = changes[-100:]
+        if counter:
+            await self.store.update("events", counter["id"], {"data": data, "updated_at": now}, bump=False)
+        else:
+            await self.store.insert("events", {"id": new_id(), "business_id": SCOPE, "kind": "profile_views", "subject_id": profile["id"], "status": "recorded",
+                                                "revision": 1, "key": f"views:{profile['id']}", "created_by": f"admin:{admin['id']}", "created_at": now, "updated_at": now, "data": data})
+        await self.event("profile_views_adjusted", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"total_views": int(total_views)})
+        return {"profile_id": profile["id"], "views": await self.profile_views(profile["id"])}
 
     async def add_profile_views(self, admin: dict, ref: str, additional_views: int) -> dict:
         """Add an audited display baseline without changing measured daily traffic."""
