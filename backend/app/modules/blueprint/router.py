@@ -625,7 +625,6 @@ async def suggest_blueprint_field(
         "proposal_title": f"Suggest a professional business proposal title. Context: {ctx}. Return only the title, no labels.",
         "about_company": f"Write a 2-3 sentence company overview describing what it does, who it serves, and its edge. Context: {ctx}. Return only the text, no labels, no markdown.",
         "tagline": f"Write a punchy one-line business tagline (max 10 words). Context: {ctx}. Return only the tagline, no labels, no markdown.",
-        "service_description": f"Write one brief, factual sentence describing the named service. Use only the business context and service name provided; do not invent prices, results, credentials, locations, or specific features. Context: {ctx}. Return only the sentence, no labels, no markdown.",
         "vision": f"Write a one-sentence company vision statement describing the future the company wants to create. Context: {ctx}. Return only the text, no labels, no markdown.",
         "mission": f"Write a one-sentence company mission statement describing how it achieves its vision. Context: {ctx}. Return only the text, no labels, no markdown.",
         "core_values": f"List 4-5 short company core values as comma-separated words or short phrases. Context: {ctx}. Return only the comma-separated list, no labels, no markdown.",

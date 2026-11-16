@@ -2237,7 +2237,7 @@ export default function CaseAssistant({ businessId, feature, subject, steps = []
         // Another module's: taken to its own page and conversation, never kept in this thread (the owner, 27 Oct)
         keep(messages || []);
         const key = res.elsewhere.startsWith("/agent") ? "chat" : "message";      // the Agent Centre takes it as "chat"
-        navigate(`${res.elsewhere}${res.elsewhere.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(res.handoff_text || t)}`);
+        navigate(`${res.elsewhere}${res.elsewhere.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(t)}`);
         return;
       }
       const acts = res?.actions || [];

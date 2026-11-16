@@ -190,7 +190,7 @@ def _html_text(html: str) -> str:
 
 
 def _button_html(url: str, label: str) -> str:
-    return (f"<p style=\"margin:20px 0;\"><a href=\"{escape(url, quote=True)}\" "
+    return (f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(url, quote=True)}\" "
             "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
             f"{escape(label)}</a></p>")
 
@@ -214,11 +214,7 @@ def render(kind: str, setting: dict, values: dict[str, Any], *, footer_html: str
         clean = re.sub(r"<(p|div|h2|h3|blockquote)\b[^>]*>\s*(?:<(?:b|strong|i|em|u)>\s*)*\{link\}\s*(?:</(?:b|strong|i|em|u)>\s*)*</\1>",
                        lambda _m: _button_html(str(values.get("link", "")), button), clean)
         clean = re.sub(r"<(p|div|h2|h3|blockquote)\b[^>]*>\s*\{code\}\s*</\1>", lambda _m: _code_html(str(values.get("code", ""))), clean)
-        def html_value(match: re.Match) -> str:
-            # Values can contain deliberate line breaks too (for example, a generated email
-            # paragraph). Escape first, then preserve those breaks in HTML mail clients.
-            return escape(str(values.get(match.group(1), "")), quote=True).replace("\n", "<br/>")
-        filled = _PLACEHOLDER.sub(html_value, clean)
+        filled = _PLACEHOLDER.sub(lambda m: escape(str(values.get(m.group(1), "")), quote=True), clean)
         plain = _html_text(body)
         text_lines = []
         for para in re.split(r"\n\s*\n", plain):
@@ -237,7 +233,7 @@ def render(kind: str, setting: dict, values: dict[str, Any], *, footer_html: str
         stripped = para.strip()
         if stripped == "{link}":
             text_lines.append(f"{button}:\n{values.get('link', '')}")
-            html_parts.append(f"<p style=\"margin:20px 0;\"><a href=\"{escape(str(values.get('link', '')), quote=True)}\" "
+            html_parts.append(f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(str(values.get('link', '')), quote=True)}\" "
                               "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
                               f"{escape(button)}</a></p>")
             continue

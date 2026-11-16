@@ -37,7 +37,7 @@ def test_a_business_is_told_when_it_is_listed_with_a_way_to_stop(world):
     index(env)
     assert [m["reason"] for m in s.sent] == ["listed"]
     m = s.sent[0]
-    assert m["to"] == NORTHWIND["contact_email"] and m["link"].startswith("/marketplace/claim-link?token=") and "/opt-out" in m["opt_out"]      # one click claims it (14 Nov)
+    assert m["to"] == NORTHWIND["contact_email"] and "/marketplace/claim/" in m["link"] and "/opt-out" in m["opt_out"]
 
 
 def test_not_told_when_it_isnt_public_or_has_no_email(world):

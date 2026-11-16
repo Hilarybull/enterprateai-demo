@@ -2289,12 +2289,6 @@ export default function AdminPage() {
     });
   }
 
-  // A user's proposals state in words, for sorting and filtering the Users table.
-  const userProposals = (u) => {
-    const owned = (stats?.workspaces || []).filter((w) => w.owner_id === u.id);
-    return !owned.length ? "No business" : owned.some((w) => w.proposals_open) ? "Open" : "Closed";
-  };
-
   // The same switch for a user: every business they own opens or closes together.
   function switchUserProposals(u, owned) {
     const opening = !owned.some((w) => w.proposals_open);
@@ -3175,11 +3169,8 @@ export default function AdminPage() {
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "member_count", label: "Members", render: (r) => <span className="text-xs tabular-nums">{r.member_count ?? 0}</span> },
-                { key: "views", label: "Listing visits", sortValue: (r) => r.views || 0, filterable: false, render: (r) => (
-                  <span className="block whitespace-nowrap"><span className="text-xs font-semibold tabular-nums text-slate-800">{(r.views || 0).toLocaleString()}</span>
-                    <span className="block text-[10px] text-slate-500">{r.views_30 || 0} in 30 days</span></span>) },
                 { key: "created_at", label: "Created", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
-                { key: "proposals", label: "Proposals", sortValue: (r) => (r.proposals_open ? "Open" : "Closed"), filterValue: (r) => (r.proposals_open ? "Open" : "Closed"), render: (r) => (
+                { key: "proposals", label: "Proposals", render: (r) => (
                   <div className="flex flex-col items-start gap-0.5">
                     <button type="button" onClick={() => switchProposals(r)} aria-pressed={Boolean(r.proposals_open)} aria-label={`${r.proposals_open ? "Close" : "Open"} ${r.name || "Unnamed"} for proposals`}
                       className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${r.proposals_open ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
@@ -3242,7 +3233,7 @@ export default function AdminPage() {
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "created_at", label: "Joined", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
-                { key: "proposals", label: "Proposals", sortValue: (r) => userProposals(r), filterValue: (r) => userProposals(r), render: (r) => {
+                { key: "proposals", label: "Proposals", render: (r) => {
                   const owned = (stats?.workspaces || []).filter((w) => w.owner_id === r.id);
                   if (!owned.length) return <span className="text-[11px] text-slate-400">No business</span>;
                   const open = owned.some((w) => w.proposals_open);

@@ -729,7 +729,7 @@ async def share_invoice_email(
         f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">{type_label} shared with you</h2>"
         f"<p style=\"margin:0 0 12px;\"><strong>{escape(body.workspace_name)}</strong> shared "
         f"{article} {type_label} with you via EnterprateAI.</p>"
-        f"<p style=\"margin:20px 0;\"><a href=\"{escape(body.share_url)}\" "
+        f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(body.share_url)}\" "
         "style=\"display:inline-block;padding:14px 32px;border-radius:8px;background:#4f46e5;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;\">"
         f"Open {type_label}</a></p>"

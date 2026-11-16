@@ -1328,10 +1328,9 @@ class Orchestrator:
             options = [{"value": "business", "label": f"The whole business: {name}"}, *launches, {"value": "new", "label": "Something new"}]
             fields.append({"key": "plan_for", "label": "What is the plan for?", "type": "choice", "required": True, "default": "business", "options": options})
             fields.append({"key": "idea", "label": "What is it? A sentence or two", "type": "textarea", "required": True, "show_if": {"plan_for": "new"}})
-        if not p.get("purpose"):
-            fields.append({"key": "purpose", "label": "Who will read it?", "type": "choice", "required": True, "options": [
-                {"value": "investors", "label": "Investors, to raise funding"}, {"value": "lender", "label": "A bank or lender, for a loan"},
-                {"value": "partners", "label": "Partners or suppliers"}, {"value": "planning", "label": "Me and my team, to plan"}]})
+        fields.append({"key": "purpose", "label": "Who will read it?", "type": "choice", "required": True, "options": [
+            {"value": "investors", "label": "Investors, to raise funding"}, {"value": "lender", "label": "A bank or lender, for a loan"},
+            {"value": "partners", "label": "Partners or suppliers"}, {"value": "planning", "label": "Me and my team, to plan"}]})
         asks = len([f for f in fields if not f.get("show_if")])
         return {"kind": "needs_input", "message": f"Happy to draft your business plan. {'One quick question' if asks == 1 else 'Two quick questions'} so it fits.", "fields": fields}
 

@@ -70,14 +70,9 @@ export function replyText(res) {
   return res.message || "";
 }
 
-export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false, page = null, caseId = null, history: priorHistory = null }) {
+export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false, page = null, caseId = null }) {
   const typed = typeof text === "string" && text.trim() ? text.trim() : null;
-  // The visible Agent Centre thread is the source of context, including task cards and
-  // handovers that never went through this text API. This lets natural follow-ups refer to
-  // "that invoice" or "the draft we just made" without needing its exact name repeated.
-  const history = typed ? (Array.isArray(priorHistory)
-    ? priorHistory.filter((m) => (m?.role === "user" || m?.role === "assistant") && m?.content).slice(-18).map((m) => ({ role: m.role, content: String(m.content).slice(0, 4000) }))
-    : getConversation(businessId).slice(-18)) : [];
+  const history = typed ? getConversation(businessId).slice(-18) : [];
   const sent = apiRequest("/agent/requests", "POST", {
     history,
     business_id: businessId,
@@ -98,7 +93,7 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
     // Both sides of the exchange are kept, so the next message carries them.
     sent.then((res) => {
       const said = replyText(res).slice(0, 4000);
-      setConversation(businessId, [...history, { role: "user", content: typed.slice(0, 4000) }, ...(said ? [{ role: "assistant", content: said }] : [])]);
+      setConversation(businessId, [...getConversation(businessId), { role: "user", content: typed.slice(0, 4000) }, ...(said ? [{ role: "assistant", content: said }] : [])]);
     }, () => {});
   }
   return announce(sent);
@@ -408,7 +403,7 @@ export function cardsToShow(list, i, stillWorking = false) {
   return cards.filter((c) => !FORM_CARDS.has(c.type) || (c.type === "progress" && stillWorking))
     .map((c) => (c.type === "preview" && c.item ? { type: "preview", item: { ...c.item, open: false } } : c));
 }
-export const NEW_REQUEST = /^\s*(?:research|find|search|draft|create|write|prepare|generate|validate|run|check|publish|edit|modify|update|delete|remove|send|help me|do (?:it )?all|i (?:want|need|would like)|can you|could you|how|what|why|which|when|where|show me|tell me)\b/i;
+export const NEW_REQUEST = /^\s*(?:research|find|search|draft|create|write|prepare|generate|validate|run|check|publish|help me|do (?:it )?all|i (?:want|need|would like)|can you|could you|how|what|why|which|when|where|show me|tell me)\b/i;
 // The next question of a task, as chat words and buttons: the same on every chat
 export function questionOf(fields, params = {}) {
   const f = (fields || []).find((x) => x.required && [undefined, null, ""].includes(params[x.key])) || (fields || [])[0];

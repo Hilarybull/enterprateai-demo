@@ -245,25 +245,3 @@ it("a landing page task that turns into a running task is followed here, and a s
   expect(await screen.findByText(/It's ready\. Next step: open it\./)).toBeTruthy();
   expect(screen.queryByText(/couldn't be started/)).toBeNull();
 });
-
-describe("a reply reads like a good chat reply (the owner, 12 Nov: \"some nice response like this\")", () => {
-  it("shows bold where the Agent put it, copy and read aloud, and its Quick actions under the reply, once", async () => {
-    replies = [{ kind: "answer", conversational: true, quick: true,
-      message: "The domain service is no longer active, so this would be a **new registration rather than a renewal**. Next step: register it.",
-      actions: [{ label: "Register piclehdest.org for me", kind: "explain", prompt: "Register piclehdest.org for me" },
-                { label: "Show me the registration price", kind: "explain", prompt: "Show me the registration price" }] }];
-    await open();
-    await ask("Can I renew my domain?");
-    const strong = await screen.findByText("new registration rather than a renewal");
-    expect(strong.tagName).toBe("STRONG");
-    expect(document.body.textContent).not.toContain("**");
-    expect(screen.getAllByRole("button", { name: "Copy reply" }).length).toBeGreaterThan(1);      // every reply, the greeting too
-    expect(screen.getByText("Quick actions")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Register piclehdest.org for me" }).length).toBe(1);      // never twice
-    replies = [{ kind: "answer", message: "It's £12 a year.", conversational: true }];
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Show me the registration price" })); });
-    expect(sent(/\/agent\/requests$/).at(-1).body.text).toBe("Show me the registration price");
-    expect(await screen.findByText("It's £12 a year.")).toBeTruthy();
-    expect(screen.queryByText("Quick actions")).toBeNull();      // only under the latest reply
-  });
-});
