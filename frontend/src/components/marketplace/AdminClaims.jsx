@@ -3,7 +3,7 @@ import { AdminTable, Chip, KpiTile } from "../admin/AdminUI";
 import AddBusinesses, { EditBusinessForm, VISIBILITY_OPTION } from "./AddBusiness";
 import { Btn, Notice, Panel, inputClass } from "../readiness/Fields";
 import {
-  createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile, getProfileRfps, publishProfileRfp, closeProfileRfp, setHeldProposals,
+  addProfileViews, createInvitation, decideClaim, directoryError, downloadClaimEvidence, getClaimQueue, getDecisions, getFunnel, getProfileSources, restoreClaimWorkspace, getUnclaimedProfiles, getVisibility, getWaitingRequests, indexRecords, moderateProfile, getProfileRfps, publishProfileRfp, closeProfileRfp, setHeldProposals,
   normaliseLocations, addTeamMember, getTeam, removeTeamMember, resolveReport, reviewListing, setProfileVisibility, setVisibility,
 } from "../../lib/directory";
 import { dateLabel } from "../../lib/readiness";
@@ -13,6 +13,35 @@ import { dateLabel } from "../../lib/readiness";
 // links. Every decision needs a reason, which is kept.
 
 export const MARKETPLACE_TABS = [["index", "Index & invites"], ["queue", "Queue"], ["decided", "Approved & rejected"], ["unclaimed", "Unclaimed profiles"], ["reports", "Reports"], ["visibility", "Visibility"]];
+
+function AddViews({ profile, total, secondary, onDone }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [state, setState] = useState({});
+  async function submit(event) {
+    event.preventDefault();
+    const n = Number(amount);
+    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) { setState({ problem: "Enter a whole number from 1 to 1,000,000." }); return; }
+    setState({ busy: true });
+    try {
+      await addProfileViews(profile, n);
+      setAmount(""); setOpen(false); setState({}); onDone?.();
+    } catch (e) { setState({ problem: directoryError(e, "The view count couldn't be updated.").message }); }
+  }
+  return (
+    <div className="min-w-36 space-y-1">
+      <span className="block whitespace-nowrap"><span className="font-semibold tabular-nums text-slate-900 dark:text-slate-100">{Number(total || 0).toLocaleString()}</span>
+        {secondary && <span className="block text-[11px] text-slate-500">{secondary}</span>}</span>
+      <button type="button" className="text-[11px] font-semibold text-brand-700 hover:underline dark:text-brand-300" aria-expanded={open} onClick={() => { setOpen((v) => !v); setState({}); }}>{open ? "Cancel" : "Add views"}</button>
+      {open && <form className="flex items-center gap-1" onSubmit={submit}>
+        <label className="sr-only" htmlFor={`add-views-${profile}`}>Number of views to add</label>
+        <input id={`add-views-${profile}`} type="number" min="1" max="1000000" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" className={`${inputClass} !w-24 !py-1 !text-[12px]`} />
+        <Btn kind="primary" type="submit" disabled={state.busy || !amount} className="!px-2 !py-1 !text-[11px]">{state.busy ? "…" : "Add"}</Btn>
+      </form>}
+      {state.problem && <p role="alert" className="max-w-40 text-[11px] text-rose-600">{state.problem}</p>}
+    </div>
+  );
+}
 
 /** The evidence and the decision for one claim, opened under its row. */
 function ClaimReview({ claim, onDone }) {
@@ -225,6 +254,7 @@ function Decided({ onChange }) {
         columns={[
         { key: "business", label: "Business", render: (r) => <><p className="break-words font-semibold text-slate-900 dark:text-slate-100">{r.slug && r.outcome === "approved" ? <a href={`/marketplace/business/${r.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{r.name}</a> : r.name}</p>
           <p className="text-[12px] text-slate-500">{[DECISION_TYPE[r.type], r.links_to].filter(Boolean).join(" · ")}</p></> },
+        ...(view === "approved" ? [{ key: "views", label: "Profile views", render: (r) => r.slug ? <AddViews profile={r.slug} total={r.views?.total} onDone={changed} /> : "—" }] : []),
         { key: "person", label: "Person told", tdClass: "break-all", render: (r) => r.person || "Not recorded" },
         { key: "by", label: "Decided by", tdClass: "break-all", render: (r) => <>{r.decided_by}{r.decided_at && <span className="block whitespace-nowrap text-[12px] text-slate-500">{dateLabel(r.decided_at)}</span>}</> },
         { key: "reason", label: "Reason", tdClass: "whitespace-pre-line break-words", render: (r) => r.reason || "None given" },
@@ -534,6 +564,7 @@ function Unclaimed({ onChange }) {
               ? <button type="button" aria-label={`Read ${p.requests_waiting === 1 ? "1 request" : `${p.requests_waiting} requests`} for ${p.name}`} className="rounded-full hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-600"
                 onClick={() => getWaitingRequests(p.slug).then(setRequests).catch((e) => setProblem(directoryError(e).message))}><Chip tone="amber"><span className="underline">{p.requests_waiting}</span></Chip></button>
               : 0) },
+            { key: "views", label: "Visits", sortValue: (p) => p.views?.total || 0, filterable: false, render: (p) => <AddViews profile={p.slug} total={p.views?.total} secondary={`${p.views?.last_30_days || 0} in 30 days`} onDone={() => { load(); onChange?.(); }} /> },
             { key: "proposals", label: "Proposals", render: (p) => (p.proposals_open ? <Chip tone="emerald">Open</Chip> : <span className="text-slate-500">Closed</span>) },
             { key: "contact", label: "Contact on record", render: (p) => (p.has_contact ? "Yes" : "No") },
           ]} />

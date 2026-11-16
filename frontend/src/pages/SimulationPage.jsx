@@ -16,7 +16,7 @@ import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { withSharedFigures } from "../lib/sharedFigures";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted, isPlatformModuleGranted } from "../lib/permissions";
-import { planAllowsScenario } from "../lib/plans";
+import { normalisePlanKey, planAllowsScenario, planRank } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
@@ -127,7 +127,8 @@ export default function SimulationPage() {
 
   // Admin-granted simulation access bypasses the subscription gate entirely.
   const hasSimulationGrant = isPlatformModuleGranted("simulation", platformGrants);
-  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active" || hasSimulationGrant;
+  const explorerPlan = normalisePlanKey(planKey) === "explorer";
+  const simulationEnabled = explorerPlan || planStatus === "grandfathered" || planStatus === "active" || hasSimulationGrant;
 
   function canSimFeature(featureKey) {
     if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
@@ -384,6 +385,14 @@ export default function SimulationPage() {
     setLoading(true);
     setError(null);
     try {
+      // The baseline projection is free on Explorer. Its page must not make a
+      // paid recommendations request just to load the free view.
+      if (planRank(normalisePlanKey(planKey)) < planRank("starter_insight") && !hasSimulationGrant) {
+        setRiskSignals(financialInsights.riskItems);
+        setRecommendations([]);
+        setRecsLocked(true);
+        return;
+      }
       const riskRes = await apiRequest("/v1/scenario-intelligence/risk-detection/run", "POST", {
         tenant_id: tenantId,
         business_id: businessId,
@@ -412,9 +421,16 @@ export default function SimulationPage() {
       setRecsLocked(false);
       setRecommendations(recRes?.recommended_scenarios?.length ? recRes.recommended_scenarios : financialInsights.recommendations);
     } catch (e) {
+      if (e?.status === 403) {
+        setRiskSignals(financialInsights.riskItems);
+        setRecommendations([]);
+        setRecsLocked(true);
+        return;
+      }
       setRiskSignals(financialInsights.riskItems);
       setRecommendations(financialInsights.recommendations);
-      setError(e instanceof Error ? e.message : "Failed to load recommendations.");
+      const message = e instanceof Error ? e.message : "Failed to load recommendations.";
+      setError(message.replace(/^HTTP \d+:\s*/, "") || "Recommendations couldn't be loaded. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -969,7 +985,7 @@ export default function SimulationPage() {
             </SectionCard>
           )}
 
-          {canSimFeature("scenario_intelligence") && (
+          {workspaceId && (
             <div data-tour="simulation-baseline">
             <SectionCard
               title={

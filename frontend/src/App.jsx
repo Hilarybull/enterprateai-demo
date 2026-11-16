@@ -61,6 +61,7 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
+import MarketplaceClaimLinkPage from "./pages/MarketplaceClaimLinkPage";
 import MarketplaceTeamInvitePage from "./pages/MarketplaceTeamInvitePage";
 import EmailPreferencesPage, { UnsubscribePage } from "./pages/EmailPreferencesPage";
 import EmailOptOutPage from "./pages/EmailOptOutPage";
@@ -163,6 +164,7 @@ export default function App() {
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/marketplace/team-invite" element={<MarketplaceTeamInvitePage />} />
+      <Route path="/marketplace/claim-link" element={<MarketplaceClaimLinkPage />} />
       <Route path="/email/unsubscribe" element={<UnsubscribePage />} />
       <Route path="/email/preferences" element={<EmailPreferencesPage />} />
       <Route path="/email/opt-out" element={<EmailOptOutPage />} />

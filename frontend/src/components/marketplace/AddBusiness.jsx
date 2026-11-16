@@ -152,8 +152,8 @@ export function AddBusinessForm({ options, onAdded, onClose }) {
         <Field label="Business status" error={errors.business_status}>
           <select className={`mt-1 ${inputClass}`} value={form.business_status} onChange={set("business_status")}>{STATUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         </Field>
-        <Field label="Short description" className="sm:col-span-2" error={errors.description} hint="40 characters or more counts towards quality."><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote."><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
+        <Field label="About" required className="sm:col-span-2" error={errors.description} hint="At least 20 characters. This is shown on the public profile."><textarea required minLength={20} rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Services (separate with commas)" required error={errors.service_tags} hint="Add at least one service. People use these to find the business."><input required className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} placeholder="Bookkeeping, Payroll" /></Field>
         <Field label="Private contact email" error={errors.contact_email} hint="For internal use and claim emails. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
         <Field label="Private phone number" error={errors.contact_phone} hint="For internal use. Never shown or searchable."><input type="tel" className={`mt-1 ${inputClass}`} value={form.contact_phone} onChange={set("contact_phone")} /></Field>
       </div>
@@ -336,8 +336,8 @@ export function EditBusinessForm({ profile, options, onSaved, onClose }) {
         </Field>
         <Field label="Town or region" error={errors.location} hint="No street address or full postcode."><input className={`mt-1 ${inputClass}`} value={form.location} onChange={set("location")} /></Field>
         <Field label="Website" error={errors.website}><input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} /></Field>
-        <Field label="Short description" className="sm:col-span-2" error={errors.description}><textarea rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
-        <Field label="Service tags (separate with commas)" error={errors.service_tags} hint="People choose from these when they ask for a quote."><input className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
+        <Field label="About" required className="sm:col-span-2" error={errors.description} hint="At least 20 characters."><textarea required minLength={20} rows={2} className={`mt-1 ${inputClass}`} value={form.description} onChange={set("description")} /></Field>
+        <Field label="Services (separate with commas)" required error={errors.service_tags} hint="Add at least one service."><input required className={`mt-1 ${inputClass}`} value={form.tags} onChange={set("tags")} /></Field>
         <Field label="Private contact email" error={errors.contact_email} hint="For internal use and claim emails. Never shown or searchable."><input type="email" className={`mt-1 ${inputClass}`} value={form.contact_email} onChange={set("contact_email")} /></Field>
         <Field label="Private phone number" error={errors.contact_phone} hint="For internal use. Never shown or searchable."><input type="tel" className={`mt-1 ${inputClass}`} value={form.contact_phone} onChange={set("contact_phone")} /></Field>
         <Field label="Reason for the change"><input className={`mt-1 ${inputClass}`} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>

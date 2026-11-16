@@ -26,6 +26,9 @@ export function reviewInChat(detail) {
 // The segments research asked for in words, as its button asks for it
 export const SEGMENTS = /\b(?:find|explore|research|look for|show me)\b.{0,20}\b(?:new )?customer segments?\b/i;
 const NEXT = /\b(?:what (?:should|do|can) i do next|what'?s next|where (?:does|do) (?:my )?(?:work|things) stand)\b/i;
+// A pending task question does not make every next message an answer to that field.
+// Social turns and questions go through the regular conversation router.
+const TASK_ASIDE = /^(?:hi|hello|hey|hiya|howdy|good\s+(?:morning|afternoon|evening)|how\s+are\s+you(?:\s+doing)?(?:\s+(?:today|first))?|how'?s\s+it\s+going|you\s+good|thanks|thank\s+you|cheers|nice\s+to\s+meet\s+you)[!.?,\s]*$|^\s*(?:what|why|how|which|when|where|who|is|are|can|could|would|should|do|does|did|tell me|explain)\b/i;
 const NUMBER = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 const clock = (at) => { try { return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
 
@@ -64,6 +67,7 @@ function toMessage(routed, businessId) {
     // Funding and launch conversations return structured result/next-step cards alongside the reply.
     // Keep those cards in the chat; dropping them here left the user with only the model's prose.
     if (Array.isArray(routed.cards) && routed.cards.length) message.cards = routed.cards;
+    if (routed.quick && (message.prompts || []).length) message.quick = true;      // the Agent's own suggestions for this reply
   } else if (routed.kind === "unavailable") {
     message.links = (routed.offers || []).filter((o) => o.to).map((o) => ({ label: o.label, to: o.to }));
     message.prompts = (routed.offers || []).filter((o) => o.kind === "explain").map((o) => ({ label: o.label, prompt: o.prompt }));
@@ -254,7 +258,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // A task's questions as ordinary messages with quick replies, answered from the box below, one at a time; what the
   // records already give is filled in and never asked (the owner, 29 Oct: "no separate box with its own Send button")
   const taskAsk = useRef(null);
-  const LATER = /^(skip|later|add it later|i'?ll add it later|not now|none|no|nope|n\/a|na|don'?t know|dont have it|i don'?t have it|no email|leave it|leave it blank)\.?$/i;
+  const LATER = /^(skip|later|add it later|i(?:'ll| will| can) (?:add|provide|send|enter|give)(?: it| the email| the address)? later(?: for now)?|i'?ll add it later|not now|none|no|nope|n\/a|na|don'?t know|dont have it|i don'?t have it|no email|leave it|leave it blank)\.?$/i;
   const known = (f) => {
     if (f.confirm) return false;
     if (f.type === "checkbox") return true;      // its default stands
@@ -286,6 +290,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     }
     return f.required ? [] : [ask("Skip")];
   };
+  const taskSummary = (a, f, value) => questionSummary({ ...f, currency: a.currency || f.currency }, value);
   function askTaskNext(first = false) {
     const a = taskAsk.current;
     if (!a) return;
@@ -306,7 +311,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     const fits = (f.type === "line_items" && /\binclude\b/i.test(a.lead)) || ((f.type === "customer" || f.key === "customer_name") && /\bwho\b/i.test(a.lead));
     const lead = !first || !a.lead || a.lead === askFor(f) ? "" : fits ? a.lead : a.lead.replace(/[^.!?]*\?\s*$/, "").trim();
     const head = lead ? `${lead} ` : "";
-    const ask = fits && head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${questionSummary(f, a.values[f.key]) || a.values[f.key]}`
+    const ask = fits && head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${taskSummary(a, f, a.values[f.key]) || a.values[f.key]}`
       : `${askFor(f)}${!f.required && f.hint ? ` ${f.hint}` : ""}`;
     const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
     setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`.trim(),
@@ -382,14 +387,14 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (waiting && amount) {
         waiting.unit_price = Number(amount[1].replace(/,/g, "")) * (amount[2] ? 1000 : 1);
         if ((a.values[f.key] || []).some((r) => !(Number(r.unit_price) > 0))) { askTaskNext(); return; }
-        say(`Added: ${questionSummary(f, a.values[f.key])}. Anything else?`, chipsFor(f, a.values));
+        say(`Added: ${taskSummary(a, f, a.values[f.key])}. Anything else?`, chipsFor(f, a.values));
         return;
       }
       const rows = linesFromText(t, f.catalogue || []);
       if (!rows.length) { say(waiting ? `What's the price for ${waiting.label || waiting.name}? Type the amount, for example 1500.` : "I couldn't read an item there. Try: 3 x office deep clean at 150.", waiting ? [] : chipsFor(f, a.values)); return; }
       // Lines typed in full replace the one still waiting for its price
       a.values[f.key] = [...(a.values[f.key] || []).filter((r) => (r.product_id || r.name) && Number(r.unit_price) > 0), ...rows];
-      say(`Added: ${questionSummary(f, rows)}. Anything else?`, chipsFor(f, a.values));
+      say(`Added: ${taskSummary(a, f, rows)}. Anything else?`, chipsFor(f, a.values));
       return;
     } else if (!f.required && LATER.test(t)) value = "";      // "later", "not now", "no email": left empty, never kept as the answer (the owner, 11 Nov)
     else if (f.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t)) {
@@ -701,13 +706,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     }
     // Whatever was priced and waiting gives way to a new request too, never "nothing was started" and the request dropped
     if (NEW_REQUEST.test(question) && !/^\s*(?:start|yes|go ahead)\b/i.test(question)) { confirming.current = null; landingTask.current = null; asking.current = null; }
-    if (taskAsk.current && (/^\s*(?:how|what|why|which|when|where)\b/i.test(question) || (/\b(?:funding|loan|grant|investors?|launch\w*|business plan|validat\w*|idea|invoice|quot\w*|proposal|receipt|contract|sales letter|research|customers?)\b/i.test(question)
-      && /^\s*(?:i (?:want|need|would like)|can you|could you|please|help me|check|create|make|draft|write|start|validate|run|research|find)\b/i.test(question)))) {
-      // a new request, never an answer to the open question (the owner, 31 Oct: a funding request was added as a quotation item)
-      taskAsk.current = null;
-      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: "I've paused that task; you'll find it in Needs You. Now, your new request." }]);
-    }
-    if (taskAsk.current) {      // the answer to the task's question just asked
+    if (taskAsk.current && !TASK_ASIDE.test(question) && !NEW_REQUEST.test(question)) {      // only a plausible answer goes into a task field
       setInput("");
       answerTask(question);
       return;
@@ -766,7 +765,8 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       }
       // One Agent: every message goes to the same place. It answers from the records, runs the
       // task, or writes the answer itself. There is no second chat behind this one.
-      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true });
+      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true,
+        history: fresh ? [] : messages.slice(-18).filter((m) => (m.role === "user" || m.role === "assistant") && m.content) });
       if (gone.current) {
         // Left before the reply came (a validation takes a while): saved into the conversation, so it is there on return (the owner, 29 Oct)
         const parts = (routed?.kind === "multi" ? routed.results || [] : [routed]).filter((r) => r && r.kind !== "workflow");
@@ -858,6 +858,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const answered = shown.length > 0 && shown[shown.length - 1] !== last;
   // ... and no starters while a task is under way: they come back with its result (the owner, 28 Oct)
   const chips = loading || working ? []
+    : last?.quick && !answered ? []      // shown under the reply as Quick actions, never twice
     : (last?.prompts || []).length && !answered ? last.prompts
       : STARTER_PROMPTS.map((q) => ({ label: q, prompt: q }));
   return (
@@ -918,8 +919,17 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
               <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
-                {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}>{message.content}</p>}
-                {message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
+                {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}><Rich text={message.content} /></p>}
+                {message.content ? <ReplyTools text={message.content} at={message.at} /> : message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
+                {message.quick && message === last && !answered && !loading && !working && (
+                  <div className="mt-3" data-quick-actions>
+                    <p className="text-[12px] font-medium text-slate-500">Quick actions</p>
+                    <div className="mt-1.5 flex flex-col items-start gap-1.5">{message.prompts.map((p) => (
+                      <button key={p.label} type="button" onClick={() => void send(p.prompt)}
+                        className="rounded-2xl bg-slate-100 px-3.5 py-2 text-left text-[13.5px] text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">{p.label}</button>
+                    ))}</div>
+                  </div>
+                )}
                 {message.check && <div className="mt-2 whitespace-normal" data-panel-chat><AgentGoalChat key={`${message.check.goal}:${message.check.at}`} text={message.check.said} /></div>}
                 {message.link && (
                   <a href={message.link} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
@@ -972,6 +982,45 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         </form>
       </div>
     </section>
+  );
+}
+
+/** A reply's words, with what the Agent put in **bold** shown bold; everything else as written (never read as HTML). */
+export function Rich({ text }) {
+  const parts = String(text || "").split(/\*\*(.+?)\*\*/g);
+  return <>{parts.map((part, i) => (i % 2 ? <strong key={i} className="font-semibold text-slate-900 dark:text-white">{part}</strong> : part))}</>;
+}
+const plain = (text) => String(text || "").replace(/\*\*(.+?)\*\*/g, "$1");
+
+/** Under a reply: copy it, hear it read aloud, and when it was said (the owner, 12 Nov: "some nice response like this"). */
+function ReplyTools({ text, at }) {
+  const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
+  async function copy() {
+    try { await navigator.clipboard.writeText(plain(text)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the browser said no */ }
+  }
+  function listen() {
+    if (!canSpeak) return;
+    if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
+    const u = new SpeechSynthesisUtterance(plain(text));
+    u.lang = "en-GB";
+    u.onend = () => setSpeaking(false);
+    window.speechSynthesis.speak(u);
+    setSpeaking(true);
+  }
+  const icon = "rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800";
+  return (
+    <div className="mt-1 flex items-center gap-1" data-reply-tools>
+      <button type="button" onClick={copy} aria-label={copied ? "Copied" : "Copy reply"} title={copied ? "Copied" : "Copy"} className={icon}>
+        {copied ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12l5 5L20 7" /></svg>
+          : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>}
+      </button>
+      {canSpeak && <button type="button" onClick={listen} aria-label={speaking ? "Stop reading" : "Read aloud"} aria-pressed={speaking} title={speaking ? "Stop" : "Read aloud"} className={icon}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13" /></svg>
+      </button>}
+      {at && <span className="ml-1 text-[12px] text-slate-500">{clock(at)}</span>}
+    </div>
   );
 }
 

@@ -197,6 +197,10 @@ class ModerateIn(BaseModel):
     reason: str = Field(max_length=2000)
 
 
+class AddProfileViewsIn(BaseModel):
+    additional_views: int = Field(gt=0, le=1_000_000)
+
+
 class InvitationIn(BaseModel):
     by_hand: bool = False      # a link the moderator copies to pass on personally: nothing is sent
     reason: str = "profile_control"
@@ -258,9 +262,11 @@ async def read_business(ref: str, user=Depends(get_optional_user), via: dict = D
 
 
 @router.post("/marketplace/businesses/{ref}/view", status_code=202)
-async def record_view(ref: str, user=Depends(get_optional_user), via: dict = Depends(_via)):
+async def record_view(ref: str, request: Request, user=Depends(get_optional_user), via: dict = Depends(_via)):
     _on()
-    await _run(get_service().record_view(ref, user, via))
+    from app.shared.limits import client_ip
+    visitor = f"user:{user['id']}" if user else f"ip:{client_ip(request)}"      # one visit per visitor a day; only a hash is kept
+    await _run(get_service().record_view(ref, user, via, visitor))
     return {"ok": True}
 
 
@@ -545,6 +551,11 @@ async def review_queue(status_: str = Query(default="pending", alias="status"), 
 @router.get("/admin/marketplace/decisions")
 async def decisions(user=Depends(get_current_user)):
     return await _run(get_service().decisions(user))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/views")
+async def add_profile_views(ref: str, body: AddProfileViewsIn, user=Depends(get_current_user)):
+    return await _run(get_service().add_profile_views(user, ref, body.additional_views))
 
 
 @router.post("/business-claims/{claim_id}/separate")

@@ -73,6 +73,11 @@ CODE_ATTEMPTS = 5
 CODE_SENDS_PER_HOUR = 5
 CLAIMS_PER_DAY = 5
 INVITE_GAP = timedelta(days=30)
+
+
+def claim_link_path(token: str) -> str:
+    """The one-click claim link emailed to a business's own address: it signs them in and hands them the profile."""
+    return f"/marketplace/claim-link?token={token}"
 REMINDER_GAP = timedelta(days=3)      # just listed: the first weekly reminder waits for the next Monday
 HAND_SENT = ("profile_control", "opportunity")      # what the 30 day gap is for: the automatic emails have their own schedule
 MAX_TEXT = 2000
@@ -389,10 +394,12 @@ def marketplace_settings(data: dict) -> dict:
         "offerings": [{"id": str(p.get("id")), "name": p.get("name"), "description": p.get("description") or "", "published": bool(p.get("marketplace_listed", True))} for p in products],
         "preferences": {
             "enquiries": {"enabled": bool((prefs.get("enquiries") or {}).get("enabled"))},
-            "rfqs": {"enabled": bool((prefs.get("rfqs") or {}).get("enabled")), "categories": list((prefs.get("rfqs") or {}).get("categories") or []),
+            # Quote requests and proposals are available by default. A saved False still
+            # represents the business owner's choice to turn either one off.
+            "rfqs": {"enabled": bool((prefs.get("rfqs") or {}).get("enabled", True)), "categories": list((prefs.get("rfqs") or {}).get("categories") or []),
                      "service_areas": list((prefs.get("rfqs") or {}).get("service_areas") or [])},
             # Proposals are owned by Proposal Intelligence: shown here, written through its own writer.
-            "proposals": {"enabled": bool(proposals.get("enabled")), "accepted_modes": list(proposals.get("accepted_modes") or ["general"])},
+            "proposals": {"enabled": bool(proposals.get("enabled", True)), "accepted_modes": list(proposals.get("accepted_modes") or ["general"])},
             "partnerships": {"enabled": bool((prefs.get("partnerships") or {}).get("enabled")), "notes": (prefs.get("partnerships") or {}).get("notes") or ""},
             "subcontracting": {"enabled": bool((prefs.get("subcontracting") or {}).get("enabled")), "notes": (prefs.get("subcontracting") or {}).get("notes") or ""},
             "notifications": {"email": bool((prefs.get("notifications") or {}).get("email", True))},
@@ -753,8 +760,15 @@ class DirectoryService:
                     waiting[str(h.get("subject_id"))] = waiting.get(str(h.get("subject_id")), 0) + 1
         except NotSetUp:
             pass
+        views: dict[str, dict] = {}
+        try:      # visits to each profile, from its own counter
+            for c in await self.store.list("events", SCOPE, kind="profile_views", limit=10000):
+                views[str(c.get("subject_id"))] = self._views_summary(c)
+        except Exception:      # noqa: BLE001 - the list still opens without them
+            pass
         items = [{"id": r["id"], "slug": r["data"].get("slug"), "name": r["data"].get("name"), "category": r["data"].get("category"), "location": r["data"].get("location"),
                   "requests_waiting": waiting.get(str(r["id"]), 0), "has_logo": bool(r["data"].get("logo_data_url")),
+                  "views": views.get(str(r["id"])) or self._views_summary(None),
                   "proposals_open": bool(r["data"].get("held_proposals_open")),
                   "publication": r["data"].get("publication"), "has_contact": bool(r["data"].get("contact_email")), "contact_email": r["data"].get("contact_email"), "contact_phone": r["data"].get("contact_phone"), "indexed_at": r["data"].get("indexed_at"),
                   "visibility": (r["data"] or {}).get("visibility") or "inherit", "effective_visibility": level_for(r["data"] or {}, level),
@@ -1008,6 +1022,14 @@ class DirectoryService:
             errors["name"] = "Enter the legal name."
         if _text(raw.get("category"), 80) not in CATEGORIES:
             errors["category"] = "Choose a category from the list."
+        description = _text(raw.get("description"), 1200)
+        if len(description) < 20:
+            errors["description"] = "Add an About description of at least 20 characters."
+        raw_tags = raw.get("service_tags") or []
+        if isinstance(raw_tags, str):
+            raw_tags = re.split(r"[,;|]", raw_tags)
+        if not isinstance(raw_tags, (list, tuple)) or not any(_text(tag, 60) for tag in raw_tags):
+            errors["service_tags"] = "Add at least one service. Separate multiple services with commas."
         town, trimmed = town_of(raw.get("location"))
         if not town:
             errors["location"] = "Enter the town or region."
@@ -1548,13 +1570,90 @@ class DirectoryService:
                 raise NotFound()      # not shown to the public until it passes; its owner still sees it, with what to fix
             out["quality_hold"] = list(held.values())
             out["noindex"] = True
+        if out["owner_controls"] or (viewer and await self.can_moderate(viewer)):
+            out["views"] = await self.profile_views(row["id"])      # how many people opened it: for its owner and the team only
         return out
 
-    async def record_view(self, ref: str, viewer: dict | None = None, via: dict | None = None) -> None:
+    # ── visits to a profile (the owner, 14 Nov): one per visitor a day, never its owner or the team ──────────
+
+    async def _views_counter(self, profile_id: str) -> dict | None:
+        return await self.store.find_key("events", SCOPE, profile_id, f"views:{profile_id}")
+
+    def _views_summary(self, counter: dict | None) -> dict:
+        d = (counter or {}).get("data") or {}
+        days = d.get("days") or {}
+        today = self.clock().date()
+        within = lambda n: sum(v for k, v in days.items() if k > (today - timedelta(days=n)).isoformat())      # noqa: E731
+        return {"total": int(d.get("total") or 0) + int(d.get("admin_added") or 0), "last_7_days": within(7), "last_30_days": within(30), "last_viewed_at": d.get("last_viewed_at")}
+
+    async def add_profile_views(self, admin: dict, ref: str, additional_views: int) -> dict:
+        """Add an audited display baseline without changing measured daily traffic."""
+        if not await self.can_moderate(admin):
+            raise Forbidden("Not available.")
+        profile = await self._profile(ref)
+        counter = await self._views_counter(profile["id"])
+        now = self.clock()
+        data = dict((counter or {}).get("data") or {})
+        data["schema_version"] = 1
+        data["correlation_id"] = f"views:{profile['id']}"
+        data["admin_added"] = int(data.get("admin_added") or 0) + int(additional_views)
+        additions = list(data.get("admin_additions") or [])
+        additions.append({"amount": int(additional_views), "by": str(admin.get("email") or admin.get("id") or "admin"), "at": now.isoformat()})
+        data["admin_additions"] = additions[-100:]
+        if counter:
+            await self.store.update("events", counter["id"], {"data": data, "updated_at": now}, bump=False)
+        else:
+            await self.store.insert("events", {"id": new_id(), "business_id": SCOPE, "kind": "profile_views", "subject_id": profile["id"], "status": "recorded",
+                                                "revision": 1, "key": f"views:{profile['id']}", "created_by": f"admin:{admin['id']}", "created_at": now, "updated_at": now, "data": data})
+        await self.event("profile_views_adjusted", profile_id=profile["id"], actor=f"moderator:{admin['id']}", payload={"additional_views": int(additional_views)})
+        return {"profile_id": profile["id"], "views": await self.profile_views(profile["id"])}
+
+    async def profile_views(self, profile_id: str) -> dict:
+        try:
+            return self._views_summary(await self._views_counter(profile_id))
+        except Exception:      # noqa: BLE001 - a count that can't be read never stops the profile opening
+            return self._views_summary(None)
+
+    async def record_view(self, ref: str, viewer: dict | None = None, via: dict | None = None, visitor: str | None = None) -> None:
         row = await self._profile(ref)
         if not await self._may_see(row, viewer, via):
             return
-        await self.event("profile_viewed", profile_id=row["id"], payload={"claimed": (row["data"] or {}).get("claim_state") == "verified"})
+        d = row["data"] or {}
+        if viewer:
+            if await self.can_moderate(viewer):
+                return      # the team checking a profile isn't a visit
+            if d.get("linked_business_id") and any(b["id"] == d["linked_business_id"] for b in await self.business.owned_by(viewer["id"])):
+                return      # nor is its owner looking at their own
+        try:
+            counted = await self._count_view(row["id"], visitor)
+        except Exception:      # noqa: BLE001 - a visit that can't be counted never fails the page
+            logger.warning("profile view for %s could not be counted", row["id"], exc_info=True)
+            counted = True
+        if counted:
+            await self.event("profile_viewed", profile_id=row["id"], payload={"claimed": d.get("claim_state") == "verified"})
+
+    async def _count_view(self, profile_id: str, visitor: str | None) -> bool:
+        """One visit per visitor a day: whether this one counted. Kept on its own counter row, so a visit never
+        writes over the profile while someone is editing it. Who visited is kept only as a one-way hash, for today."""
+        now = self.clock()
+        today = now.date().isoformat()
+        counter = await self._views_counter(profile_id)
+        d = (counter or {}).get("data") or {}
+        seen = list(d.get("seen") or []) if d.get("seen_day") == today else []
+        who = hashlib.sha256(f"{profile_id}:{visitor}".encode()).hexdigest()[:16] if visitor else None
+        if who and who in seen:
+            return False
+        keep_from = (now.date() - timedelta(days=400)).isoformat()
+        days = {k: v for k, v in (d.get("days") or {}).items() if k >= keep_from}
+        days[today] = int(days.get(today) or 0) + 1
+        data = {"schema_version": 1, "correlation_id": f"views:{profile_id}", "total": int(d.get("total") or 0) + 1, "days": days, "seen_day": today,
+                "seen": ([*seen, who] if who else seen)[-5000:], "last_viewed_at": now.isoformat()}
+        if counter:
+            await self.store.update("events", counter["id"], {"data": data, "updated_at": now}, bump=False)
+        else:
+            await self.store.insert("events", {"id": new_id(), "business_id": SCOPE, "kind": "profile_views", "subject_id": profile_id, "status": "recorded",
+                                               "revision": 1, "key": f"views:{profile_id}", "created_by": None, "created_at": now, "updated_at": now, "data": data})
+        return True
 
     # ── requests left on a profile nobody has claimed yet ─────────────────────
 
@@ -2038,7 +2137,20 @@ class DirectoryService:
 
     async def my_claims(self, user: dict) -> list[dict]:
         rows = await self.store.list("claims", SCOPE, kind=user["id"], limit=50)
-        return [await self._public_claim(c, user) for c in rows if c.get("status") != "cancelled"]
+        linked = [c for c in rows if c.get("status") == "verified" and (c.get("data") or {}).get("linked_business_id")]
+        stale_ids: set[str] = set()
+        if linked:
+            try:
+                owned_ids = {str(b["id"]) for b in await self.business.owned_by(user["id"]) if b.get("id")}
+                for claim in linked:
+                    business_id = str((claim.get("data") or {}).get("linked_business_id"))
+                    if business_id not in owned_ids:
+                        await self._move(claim, "cancelled", actor="system", reason="The linked workspace no longer exists",
+                                         patch={"claimant_email": None, "verified_email": None})
+                        stale_ids.add(str(claim["id"]))
+            except Exception:      # noqa: BLE001 - don't hide valid claims if workspace lookup is temporarily unavailable
+                logger.warning("Could not reconcile Marketplace claims for %s", user["id"], exc_info=True)
+        return [await self._public_claim(c, user) for c in rows if c.get("status") != "cancelled" and str(c.get("id")) not in stale_ids]
 
     async def get_claim(self, user: dict, claim_id: str) -> dict:
         return await self._public_claim(await self._claim(claim_id, user), user)
@@ -2249,7 +2361,9 @@ class DirectoryService:
         seed = {"workspace_profile": {k: v for k, v in {"company_name": d.get("trading_name") or d.get("name"), "legal_name": d.get("name"),
                                                        "registration_number": d.get("company_number"), "website": d.get("website"), "country": d.get("country"),
                                                        "city": d.get("location"), "primary_industry": d.get("category"), "about_company": d.get("description"), "logo_data_url": d.get("logo_data_url"),
-                                                       "services": [{"service_name": t["tag"], "service_category": "other", "description": t["tag"]} for t in d.get("service_tags") or []]}.items() if v not in (None, "")},
+                                                       "business_type": d.get("business_type"), "company_size": d.get("company_size"), "year_established": d.get("year_established"),
+                                                       "tagline": d.get("tagline"),
+                                                       "services": [{"service_name": t["tag"], "service_category": "other", "service_description": t.get("description") or ""} for t in d.get("service_tags") or [] if isinstance(t, dict) and t.get("tag")]}.items() if v not in (None, "")},
                 "settings": {"currency": "GBP"}}
         seed["settings"]["currency"] = bz.country_currency(seed) or "GBP"      # a quote to a waiting buyer goes out in the business's own currency
         # Its services are in its Catalogue from the start, as after onboarding: each needs a price, and none is invented.
@@ -2619,6 +2733,12 @@ class DirectoryService:
         if not await self.can_moderate(admin):
             raise Forbidden("Not available.")
         profiles = {p["id"]: p for p in await self.store.list("profiles", SCOPE, limit=5000)}
+        views: dict[str, dict] = {}
+        try:
+            for counter in await self.store.list("events", SCOPE, kind="profile_views", limit=10000):
+                views[str(counter.get("subject_id"))] = self._views_summary(counter)
+        except Exception:      # noqa: BLE001 - decisions remain available if analytics storage is unavailable
+            pass
         items = []
         for c in await self.store.list("claims", SCOPE, limit=500):
             if c.get("status") not in ("verified", "rejected", "revoked") or c["subject_id"] not in profiles:
@@ -2635,6 +2755,7 @@ class DirectoryService:
             hold = cd.get("workspace_hold") or {}
             revoke["workspace"] = {"state": hold.get("state"), "until": hold.get("until")} if hold else None
             items.append({**revoke, "id": c["id"], "type": "verification" if cd.get("self_verify") else "claim", "outcome": {"verified": "approved", "rejected": "rejected", "revoked": "removed"}[c["status"]],
+                          "profile_id": c["subject_id"], "views": views.get(str(c["subject_id"])) or self._views_summary(None),
                           "name": pd.get("name"), "slug": pd.get("slug"), "person": ", ".join((email or {}).get("to") or _addresses(cd.get("claimant_email"), cd.get("verified_email"))),
                           "links_to": None if c["status"] != "verified" else "A new business" if cd.get("target") == "new" else "An existing business",
                           "decided_by": cd.get("decided_by_email") or ("A team member" if by_team else "Email code"), "decided_at": last.get("at"), "reason": last.get("reason"),
@@ -2644,7 +2765,7 @@ class DirectoryService:
             review = pd.get("review") or {}
             if pd.get("origin") == "created" and review.get("status") in ("approved", "suppressed"):
                 email = review.get("email")
-                items.append({"id": p["id"], "type": "listing", "outcome": "approved" if review["status"] == "approved" else "rejected", "name": pd.get("name"), "slug": pd.get("slug"),
+                items.append({"id": p["id"], "profile_id": p["id"], "views": views.get(str(p["id"])) or self._views_summary(None), "type": "listing", "outcome": "approved" if review["status"] == "approved" else "rejected", "name": pd.get("name"), "slug": pd.get("slug"),
                               "person": ", ".join((email or {}).get("to") or []), "links_to": None, "decided_by": review.get("decided_by_email") or "A team member", "decided_at": review.get("decided_at"),
                               "reason": review.get("reason"), "email": ("sent" if email["sent"] else "failed") if email else "before_emails"})
         items.sort(key=lambda x: str(x["decided_at"] or ""), reverse=True)
@@ -2860,6 +2981,13 @@ class DirectoryService:
                     review = None      # taken down by its owner before anyone looked: nothing left to review
             if publication != d.get("publication") or review != d.get("review") or any(d.get(k) != v for k, v in fields.items()):      # write only when something changed
                 profile = await self.store.update("profiles", profile["id"], {"status": publication, "updated_at": now, "data": {**d, **fields, "publication": publication, "review": review}}) or profile
+        elif active and (profile["data"] or {}).get("claim_state") == "verified" and (profile["data"] or {}).get("publication") == "noindex":
+            # A sourced profile can be invite-only before its owner claims it. Once the verified
+            # owner publishes their Marketplace profile, make that existing directory address
+            # searchable too. Keep the address and provenance; only widen publication visibility.
+            d = profile["data"]
+            profile = await self.store.update("profiles", profile["id"], {"status": "published", "updated_at": now,
+                                                                          "data": {**d, "publication": "published"}}) or profile
         if m.get("directory_profile_id") != profile["id"]:
             def point(doc: dict) -> None:
                 mk = dict(doc.get("marketplace") or {})
@@ -2883,6 +3011,9 @@ class DirectoryService:
         if profile is None and settings["is_published"]:
             # Published before the directory existed (or through the older listing switch): it gets its one public profile now.
             profile = await self._sync(business_id, user["id"], data=ctx["data"])
+        elif profile and verified and settings["is_published"] and (profile["data"] or {}).get("publication") == "noindex":
+            # Repair a verified listing that was activated before sourced noindex profiles were promoted on publish.
+            profile = await self._sync(business_id, user["id"], data=ctx["data"], profile=profile)
         return self._view(ctx, business_id, ctx["data"], profile, await self._duplicates(business_id, ctx["data"], profile))
 
     async def _duplicates(self, business_id: str, data: dict, profile: dict | None) -> list[dict]:
@@ -3341,13 +3472,72 @@ class DirectoryService:
                                                                "has_contact": bool(d.get("contact_email"))}})
         link = f"/marketplace/claim/{d.get('slug')}?invite={token}"
         if send and self._send_invitation and d.get("contact_email"):
-            went = await self._send_invitation({"to": d["contact_email"], "business_name": d.get("name"), "reason": reason, "link": link, "opt_out": f"/marketplace/invitations/{token}/opt-out"})
+            # Emailed to the business's own listed address: its link claims in one click (the owner, 14 Nov). A link copied to share by hand
+            # keeps the claim page, since nothing shows who opens it.
+            went = await self._send_invitation({"to": d["contact_email"], "business_name": d.get("name"), "reason": reason, "link": claim_link_path(token),
+                                                "opt_out": f"/marketplace/invitations/{token}/opt-out"})
             if went is not False:      # the mailer says False when sending is switched off or the message was refused
-                await self.store.update("invitations", row["id"], {"status": "sent", "data": {**row["data"], "sent_at": now.isoformat()}}, bump=False)
+                await self.store.update("invitations", row["id"], {"status": "sent", "data": {**row["data"], "sent_at": now.isoformat(),
+                                                                                              "sent_to": str(d["contact_email"]).strip().lower()}}, bump=False)
                 status = "sent"
         # A link made to be shared by hand is "created"; "sent" is recorded only when an email went out.
         await self.event("ClaimInvitationSent" if status == "sent" else "ClaimInvitationCreated", profile_id=profile["id"], actor=admin["id"], payload={"reason": reason, "status": status, "invitation_id": row["id"]})
         return {"id": row["id"], "status": status, "link": link, "reason": reason}
+
+    # ── one-click claim from the business's own email (the owner, 14 Nov) ─────────────────────────────────
+    # Opening the link sent to the address the profile lists proves control of that address, as an email code would:
+    # the person is signed in (an account is made for the address if needed), the profile becomes theirs and a workspace
+    # is made from its details. Only for an emailed link, only to that address, once, within INVITE_TTL.
+
+    async def email_claim_link(self, ref: str, email: str, actor: str = "system") -> str | None:
+        """A one-click claim link for a profile, when this email is the address it lists; None otherwise."""
+        profile = await self._profile(ref)
+        d = profile["data"] or {}
+        to = str(email or "").strip().lower()
+        if (not to or to != str(d.get("contact_email") or "").strip().lower() or d.get("linked_business_id")
+                or d.get("claim_state") != "unclaimed" or d.get("publication") not in ("published", "noindex")):
+            return None
+        token = secrets.token_urlsafe(24)
+        now = self.clock()
+        await self.store.insert("invitations", {"id": new_id(), "business_id": SCOPE, "kind": "email_link", "subject_id": profile["id"], "status": "sent", "revision": 1,
+                                                "key": _hash(token), "created_by": actor, "created_at": now, "updated_at": now,
+                                                "data": {"reason": "email_link", "channel": "email", "has_contact": True, "sent_at": now.isoformat(), "sent_to": to}})
+        return claim_link_path(token)
+
+    async def _claim_link(self, token: str) -> tuple[dict, dict]:
+        """The invitation behind a one-click link and its profile, or NotFound when it is unknown, used, expired or never emailed."""
+        inv = await self._invitation(token)
+        data = (inv or {}).get("data") or {}
+        if (not inv or inv.get("status") != "sent" or not data.get("sent_to")
+                or str(inv.get("created_at")) < (self.clock() - INVITE_TTL).isoformat()):
+            raise NotFound()
+        return inv, await self.store.get("profiles", inv["subject_id"])
+
+    async def claim_link_email(self, token: str) -> str:
+        """The address a one-click link was sent to, once the link is known to be usable."""
+        inv, profile = await self._claim_link(token)
+        d = (profile or {}).get("data") or {}
+        if not profile or d.get("linked_business_id") or d.get("claim_state") != "unclaimed":
+            raise Conflict("already_claimed", "This business has already been claimed.", {"slug": d.get("slug")})
+        if d.get("publication") not in ("published", "noindex"):
+            raise NotFound()
+        return inv["data"]["sent_to"]
+
+    async def claim_by_email_link(self, user: dict, token: str) -> dict:
+        """The person who opened the link (signed in as the address it went to) now holds the profile, in a new workspace."""
+        inv, profile = await self._claim_link(token)
+        if str(user.get("email") or user["id"]).lower() != inv["data"]["sent_to"]:
+            raise Forbidden("This link was sent to another address.")
+        await self.claim_link_email(token)      # still unclaimed and listed
+        started = await self.start_claim(user, profile["id"], invitation=token)
+        claim = await self._claim(started["id"], user)
+        if claim.get("status") != "verified":
+            claim = await self._move(claim, claim.get("status"), actor=user["id"], reason="A new business is created from the profile", patch={"target": "new", "invitation_id": inv["id"]})
+            claim = await self._approve(claim, actor=user["id"], method="email_link", reason="Opened the claim link sent to the email address the profile lists")
+        await self.store.update("invitations", inv["id"], {"status": "used", "data": {**inv["data"], "used_at": self.clock().isoformat(),
+                                                                                      "business_id": (claim["data"] or {}).get("linked_business_id")}}, bump=False)
+        done = await self.complete_handoff(user, claim["id"])
+        return {"business_id": done["business_id"], "claim_id": claim["id"], "slug": (profile["data"] or {}).get("slug"), "name": (profile["data"] or {}).get("name")}
 
     async def _ensure_first_claim_invite(self, profile: dict) -> bool:
         """Send the first listing email when a profile first becomes eligible; never repeat a successful send."""
@@ -3370,11 +3560,12 @@ class DirectoryService:
                                                           "key": _hash(token), "created_by": "system", "created_at": now, "updated_at": now,
                                                           "data": {"reason": reason, "channel": "email", "has_contact": True, "week": week}})
             went = await self._send_invitation({"to": d["contact_email"], "business_name": d.get("name"), "reason": reason, "requests": len(await self._held_requests(profile["id"])),
-                                                "link": f"/marketplace/claim/{d.get('slug')}?invite={token}", "opt_out": f"/marketplace/invitations/{token}/opt-out",
+                                                "link": claim_link_path(token), "opt_out": f"/marketplace/invitations/{token}/opt-out",
                                                 "key": f"claim-{reason}-{profile['id']}-{week or 'first'}"})
             if went is False:
                 return False
-            await self.store.update("invitations", row["id"], {"status": "sent", "data": {**row["data"], "sent_at": now.isoformat()}}, bump=False)
+            await self.store.update("invitations", row["id"], {"status": "sent", "data": {**row["data"], "sent_at": now.isoformat(),
+                                                                                          "sent_to": str(d["contact_email"]).strip().lower()}}, bump=False)
             await self.event("ClaimInvitationSent", profile_id=profile["id"], actor="system", payload={"reason": reason, "status": "sent", "invitation_id": row["id"]})
             return True
         except Exception:      # noqa: BLE001
@@ -3545,16 +3736,19 @@ async def _email_invitation(message: dict) -> bool:
         return False
     base = str(getattr(get_settings(), "frontend_url", "") or "").split(",")[0].strip().rstrip("/")
     name, count = message["business_name"], int(message.get("requests") or 0)
-    waiting = f"{count} request{' is' if count == 1 else 's are'} waiting for you. " if count else ""
+    waiting = f"{count} request{' is' if count == 1 else 's are'} waiting for you." if count else ""
     automatic = {
-        "listed": (f"{name} is now listed on the EnterprateAI Marketplace", f"{name} is now listed on the EnterprateAI Marketplace, based on public information. {waiting}Claim it for free to correct the details, reply to customers and choose the work you want."),
-        "weekly_reminder": (f"{name} hasn't been claimed yet", f"{name} is listed on the EnterprateAI Marketplace and hasn't been claimed yet. {waiting}Claim it for free to correct the details, reply to customers and choose the work you want."),
+        "listed": (f"{name} is now listed on the EnterprateAI Marketplace", f"{name} is now listed on the EnterprateAI Marketplace, based on public information."),
+        "weekly_reminder": (f"{name} hasn't been claimed yet", f"{name} is listed on the EnterprateAI Marketplace and hasn't been claimed yet."),
     }.get(message["reason"])
-    lead = automatic[1] if automatic else ("A current request on the EnterprateAI Marketplace may match your services. Claim your profile to see it and respond."
-                                           if message["reason"] == "opportunity" else "Your business is discoverable on EnterprateAI. Claim it to control the profile and choose the opportunities you want.")
+    intro = automatic[1] if automatic else ("A current request on the EnterprateAI Marketplace may match your services."
+                                            if message["reason"] == "opportunity" else "Your business is discoverable on EnterprateAI.")
+    next_step = ("Claim your profile to see the request and respond." if message["reason"] == "opportunity"
+                 else "Claim it for free to correct the details, reply to customers and choose the work you want.")
+    lead = "\n\n".join(part for part in (intro, waiting, next_step) if part)
     text = f"{lead}\n\nNext step: claim your profile: {base}{message['link']}\n\nNot interested? Stop these emails: {base}{message['opt_out']}"
-    html = (f"<p>{escape(lead)}</p>" + email_button(base + message["link"], f"Claim {name}")
-            + f"<p style='font-size:12px;color:#64748b;text-align:center'>Not interested? <a href='{escape(base + message['opt_out'], quote=True)}'>Stop these emails</a>.</p>")
+    html = "".join(f"<p style='margin:0 0 14px'>{escape(part)}</p>" for part in lead.split("\n\n")) + email_button(base + message["link"], f"Claim {name}")
+    html += f"<p style='font-size:12px;color:#64748b'>Not interested? <a href='{escape(base + message['opt_out'], quote=True)}'>Stop these emails</a>.</p>"
     headline = automatic[0] if automatic else f"{name} on the EnterprateAI Marketplace"
     result = await send_email_via_resend(kind="claim_invitation", values={"headline": headline, "message": lead, "business_name": name, "waiting": waiting.strip(),
                                                                          "link": base + message["link"], "opt_out": base + message["opt_out"]},

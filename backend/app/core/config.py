@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     claude_model: str = Field(default="claude-3-5-sonnet-20240620", validation_alias=AliasChoices("CLAUDE_MODEL",))
     # The one Agent conversation (31 Oct): on for every workspace when true; off, a workspace can still turn it on in its settings
     agent_conductor: bool = Field(default=False, validation_alias=AliasChoices("AGENT_CONDUCTOR",))
+    # Claude model behind the one Agent conversation (chat_agent.py); OpenAI is its backup
+    agent_model: str = Field(default="claude-opus-5-5", validation_alias=AliasChoices("AGENT_MODEL",))
+    # The backup when Claude can't answer; empty means OPENAI_MODEL
+    agent_openai_model: str | None = Field(default=None, validation_alias=AliasChoices("AGENT_OPENAI_MODEL",))
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GEMINI_API_KEY",))
     gemini_model: str = Field(default="gemini-1.5-flash", validation_alias=AliasChoices("GEMINI_MODEL",))
     allow_gemini_fallback: bool = Field(default=False, validation_alias=AliasChoices("ALLOW_GEMINI_FALLBACK",))

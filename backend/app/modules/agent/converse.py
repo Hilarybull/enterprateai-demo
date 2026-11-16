@@ -152,17 +152,24 @@ class OutOfCredits(Exception):
         self.needed, self.have = needed, have
 
 
+_REPLY_CHARGED = __import__("contextvars").ContextVar("reply_charged", default=False)
+
+
 async def paid_reply(orch, user: dict, call):
     """A reply the model writes in a signed-in chat, charged as one Assistant chat (the owner, 31 Oct: "every chat after
     signup should cost 2 credits"): only when a reply comes back, never for a failure, a button or a scripted line. The
     charge is never said in the reply (the sidebar balance and the Credits page show it)."""
     import secrets
     from app.modules.agent.services import InsufficientCredits
-    if getattr(getattr(orch, "rt", None), "meter", None) is None:
-        return await call()      # no meter here (a stand-in in tests): the reply as it is
+    if getattr(getattr(orch, "rt", None), "meter", None) is None or _REPLY_CHARGED.get():
+        return await call()      # no meter here (a stand-in in tests), or this reply is already charged: one reply, one charge
     try:
         async with orch.rt.meter.charge(user["id"], CHAT_FEATURE, key=f"chat:{secrets.token_hex(8)}"):
-            res = await call()
+            token = _REPLY_CHARGED.set(True)      # a module the reply calls on (the funding chat) never charges it again
+            try:
+                res = await call()
+            finally:
+                _REPLY_CHARGED.reset(token)
             if not str(getattr(res, "text", "") or "").strip():
                 raise RuntimeError("no reply written")      # released: nothing is charged for nothing
     except InsufficientCredits as e:

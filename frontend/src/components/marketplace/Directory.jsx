@@ -344,6 +344,9 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
           {" "}These come from public sources and stay on record; what you write below is what the public sees.
         </Notice>
       )}
+      <p className="text-[12px] text-slate-500">
+        Business name and industry are managed in your workspace profile. <Btn kind="link" disabled={disabled} onClick={() => navigate("/account")}>Edit workspace profile</Btn>
+      </p>
       <div>
         <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
           <label htmlFor="mp-field-description" className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Public description
@@ -401,7 +404,7 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
       </div>
       <div>
         <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Offerings to show publicly</p>
-        <p className="text-[12px] text-slate-500">These are your Catalogue items. Ticking one shows it on your profile; nothing is copied.</p>
+        <p className="text-[12px] text-slate-500">These are your Catalogue items. Choose which ones to show here; edit their names, descriptions and prices in your Catalogue.</p>
         {!offered && need("offering", "Needed to publish: tick at least one offering, or list a service above.")}
         {profile.offerings.length === 0 ? (
           <p className="mt-1 text-[13px] text-slate-500">Your Catalogue is empty. <Btn kind="link" onClick={() => navigate("/catalogue")}>Add a product or service</Btn>, or list your services above.</p>
@@ -418,6 +421,7 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
             ))}
           </ul>
         )}
+        <Btn kind="link" disabled={disabled} onClick={() => navigate("/catalogue")}>Edit Catalogue items</Btn>
       </div>
       {state.problem && <Notice tone="rose" role="alert">{state.problem.message}</Notice>}
       <div className={`flex flex-wrap items-center gap-3 ${footerLeft ? "flex-row-reverse justify-between border-t border-slate-100 pt-4 dark:border-slate-800" : ""}`}>

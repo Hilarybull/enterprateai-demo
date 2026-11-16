@@ -132,6 +132,23 @@ describe("public profile (W02 and W12)", () => {
     expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}?invite=tok123`);      // the invitation travels with the claim
   });
 
+  it("its owner sees how many people viewed the profile; a visitor never does", async () => {
+    const views = { total: 206, last_7_days: 12, last_30_days: 48, last_viewed_at: new Date().toISOString() };
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...claimed, owner_controls: true, business_id: "ws9", views } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Profile visits");
+    expect(document.querySelector("[data-visits-headline]").textContent).toBe("206 people may have viewed your profile");
+    expect(screen.getByText("Last 7 days").parentElement.textContent).toBe("Last 7 days12");
+    expect(screen.getByText("Last 30 days").parentElement.textContent).toBe("Last 30 days48");
+    expect(screen.getByText(/Last visit today\./).textContent).toContain("Only you and the EnterprateAI team see this.");
+    cleanup();
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: claimed }) }, { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Owner-verified");
+    expect(screen.queryByText("Profile visits")).toBeNull();
+  });
+
   it("a claimed profile shows what the owner confirmed and only the actions they switched on", async () => {
     routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: claimed }) }, { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
