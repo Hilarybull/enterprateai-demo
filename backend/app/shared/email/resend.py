@@ -74,8 +74,8 @@ _FOOTER_TEXT = (
 
 
 def email_button(url: str, label: str) -> str:
-    """The one call to action in an email: a centred button. The url and label are escaped here."""
-    return (f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(url, quote=True)}\" "
+    """The one call to action in an email, aligned with the message text. The url and label are escaped here."""
+    return (f"<p style=\"margin:20px 0;\"><a href=\"{escape(url, quote=True)}\" "
             "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
             f"{escape(label)}</a></p>")
 
@@ -125,7 +125,7 @@ async def send_email_via_resend(
                     "style=\"color:#64748b;\">Unsubscribe</a></p>")
         else:
             text_content = f"{text_content}\n\nDon't want these emails? Unsubscribe: {page}"
-            line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;text-align:center;\">Don't want these emails? "
+            line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;\">Don't want these emails? "
                     f"<a href=\"{escape(page, quote=True)}\" style=\"color:#64748b;\">Unsubscribe</a></p>")
         html_content = html_content[:html_content.rfind("</div>")] + line + "</div>" if html_content.rstrip().endswith("</div>") else html_content + line
         headers = {**(headers or {}), "List-Unsubscribe": f"<{one_click or page}>", **({"List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if one_click else {})}
@@ -248,7 +248,7 @@ async def send_workspace_invitation_email_with_link(
         f"workspace on <strong>{escape(app_name)}</strong>.</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">Access level: {escape(access_label)}<br/>"
         f"This invitation expires in {expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(invite_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(invite_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Accept invitation</a></p>"
@@ -289,7 +289,7 @@ async def send_password_reset_email(
         f"<p style=\"margin:0 0 12px;\">We received a request to set a new password for your "
         f"<strong>{escape(app_name)}</strong> account ({escape(to_email)}).</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in <strong>{expires_in_minutes} minutes</strong>.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(reset_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(reset_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Set new password</a></p>"
@@ -394,7 +394,7 @@ async def send_email_verification_email(
         f"<p style=\"margin:0 0 12px;\">{greeting}</p>"
         f"<p style=\"margin:0 0 20px;\">Thank you for signing up to <strong>{escape(app_name)}</strong>! "
         "Please verify your email address to activate your account.</p>"
-        f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(verify_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(verify_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Verify my email</a></p>"
@@ -479,7 +479,7 @@ async def send_proposal_request_invite_email(
         + desc_html
         + f"</div>"
         + req_html
-        + f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(invite_url)}\" "
+        + f"<p style=\"margin:20px 0;\"><a href=\"{escape(invite_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#4f46e5;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "View request &amp; apply</a></p>"
@@ -531,7 +531,7 @@ async def send_document_share_email(
         f"{article} {escape(doc_label)} with you via {escape(app_name)}.</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in "
         f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(share_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(share_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         f"Open {escape(doc_label)}</a></p>"
