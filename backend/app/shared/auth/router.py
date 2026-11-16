@@ -250,6 +250,57 @@ async def accept_marketplace_team_invite(payload: dict, request: Request) -> dic
     return {"access_token": create_access_token(subject=email), "token_type": "bearer", "email": email}
 
 
+@router.post("/marketplace-claim-link")
+async def marketplace_claim_link(payload: dict, request: Request) -> dict:
+    """The one-click claim link emailed to a business's listed address (the owner, 14 Nov): opening it verifies that
+    address, signs its owner in (making the account if there isn't one), hands them the profile and makes their workspace."""
+    _within(f"marketplace-claim-link:{limits.client_ip(request)}", (10, 900))
+    if not get_settings().marketplace_claim_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    token = str(payload.get("token") or "").strip()
+    unusable = "This claim link has already been used or has expired. Sign in, or open the business's profile to claim it."
+    if len(token) < 20 or len(token) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unusable)
+    from app.modules.agent.router import get_orchestrator
+    from app.modules.marketplace import directory as mk
+    svc = mk.service_for(get_orchestrator())
+    try:
+        email = await svc.claim_link_email(token)
+    except mk.NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unusable) from exc
+    except mk.Conflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"message": exc.message, **exc.detail}) from exc
+
+    user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    new_account = user is None
+    if not user:
+        user = {"id": email, "email": email, "name": email.split("@", 1)[0], "password_hash": None,
+                "auth_provider": "marketplace_claim_link", "email_verified": True, "email_verification_token": None,
+                "created_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            await sb_insert("users", user)
+        except Exception:
+            user = await sb_select("users", filters=[("id", "eq", email)], single=True)      # a second click made it first
+            if not user:
+                raise
+    if user.get("is_blocked"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is suspended. Contact support.")
+    if user.get("email_verified") is False:
+        await sb_update("users", filters=[("id", "eq", email)], payload={"email_verified": True, "email_verification_token": None})
+        await _mark_verified(email)
+    try:
+        done = await svc.claim_by_email_link({"id": email, "email": email}, token)
+    except mk.NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unusable) from exc
+    except mk.Conflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"message": exc.message, **exc.detail}) from exc
+    except mk.Forbidden as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc) or "This link was sent to another address.") from exc
+    except mk.RateLimited as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many claims today. Try again tomorrow.") from exc
+    return {"access_token": create_access_token(subject=email), "token_type": "bearer", "email": email, "new_account": new_account, **done}
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, request: Request) -> TokenResponse:
     email, ip = payload.email.lower(), limits.client_ip(request)

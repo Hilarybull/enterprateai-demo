@@ -1023,8 +1023,8 @@ class DirectoryService:
         if _text(raw.get("category"), 80) not in CATEGORIES:
             errors["category"] = "Choose a category from the list."
         description = _text(raw.get("description"), 1200)
-        if len(description) < 20:
-            errors["description"] = "Add an About description of at least 20 characters."
+        if len(description) < 40:
+            errors["description"] = "Add an About description of at least 40 characters for search indexing."
         raw_tags = raw.get("service_tags") or []
         if isinstance(raw_tags, str):
             raw_tags = re.split(r"[,;|]", raw_tags)
