@@ -26,7 +26,7 @@ function Panel({ className = "", ...props }) {
 
 export function PublicFrame({ children }) {
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen overflow-x-clip bg-slate-50 dark:bg-slate-950">
       <MarketplaceHeader />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
     </div>
@@ -407,6 +407,27 @@ export default function DirectoryProfilePage() {
             ) : !b.offerings?.length && <p className="text-sm text-slate-500">Nothing listed yet.</p>}
           </Panel>
 
+          {!mine && <Panel title="How to work with us">
+            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} proposalsOpen={Boolean(b.held_proposals_open)} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
+              : paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
+              : ways.length > 0 ? (
+                <ul className="divide-y divide-slate-100 dark:divide-slate-800" data-ways>
+                  {ways.map((w) => (
+                    <li key={w.key} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
+                      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
+                        <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d={ICON[w.key]} /></svg>
+                      </span>
+                      <span className="min-w-[12rem] flex-1">
+                        <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{w.label}</span>
+                        <span className="block text-[13px] text-slate-600 dark:text-slate-300">{w.line}</span>
+                      </span>
+                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => w.key === "proposals" ? setProposalFlowOpen(true) : navigate(w.to)}>{w.label}</Btn>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-sm text-slate-600 dark:text-slate-300">{b.claimed ? (b.activated ? "This business hasn't opened any ways to work with it yet." : "This business hasn't published its Marketplace profile yet.") : b.opportunity_note}</p>}
+          </Panel>}
+
           <section aria-labelledby="owner-benefits-title" data-owner-benefits className="relative isolate overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4 shadow-sm sm:p-5 dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50">
             <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-brand-200/30 blur-2xl dark:bg-brand-500/10" />
             <header className="relative mb-4 flex items-start gap-3">
@@ -439,26 +460,7 @@ export default function DirectoryProfilePage() {
             </ul>
           </section>
 
-          {!mine && <Panel title="How to work with us">
-            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} proposalsOpen={Boolean(b.held_proposals_open)} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
-              : paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
-              : ways.length > 0 ? (
-                <ul className="divide-y divide-slate-100 dark:divide-slate-800" data-ways>
-                  {ways.map((w) => (
-                    <li key={w.key} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
-                      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
-                        <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d={ICON[w.key]} /></svg>
-                      </span>
-                      <span className="min-w-[12rem] flex-1">
-                        <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{w.label}</span>
-                        <span className="block text-[13px] text-slate-600 dark:text-slate-300">{w.line}</span>
-                      </span>
-                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => w.key === "proposals" ? setProposalFlowOpen(true) : navigate(w.to)}>{w.label}</Btn>
-                    </li>
-                  ))}
-                </ul>
-              ) : <p className="text-sm text-slate-600 dark:text-slate-300">{b.claimed ? (b.activated ? "This business hasn't opened any ways to work with it yet." : "This business hasn't published its Marketplace profile yet.") : b.opportunity_note}</p>}
-          </Panel>}
+
 
           {!mine && <div className="mt-auto px-1"><ReportBox slug={b.slug} via={via} /></div>}
         </div>
