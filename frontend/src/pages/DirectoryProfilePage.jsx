@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { ReportBox, TrustBadge } from "../components/marketplace/Directory";
 import LeaveARequest from "../components/marketplace/LeaveARequest";
 import MarketplaceHeader, { BusinessMark } from "../components/marketplace/MarketplaceHeader";
-import { Btn, Notice, Panel } from "../components/readiness/Fields";
+import { Btn, Notice, Panel as BasePanel } from "../components/readiness/Fields";
 import { activateMarketplaceProfile, directoryError, getBusinessProfile, myClaims, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
@@ -11,6 +11,10 @@ import { confirmDialog } from "../lib/dialog";
 import { SkeletonBlock, SkeletonCard, SkeletonRegion, SkeletonText } from "../components/Skeleton";
 
 const MarketplaceProposalFlow = lazy(() => import("./MarketplaceListings").then((module) => ({ default: module.MarketplaceProposalFlow })));
+
+function Panel({ className = "", ...props }) {
+  return <BasePanel {...props} className={`border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 shadow-sm dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50 ${className}`} />;
+}
 
 // W02 and W12: a business's public Marketplace profile. Before a claim it shows what public
 // sources say, labelled as such, with a clear way to claim it. After a claim it shows what
@@ -118,11 +122,6 @@ const WAYS = [
   ["subcontracting", "Subcontract work", "Bring them in on part of a project of yours."],
 ];
 
-function since(iso) {
-  const d = iso ? new Date(iso) : null;
-  return d && !Number.isNaN(d.getTime()) ? `On EnterprateAI since ${d.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}` : null;
-}
-
 /** The owner's own controls, above the public page: a row of links, or one menu on a phone. */
 function OwnerBar({ profile, busy, problem, onVerify, onUnlist, onVisitor }) {
   const navigate = useNavigate();
@@ -161,38 +160,17 @@ function OwnerBar({ profile, busy, problem, onVerify, onUnlist, onVisitor }) {
   );
 }
 
-const sinceWords = (iso) => {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  return Number.isNaN(days) ? "" : days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
-};
-
 // Visits to this profile (the owner, 14 Nov): shown to its owner and the Marketplace team only, never to visitors.
 // One visit per person a day; the owner's own visits and the team's aren't counted.
 function ProfileVisits({ views, mine }) {
   const total = Number(views.total || 0);
-  const tiles = [["Last 7 days", views.last_7_days], ["Last 30 days", views.last_30_days]];
   return (
     <Panel title="Profile visits" data-profile-visits>
       <p className="text-[15px] text-slate-700 dark:text-slate-200" data-visits-headline>
         <span className="text-2xl font-bold tabular-nums text-brand-600 dark:text-brand-300">{total.toLocaleString()}</span>{" "}
         {total === 1 ? "person may have" : "people may have"} viewed {mine ? "your" : "this"} profile
       </p>
-      <dl className="mt-3 grid grid-cols-2 gap-2">
-        {tiles.map(([label, n]) => (
-          <div key={label} className="flex flex-col-reverse rounded-xl bg-slate-50 px-2 py-2.5 text-center dark:bg-slate-800/60">
-            <dt className="mt-0.5 text-[11px] leading-tight text-slate-500">{label}</dt>
-            <dd className="text-xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{Number(n || 0).toLocaleString()}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-2.5 text-[12px] text-slate-500">
-        {views.last_viewed_at
-          ? `Last tracked visit ${sinceWords(views.last_viewed_at)}. `
-          : total > 0
-            ? "Some views have no visit date, so they aren’t included in the recent totals. "
-            : "No tracked visits yet. "}
-        These visit stats aren’t visible to Marketplace visitors.
-      </p>
+      <p className="mt-2.5 text-[12px] text-slate-500">{total === 0 ? "No tracked visits yet. " : ""}Only you can see this.</p>
     </Panel>
   );
 }
@@ -213,6 +191,7 @@ export default function DirectoryProfilePage() {
   const b = state.profile;
   // QA P2-11: someone who has already claimed this profile is told where their claim stands, not offered a new one.
   const signedIn = useAuthStore((st) => Boolean(st.token)) || (() => { try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; } })();
+  const openToolLibrary = () => navigate(signedIn ? "/tools" : `/login?signup=1&next=${encodeURIComponent("/tools")}`);
   const [myClaim, setMyClaim] = useState(null);
   useEffect(() => {
     if (!b || b.claimed || !signedIn) { setMyClaim(null); return undefined; }
@@ -316,7 +295,6 @@ export default function DirectoryProfilePage() {
   const locationParts = String(b.location || "").split(",").map((part) => part.trim()).filter(Boolean);
   const place = [...locationParts.filter((part) => part.toLowerCase() !== String(b.country || "").trim().toLowerCase()), b.country]
     .filter(Boolean).filter((part, i, all) => all.findIndex((other) => String(other).toLowerCase() === String(part).toLowerCase()) === i).join(", ");
-  const joined = since(b.since);
   const meta = [b.category, place].filter(Boolean);
   const sticky = b.claimed && main;      // on a phone, the main button stays in reach
 
@@ -393,7 +371,6 @@ export default function DirectoryProfilePage() {
                     <a href={site} target="_blank" rel="noopener noreferrer nofollow" className="min-w-0 truncate font-semibold text-brand-700 hover:underline dark:text-brand-300">{b.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}</a>
                   </span>
                 )}
-                {joined && <span className="inline-flex items-center gap-2">{(meta.length > 0 || site) && <span aria-hidden="true" className="text-slate-300">·</span>}{joined}</span>}
               </p>
             </div>
           </div>
@@ -430,37 +407,37 @@ export default function DirectoryProfilePage() {
             ) : !b.offerings?.length && <p className="text-sm text-slate-500">Nothing listed yet.</p>}
           </Panel>
 
-          {mine && <section aria-labelledby="owner-benefits-title" data-owner-benefits className="relative isolate overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4 shadow-sm sm:p-5 dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50">
+          <section aria-labelledby="owner-benefits-title" data-owner-benefits className="relative isolate overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4 shadow-sm sm:p-5 dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50">
             <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-brand-200/30 blur-2xl dark:bg-brand-500/10" />
             <header className="relative mb-4 flex items-start gap-3">
               <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-500 text-white shadow-sm">
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16l1 2.5 2.5 1-2.5 1L19 23l-1-2.5-2.5-1 2.5-1L19 16Z"/></svg>
               </span>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-700 dark:text-brand-300">EnterprateAI Marketplace</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-700 dark:text-brand-300">EnterprateAI Platform</p>
                 <h2 id="owner-benefits-title" className="mt-0.5 text-base font-bold text-slate-900 dark:text-slate-100">What you get with EnterprateAI</h2>
-                <p className="mt-1 text-[13px] leading-5 text-slate-600 dark:text-slate-300">Tools to help customers find and contact your business.</p>
+                <p className="mt-1 text-[13px] leading-5 text-slate-600 dark:text-slate-300">Plan, operate, sell and grow with AI-powered business tools.</p>
               </div>
             </header>
             <ul className="relative grid gap-3 sm:grid-cols-2" data-benefits-grid>
-              <li className="flex h-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 dark:border-slate-700 dark:bg-slate-900/80">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.5-6 9.75-6 9.75 6 9.75 6-3.5 6-9.75 6-9.75-6-9.75-6Z"/><circle cx="12" cy="12" r="2.5"/></svg></span>
-                <p className="min-w-0 text-[13px] leading-5 text-slate-600 dark:text-slate-300"><span className="block font-semibold text-slate-900 dark:text-slate-100">Be found</span>Show up when local customers search for what you offer.</p>
-              </li>
-              <li className="flex h-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 dark:border-slate-700 dark:bg-slate-900/80">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H9l-5 2V11a3 3 0 0 1 3-3Z"/><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h8M8 15h5"/></svg></span>
-                <p className="min-w-0 text-[13px] leading-5 text-slate-600 dark:text-slate-300"><span className="block font-semibold text-slate-900 dark:text-slate-100">Get enquiries direct</span>Requests land in your inbox. No commission, no middleman.</p>
-              </li>
-              <li className="flex h-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 dark:border-slate-700 dark:bg-slate-900/80">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M4 20h16M6 20V8l6-4 6 4v12M9 11h.01M15 11h.01M9 15h.01M15 15h.01"/></svg></span>
-                <p className="min-w-0 text-[13px] leading-5 text-slate-600 dark:text-slate-300"><span className="block font-semibold text-slate-900 dark:text-slate-100">Look the part</span>Add your logo so visitors choose you.</p>
-              </li>
-              <li className="flex h-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 dark:border-slate-700 dark:bg-slate-900/80">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3 4.5 6v5.5c0 4.4 3.2 7.5 7.5 9.5 4.3-2 7.5-5.1 7.5-9.5V6L12 3Z"/><path strokeLinecap="round" strokeLinejoin="round" d="m9 12 2 2 4-4"/></svg></span>
-                <p className="min-w-0 text-[13px] leading-5 text-slate-600 dark:text-slate-300"><span className="block font-semibold text-slate-900 dark:text-slate-100">Stay in control</span>Fix anything that’s wrong, or remove the listing any time.</p>
-              </li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M6 3.75h9l4.5 4.5v12H6a2.25 2.25 0 0 1-2.25-2.25V6A2.25 2.25 0 0 1 6 3.75Z"/><path strokeLinecap="round" strokeLinejoin="round" d="M14.25 3.75v5.1h5.1M8 13h8M8 16.5h8M8 9.5h2"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Plan</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Business Plan, Idea Validation, Launch Readiness, Funding Readiness</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 3.75h14A1.25 1.25 0 0 1 20.25 5v14A1.25 1.25 0 0 1 19 20.25H5A1.25 1.25 0 0 1 3.75 19V5A1.25 1.25 0 0 1 5 3.75Z"/><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8h9M7.5 12h9M7.5 16h5"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Operate</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Free Invoices, Quotations, Contracts, Receipts, Customer &amp; Product Records</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4.5h2l2.2 10.1a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 1.9-1.4L21 8H6"/><circle cx="10" cy="20" r="1.2"/><circle cx="18" cy="20" r="1.2"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Sell</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Receive RFQs, Open RFP Leads, Publish RFPs, Marketplace Listing &amp; SEO</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3.5 19.5h17M5 18V9l7-5 7 5v9M9 19.5v-6h6v6M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Intelligence</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Simulation, Risk Alerts, Fragility Index, Recommendations &amp; Insights</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
             </ul>
-          </section>}
+          </section>
 
           {!mine && <Panel title="How to work with us">
             {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} proposalsOpen={Boolean(b.held_proposals_open)} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
@@ -546,9 +523,6 @@ export default function DirectoryProfilePage() {
                 {!paused && b.contact?.phone && <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">Phone: <a href={`tel:${b.contact.phone}`} className="font-semibold text-brand-600 hover:underline">{b.contact.phone}</a></p>}
               </Panel>
             ) : null}
-            {!mine && <Panel title="About this badge" data-trust-card>
-              <div className="space-y-2 text-[13px] text-slate-600 dark:text-slate-300"><TrustWords profile={b} /></div>
-            </Panel>}
           </div>
         </aside>
       </div>
