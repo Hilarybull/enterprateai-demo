@@ -415,7 +415,7 @@ export default function DirectoryProfilePage() {
               </span>
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-700 dark:text-brand-300">EnterprateAI Platform</p>
-                <h2 id="owner-benefits-title" className="mt-0.5 text-base font-bold text-slate-900 dark:text-slate-100">What you get with EnterprateAI</h2>
+                <h2 id="owner-benefits-title" className="mt-0.5 text-base font-bold text-slate-900 dark:text-slate-100">What you get with Enterprate<span className="text-red-600">AI</span></h2>
                 <p className="mt-1 text-[13px] leading-5 text-slate-600 dark:text-slate-300">Plan, operate, sell and grow with AI-powered business tools.</p>
               </div>
             </header>
