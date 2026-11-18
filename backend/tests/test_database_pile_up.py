@@ -90,3 +90,38 @@ def test_the_watchdog_reads_the_runs_once_when_nothing_moved():
     orch.auto_retry = nothing
     assert asyncio.run(orch.tick()) == 0
     assert len(reads) == 1
+
+
+def test_stale_pool_failures_count_toward_retry_limit_and_force_a_fresh_connection(monkeypatch):
+    calls = []
+    pooled, fresh = object(), object()
+    take = []
+
+    def borrow():
+        take.append(True)
+        return pooled, True
+
+    monkeypatch.setattr(sb, "_take", borrow)
+    monkeypatch.setattr(sb, "_make_pool_client", lambda: fresh)
+
+    def fail(client):
+        calls.append(client)
+        raise httpx.ReadTimeout("timeout")
+
+    with pytest.raises(httpx.ReadTimeout):
+        REAL_WITH_CLIENT(fail, max_attempts=3)
+    assert calls == [pooled, fresh, fresh]
+    assert len(take) == 1
+
+
+def test_stale_connection_retry_can_recover_on_a_fresh_connection(monkeypatch):
+    pooled, fresh = object(), object()
+    monkeypatch.setattr(sb, "_take", lambda: (pooled, True))
+    monkeypatch.setattr(sb, "_make_pool_client", lambda: fresh)
+
+    def query(client):
+        if client is pooled:
+            raise httpx.ReadTimeout("stale")
+        return "saved"
+
+    assert REAL_WITH_CLIENT(query, max_attempts=2) == "saved"

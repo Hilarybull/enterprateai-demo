@@ -48,7 +48,7 @@ export function OpportunityChips({ opportunities }) {
 const DIRECTORY_PAGE = 24;
 
 /** `stickyTop`: the height of whatever is fixed above (the Marketplace header), so the filter bar stays in view under it. */
-export function DirectoryResults({ query = "", stickyTop = 0 }) {
+export function DirectoryResults({ query = "", stickyTop = 0, toolbarAction }) {
   const [filters, setFilters] = useState({ category: "", location: "", trust: "", open_for: "" });
   const [state, setState] = useState({ loading: true, items: [], total: 0, categories: [] });
   const [paged, setPaged] = useState({ page: 1, more: 1 });      // Previous, Next and the numbers; on a phone, "Load more" adds to the list
@@ -74,20 +74,23 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
   return (
     <div ref={top} style={{ scrollMarginTop: stickyTop }}>
       <div style={{ top: stickyTop }} className="sticky z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 dark:border-slate-800 dark:bg-slate-950/95">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter businesses">
-          <select aria-label="Category" className={field} value={filters.category} onChange={set("category")}>
-            <option value="">All categories</option>
-            {(state.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input aria-label="Location or service area" className={field} value={filters.location} onChange={set("location")} placeholder="Location" />
-          <select aria-label="Profile status" className={field} value={filters.trust} onChange={set("trust")}>
-            <option value="">Any status</option><option value="claimed">Verified only</option><option value="created">Created on EnterprateAI, not verified</option>
-            {/* Offered only when unclaimed profiles are listed at all. */}
-            {state.unclaimed_listed && <option value="unclaimed">Public listing</option>}
-          </select>
-          <select aria-label="Open for" className={field} value={filters.open_for} onChange={set("open_for")}>
-            <option value="">Any opportunity</option><option value="enquiries">Open for enquiries</option><option value="rfqs">Open for quote requests</option><option value="proposals">Open for proposals</option>
-          </select>
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter businesses">
+            <select aria-label="Category" className={field} value={filters.category} onChange={set("category")}>
+              <option value="">All categories</option>
+              {(state.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input aria-label="Location or service area" className={field} value={filters.location} onChange={set("location")} placeholder="Location" />
+            <select aria-label="Profile status" className={field} value={filters.trust} onChange={set("trust")}>
+              <option value="">Any status</option><option value="claimed">Verified only</option><option value="created">Created on EnterprateAI, not verified</option>
+              {/* Offered only when unclaimed profiles are listed at all. */}
+              {state.unclaimed_listed && <option value="unclaimed">Public listing</option>}
+            </select>
+            <select aria-label="Open for" className={field} value={filters.open_for} onChange={set("open_for")}>
+              <option value="">Any opportunity</option><option value="enquiries">Open for enquiries</option><option value="rfqs">Open for quote requests</option><option value="proposals">Open for proposals</option>
+            </select>
+          </div>
+          {toolbarAction}
         </div>
       </div>
       <div className="space-y-4 pt-5">

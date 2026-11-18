@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DirectoryResults, FindToClaim } from "../components/marketplace/Directory";
 import MarketplaceHeader from "../components/marketplace/MarketplaceHeader";
 import { useDemoTour } from "../context/DemoTourContext";
@@ -8,16 +8,20 @@ import { useDemoTour } from "../context/DemoTourContext";
 // Business Directory opens first. Products & Services and Proposal Requests are a much larger
 // module, loaded only when one of those tabs is opened.
 
+const PublicTenders = lazy(() => import("../components/marketplace/PublicTenders"));
+
 const MarketplaceListings = lazy(() => import("./MarketplaceListings"));
 
 const TABS = [
   { id: "businesses", label: "Business Directory", placeholder: "Search by name, service or location…" },
   { id: "products", label: "Products & Services", placeholder: "Search products or services…" },
   { id: "requests", label: "Proposal Requests", placeholder: "Search proposal requests…" },
+  { id: "tenders", label: "Public Tenders", placeholder: "Search titles, buyers or CPV codes" },
 ];
 
 function tabFrom(params) {
   const tab = params.get("tab");
+  if (tab === "tenders") return tab;
   if (tab === "requests" || params.get("request")) return "requests";
   if (tab === "products" || tab === "profiles") return tab;
   if (params.get("business")) return "products";      // a link from a public profile to that business's listing
@@ -49,9 +53,9 @@ export default function MarketplacePage() {
       <MarketplaceHeader onList={list} />
 
       <div className="bg-gradient-to-br from-brand-600 via-brand-700 to-accent-700 px-4 pb-0 pt-8 text-center sm:pt-12">
-        <h1 className="text-2xl font-extrabold text-white sm:text-3xl xl:text-4xl">Discover Businesses. Promote Yours. Get Seen.</h1>
+        <h1 className="text-2xl font-extrabold text-white sm:text-3xl xl:text-4xl">Find suppliers. Win contracts. Simplify procurement.</h1>
         <div className="mx-auto max-w-2xl">
-          <p className="mt-3 text-sm text-white/70">A marketplace built to help businesses get discovered, manage automated RFQ workflows, and generate proposals in one click.</p>
+          <p className="mt-3 text-sm text-white/70">Source business services, request quotes and connect with suppliers through EnterprateAI.</p>
           <div className="relative mt-6">
             <svg className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
@@ -81,11 +85,13 @@ export default function MarketplacePage() {
         </div>
       </div>
 
-      {tab === "businesses" ? (
+      {tab === "tenders" ? (
+        <Suspense fallback={<p role="status" className="p-6">Loading public tenders...</p>}><PublicTenders query={query} /></Suspense>
+      ) : tab === "businesses" ? (
         <div className="mx-auto w-full max-w-7xl flex-1 px-4 pb-8 sm:px-6">
           {/* "Already listed? Claim your business" from the homepage, pricing and sign-up lands here with the finder open. */}
           {params.get("find") && <div className="pt-5"><FindToClaim defaultOpen /></div>}
-          <DirectoryResults query={query} stickyTop={56} />
+          <DirectoryResults query={query} stickyTop={56} toolbarAction={<Link to="/marketplace/sourcing" state={{ marketplaceSearch: "?" + params.toString() }} className="inline-flex shrink-0 justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700">Find Suppliers with Enterprate AI</Link>} />
           {!params.get("find") && <div className="mt-6"><FindToClaim /></div>}
         </div>
       ) : (

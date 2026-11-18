@@ -24,6 +24,7 @@ class RequirementIn(BaseModel):
     text: str
     mandatory: bool = False
     weight: int = 1
+    format: str = "text"
 
 
 class ProposalRequestIn(BaseModel):
@@ -39,6 +40,9 @@ class ProposalRequestIn(BaseModel):
     accepted_modes: list[str] = ["general"]
     accepted_categories: list[str] | None = None
     visibility: str = "marketplace"
+    specific_criteria: dict | None = None
+    invited_workspace_ids: list[str] = []
+    invite_emails: list[str] = []
 
 
 class ProposalRequestPatch(BaseModel):
@@ -54,6 +58,9 @@ class ProposalRequestPatch(BaseModel):
     accepted_modes: list[str] | None = None
     accepted_categories: list[str] | None = None
     visibility: str | None = None
+    specific_criteria: dict | None = None
+    invited_workspace_ids: list[str] | None = None
+    invite_emails: list[str] | None = None
 
 
 class ProposalRequestOut(BaseModel):

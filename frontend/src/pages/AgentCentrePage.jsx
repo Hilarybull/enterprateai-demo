@@ -386,6 +386,7 @@ export default function AgentCentrePage() {
   const capabilityOptions = useCapabilityOptions();
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
+  const knownWorkspaceName = useWorkspaceStore((s) => s.workspaceName);
   const [params, setParams] = useSearchParams();
   // Short links from the dashboard and notifications: ?tab=approval, ?tab=needs-you.
   const asked = { approval: "needs_approval", approvals: "needs_approval", "needs-approval": "needs_approval", "needs-you": "needs_attention", "needs_you": "needs_attention" }[params.get("tab")] || params.get("tab");
@@ -457,8 +458,10 @@ export default function AgentCentrePage() {
   const [listOpen, setListOpen] = useState(params.has("tab"));
   const pick = (key) => { setParams({ tab: key }); setListOpen(true); };
   // The business, its risk and activity, and where each case and check stands: for the chat and the column beside it
-  const [ctx, setCtx] = useState(null);
+  const [contextRecord, setContextRecord] = useState(null);
+  const ctx = contextRecord?.workspaceId === workspaceId ? contextRecord.value : null;
   const [work, setWork] = useState([]);
+  useEffect(() => { setWork([]); }, [workspaceId]);
   const [workTick, setWorkTick] = useState(0);      // read again after each reply, so the cards show the case as it is now
   useEffect(() => {
     if (!workspaceId) return;
@@ -467,7 +470,8 @@ export default function AgentCentrePage() {
     Promise.all([read(`/businesses/${workspaceId}/agent/assistant-context?kind=funding`), read(`/businesses/${workspaceId}/funding-cases`),
       read(`/businesses/${workspaceId}/launch-initiatives`), read(`/businesses/${workspaceId}/agent/assistant-context?kind=idea&case_id=idea`)]).then(([c, f, l, i]) => {
       if (!live) return;
-      setCtx(c || {});      // read, even when it couldn't be: never a skeleton for ever
+      setContextRecord((previous) => c ? { workspaceId, value: c } :
+        previous?.workspaceId === workspaceId ? previous : { workspaceId, value: {} });
       // The newest open case first, never an older one the list happens to start with (the owner, 30 Oct: the van case's
       // 95/100 shown while the equipment case was the one being worked on)
       const at = (x) => String(x.updated_at || x.created_at || "");
@@ -484,7 +488,11 @@ export default function AgentCentrePage() {
       }
       const lp = open(l)[0];
       if (lp) out.push({ key: "launch", id: lp.id, kind: "launch", title: "Launch readiness", score: lp.summary?.score ?? null, detail: `${lp.title || "Your launch"}.${lp.summary?.next_action?.title ? ` Next: ${lp.summary.next_action.title}.` : things(lp.summary?.open_actions)}`, to: `/launch/${lp.id}?tab=assistant` });
-      setWork(out.map((w) => ({ ...w, score: typeof w.score === "number" ? Math.round(w.score) : null })));
+      setWork((previous) => {
+        const failedKinds = [f === null && "funding", l === null && "launch", i === null && "idea"].filter(Boolean);
+        const retained = previous.filter((item) => failedKinds.includes(item.key));
+        return [...out, ...retained].map((w) => ({ ...w, score: typeof w.score === "number" ? Math.round(w.score) : null }));
+      });
     });
     return () => { live = false; };
   }, [workspaceId, workTick]);
@@ -559,8 +567,8 @@ export default function AgentCentrePage() {
           </div>
         ) : <>
         <div className="mt-3 flex items-center gap-3">
-          {b?.logo ? <img src={b.logo} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-[18px] font-semibold text-blue-700">{(b?.name || "?").slice(0, 1)}</span>}
-          <span className="min-w-0"><span className="flex flex-wrap items-center gap-2 text-[15px] font-semibold text-slate-900 dark:text-slate-50">{b?.name || "Your business"}<span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700">Active</span></span>
+          {b?.logo ? <img src={b.logo} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-[18px] font-semibold text-blue-700">{(b?.name || knownWorkspaceName || "?").slice(0, 1)}</span>}
+          <span className="min-w-0"><span className="flex flex-wrap items-center gap-2 text-[15px] font-semibold text-slate-900 dark:text-slate-50">{b?.name || knownWorkspaceName || "Your business"}<span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[12px] font-medium text-emerald-700">Active</span></span>
             {b?.stage && <span className="text-[13.5px] text-slate-500">{b.stage} stage</span>}</span>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3">

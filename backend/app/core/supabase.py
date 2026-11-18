@@ -185,8 +185,9 @@ def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int 
     try:
         last_exc: Exception | None = None
         attempt = 0
+        force_fresh = False
         while attempt < max_attempts:
-            client, reused = _take() if have_slot else (_make_pool_client(), False)
+            client, reused = _take() if have_slot and not force_fresh else (_make_pool_client(), False)
             try:
                 result = fn(client)
             except Exception as exc:
@@ -198,13 +199,11 @@ def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int 
                     raise
                 _close(client)
                 last_exc = exc
-                if reused:
-                    # The server closed this connection while it sat idle. Try the next one
-                    # straight away; this doesn't count as an attempt, and can't loop for
-                    # long because each failure removes a connection from the pool.
-                    logger.info("Supabase pooled connection had gone stale (%s); retrying", type(exc).__name__)
-                    continue
                 attempt += 1
+                if reused:
+                    logger.info("Supabase pooled connection failed (%s); retrying with a fresh connection", type(exc).__name__)
+                    force_fresh = True
+                    continue
                 if attempt < max_attempts:
                     time.sleep(base_delay * attempt)
                 continue

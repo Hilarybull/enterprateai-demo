@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
-from app.modules.proposals import service
+from app.modules.proposals import evaluation, service, sourcing
 from app.modules.plans.access import plan_meets
 from fastapi import HTTPException, status as http_status
 
@@ -363,3 +365,57 @@ Return ONLY the description text — no headings, no bullet points, no extra com
         import logging
         logging.getLogger(__name__).warning("generate-description failed: %s", exc)
         return {"description": ""}
+
+@router.post("/sourcing/assist")
+async def sourcing_assist(
+    body: sourcing.SourcingBrief,
+    request_id: UUID,
+    workspace_id: str = Query(min_length=1),
+    user=Depends(get_current_user),
+):
+    return await sourcing.generate_for_request(user["id"], workspace_id, str(request_id), body)
+
+
+@router.post("/sourcing/match-suppliers")
+async def sourcing_match_suppliers(
+    body: sourcing.MatchInput,
+    workspace_id: str = Query(min_length=1),
+    user=Depends(get_current_user),
+):
+    return await sourcing.match_suppliers(user["id"], workspace_id, body)
+
+
+@router.put("/sourcing/drafts/{request_id}")
+async def save_sourcing_draft(
+    request_id: UUID, body: sourcing.SaveDraft,
+    workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.save_draft(user["id"], workspace_id, str(request_id), body)
+
+
+@router.get("/sourcing/drafts/{request_id}")
+async def load_sourcing_draft(
+    request_id: UUID, workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.load_draft(user["id"], workspace_id, str(request_id))
+
+@router.post("/sourcing/drafts/{request_id}/send-rfq")
+async def send_sourcing_rfq(
+    request_id: UUID, body: sourcing.SendDraft,
+    workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.send_rfq_draft(user, workspace_id, str(request_id), body)
+
+@router.get("/requests/{request_id}/evaluation")
+async def read_evaluation(request_id: str, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.read(user["id"], workspace_id, request_id)
+
+
+@router.post("/requests/{request_id}/evaluation/assist/{proposal_id}")
+async def assist_evaluation(request_id: str, proposal_id: str, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.generate(user["id"], workspace_id, request_id, proposal_id)
+
+
+@router.post("/requests/{request_id}/evaluation/confirm")
+async def confirm_evaluation(request_id: str, body: evaluation.Review, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.confirm(user["id"], workspace_id, request_id, body)

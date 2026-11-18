@@ -307,7 +307,7 @@ class AgentRequestIn(BaseModel):
     locale: str = "en-GB"
     background: bool = False      # return as soon as the task exists; the caller watches it
     # Sent from a module's own Assistant (a funding case, a launch plan, the idea): its conversation answers, never another's
-    page: str | None = Field(default=None, pattern="^(funding|launch|idea|customers|risks|pricing)$")
+    page: str | None = Field(default=None, pattern="^(funding|launch|idea|customers|risks|pricing|procurement)$")
     case_id: str | None = Field(default=None, max_length=80)      # the plan's page it was sent from: the plan it is about (28 Oct)
 
 
@@ -879,6 +879,9 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         # The one Agent conversation (the owner, 31 Oct), behind its switch: the Agent Centre and the dashboard's chat. It answers,
         # or assigns the work to a module; a module that keeps its own flow (funding, launch, documents) carries on below.
         from app.modules.agent import conductor
+        from app.modules.agent import procurement
+        if procurement.should_route(body, conductor._thread(known, user["id"])):
+            return _result(await procurement.run(get_orchestrator(), user, body, known))
         if not body.page and conductor.enabled(known):
             try:
                 led = await conductor.turn(get_orchestrator(), user, body, known)

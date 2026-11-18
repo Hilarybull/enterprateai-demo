@@ -1,5 +1,4 @@
 import { safeHtml } from "../lib/safeHtml";
-import UkDateInput from "../components/UkDateInput";
 import ResearchDiagnostics from "../components/admin/ResearchDiagnostics";
 import { createPortal } from "react-dom";
 import { alertDialog } from "../lib/dialog";
@@ -12,11 +11,12 @@ import { normalisePlanKey, planLabel } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
+import TenderSyncAdmin from "../components/admin/TenderSyncAdmin";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
 import EmailsAdmin from "../components/admin/EmailsAdmin";
 import DiscountsAdmin from "../components/admin/DiscountsAdmin";
 import AgentSpend from "../components/admin/AgentSpend";
-import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
+import { ADMIN_NAV, AdminDateFilter, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
 import { moderatorAccess } from "../lib/directory";
 
 function fmtAdminDate(iso) {
@@ -1672,6 +1672,7 @@ const STAT_CONFIG = [
 
 // Title (one brand-coloured word) and subtitle for each section's header.
 const PAGE_TITLE = {
+  "tender-sync": ["Public tender", "sync", "Manage the Find a Tender import and automatic schedule."],
   overview: ["Platform", "Overview", "How the platform is doing, and what needs attention."],
   "ai-usage": ["AI", "Usage", "Calls, tokens and estimated cost."],
   workspaces: ["All", "Workspaces", "Every business on the platform."],
@@ -1742,8 +1743,8 @@ export function ContactsSection() {
         <select aria-label="Marketing consent" value={filters.consent} onChange={set("consent")} className={field}><option value="">Any consent</option><option value="yes">Can be sent marketing</option><option value="no">Cannot be sent marketing</option></select>
         <select aria-label="Plan" value={filters.plan} onChange={set("plan")} className={field}><option value="">Any plan</option><option value="explorer">Explorer</option><option value="starter_insight">Starter</option><option value="decision_engine">Decision Engine</option></select>
         <select aria-label="Sign-up source" value={filters.source} onChange={set("source")} className={field}><option value="">Any source</option>{Object.entries(CONTACT_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <UkDateInput aria-label="Joined from" value={filters.since} onChange={(v) => set("since")({ target: { value: v } })} className={field} />
-        <UkDateInput aria-label="Joined until" value={filters.until} onChange={(v) => set("until")({ target: { value: v } })} className={field} />
+        <AdminDateFilter label="Date joined" start={filters.since} end={filters.until}
+          onApply={(since, until) => setFilters((current) => ({ ...current, since, until }))} />
       </div>
       {state.problem && <p role="alert" className="mb-2 text-[13px] text-rose-600">{state.problem}</p>}
       {state.loading ? <p role="status" className="py-6 text-center text-[13px] text-slate-400">Loading contacts…</p> : (
@@ -3502,6 +3503,7 @@ export default function AdminPage() {
           </div>
         )}
 
+        {tab === "tender-sync" && isAdmin && <TenderSyncAdmin />}
         {tab === "activation" && isAdmin && <ActivationAdmin />}
         {tab === "emails" && isAdmin && <EmailsAdmin onOpenTab={setTab} />}
         {tab === "discounts" && isAdmin && <DiscountsAdmin />}

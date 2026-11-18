@@ -183,6 +183,8 @@ async def update_request(user_id: str, workspace_id: str | None, request_id: str
     if idx is None:
         raise HTTPException(status_code=404, detail="Request not found")
     req = dict(requests[idx])
+    if req.get("sourcing_kind") and req.get("status") in ("DRAFT", "SENDING"):
+        raise HTTPException(409, "Edit this request through Sourcing.")
     if req.get("status") not in ("DRAFT", "PAUSED", "PUBLISHED"):
         raise HTTPException(status_code=400, detail="Only DRAFT, PAUSED, or PUBLISHED requests can be edited")
     now = _now()
@@ -211,12 +213,19 @@ async def publish_request(user_id: str, workspace_id: str | None, request_id: st
     idx = next((i for i, r in enumerate(requests) if r.get("id") == request_id), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Request not found")
+    if requests[idx].get("sourcing_kind") == "RFQ":
+        raise HTTPException(409, "RFQ drafts must be sent to a supplier.")
     if requests[idx].get("status") != "DRAFT":
         raise HTTPException(status_code=400, detail="Only DRAFT requests can be published")
     now = _now()
     requests[idx] = {**requests[idx], "status": "PUBLISHED", "published_at": now, "updated_at": now}
     merged = dict(data)
     merged["proposal_requests"] = requests
+    if requests[idx].get("sourcing_kind") == "RFP":
+        from app.modules.proposals.sourcing import record_event
+
+        merged = record_event(merged, user_id=user_id, workspace_id=ws_id, request_id=request_id,
+                              event_type="rfp_publish_approved", detail={})
     await _save_data(ws_id, user_id, merged)
     return requests[idx]
 
@@ -659,6 +668,16 @@ async def invite_to_request(
     req = next((r for r in requests_list if r.get("id") == request_id), None)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
+
+    if req.get("sourcing_kind") == "RFQ" or (req.get("sourcing_kind") and req.get("status") != "PUBLISHED"):
+        raise HTTPException(409, "Publish this proposal request before inviting suppliers.")
+    if req.get("sourcing_kind"):
+        from app.modules.proposals.sourcing import record_event
+
+        ws_id, _ = _ws_fields(ws)
+        audited = record_event(data, user_id=user_id, workspace_id=ws_id, request_id=request_id,
+                               event_type="rfp_invite_approved", detail={"recipient_count": len(emails)})
+        await _save_data(ws_id, user_id, audited)
 
     sent: list[str] = []
     failed: list[str] = []

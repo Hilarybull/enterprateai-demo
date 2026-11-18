@@ -44,6 +44,7 @@ from app.modules.agent.router import router as agent_router, start_scheduler as 
 from app.modules.readiness.router import router as readiness_router
 from app.modules.agent.goal_router import router as goal_router
 from app.modules.marketplace.directory_router import router as marketplace_directory_router
+from app.modules.tenders.router import router as tenders_router, start_scheduler as start_tender_scheduler, stop_scheduler as stop_tender_scheduler
 from app.modules.activation.router import router as activation_router, start_scheduler as start_activation_scheduler, stop_scheduler as stop_activation_scheduler
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
@@ -180,6 +181,7 @@ def create_app() -> FastAPI:
     app.include_router(goal_router)
     app.include_router(marketplace_directory_router)
     app.include_router(activation_router)
+    app.include_router(tenders_router)
     app.include_router(support_router)
     app.include_router(reports_router)
     app.include_router(credits_router)
@@ -203,6 +205,7 @@ def create_app() -> FastAPI:
             app.state.supabase_warm_task = asyncio.create_task(keep_pool_warm())
         # Agent workflows wait on due dates and payments; this wakes the ones that are due.
         start_agent_scheduler()
+        start_tender_scheduler()
         start_activation_scheduler()      # does nothing each run unless ACTIVATION_EMAILS_ENABLED is set
         if settings.supabase_url and settings.supabase_service_role_key:
             from app.modules.marketplace.directory_router import start_workspace_sweep
@@ -216,6 +219,7 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def shutdown():
         stop_agent_scheduler()
+        stop_tender_scheduler()
         stop_activation_scheduler()
         from app.modules.marketplace.directory_router import stop_workspace_sweep
         stop_workspace_sweep()

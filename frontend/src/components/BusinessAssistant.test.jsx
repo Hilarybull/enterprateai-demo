@@ -58,7 +58,7 @@ describe("the chat bubble is the Agent", () => {
     window.addEventListener("ea:credits:refresh", refreshed);
     await ask("How is my revenue?");
     expect(await screen.findByText("Your revenue is steady.")).toBeTruthy();
-    expect(sent(/\/agent\/requests$/)[0].body).toMatchObject({ business_id: "ws-2", text: "How is my revenue?", history: [] });
+    expect(sent(/\/agent\/requests$/)[0].body).toMatchObject({ business_id: "ws-2", text: "How is my revenue?", history: [{ role: "assistant", content: expect.any(String) }] });
     expect(calls.some((c) => /business-assistant/.test(c.path))).toBe(false);
     expect(refreshed).toHaveBeenCalled();
     window.removeEventListener("ea:credits:refresh", refreshed);
@@ -74,6 +74,7 @@ describe("the chat bubble is the Agent", () => {
     await ask("And the name of my van was?");
     await waitFor(() => expect(sent(/\/agent\/requests$/).length).toBe(3));
     expect(sent(/\/agent\/requests$/)[2].body.history).toEqual([
+      { role: "assistant", content: expect.any(String) },
       { role: "user", content: "My van is called Bluebell." }, { role: "assistant", content: "Noted: Bluebell." },
       { role: "user", content: "Thanks" }, { role: "assistant", content: "You're welcome." }]);
   });
@@ -82,14 +83,14 @@ describe("the chat bubble is the Agent", () => {
     await open();
     await ask("How is my revenue?");
     await screen.findByText("Your revenue is steady.");
-    expect(getConversation("ws-2").length).toBe(2);
+    expect(getConversation("ws-2").length).toBe(3);
     expect(getConversation("ws-9")).toEqual([]);                          // another business sees none of it
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "New conversation" })); });
     expect(getConversation("ws-2")).toEqual([]);
     expect(screen.queryByText("Your revenue is steady.")).toBeNull();
     await ask("Anything new?");
     await waitFor(() => expect(sent(/\/agent\/requests$/).length).toBe(2));
-    expect(sent(/\/agent\/requests$/)[1].body.history).toEqual([]);
+    expect(sent(/\/agent\/requests$/)[1].body.history).toEqual([{ role: "assistant", content: expect.any(String) }]);
   });
 
   it("says exactly what is blocking it: credits, or the plan, with the way to upgrade", async () => {
@@ -244,4 +245,26 @@ it("a landing page task that turns into a running task is followed here, and a s
   await act(async () => { render(<MemoryRouter><BusinessAssistant /></MemoryRouter>); });
   expect(await screen.findByText(/It's ready\. Next step: open it\./)).toBeTruthy();
   expect(screen.queryByText(/couldn't be started/)).toBeNull();
+});
+
+describe("a reply reads like a good chat reply (the owner, 12 Nov: \"some nice response like this\")", () => {
+  it("shows bold where the Agent put it, copy and read aloud, and its contextual actions next to the composer, once", async () => {
+    replies = [{ kind: "answer", conversational: true, quick: true,
+      message: "The domain service is no longer active, so this would be a **new registration rather than a renewal**. Next step: register it.",
+      actions: [{ label: "Register piclehdest.org for me", kind: "explain", prompt: "Register piclehdest.org for me" },
+                { label: "Show me the registration price", kind: "explain", prompt: "Show me the registration price" }] }];
+    await open();
+    await ask("Can I renew my domain?");
+    const strong = await screen.findByText("new registration rather than a renewal");
+    expect(strong.tagName).toBe("STRONG");
+    expect(document.body.textContent).not.toContain("**");
+    expect(screen.getAllByRole("button", { name: "Copy reply" }).length).toBeGreaterThan(1);      // every reply, the greeting too
+    expect(screen.getByRole("group", { name: "Suggested actions" }).contains(screen.getByRole("button", { name: "Register piclehdest.org for me" }))).toBe(true);
+    expect(screen.getAllByRole("button", { name: "Register piclehdest.org for me" }).length).toBe(1);      // never twice
+    replies = [{ kind: "answer", message: "It's £12 a year.", conversational: true }];
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Show me the registration price" })); });
+    expect(sent(/\/agent\/requests$/).at(-1).body.text).toBe("Show me the registration price");
+    expect(await screen.findByText("It's £12 a year.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Register piclehdest.org for me" })).toBeNull();      // only the latest reply’s actions
+  });
 });

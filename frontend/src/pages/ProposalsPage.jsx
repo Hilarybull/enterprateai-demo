@@ -1,3 +1,4 @@
+import { saveSourcingDraft } from "../lib/sourcing";
 import { refusalMessage } from "../lib/entitlement";
 import UkDateInput from "../components/UkDateInput";
 import { useEffect, useImperativeHandle, useRef, forwardRef, useState, useMemo, useCallback } from "react";
@@ -253,10 +254,12 @@ const REQ_FORMATS = [
   { key: "link",         label: "Link / URL",   desc: "Website or portfolio link" },
 ];
 
-function RequestModal({ onClose, onSaved, editItem }) {
+export function RequestModal({ onClose, onSaved, editItem, inline = false, saveDraft, saveLabel, locked = false, onDirty, onDraftChange, initialSaved = false }) {
   const { createRequest, updateRequest } = useProposalStore();
-  const wsCurrency = useWorkspaceStore((s) => s.currency) || "GBP";
+  const accountCurrency = useWorkspaceStore((s) => s.currency) || "GBP";
+  const wsCurrency = editItem?.budget_currency || accountCurrency;
   const workspaceName = useWorkspaceStore((s) => s.workspaceName) || "";
+  const [requestKind, setRequestKind] = useState(editItem?.sourcing_kind || "RFP");
   const [type, setType] = useState(editItem?.type ?? "general");
   const [title, setTitle] = useState(editItem?.title ?? "");
   const [description, setDescription] = useState(editItem?.description ?? "");
@@ -273,12 +276,17 @@ function RequestModal({ onClose, onSaved, editItem }) {
   // Split stored categories into known ones + free-text "other"
   const _storedCats = editItem?.accepted_categories ?? [];
   const _knownCats = PROPOSAL_CATEGORIES.filter(c => c !== "Other");
-  const [acceptedCategories, setAcceptedCategories] = useState(_storedCats.filter(c => _knownCats.includes(c) || c === "Other"));
+  const [acceptedCategories, setAcceptedCategories] = useState(() => {
+    const known = _storedCats.filter((category) => _knownCats.includes(category) || category === "Other");
+    if (_storedCats.some((category) => !PROPOSAL_CATEGORIES.includes(category)) && !known.includes("Other")) known.push("Other");
+    return known;
+  });
   const [otherCatText, setOtherCatText] = useState(_storedCats.find(c => !PROPOSAL_CATEGORIES.includes(c)) ?? "");
   const [requirements, setRequirements] = useState(editItem?.requirements ?? []);
   const [newReq, setNewReq] = useState("");
   const [newReqFormat, setNewReqFormat] = useState("text");
   const [saving, setSaving] = useState(false);
+  const [unchanged, setUnchanged] = useState(initialSaved);
   const [error, setError] = useState(null);
   const [aiDescLoading, setAiDescLoading] = useState(false);
   const [aiDescHint, setAiDescHint] = useState("");
@@ -309,8 +317,8 @@ function RequestModal({ onClose, onSaved, editItem }) {
   // Invite-only: marketplace business search
   const [bizListings, setBizListings] = useState([]);
   const [bizSearch, setBizSearch] = useState("");
-  const [inviteEmails, setInviteEmails] = useState("");
-  const [inviteSelected, setInviteSelected] = useState([]); // [{workspace_id, name}]
+  const [inviteEmails, setInviteEmails] = useState((editItem?.invite_emails || []).join(", "));
+  const [inviteSelected, setInviteSelected] = useState((editItem?.invited_workspace_ids || []).map((workspace_id) => ({ workspace_id, name: "Selected supplier" }))); // [{workspace_id, name}]
 
   const isInviteOnly = acceptedModes[0] === "invite_only";
   const isSpecific = acceptedModes[0] === "specific";
@@ -353,9 +361,10 @@ function RequestModal({ onClose, onSaved, editItem }) {
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    if (inline) return;
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, inline]);
 
   async function handleBriefUpload(file) {
     if (!file) return;
@@ -406,11 +415,24 @@ function RequestModal({ onClose, onSaved, editItem }) {
     setRequirements((r) => r.map((x, idx) => idx === i ? { ...x, format: fmt } : x));
   }
 
-  async function handleSave() {
-    if (!title.trim()) { setError("Title is required."); return; }
-    setSaving(true); setError(null);
+  const dirtyHandler = useRef(onDirty);
+  dirtyHandler.current = onDirty;
+  const valuesHandler = useRef(onDraftChange);
+  valuesHandler.current = onDraftChange;
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    setUnchanged(false);
+    dirtyHandler.current?.();
+    valuesHandler.current?.(requestFields());
+  }, [requestKind, type, title, description, budget, budgetVisible, deadline, cap, acceptedModes, visibility,
+      acceptedCategories, otherCatText, requirements, critBusinessTypes, critStages, critCountry,
+      critCountryOther, critIndustry, critIndustryOther, inviteEmails, inviteSelected]);
+
+  function requestFields() {
     const effectiveVisibility = isInviteOnly ? "private" : visibility;
     const payload = {
+      ...(editItem?.sourcing_kind && { kind: requestKind }),
       type, title: title.trim(), description: description.trim() || null,
       budget_range: budget.trim() || null, budget_currency: wsCurrency || "GBP", budget_visible: budgetVisible,
       deadline: deadline || null,
@@ -437,10 +459,25 @@ function RequestModal({ onClose, onSaved, editItem }) {
         },
       }),
     };
-    const res = editItem
-      ? await updateRequest(editItem.id, payload)
-      : await createRequest(payload);
-    if (res.ok && isInviteOnly && inviteEmails.trim()) {
+    return payload;
+  }
+
+  async function handleSave() {
+    if (!title.trim()) { setError("Title is required."); return; }
+    setSaving(true); setError(null);
+    const payload = requestFields();
+    if (locked || saving) { setSaving(false); return; }
+    let res;
+    try {
+      res = saveDraft ? { ok: true, data: await saveDraft(payload) } : editItem
+        ? await updateRequest(editItem.id, payload)
+        : await createRequest(payload);
+    } catch {
+      setSaving(false);
+      setError(saveDraft ? "We couldn't save your draft. Your edits are still here. Try saving again." : "We couldn't save this request. Your edits are still here. Try again.");
+      return;
+    }
+    if (!saveDraft && !editItem?.sourcing_kind && res.ok && isInviteOnly && inviteEmails.trim()) {
       const emailList = inviteEmails.split(/[\s,;]+/).map(e => e.trim()).filter(Boolean);
       if (emailList.length > 0) {
         const savedId = res.data?.id || editItem?.id;
@@ -455,39 +492,46 @@ function RequestModal({ onClose, onSaved, editItem }) {
       }
     }
     setSaving(false);
-    if (res.ok) { onSaved && onSaved(res.data); onClose(); }
+    if (res.ok) { setUnchanged(true); onSaved?.(res.data); if (!inline) onClose(); }
     else setError(res.error);
   }
 
-  return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="ea-dialog relative z-10 w-full max-w-2xl overflow-hidden rounded-t-3xl sm:rounded-2xl" style={{ maxHeight: "95vh" }}>
+  const content = (
+    <div className={inline ? "min-w-0" : "fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4"}
+      onClick={(e) => { if (!inline && e.target === e.currentTarget) onClose(); }}>
+      {!inline && <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />}
+      <fieldset disabled={locked} className={inline ? "min-w-0" : "ea-dialog relative z-10 w-full max-w-2xl overflow-hidden rounded-t-3xl sm:rounded-2xl"} style={inline ? undefined : { maxHeight: "95vh" }}>
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <h2 className="text-[16px] font-bold text-slate-800 dark:text-slate-100">
-            {editItem ? "Edit Proposal Request" : "New Proposal Request"}
+            {inline ? "Request details and options" : editItem?.sourcing_kind === "RFQ" ? "Edit Quote Request" : editItem ? "Edit Proposal Request" : "New Proposal Request"}
           </h2>
-          <button onClick={onClose}
+          {!inline && <button onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          </button>}
         </div>
 
-        <div className="ea-scroll overflow-y-auto px-6 py-5 space-y-5" style={{ maxHeight: "calc(95vh - 140px)" }}>
+        <div className="ea-scroll overflow-y-auto px-6 py-5 space-y-5" style={inline ? undefined : { maxHeight: "calc(95vh - 140px)" }}>
 
+          {!inline && editItem?.sourcing_kind && editItem.status === "DRAFT" && <label className="block text-sm font-medium">Request type
+            <select className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+              value={requestKind} onChange={(event) => setRequestKind(event.target.value)}>
+              <option value="RFQ">RFQ - Send a quote request to a supplier</option>
+              <option value="RFP">RFP - Publish a request for proposals and invite suppliers</option>
+            </select>
+          </label>}
           {/* Title */}
           <div>
             <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">
               Request Title <span className="text-red-500">*</span>
             </label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Looking for a software development partner"
+            <input aria-label="Request title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Looking for a software development partner"
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
           </div>
 
           {/* Description + brief upload */}
           <div>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
               <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-400">Description</label>
               <div className="flex items-center gap-2">
                 <button type="button"
@@ -511,22 +555,22 @@ function RequestModal({ onClose, onSaved, editItem }) {
               </div>
             </div>
             {(briefError || aiDescHint) && <p className="mb-1.5 text-[11px] text-amber-600 dark:text-amber-400">{briefError || aiDescHint}</p>}
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={5}
+            <textarea aria-label="Request description" value={description} onChange={(e) => setDescription(e.target.value)} rows={5}
               placeholder="Describe what you're looking for, your context, and any key criteria…&#10;Or upload a brief above to auto-fill this field."
               className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 resize-none" />
           </div>
 
           {/* Budget + Deadline row */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">
                 Budget Range <span className="font-normal text-slate-400">({wsCurrency})</span>
               </label>
               <div className="flex items-center rounded-xl border border-slate-200 bg-white shadow-sm focus-within:border-brand-400 dark:border-slate-700 dark:bg-slate-900">
                 <span className="pl-3 pr-1 text-[13px] font-medium text-slate-400 select-none">{getCurrencySymbol(wsCurrency)}</span>
-                <input value={budget} onChange={(e) => setBudget(e.target.value)}
+                <input aria-label="Budget range" value={budget} onChange={(e) => setBudget(e.target.value)}
                   placeholder={`e.g. 10,000 – 50,000`}
-                  className="flex-1 rounded-xl bg-transparent px-2 py-2.5 text-[13px] text-slate-800 focus:outline-none dark:text-slate-200" />
+                  className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-2.5 text-[13px] text-slate-800 focus:outline-none dark:text-slate-200" />
               </div>
               <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-slate-500">
                 <input type="checkbox" checked={budgetVisible} onChange={(e) => setBudgetVisible(e.target.checked)}
@@ -536,7 +580,7 @@ function RequestModal({ onClose, onSaved, editItem }) {
             </div>
             <div>
               <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Deadline</label>
-              <UkDateInput value={deadline} onChange={(v) => setDeadline(v)}
+              <UkDateInput aria-label="Submission deadline" value={deadline} onChange={(v) => setDeadline(v)}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
             </div>
           </div>
@@ -544,7 +588,7 @@ function RequestModal({ onClose, onSaved, editItem }) {
           {/* Submission cap */}
           <div>
             <label className="mb-1.5 block text-[12px] font-semibold text-slate-600 dark:text-slate-400">Submission Cap</label>
-            <input type="number" min="1" value={cap} onChange={(e) => setCap(e.target.value)} placeholder="No limit"
+            <input aria-label="Submission cap" type="number" min="1" value={cap} onChange={(e) => setCap(e.target.value)} placeholder="No limit"
               className="w-36 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" />
           </div>
 
@@ -859,25 +903,25 @@ function RequestModal({ onClose, onSaved, editItem }) {
         </div>
 
         {error && (
-          <div className="border-t border-red-100 bg-red-50 px-6 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+          <div role="alert" className="border-t border-red-100 bg-red-50 px-6 py-2.5 text-[12px] text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {error}
           </div>
         )}
 
         <div className="flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
-          <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:text-slate-400 transition">
+          {!inline && <button onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-transparent dark:text-slate-400 transition">
             Cancel
-          </button>
-          <button onClick={handleSave} disabled={saving}
+          </button>}
+          <button onClick={handleSave} disabled={saving || locked || (Boolean(saveDraft) && unchanged)}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2 text-[13px] font-bold text-white hover:bg-brand-700 disabled:opacity-50 transition">
             {saving && <Spinner size="sm" />}
-            {saving ? "Saving…" : editItem ? "Save Changes" : "Create Request"}
+            {saving ? "Saving…" : saveDraft && unchanged ? "Draft saved" : saveLabel || (editItem ? "Save Changes" : "Create Request")}
           </button>
         </div>
-      </div>
-    </div>,
-    document.body
+      </fieldset>
+    </div>
   );
+  return inline ? content : createPortal(content, document.body);
 }
 
 // ─── confirm modal ────────────────────────────────────────────────────────────
@@ -942,7 +986,7 @@ function RequestStatusBadge({ status }) {
   );
 }
 
-function InviteModal({ req, onClose }) {
+export function InviteModal({ req, onClose }) {
   const workspaceName = useWorkspaceStore((s) => s.workspaceName) || "";
   const userEmail = useAuthStore((s) => s.email) || "";
   const [emails, setEmails] = useState("");
@@ -960,7 +1004,7 @@ function InviteModal({ req, onClose }) {
     if (!list.length) return;
     setSending(true); setResult(null);
     try {
-      const data = await apiRequest(`/proposals/requests/${req.id}/invite`, "POST", {
+      const data = await apiRequest(`/proposals/requests/${req.id}/invite?workspace_id=${encodeURIComponent(req.workspace_id || useWorkspaceStore.getState().workspaceId || "")}`, "POST", {
         emails: list,
         invite_url: inviteUrl,
         sender_name: workspaceName || userEmail,
@@ -981,7 +1025,7 @@ function InviteModal({ req, onClose }) {
   return createPortal(
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+      <div role="dialog" aria-modal="true" aria-label="Share RFP" className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
           <h3 className="text-[14px] font-bold text-slate-800 dark:text-slate-100">Share "{req.title}"</h3>
           <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
@@ -1070,7 +1114,7 @@ function RequestCard({ req, onEdit, onPublish, onClose: onCloseReq, onReopen, on
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <RequestStatusBadge status={req.status || "DRAFT"} />
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                {titleCase(req.type || "general")}
+                {req.sourcing_kind || titleCase(req.type || "general")}
               </span>
               {(req.accepted_modes || [])[0] === "invite_only" && (
                 <span className="text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
@@ -1126,14 +1170,14 @@ function RequestCard({ req, onEdit, onPublish, onClose: onCloseReq, onReopen, on
               {copied ? "Copied!" : "Copy Link"}
             </button>
           )}
-          {canShare && (
+          {canShare && onInvite && (
             <button onClick={() => { setMenuOpen(false); onInvite && onInvite(req); }}
               className="flex w-full items-center gap-2 px-3.5 py-2.5 text-[12px] text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
               Invite via Email
             </button>
           )}
-          {canPublish && (
+          {canPublish && onPublish && (
             <button onClick={() => { setMenuOpen(false); onPublish && onPublish(req); }}
               className="flex w-full items-center gap-2 px-3.5 py-2.5 text-[12px] text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20 transition">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -1178,8 +1222,19 @@ function RequestCard({ req, onEdit, onPublish, onClose: onCloseReq, onReopen, on
 // ─── requests tab ─────────────────────────────────────────────────────────────
 
 export function RequestsTab({ createTrigger }) {
+  const [requestParams] = useSearchParams();
+  const publishDraftId = requestParams.get("publishDraft");
+  const sourcingDraftId = requestParams.get("sourcingDraft");
+  const openedDraft = useRef(null);
   const { requests, requestsLoading, requestsError, fetchRequests, publishRequest, reopenRequest, closeRequest, deleteRequest, preferences, fetchPreferences } = useProposalStore();
   const navigate = useNavigate();
+
+  function editRequest(record) {
+    setDetailItem(null);
+    if (record.status === "SENDING") return;
+    setEditItem(record);
+    setShowModal(true);
+  }
 
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -1191,10 +1246,21 @@ export function RequestsTab({ createTrigger }) {
   const [inviteTarget, setInviteTarget] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmClose, setConfirmClose] = useState(null);
+  const [confirmPublish, setConfirmPublish] = useState(null);
+  const publishDraft = requests.find((req) => req.id === publishDraftId && req.sourcing_kind === "RFP" && req.status === "DRAFT");
   const [publishGate, setPublishGate] = useState(null); // req blocked by missing open_for_proposals
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
   useEffect(() => { fetchPreferences(); }, [fetchPreferences]);
+  useEffect(() => {
+    if (!sourcingDraftId || openedDraft.current === sourcingDraftId) return;
+    const record = requests.find((request) => request.id === sourcingDraftId);
+    if (!record || record.status === "SENDING") return;
+    openedDraft.current = sourcingDraftId;
+    setEditItem(record);
+    setShowModal(true);
+  }, [requests, sourcingDraftId]);
+
 
   const seenTrigger = useRef(createTrigger ?? 0);
   useEffect(() => {
@@ -1217,7 +1283,9 @@ export function RequestsTab({ createTrigger }) {
       return;
     }
     const res = await publishRequest(req.id);
-    setToast(res.ok ? { msg: "Request published to Marketplace", type: "success" } : { msg: res.error, type: "error" });
+    setToast(res.ok
+      ? { msg: "Request published to Marketplace", type: "success" }
+      : { msg: req.sourcing_kind === "RFP" ? "We couldn't confirm publication. Check the request status before trying again." : res.error, type: "error" });
   }
 
   function handleClose(req) {
@@ -1255,9 +1323,21 @@ export function RequestsTab({ createTrigger }) {
   return (
     <div>
       {toast && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
+      {publishDraft && <section className="mb-4 space-y-2 rounded-xl border border-brand-200 p-4 dark:border-brand-800" aria-label="Review RFP for publication">
+        <h3 className="font-semibold">{publishDraft.title}</h3>
+        <p className="whitespace-pre-wrap text-sm">{publishDraft.description}</p>
+        <button type="button" className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white" onClick={() => setConfirmPublish(publishDraft)}>Publish RFP</button>
+      </section>}
+      {confirmPublish && <ConfirmModal title="Publish this RFP?"
+        body="This request will appear on Marketplace and can receive proposals."
+        confirmLabel="Publish RFP" onCancel={() => setConfirmPublish(null)}
+        onConfirm={() => { const request = confirmPublish; setConfirmPublish(null); handlePublish(request); }} />}
       {showModal && (
         <RequestModal
           editItem={editItem}
+          saveDraft={editItem?.sourcing_kind && editItem.status === "DRAFT" ? (payload) =>
+            saveSourcingDraft(editItem.id, editItem.workspace_id || useWorkspaceStore.getState().workspaceId,
+              { ...payload, kind: payload.kind || editItem.sourcing_kind }) : undefined}
           onClose={() => { setShowModal(false); setEditItem(null); }}
           onSaved={(updated) => {
             fetchRequests();
@@ -1267,7 +1347,7 @@ export function RequestsTab({ createTrigger }) {
         />
       )}
       {detailItem && (
-        <RequestDetailPanel req={detailItem} onClose={() => setDetailItem(null)} onEdit={(r) => { setDetailItem(null); setEditItem(r); setShowModal(true); }} />
+        <RequestDetailPanel req={detailItem} onClose={() => setDetailItem(null)} onEdit={editRequest} />
       )}
       {inviteTarget && <InviteModal req={inviteTarget} onClose={() => setInviteTarget(null)} />}
       {confirmDelete && (
@@ -1328,7 +1408,7 @@ export function RequestsTab({ createTrigger }) {
           <h2 className="text-[15px] font-bold text-slate-800 dark:text-slate-100">Proposal Requests</h2>
           <p className="text-[12px] text-slate-500 dark:text-slate-400">Manage requests you've created for incoming proposals.</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search requests..." className="rounded-lg border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300 w-40" />
@@ -1350,6 +1430,8 @@ export function RequestsTab({ createTrigger }) {
               </div>
             )}
           </div>
+          <button type="button" className="rounded-xl border border-brand-200 px-3 py-1.5 text-xs font-semibold text-brand-700 dark:border-brand-800 dark:text-brand-300"
+            onClick={() => navigate("/marketplace/sourcing?from=procurement&mode=draft")}>Draft with EnterprateAI</button>
           <button
             onClick={() => { setEditItem(null); setShowModal(true); }}
             className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 transition">
@@ -1390,13 +1472,13 @@ export function RequestsTab({ createTrigger }) {
             <RequestCard
               key={req.id}
               req={req}
-              onEdit={(r) => { setEditItem(r); setShowModal(true); }}
-              onPublish={handlePublish}
+              onEdit={editRequest}
+              onPublish={req.sourcing_kind === "RFQ" ? undefined : handlePublish}
               onClose={handleClose}
               onReopen={handleReopen}
               onDelete={handleDelete}
               onView={(r) => setDetailItem(r)}
-              onInvite={(r) => setInviteTarget(r)}
+              onInvite={req.sourcing_kind && req.status !== "PUBLISHED" ? undefined : (r) => setInviteTarget(r)}
             />
           ))}
         </div>
@@ -1433,7 +1515,7 @@ function RequestDetailPanel({ req, onClose, onEdit }) {
         <div className="ea-scroll overflow-y-auto px-6 py-5 space-y-5" style={{ maxHeight: "calc(90vh - 80px)" }}>
           <div className="flex flex-wrap items-center gap-2">
             <RequestStatusBadge status={req.status || "DRAFT"} />
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{titleCase(req.type || "general")}</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{req.sourcing_kind || titleCase(req.type || "general")}</span>
             {(req.accepted_modes || [])[0] === "invite_only" && (
               <span className="text-[11px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                 Invite Only

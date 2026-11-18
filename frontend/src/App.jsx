@@ -1,5 +1,5 @@
 import DialogHost from "./components/DialogHost";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Suspense, lazy, useEffect } from "react";
 import { DemoTourProvider } from "./context/DemoTourContext";
 import DemoTour from "./components/DemoTour";
@@ -46,6 +46,7 @@ import AdminPage from "./pages/AdminPage";
 import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
 import MarketplacePage from "./pages/MarketplacePage";
+import SupplierSourcing from "./components/marketplace/SupplierSourcing";
 import DirectoryProfilePage from "./pages/DirectoryProfilePage";
 import ClaimEmailsOptOutPage from "./pages/ClaimEmailsOptOutPage";
 import ClaimFlowPage from "./pages/ClaimFlowPage";
@@ -102,6 +103,24 @@ function Protected({ children }) {
     return <Navigate to={`/login${next}`} replace />;
   }
   return <>{children}</>;
+}
+
+function MarketplaceSourcingPage() {
+  const { state, search: sourcingSearch } = useLocation();
+  const fromProcurement = new URLSearchParams(sourcingSearch).get("from") === "procurement";
+  const search = typeof state?.marketplaceSearch === "string" && state.marketplaceSearch.startsWith("?")
+    ? state.marketplaceSearch : "";
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 sm:py-10 dark:bg-slate-950">
+      <div className="mx-auto max-w-6xl">
+        <Link to={fromProcurement ? "/operations?tab=Procurement&sub=Proposal%20Requests" : { pathname: "/marketplace", search }}
+          className="mb-4 inline-flex items-center gap-2 rounded-md text-sm font-semibold text-slate-600 hover:text-brand-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 dark:text-slate-300 dark:hover:text-brand-300">
+          <span aria-hidden="true">&#8592;</span> {fromProcurement ? "Back to Proposal Requests" : "Back to Marketplace"}
+        </Link>
+        <SupplierSourcing />
+      </div>
+    </main>
+  );
 }
 
 function PublicRoot() {
@@ -223,6 +242,7 @@ export default function App() {
         }
       />
       <Route path="/marketplace" element={<MarketplacePage />} />
+      <Route path="/marketplace/sourcing" element={<Protected><RequireWorkspace><MarketplaceSourcingPage /></RequireWorkspace></Protected>} />
       <Route path="/marketplace/request/:requestId" element={<Suspense fallback={<div className="p-6"><ContentSkeleton label="this request" /></div>}><ProposalRequestDetailPage /></Suspense>} />
       {/* A business's own Marketplace settings live in the Marketplace, under its header, not in the dashboard. */}
       <Route path="/marketplace/profile" element={<Protected><MarketplaceShell><RequireWorkspace fallback={<ProfileSkeleton />}><ErrorBoundary label="Marketplace profile"><MarketplaceProfilePage /></ErrorBoundary></RequireWorkspace></MarketplaceShell></Protected>} />

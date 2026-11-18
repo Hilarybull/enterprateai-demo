@@ -7,6 +7,7 @@ import { currencySign, formatCurrency, newRecordId, todayLocal } from "../lib/fo
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import ProposalEvaluation from "../components/ProposalEvaluation";
 import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
 import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
@@ -1801,19 +1802,24 @@ export default function BusinessOperationsPage() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [activeTab, setActiveTab] = useState("Overview");
   const [salesSub, setSalesSub] = useState("Pipeline");
+  const [evaluationRequest, setEvaluationRequest] = useState(null);
   const [procSub, setProcSub] = useState("Overview");
   // Read ?tab= and ?sub= from notification deep-links
   useEffect(() => {
     const p = new URLSearchParams(location.search);
     const tab = p.get("tab"); const sub = p.get("sub");
     if (tab) setActiveTab(tab);
+    const evaluate = p.get("evaluationRequest");
+    if (tab === "Procurement" && sub === "Evaluations" && evaluate && workspaceId) {
+      setEvaluationRequest({ request: { id: evaluate, title: "this request" }, workspaceId });
+    }
     if (sub) {
       if (tab === "Sales") setSalesSub(sub);
       if (tab === "Procurement") setProcSub(sub);
       if (tab === "Transactions") setTxnSub(sub);
     }
     if (["quote", "invoice", "expense"].includes(p.get("new"))) setCreateFromLink(p.get("new"));      // "Add an expense" from the risk check: the form, open      // "Create a quotation" from a check: the form, open
-  }, [location.search]);
+  }, [location.search, workspaceId]);
   const [createFromLink, setCreateFromLink] = useState(null);
   const [recordsIn, setRecordsIn] = useState(false);      // the workspace's records have been read at least once
   const [reqCreateTrigger, setReqCreateTrigger] = useState(0);
@@ -3095,7 +3101,9 @@ export default function BusinessOperationsPage() {
                 </>
               );
             })()}
-            {procSub === "Proposal Requests" && <div className="mt-2"><RequestsTab createTrigger={reqCreateTrigger} /></div>}
+            {procSub === "Proposal Requests" && <div className="mt-2 space-y-4">
+              <RequestsTab createTrigger={reqCreateTrigger} />
+            </div>}
             {procSub === "Sent RFQs" && (
               <>
                 <div className="flex gap-3 overflow-x-auto mt-2">
@@ -3148,6 +3156,9 @@ export default function BusinessOperationsPage() {
                     value={unlinked.length}
                     numColor="text-orange-500" iconBg="bg-orange-50" iconColor="text-orange-500" />}
                 </div>
+                {evaluationRequest?.workspaceId === workspaceId && <ProposalEvaluation
+                  key={evaluationRequest.request.id} request={evaluationRequest.request} workspaceId={workspaceId}
+                  onClose={() => setEvaluationRequest(null)} />}
                 <TableSection title="Evaluations" searchPlaceholder="Search evaluations..."
                   cols={["Request", "Proposals", "Deadline", "Status", "Action"]}
                   rows={proposalRequests.map(r => ({
@@ -3156,6 +3167,7 @@ export default function BusinessOperationsPage() {
                     Deadline: r.deadline ? new Date(r.deadline).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—",
                     Status: <StatusPill status={r.status || "DRAFT"} />,
                     Action: <ActionMenu items={[
+                      ...(r.sourcing_kind === "RFQ" ? [] : [{ label: "Evaluate proposals", onClick: () => setEvaluationRequest({ request: r, workspaceId }) }]),
                       { label: "View Proposals", onClick: () => setProcSub("Inbox") },
                       { label: "View Request", onClick: () => setProcSub("Proposal Requests") },
                     ]} />,
