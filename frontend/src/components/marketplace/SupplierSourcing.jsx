@@ -62,6 +62,7 @@ export default function SupplierSourcing({ onSaved }) {
   const [supplier, setSupplier] = useState("");
   const [quoteMatches, setQuoteMatches] = useState(null);
   const [quoteSearchFailed, setQuoteSearchFailed] = useState(false);
+  const [quoteRetry, setQuoteRetry] = useState(0);
   const [sent, setSent] = useState(false);
   const [published, setPublished] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
@@ -96,7 +97,7 @@ export default function SupplierSourcing({ onSaved }) {
       }
       setKind(record.sourcing_kind);
       setDraft({ questions: [], ...generation?.draft, ...record, description: record.description || "",
-        constraints: (record.requirements || []).map((requirement) => requirement.text) });
+        constraints: generation?.draft?.constraints || [] });
       setSaved(record.id);
       setSupplier(record.rfq_supplier_slug || "");
       setSendPending(record.status === "SENDING");
@@ -109,21 +110,21 @@ export default function SupplierSourcing({ onSaved }) {
 
   const quoteService = draft?.supplier_search || draft?.category?.split(/\s+[–—-]\s+/).at(-1) || "";
   const quoteLocation = draft?.location || "";
-  const canSuggestSuppliers = Boolean(saved && kind === "RFQ" && workspaceId && !sent && !sendPending && quoteService.trim().length >= 2);
+  const canSuggestSuppliers = Boolean(saved && workspaceId && !sent && !published && !sendPending && quoteService.trim().length >= 2);
   useEffect(() => {
     setQuoteMatches(null);
     setQuoteSearchFailed(false);
     if (!canSuggestSuppliers) return;
     let active = true;
     apiRequest("/proposals/sourcing/match-suppliers" + scope, "POST", {
-      service: quoteService.trim().slice(0, 150), location: quoteLocation.trim().slice(0, 150), rfq_only: true,
+      service: quoteService.trim().slice(0, 150), location: quoteLocation.trim().slice(0, 150), rfq_only: kind === "RFQ", include_related: true,
     }).then((result) => {
       if (active) setQuoteMatches(result.matches || []);
     }).catch(() => {
       if (active) setQuoteSearchFailed(true);
     });
     return () => { active = false; };
-  }, [canSuggestSuppliers, saved, scope, quoteService, quoteLocation]);
+  }, [canSuggestSuppliers, saved, scope, quoteService, quoteLocation, quoteRetry, kind]);
 
   const split = (value) => value.split(",").map((part) => part.trim()).filter(Boolean);
   function sendDraftMessage() {
@@ -226,10 +227,8 @@ export default function SupplierSourcing({ onSaved }) {
               ["Timeline", draft.timeline], ["Submission cap", draft.submission_cap]].filter(([, value]) => value != null && value !== "").map(([label, value]) =>
                 <div key={label}><dt className="font-medium">{label}</dt><dd>{value}</dd></div>)}
           </dl>
-          {(draft.requirements?.length > 0 || draft.constraints?.length > 0) && <ul className="list-disc space-y-1 pl-5">
-            {(draft.requirements?.length ? draft.requirements.map((requirement) => requirement.text) : draft.constraints).map((text, i) =>
-              <li key={i}>{text}</li>)}
-          </ul>}
+          {draft.constraints?.length > 0 && <div><h4 className="font-medium">Service details</h4><ul className="mt-1 list-disc space-y-1 pl-5">{draft.constraints.map((text,i)=><li key={i}>{text}</li>)}</ul></div>}
+          {draft.requirements?.length > 0 && <div><h4 className="font-medium">What suppliers should submit</h4><ul className="mt-1 list-disc space-y-1 pl-5">{draft.requirements.map((requirement,i)=><li key={i}>{requirement.text}</li>)}</ul></div>}
         </div>
         {!saved && !sent && !published && <p className="text-sm">Tell me what to change, or save this {kind} draft to continue.</p>}
         <div className="flex flex-wrap gap-3">
@@ -247,8 +246,7 @@ export default function SupplierSourcing({ onSaved }) {
                 accepted_modes, accepted_categories, visibility, specific_criteria, invited_workspace_ids, invite_emails };
               const record = await saveSourcingDraft(requestId, workspaceId, {
                 ...Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)),
-                kind, requirements: draft.requirements?.length ? draft.requirements :
-                  (draft.constraints || []).map((text) => ({ text, mandatory: false, weight: 1, format: "text" })),
+                kind, requirements: draft.requirements || [],
               });
               setDraft((current) => ({ ...current, ...record }));
               setSaved(record.id);
@@ -259,17 +257,17 @@ export default function SupplierSourcing({ onSaved }) {
             Use {kind === "RFQ" ? "RFP" : "RFQ"} instead
           </button>}
         </div>
-        {saved && kind === "RFQ" && !sent && <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+        {saved && !sent && !published && <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <h4 className="text-sm font-semibold">Suggested suppliers</h4>
           {!sendPending && <>
-            {canSuggestSuppliers && !quoteMatches && !quoteSearchFailed && <p role="status" className="text-sm">Finding suppliers that accept quote requests…</p>}
-            {quoteSearchFailed && <p role="status" className="text-sm">We couldn’t load suggestions. Try searching for suppliers below.</p>}
-            {quoteMatches?.length === 0 && <div className="space-y-2">
-              <p role="status" className="text-sm">I found no matching suppliers accepting quote requests. You can widen the search or use an RFP to publish your requirement and invite suppliers to respond.</p>
+            {canSuggestSuppliers && !quoteMatches && !quoteSearchFailed && <p role="status" className="text-sm">Finding relevant businesses…</p>}
+            {quoteSearchFailed && <div><button type="button" className="text-sm font-semibold underline" onClick={() => setQuoteRetry(v => v + 1)}>Retry suggestions</button><p role="status" className="text-sm">Supplier suggestions are temporarily unavailable. You can retry, or use an RFP to publish your requirement and invite suppliers.</p></div>}
+            {kind === "RFQ" && (quoteMatches && !quoteMatches.some(match => match.can_send_rfq !== false) || quoteSearchFailed) && <div className="space-y-2">
+              {!quoteSearchFailed && <p role="status" className="text-sm">I recommend an RFP because no matching suppliers are available to receive this RFQ. Publish your requirement and invite suppliers to respond.</p>}
               <button type="button" className={primary} onClick={() => {
                 setKind("RFP");
                 setDraft((current) => ({ ...current, recommendation: "RFP",
-                  rationale: "No matching suppliers were found. An RFP lets you publish this requirement and invite suppliers to respond." }));
+                  rationale: quoteSearchFailed ? "Supplier suggestions are unavailable. An RFP lets you publish this requirement and invite suppliers to respond." : "No suitable suppliers are available for a direct RFQ. An RFP lets you publish this requirement and invite suppliers to respond." }));
                 setSaved(null);
                 setSupplier("");
                 setConfirmPublish(false);
@@ -279,21 +277,16 @@ export default function SupplierSourcing({ onSaved }) {
               {quoteMatches.map((match) => <li key={match.slug} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <div>
                   <Link className="font-semibold underline" to={"/marketplace/business/" + encodeURIComponent(match.slug)}>{match.name}</Link>
-                  <p>{[match.location, ...match.service_evidence].filter(Boolean).join(" · ")}</p>
+                  <p>{match.match_level === "related" ? "Related business — confirm suitability. " : ""}{[match.location, ...match.service_evidence].filter(Boolean).join(" · ")}</p>
                 </div>
-                <button type="button" className="font-semibold underline" aria-pressed={supplier === match.slug}
-                  onClick={() => setSupplier(match.slug)}>{supplier === match.slug ? "Selected" : "Choose supplier"}</button>
+                {kind === "RFQ" && match.can_send_rfq !== false && <button type="button" className="font-semibold underline" aria-pressed={supplier === match.slug}
+                  onClick={() => setSupplier(match.slug)}>{supplier === match.slug ? "Selected" : "Choose supplier"}</button>}
               </li>)}
             </ul>}
-            <button type="button" className="text-sm font-semibold underline" onClick={() => {
-              setService(quoteService);
-              setLocation("");
-              setMatches(null);
-              setMode("match");
-            }}>Widen search</button>
+            {kind === "RFP" && quoteMatches?.length === 0 && <p className="text-sm">No related businesses found. You can publish this RFP and invite suppliers by email.</p>}
           </>}
           {supplier && <p className="text-sm">Selected supplier: {quoteMatches?.find((match) => match.slug === supplier)?.name || matches?.find((match) => match.slug === supplier)?.name || supplier}</p>}
-          <button type="button" className="rounded-lg border border-brand-600 px-3 py-2 text-sm font-semibold text-brand-600 disabled:opacity-50"
+          {kind === "RFQ" && supplier && <button type="button" className="rounded-lg border border-brand-600 px-3 py-2 text-sm font-semibold text-brand-600 disabled:opacity-50"
             disabled={Boolean(busy) || !supplier.trim()}
             onClick={() => {
               if (!window.confirm("Send this saved quote request to " + supplier.trim() + "?")) return;
@@ -302,7 +295,7 @@ export default function SupplierSourcing({ onSaved }) {
                 setSent(true);
                 onSaved?.();
               });
-            }}>{busy === "send" ? "Sending..." : "Approve and send RFQ"}</button>
+            }}>{busy === "send" ? "Sending..." : "Send RFQ to selected supplier"}</button>}
         </div>}
         {sent && <p role="status" className="text-sm">RFQ sent. <Link className="underline" to="/operations?tab=Procurement&sub=Sent%20RFQs">Open Sent RFQs</Link></p>}
         {saved && kind === "RFP" && !published && <div className="space-y-3">

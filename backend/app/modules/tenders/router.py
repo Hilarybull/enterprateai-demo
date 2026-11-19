@@ -1,7 +1,7 @@
 """Public discovery and authenticated watchlist / admin operations."""
 import asyncio
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
@@ -19,8 +19,16 @@ Stage = Literal["open", "planning", "award", "closed", "other", "all"]
 
 @router.get("")
 async def browse(q: str = Query("", max_length=150), stage: Stage = "open",
-                 page: int = Query(1, ge=1, le=500)):
-    return await service.search(q, stage, page)
+                 page: int = Query(1, ge=1, le=500), industry: str = Query("", max_length=2, pattern=r"^(?:[0-9]{2})?$"),
+                 location: str = Query("", max_length=150), category: Literal["", "goods", "services", "works"] = "",
+                 deadline_from: date | None = None, deadline_to: date | None = None,
+                 sme: Literal["suitable", "all", "unspecified"] = "suitable"):
+    if deadline_from and deadline_to and deadline_from > deadline_to:
+        from fastapi import HTTPException
+        raise HTTPException(422, "The end date must be on or after the start date.")
+    return await service.search(q, stage, page, industry=industry, location=location, category=category,
+        deadline_from=deadline_from.isoformat() if deadline_from else None,
+        deadline_to=deadline_to.isoformat() if deadline_to else None, sme=sme)
 
 
 @router.get("/watchlist")

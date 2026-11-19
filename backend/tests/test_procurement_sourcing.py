@@ -202,3 +202,13 @@ def test_full_sourcing_form_options_survive_legacy_resave(monkeypatch):
         assert len(row["data"]["proposal_requests"]) == 1
 
     asyncio.run(scenario())
+
+
+def test_related_businesses_are_labelled_and_do_not_gain_rfq_permission():
+    supplier={"slug":"automation","name":"Automation Studio","category":"Technology", "service_tags":["AI automation services"]}
+    unrelated={"slug":"caterer","name":"Caterer","service_tags":["Food catering"]}
+    criteria=MatchInput(service="AI chat agent Salesforce integration",include_related=True)
+    results=rank_suppliers([unrelated,supplier],criteria)
+    assert [r["slug"] for r in results] == ["automation"]
+    assert results[0]["match_level"] == "related"
+    assert results[0]["can_send_rfq"] is False

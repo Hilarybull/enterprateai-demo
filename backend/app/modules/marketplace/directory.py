@@ -1477,7 +1477,7 @@ class DirectoryService:
             base["contact"] = public_contact(linked)
         return base
 
-    async def search(self, *, q: str = "", category: str = "", location: str = "", trust: str = "", open_for: str = "", page: int = 1, page_size: int = 24) -> dict:
+    async def search(self, *, q: str = "", category: str = "", location: str = "", trust: str = "", open_for: str = "", page: int = 1, page_size: int = 24, exclude_opt_out: bool = False) -> dict:
         rows = [r for r in await self.store.list("profiles", SCOPE, limit=5000) if (r["data"] or {}).get("publication") == "published"]
         linked_ids = list(dict.fromkeys(str((r["data"] or {}).get("linked_business_id")) for r in rows if (r["data"] or {}).get("linked_business_id")))
         linked_by_id = await self.business.load_many(linked_ids)
@@ -1485,6 +1485,8 @@ class DirectoryService:
         listed = level == "public"      # becomes true below if any unclaimed profile is listed (its own setting may make it public)
         items, shown = [], []
         for row in rows:
+            if exclude_opt_out and (row["data"] or {}).get("outreach_opt_out"):
+                continue
             linked = linked_by_id.get(str((row["data"] or {}).get("linked_business_id")))
             item = self._public(row, linked)
             if item["claimed"] and item.get("activated") and listing_quality(_with_public_services(marketplace_settings(linked), row)):

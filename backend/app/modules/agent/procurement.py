@@ -21,10 +21,10 @@ TOOL = {
     "input_schema": {
         "type": "object", "additionalProperties": False,
         "properties": {
-            "action": {"type": "string", "enum": ["draft", "match", "evaluation", "tenders"]},
+            "action": {"type": "string", "enum": ["draft", "match", "evaluation", "tenders", "tender_evaluation"]},
             "service": {"type": "string"}, "location": {"type": "string"},
             "query": {"type": "string"}, "stage": {"type": "string"},
-            "request_id": {"type": "string"}, "proposal_id": {"type": "string"},
+            "tender_id": {"type": "string"}, "request_id": {"type": "string"}, "proposal_id": {"type": "string"},
         },
     },
 }
@@ -83,7 +83,7 @@ async def run(orch, user: dict, body, known: dict, args: dict | None = None) -> 
     if _INTENT.search(text) and not explicit.get("action") and not args.get("action") and _DOCUMENT.search(text):
         action = "draft"
     if not action:
-        action = ("tenders" if re.search(r"\b(?:public |uk )?tenders?\b", text, re.I)
+        action = ("tender_evaluation" if re.search(r"\b(?:evaluate|assess|review|fit|alignment)\b.*\btender", text, re.I) else "tenders" if re.search(r"\b(?:public |uk )?tenders?\b", text, re.I)
                   else "evaluation" if _EVAL.search(text)
                   else "match" if _MATCH.search(text) and not _DOCUMENT.search(text) else "draft")
     prior_brief = previous.get("brief") if pending or (reference and action == "draft") else None
@@ -94,6 +94,20 @@ async def run(orch, user: dict, body, known: dict, args: dict | None = None) -> 
         if action != "tenders" and not explicit.get("action") and _ACTION.search(text) and _INTENT.search(text):
             reply = _reply("Open Procurement to review and approve that action.", status="approval_required")
             reply["actions"] = [{"label": "Open Procurement", "to": "/operations?tab=Procurement"}]
+        elif action == "tender_evaluation":
+            from app.modules.tenders import evaluation as tender_evaluation
+            tender_id = explicit.get("tender_id") or args.get("tender_id") or previous.get("tender_id")
+            if not isinstance(tender_id, str) or not tender_id.strip():
+                reply = _reply("Open the tender you want to assess and choose Evaluate This Tender for Me.", status="clarification")
+                reply["actions"] = [{"label": "Open Public Tenders", "to": "/marketplace?tab=tenders"}]
+            else:
+                result = await tender_evaluation.evaluate(user_id, workspace_id, tender_id)
+                state["tender_id"] = tender_id
+                steps = [finding["next_step"] for finding in result["findings"]]
+                explanation = "\n\n".join(item["heading"] + ": " + item["explanation"] for item in result.get("overview", []))
+                reply = _reply((explanation + "\n\n" if explanation else "") + result["verdict"] + "\n\nWhat to do next:\n" + "\n".join("• " + step for step in steps),
+                               status="tender_evaluation", tender_evaluation=result)
+                reply["actions"] = [{"label": "Review tender evaluation", "to": "/marketplace?tab=tenders&tender=" + quote(tender_id, safe="")}]
         elif action == "tenders":
             from app.modules.tenders import service as tenders
 

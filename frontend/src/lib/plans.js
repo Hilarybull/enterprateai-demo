@@ -2,7 +2,7 @@ import { isPlatformModuleGranted } from "./permissions";
 
 export const BILLING = { monthly: "monthly", annual: "annual" };
 
-// The plans as sold (EnterprateAI_Pricing_Plans_AI_Agent_Final.pdf, 19 Oct 2026): names, lines, prices and features word for word.
+// Public plan presentation. Funding remains accessible to Starter during the transition.
 export const PLANS = [
   {
     key: "explorer",
@@ -42,13 +42,14 @@ export const PLANS = [
       "1 user seat",
       "AI Business Plan Generator",
       "Product/Service Launch Readiness",
-      "AI-Powered Funding Readiness",
       "Proposals & Sales Letters Generator",
       "Pricing & Customer Growth Insights",
       "Up to 10 Marketplace Listings*",
       "4 Scenario Simulations a month",
       "Request for Proposal",
-      "RFQ-to-Quote Workflow",
+      "Request for Quotation",
+      "Tender",
+      "Tender Evaluation",
       "AI-Powered Decision Recommendations",
     ],
   },
@@ -71,6 +72,7 @@ export const PLANS = [
       "3 user seats included",
       "Extra seat: £15/mo (+250 AI credits)",
       "Live & Adaptive Business Plan Intelligence",
+      "AI-Powered Funding Readiness",
       "Access to RFP Leads",
       "Third-Party Integrations",
       "Unlimited Marketplace Listings",

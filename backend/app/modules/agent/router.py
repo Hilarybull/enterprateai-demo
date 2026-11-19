@@ -854,6 +854,12 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             "code": "channel_not_allowed",
             "message": "That request channel is reserved for system integrations.",
         })
+    # Procurement UI actions use the same specialist and workspace checks as chat.
+    if body.page == "procurement" and body.business_id and not body.capability:
+        from app.modules.agent import procurement
+        from app.modules.proposals import sourcing
+        owned = await sourcing._owned_workspace(user["id"], body.business_id)
+        return _result(await procurement.run(get_orchestrator(), user, body, owned.get("data") or {}))
     from app.shared import people
     called = people.call_me(body.text) if body.text and not body.capability else None
     if called:

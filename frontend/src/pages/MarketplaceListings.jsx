@@ -1828,7 +1828,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
               </button>
             </div>
             <div className="border-t border-slate-100 px-6 py-4 text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
-              Your proposal will be reviewed by {listing.company_name}. AI may analyse submissions but humans make all decisions.
+              Your proposal will be reviewed by {listing.company_name}.
             </div>
           </>
 

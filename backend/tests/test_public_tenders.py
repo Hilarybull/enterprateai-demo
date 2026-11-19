@@ -132,7 +132,7 @@ def test_public_routes_and_watchlist_auth(monkeypatch):
     monkeypatch.setattr(service, "get_listing", AsyncMock(return_value={"id": "test", "title": "Catering"}))
     client = TestClient(app)
     assert client.get("/public-tenders").status_code == 200
-    search.assert_awaited_once_with("", "open", 1)
+    search.assert_awaited_once_with("", "open", 1, industry="", location="", category="", deadline_from=None, deadline_to=None, sme="suitable")
     assert client.get("/public-tenders/test").json()["title"] == "Catering"
     assert client.get("/public-tenders?stage=bad").status_code == 422
     assert client.get("/public-tenders/watchlist?workspace_id=private").status_code in (401, 403)
@@ -226,3 +226,104 @@ def test_malformed_release_is_quarantined_as_storable_json(invalid):
 def test_malformed_next_link_is_reported_as_a_feed_error():
     with pytest.raises(service.FeedError, match="malformed pagination link"):
         service.next_cursor("https://[broken")
+
+
+def test_submission_details_document_safety_and_item_cpv():
+    raw = release()
+    raw["tender"].update(submissionMethodDetails="Submit online at https://portal.example.test/bids. Read all instructions.",
+        submissionTerms={"electronicSubmissionPolicy": "allowed"},
+        eligibilityCriteria="Provide insurance evidence.", awardCriteriaDetails="Quality 60%, price 40%.",
+        documents=[{"title":"Specification","url":"https://portal.example.test/spec.pdf"},
+                   {"title":"Unsafe","url":"javascript:alert(1)"}],
+        items=[{"classification":{"id":"72000000","description":"IT services"}}])
+    data = service.parse_release(raw)["listings"][0]["details"]
+    assert data["cpv"] == "72000000"
+    assert data["industry"] == "IT services"
+    assert data["submission_url"] == "https://portal.example.test/bids"
+    assert data["electronic_submission"] == "allowed"
+    assert data["eligibility"] == "Provide insurance evidence."
+    assert len(data["documents"]) == 1
+    assert service.safe_source_url("https://user:secret@example.test") is None
+
+
+def test_filters_counts_and_invalid_date_range(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    mocked = AsyncMock(return_value={"items":[],"total":123,"more":True})
+    monkeypatch.setattr(service,"search",mocked)
+    client = TestClient(app)
+    response = client.get("/public-tenders?industry=72&location=London&category=services&deadline_from=2026-12-01&deadline_to=2026-12-31")
+    assert response.json()["total"] == 123
+    assert mocked.await_args.kwargs == dict(industry="72",location="London",category="services",deadline_from="2026-12-01",deadline_to="2026-12-31",sme="suitable")
+    assert client.get("/public-tenders?deadline_from=2026-12-31&deadline_to=2026-12-01").status_code == 422
+    assert client.get("/public-tenders?industry=invalid").status_code == 422
+
+
+def test_discovery_count_is_from_full_index_not_page(monkeypatch):
+    row = service.parse_release(release())["listings"][0]
+    row.update(notice_id="000101-2026",ocid="ocds-h6vhtk-001abc")
+    rpc = AsyncMock(return_value={"items":[row],"total":125})
+    monkeypatch.setattr(service,"sb_rpc",rpc)
+    monkeypatch.setattr(service,"sync_health",AsyncMock(return_value={"last_sync":None,"stale":True}))
+    result=asyncio.run(service.search("catering",page=2))
+    assert result["total"] == 125 and result["more"]
+    assert rpc.await_args.args[1]["p_offset"] == 24
+    assert rpc.await_args.args[1]["p_industry"] == ""
+
+
+def test_sme_suitability_is_source_backed_and_preserves_unknown_and_false():
+    original = release()
+    assert service.parse_release(original)["listings"][0]["details"]["sme_suitable"] is None
+    original["tender"]["suitability"] = {"sme": True}
+    assert service.parse_release(original)["listings"][0]["details"]["sme_suitable"] is True
+    original["tender"]["lots"] = [{"id":"one","suitability":{"sme":False}},
+                                     {"id":"two","suitability":{"sme":True}}]
+    rows=service.parse_release(original)["listings"]
+    assert [r["details"]["sme_suitable"] for r in rows] == [False,True]
+    original["tender"]["lots"][0]["suitability"]["sme"]="true"
+    assert service.parse_release(original)["listings"][0]["details"]["sme_suitable"] is None
+
+
+def test_sme_filter_is_default_and_can_be_explicitly_changed(monkeypatch):
+    app=FastAPI()
+    app.include_router(router)
+    mocked=AsyncMock(return_value={"items":[],"total":0})
+    monkeypatch.setattr(service,"search",mocked)
+    client=TestClient(app)
+    assert client.get("/public-tenders").status_code == 200
+    assert mocked.await_args.kwargs["sme"] == "suitable"
+    assert client.get("/public-tenders?sme=all").status_code == 200
+    assert mocked.await_args.kwargs["sme"] == "all"
+    assert client.get("/public-tenders?sme=unspecified").status_code == 200
+    assert mocked.await_args.kwargs["sme"] == "unspecified"
+    assert client.get("/public-tenders?sme=guess").status_code == 422
+
+
+def test_industry_matches_secondary_codes_across_existing_pages_before_counting(monkeypatch):
+    rows = [{"id": str(i), "details": {"cpv": "75000000", "cpv_classifications": [{"id": "85000000"}]}} for i in range(60)]
+    rows[0]["details"]["cpv_classifications"] = [{"id": "32000000"}]
+    async def rpc(name, args):
+        assert name == "fts_discover_sme" and args["p_industry"] == ""
+        assert args["p_location"] == "London" and args["p_sme"] == "suitable"
+        return {"items": rows[args["p_offset"]:args["p_offset"]+50], "total": 60}
+    monkeypatch.setattr(service, "sb_rpc", rpc)
+    monkeypatch.setattr(service, "sync_health", AsyncMock(return_value={"last_sync": None, "stale": True}))
+    monkeypatch.setattr(service, "public_listing", lambda row: row)
+    result = asyncio.run(service.search(industry="85", location="London", page=3, limit=24))
+    assert result["total"] == 59 and len(result["items"]) == 11 and not result["more"]
+    assert result["items"][0]["id"] == "49"
+    assert service.industry_matches({"cpv": "32000000"}, "32")
+    assert not service.industry_matches({"cpv": None}, "32")
+
+
+def test_metadata_repair_uses_saved_release_and_preserves_status_and_unrelated_details():
+    import json
+    from pathlib import Path
+    from app.modules.tenders.repair_index import repaired_details
+    raw = json.loads((Path(__file__).parent / "fixtures" / "fts_107312_2026.json").read_text(encoding="utf-8"))
+    projected = service.parse_release(raw)["listings"][0]
+    row = {**projected, "notice_id": raw["id"], "ocid": raw["ocid"], "details": {"title": "Old", "custom": "keep"}, "stage": "closed"}
+    details = repaired_details(row, [{"notice_id": raw["id"], "ocid": raw["ocid"], "payload": raw}])
+    assert details["cpv"] == "75122000" and len(details["cpv_classifications"]) == 2
+    assert details["custom"] == "keep" and row["stage"] == "closed"
+    assert repaired_details({**row, "details": details}, [{"notice_id": raw["id"], "ocid": raw["ocid"], "payload": raw}]) == details

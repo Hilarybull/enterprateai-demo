@@ -1,0 +1,141 @@
+{
+  "id": "107312-2026",
+  "tag": [
+    "tender"
+  ],
+  "date": "2026-11-11T17:04:59Z",
+  "ocid": "ocds-h6vhtk-07ba0b",
+  "buyer": {
+    "id": "GB-PPON-PZDG-2995-QQMD",
+    "name": "Staffordshire County Council"
+  },
+  "tender": {
+    "id": "IA4017",
+    "lots": [
+      {
+        "id": "1",
+        "value": {
+          "amount": 62500,
+          "currency": "GBP",
+          "amountGross": 75000
+        },
+        "status": "active",
+        "renewal": {
+          "description": "Two, twelve (12) months extension periods which can be exercised at the discretion of the County Council based on satisfactory performance of the Provider."
+        },
+        "hasRenewal": true,
+        "suitability": {
+          "sme": true,
+          "vcse": true
+        },
+        "awardCriteria": {
+          "description": "Tenders will be assessed on a price (80%) and quality (20%) basis.\nProviders will also have to meet the conditions of participation including required insurance levels, DBS agreement, Safeguarding, and HCPC registration (or demonstrable equivalent experience)"
+        },
+        "contractPeriod": {
+          "endDate": "2030-03-31T23:59:59+01:00",
+          "startDate": "2027-04-01T00:00:00+01:00",
+          "maxExtentDate": "2032-03-31T23:59:59+01:00"
+        }
+      }
+    ],
+    "items": [
+      {
+        "id": "1",
+        "relatedLot": "1",
+        "deliveryAddresses": [
+          {
+            "region": "UKG24",
+            "country": "GB",
+            "countryName": "United Kingdom"
+          }
+        ],
+        "additionalClassifications": [
+          {
+            "id": "75122000",
+            "scheme": "CPV",
+            "description": "Administrative healthcare services"
+          },
+          {
+            "id": "85000000",
+            "scheme": "CPV",
+            "description": "Health and social work services"
+          }
+        ]
+      }
+    ],
+    "title": "Independent Medical Assessments for Concessionary Travel and Blue Badge Scheme",
+    "value": {
+      "amount": 62500,
+      "currency": "GBP",
+      "amountGross": 75000
+    },
+    "status": "active",
+    "documents": [
+      {
+        "id": "107312-2026",
+        "url": "https://www.find-tender.service.gov.uk/Notice/107312-2026",
+        "format": "text/html",
+        "noticeType": "UK4",
+        "description": "Tender notice on Find a Tender",
+        "documentType": "tenderNotice",
+        "datePublished": "2026-11-11T17:04:59Z"
+      }
+    ],
+    "legalBasis": {
+      "id": "2023/54",
+      "uri": "https://www.legislation.gov.uk/ukpga/2023/54/contents",
+      "scheme": "UKPGA"
+    },
+    "description": "Staffordshire County Council has a statutory obligation to provide concessionary travel passes to eligible residents with qualifying disabilities as part of the English National Concessionary Travel Scheme (ENCTS). \nStaffordshire County Council is seeking a Provider who will be able to provide independent medical assessments to new and existing applicants to the scheme. This provider will also undertake independent mobility assessments for Blue Badge applicants  to determine whether they meet the relevant eligibility criteria under the prevailing Department for Transport guidance.  \nApplicants will be assessed against the prevailing guidance at the time of the assessment. The object of the assessment will be to ascertain whether the applicant meets the English National Concessionary Travel Scheme (ENCTS) eligibility criterion or not. All medical assessments must be carried out by a qualified practising health professional. These must be Health & Care Professions (HCPC)-registered Occupational Therapists, Physiotherapists, or other appropriately registered clinicians with a minimum of two years post-registration experience and / or demonstrable expertise in functional mobility or disability assessment, and training in DfT concessionary travel eligibility guidance and Driver & Vehicle Licensing Agency (DVLA) fitness-to-drive standards.\nThe Provider will manage the whole process from booking the appointment(s) with the applicant, carrying out assessment(s), returning of the outcomes electronically by secure file transfer to the Council's Authorised Officers and managing an appeals process. The appointments will be booked with a frequency allowing the Provider to meet the requirements of the contract such as carrying out a walking assessment within 15 working days of request. \nThe Council requested 200 assessments as part of the ENCTS assessments and 100 blue badge assessments during the 2025/6 financial year.\nThe Contract will be for an initial three (3) year period commencing on 1st April 2027 with two potential twelve (12) months extension periods which can be exercised at the discretion of the County Council based on satisfactory performance of the Provider.",
+    "tenderPeriod": {
+      "endDate": "2026-12-09T12:00:00Z"
+    },
+    "enquiryPeriod": {
+      "endDate": "2026-12-02T23:59:59Z"
+    },
+    "aboveThreshold": false,
+    "submissionTerms": {
+      "electronicSubmissionPolicy": "allowed"
+    },
+    "procurementMethod": "open",
+    "mainProcurementCategory": "services",
+    "submissionMethodDetails": "All submissions must be made through the Council's eProcurement platform, Proactis (https://supplierlive.proactisp2p.com/Account/Login#) using the reference IA4017.\nFull tender documents can be found with this opportunity on Proactis.",
+    "procurementMethodDetails": "Below threshold - open competition"
+  },
+  "parties": [
+    {
+      "id": "GB-PPON-PZDG-2995-QQMD",
+      "name": "Staffordshire County Council",
+      "roles": [
+        "buyer"
+      ],
+      "address": {
+        "region": "UKG24",
+        "country": "GB",
+        "locality": "Stafford",
+        "postalCode": "ST16 2DH",
+        "countryName": "United Kingdom",
+        "streetAddress": "1 Staffordshire Place, Tipping Street,"
+      },
+      "details": {
+        "url": "https://www.staffordshire.gov.uk",
+        "classifications": [
+          {
+            "id": "publicAuthoritySubCentralGovernment",
+            "scheme": "UK_CA_TYPE",
+            "description": "Public authority - sub-central government"
+          }
+        ]
+      },
+      "identifier": {
+        "id": "PZDG-2995-QQMD",
+        "scheme": "GB-PPON"
+      },
+      "contactPoint": {
+        "email": "commercial.team@staffordshire.gov.uk"
+      }
+    }
+  ],
+  "language": "en",
+  "initiationType": "tender"
+}

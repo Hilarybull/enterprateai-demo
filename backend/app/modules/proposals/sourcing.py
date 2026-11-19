@@ -45,6 +45,7 @@ class MatchInput(BaseModel):
     required_evidence: list[str] = Field(default_factory=list, max_length=12)
     excluded_slugs: list[str] = Field(default_factory=list, max_length=100)
     rfq_only: bool = False
+    include_related: bool = False
 
 
 async def require_workspace(user_id: str, workspace_id: str):
@@ -75,6 +76,8 @@ async def draft(user_id: str, brief: SourcingBrief) -> SourcingDraft:
             "If the scope is clear, draft immediately and leave unknown optional fields blank. "
             "Preserve the current request fields and buyer options unless the buyer asks to change them. "
             "Populate the existing request form fields from explicit buyer details, including budget_range, budget_currency, deadline (submission deadline only), submission_cap, accepted_modes, accepted_categories, visibility, specific_criteria and structured requirements with mandatory, weight and format. Do not infer a submission deadline from delivery or rental dates. Leave unspecified options at their defaults. "
+            "Keep service deliverables, quantities, delivery dates and location in description, outcome and constraints. "
+            "requirements are ONLY information or evidence suppliers must submit with their proposal, phrased as response prompts such as Describe your proposed approach, Provide an itemised price breakdown, Confirm availability, or Upload insurance evidence when requested. Never copy service deliverables into submission fields. Do not invent mandatory evidence. "
             "Set supplier_search to a short directory search phrase describing the product or service, without dates, quantities or location. Return only JSON.",
             prompt=json.dumps({"buyer_brief": brief.brief, "latest_message": brief.latest_message, "previous_response": brief.previous_response, "previous_question": brief.previous_question,
                                "current_request": brief.current_request.model_dump(exclude_unset=True) if brief.current_request else None,
@@ -118,7 +121,10 @@ def rank_suppliers(items: list[dict], criteria: MatchInput) -> list[dict]:
                 evidence.append((f"{label}: {item[field]}", item[field]))
         evidence.append(("Public profile description", item.get("description") or ""))
         matched = [(label, service_words & _words(text)) for label, text in evidence]
-        if not service_words <= set().union(*(words for _, words in matched)):
+        coverage = service_words & set().union(*(words for _, words in matched))
+        exact = service_words <= coverage
+        meaningful = coverage - {"a", "an", "and", "for", "with", "the", "service", "services", "solution", "solutions"}
+        if not exact and (not criteria.include_related or not meaningful):
             continue
         covered = [label for label, words in matched if words]
         # The directory currently publishes no independently verified credentials.
@@ -127,12 +133,14 @@ def rank_suppliers(items: list[dict], criteria: MatchInput) -> list[dict]:
             continue
         matches.append({
             "slug": item["slug"], "name": item["name"], "location": item.get("location"),
+            "match_level": "direct" if exact else "related",
+            "can_send_rfq": bool(item.get("listing_id") and item.get("opportunities", {}).get("rfqs")),
             "category": item.get("category"), "service_evidence": covered,
             "owner_verified": item.get("trust", {}).get("state") == "verified",
             "qualifications_verified": False,
             "score": max(len(words) / len(service_words) for _, words in matched),
         })
-    return sorted(matches, key=lambda result: (-result["score"], result["name"].casefold(), result["slug"]))[:20]
+    return sorted(matches, key=lambda result: (result["match_level"] != "direct", -result["score"], result["name"].casefold(), result["slug"]))[:20]
 
 class SaveDraft(ProposalRequestIn):
     kind: Literal["RFQ", "RFP"]
@@ -178,7 +186,7 @@ async def generate_for_request(user_id: str, workspace_id: str, request_id: str,
         if saved and (not saved.get("sourcing_kind") or saved["status"] != "DRAFT"):
             raise HTTPException(409, "This request cannot be revised.")
         changed = record_event(data, user_id=user_id, workspace_id=workspace_id, request_id=request_id,
-                               event_type="answered" if result.turn_intent in ("question", "aside") else "generated", detail={"brief": brief.brief, "draft": result.model_dump(), "prompt_version": "sourcing-v6"})
+                               event_type="answered" if result.turn_intent in ("question", "aside") else "generated", detail={"brief": brief.brief, "draft": result.model_dump(), "prompt_version": "sourcing-v7"})
         if await _write(row, changed):
             logger.info("Sourcing timings generation_ms=%.0f audit_ms=%.0f",
                         (generated - started) * 1000, (perf_counter() - generated) * 1000)
@@ -311,7 +319,7 @@ async def match_suppliers(user_id: str, workspace_id: str, criteria: MatchInput)
     await require_workspace(user_id, workspace_id)
     found = await get_service().search(page_size=5000, exclude_opt_out=True)
     items = found["items"]
-    if criteria.rfq_only:
-        items = [item for item in items if item.get("listing_id") and item["listing_id"] != workspace_id
-                 and item.get("opportunities", {}).get("rfqs")]
+    items = [item for item in items if item.get("listing_id") != workspace_id]
+    if criteria.rfq_only and not criteria.include_related:
+        items = [item for item in items if item.get("listing_id") and item.get("opportunities", {}).get("rfqs")]
     return {"ruleset": "directory-evidence-v2", "matches": rank_suppliers(items, criteria)}

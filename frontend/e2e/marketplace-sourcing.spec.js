@@ -211,7 +211,7 @@ test("no supplier matches offers RFP conversion, publication, copy and email inv
   const kinds = [];
   let saved;
   let invitations = 0;
-  const draft = { title: "Camping tents", description: "Rent tents for 20 people.", constraints: [],
+  const draft = { title: "Camping tents", description: "Rent tents for 20 people.", constraints: ["Tents must accommodate 20 people"],
     questions: [], recommendation: "RFQ", rationale: "Defined equipment rental.", supplier_search: "tents" };
   await page.route("**/agent/requests", (route) => route.fulfill({ json: {
     procurement: { status: "draft", draft }, message: "Draft prepared.",
@@ -219,6 +219,7 @@ test("no supplier matches offers RFP conversion, publication, copy and email inv
   await page.route("**/proposals/sourcing/drafts/*", (route) => {
     const id = new URL(route.request().url()).pathname.split("/").pop();
     const fields = route.request().postDataJSON();
+    expect(fields.requirements).toEqual([]);
     kinds.push(fields.kind);
     savedIds.push(id);
     saved = { ...fields, id, workspace_id: "A", sourcing_kind: fields.kind, status: "DRAFT" };
@@ -239,6 +240,8 @@ test("no supplier matches offers RFP conversion, publication, copy and email inv
   await page.getByLabel("What service do you need?").fill("Rent tents for 20 people");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.getByRole("button", { name: "Save RFQ draft" }).click();
+  await expect(page.getByRole("button", {name:"Widen search"})).toHaveCount(0);
+  await expect(page.getByRole("button", {name:"Approve and send RFQ"})).toHaveCount(0);
   await page.getByRole("button", { name: "Use an RFP" }).click();
   await expect(page.getByText("Camping tents", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Save RFP draft" }).click();
