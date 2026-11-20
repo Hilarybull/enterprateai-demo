@@ -39,6 +39,27 @@ test("opens a saved evaluation in a popup without generating it again",async()=>
  expect(submitAgentRequest).not.toHaveBeenCalled();
 });
 
+test("shows readable evidence labels and values while preserving saved source references",async()=>{
+ const saved = {notice_id:"notice-1",workspace_id:"A",business_name:"Example",verdict:"More information needed",overview:[{heading:"Published dates",explanation:"Check the contract dates.",evidence:[{source:"contract_end",quote:"2030-01-27T23:59:59Z"}]}],findings:[{requirement:"Business capacity",alignment:"unknown",explanation:"Confirm your capacity.",tender_evidence:[{source:"amount",quote:"15000000"}],business_evidence:[{source:"workspace_profile.company_size",quote:"solo"},{source:"workspace_profile.business_type",quote:"limited_company"},{source:"workspace_profile.operating_stage",quote:"idea"},{source:"workspace_profile.delivery_model",quote:"manual"},{source:"financials.products.1.name",quote:"Consulting"},{source:"workspace_profile.certifications",quote:'["First aid", "Safeguarding"]'},{source:"workspace_profile.new_internal_field",quote:"Provided"}],next_step:"Check the tender documents."}],limitations:[]};
+ const original = JSON.stringify(saved);
+ apiRequest.mockResolvedValue({evaluation:saved,stale:false});
+ render(<MemoryRouter><TenderEvaluation notice={{id:"notice-1",currency:"GBP"}} token="fixture" workspaceId="A"/></MemoryRouter>);
+ fireEvent.click(await screen.findByRole("button",{name:"View saved evaluation"}));
+ expect(screen.getByText("1 person")).toBeTruthy();
+ expect(screen.getByText("Limited company")).toBeTruthy();
+ expect(screen.getByText("Idea stage")).toBeTruthy();
+ expect(screen.getByText("Manual / service-led")).toBeTruthy();
+ expect(screen.getByText("£15,000,000.00")).toBeTruthy();
+ expect(screen.getByText(/27 Jan 2030.*23:59.*UK time/)).toBeTruthy();
+ expect(screen.getByText("Your business profile · Team size")).toBeTruthy();
+ expect(screen.getByText("Your catalogue · Product 1 · Name")).toBeTruthy();
+ expect(screen.getByText("First aid, Safeguarding")).toBeTruthy();
+ const text = screen.getByRole("dialog").textContent;
+ expect(text).not.toMatch(/workspace_profile|financials\.products|limited_company|2030-01-27T/);
+ expect(JSON.stringify(saved)).toBe(original);
+ expect(submitAgentRequest).not.toHaveBeenCalled();
+});
+
 test("resolves an existing workspace when a tender was opened directly",async()=>{
  submitAgentRequest.mockResolvedValue({procurement:{tender_evaluation:{notice_id:"notice-1",workspace_id:"A",business_name:"Example",verdict:"More information needed",findings:[],limitations:[]}}});
  renderPanel("fixture",null);fireEvent.click(screen.getByRole("button",{name:"Evaluate This Tender for Me"}));

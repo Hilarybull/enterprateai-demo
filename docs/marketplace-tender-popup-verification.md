@@ -15,3 +15,7 @@ Rollback: revert these code changes; stored evaluations remain in the existing w
 ## Demo staging promotion checks
 
 The scoped demo checkout passed 78 backend regression checks, 19 frontend checks and the production build before the authorised push to `Hilarybull/enterprateai-demo`, branch `staging`. Clarity tracking is absent. Unrelated unfinished Agent changes were excluded. Responsive browser verification retains the startup blocker recorded above.
+
+## Plain-language evaluation evidence
+
+Evaluation evidence now displays readable section names and business choices instead of internal source paths and stored enum codes. Team size, business type, stage and delivery method use customer-facing labels; dates and monetary amounts are formatted for display. Saved source keys and exact evidence quotes stay unchanged, so existing reviews improve without AI regeneration. The narrative prompt also asks for plain language. Verified with six frontend evaluation checks (including unchanged saved references) and seven backend evaluation checks.
