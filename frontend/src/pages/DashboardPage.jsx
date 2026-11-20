@@ -19,6 +19,7 @@ import { assembleOutput } from "../lib/contracts/index";
 import { hasPaidAccess, planRank } from "../lib/plans";
 import FirstResultPanel from "../components/FirstResultPanel";
 import PinnedCards, { stripStatus, usePinned } from "../components/dashboard/PinnedCards";
+import TenderRecommendations from "../components/dashboard/TenderRecommendations";
 import { stepsOf } from "../components/ResultSummary";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
@@ -158,20 +159,19 @@ export default function DashboardPage() {
   const reportRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const dashArrived = useRef(false);
   const loadAgentSummary = useCallback(() => {
     if (!workspaceId) return;
-    const legacy = () => getAgentSummary(workspaceId).then(setAgentSummary).catch(() => {
+    const legacy = () => getAgentSummary(workspaceId).then((summary) => {
+      if (!Array.isArray(summary?.suggestions)) throw new Error("Invalid Agent summary");
+      setAgentSummary(summary);
+    }).catch(() => {
       // Never leave the page waiting: keep what we have, or fall back to an empty summary.
       setAgentSummary((prev) => prev || { suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [], risks: null, unavailable: true });
     });
     if (!ADAPTIVE_DASHBOARD) return legacy();
-    // The Agent row first (the owner's QA, 16 Oct: 12 seconds of skeleton): its own, quicker summary is asked for beside
-    // the full dashboard and shown as soon as it comes; the dashboard's copy replaces it when that arrives.
-    dashArrived.current = false;
-    getAgentSummary(workspaceId).then((s) => { if (!dashArrived.current && Array.isArray(s?.suggestions)) setAgentSummary(s); }).catch(() => {});
+    // The composed dashboard already contains the Agent summary. Requesting both
+    // endpoints together doubles the same business, task and billing reads.
     return getDashboard(workspaceId, { stage: previewStage, pathway: previewPathway }).then((d) => {
-      dashArrived.current = true;
       if (!d?.enabled) { setAdaptiveOff(true); setDashboard(null); return legacy(); }
       setAdaptiveOff(false);
       setDashFailed(false);
@@ -186,7 +186,8 @@ export default function DashboardPage() {
       return d;
     }).catch(() => {
       setDashFailed(true);
-      return legacy();      // the Agent panel and approvals still load from their own source
+      // Load the independent panel without delaying the retry control.
+      legacy();
     }).finally(() => setDashLoading(false));
   }, [workspaceId, previewPathway, previewStage]);
 
@@ -736,6 +737,7 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         {launchpadHero}
+        <TenderRecommendations workspaceId={workspaceId} />
         {workspaceStatus === "checking" ? <DashboardSkeleton /> : (
           <div role="status" aria-label="No business yet" className="rounded-2xl border border-slate-200/70 bg-white px-6 py-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="text-base font-bold text-slate-900 dark:text-slate-100">Set up your business to see your dashboard</p>
@@ -752,12 +754,13 @@ export default function DashboardPage() {
       <div className="space-y-6">
         {launchpadHero}
         {/* The Agent row as soon as its summary is here; the figures and insights below load after it. */}
-        {agentSummary && !dashFailed && (
+        {agentSummary && !agentSummary.unavailable && (
           <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]" data-agent-row-early>
             <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
             <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
           </div>
         )}
+        <TenderRecommendations workspaceId={workspaceId} />
         {dashFailed ? (
           <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800">
             <p className="font-semibold">Your dashboard couldn't be loaded.</p>
@@ -787,6 +790,7 @@ export default function DashboardPage() {
         <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
         <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
       </div>
+      <TenderRecommendations workspaceId={workspaceId} />
 
       {/* The first result: the full card only right after a fresh run (the owner's brief, 20 Oct). Dismissed, or on the next
           visit, it is a strip like every pinned item: never a full card once pinned. */}

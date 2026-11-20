@@ -18,7 +18,7 @@ export function getDashboard(businessId, preview) {
   if (preview?.stage) q.set("preview_stage", preview.stage);
   else if (preview?.pathway) q.set("preview_pathway", preview.pathway);
   const qs = q.toString();
-  return apiRequest(`/businesses/${businessId}/dashboard${qs ? `?${qs}` : ""}`, "GET");
+  return apiRequest(`/businesses/${businessId}/dashboard${qs ? `?${qs}` : ""}`, "GET", null, { timeoutMs: 90000 });
 }
 
 // "Not right? Change it": the stage the dashboard is composed for. `null` = read it from the records.

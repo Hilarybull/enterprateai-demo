@@ -36,6 +36,15 @@ async def watchlist(workspace_id: str = Query(min_length=1), user=Depends(get_cu
     return await service.watchlist(user["id"], workspace_id)
 
 
+@router.get("/recommendations")
+async def recommendations(workspace_id: str = Query(min_length=1),
+                          stage: Literal["open", "award"] | None = None,
+                          page: int = Query(1, ge=1, le=5000),
+                          page_size: int = Query(10, ge=1, le=50), user=Depends(get_current_user)):
+    from app.modules.tenders.recommendations import recommend
+    return await recommend(user["id"], workspace_id, stage=stage, page=page, page_size=page_size)
+
+
 @router.get("/admin/health")
 async def health(_user=Depends(require_admin)):
     return await service.sync_health()
@@ -84,6 +93,12 @@ async def _manual_sync():
 @router.get("/{listing_id}")
 async def detail(listing_id: str):
     return await service.get_listing(listing_id)
+
+
+@router.get("/{listing_id}/evaluation")
+async def saved_evaluation(listing_id: str, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    from app.modules.tenders.evaluation import saved_evaluation as read_saved
+    return await read_saved(user["id"], workspace_id, listing_id)
 
 
 @router.put("/{listing_id}/watchlist")

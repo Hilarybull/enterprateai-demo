@@ -17,7 +17,7 @@ const readable = (value) => (value || "").replace(/<script[\s\S]*?<\/script>/gi,
 // The notice is already displayed here; don't present its HTML page as a document or submission portal.
 const isNoticePage = (value) => { try { const u = new URL(value); return /^(www\.)?find-tender\.service\.gov\.uk$/i.test(u.hostname) && /^\/Notice\/[^/]+\/?$/i.test(u.pathname); } catch { return false; } };
 
-function TenderDetail({ item, children }) {
+function TenderDetail({ item, children, evaluation }) {
   const documents = (item.documents || []).filter(doc => sourceLink(doc.url) && !isNoticePage(doc.url));
   const instructions = item.submission_instructions || "Submission instructions are not available. Check the buyer’s tender documents.";
   const submissionUrl = !isNoticePage(item.submission_url) && sourceLink(item.submission_url);
@@ -38,6 +38,7 @@ function TenderDetail({ item, children }) {
       </section>
     </div>
     <aside className="min-w-0 space-y-3 self-start lg:sticky lg:top-24">
+      {evaluation}
       <section className={box + " space-y-3 text-sm"}><h3 className="font-semibold">Submission details</h3>
         <p>Submit through the buyer’s published submission service.</p>
         {submissionUrl && <a className="block rounded-xl bg-brand-600 px-4 py-3 text-center font-semibold text-white" href={submissionUrl} target="_blank" rel="noopener noreferrer">Go to submission site ↗</a>}
@@ -69,7 +70,6 @@ function Listing({ item, onOpen, children }) {
       <p className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
         <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold dark:bg-slate-800">{item.status === "open" ? "Open opportunity" : stages[item.status]}</span>
         {item.lot_id && <span>Lot {item.lot_id}</span>}
-        {item.sme_suitable === true && <span className="rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">SME suitable</span>}
       </p>
       <h3 className="text-base font-semibold">{onOpen ? <button type="button" className="text-left hover:underline" onClick={onOpen}>{item.title}</button> : item.title}</h3>
       {onOpen && item.description && <p className="line-clamp-3 text-sm text-slate-600 dark:text-slate-300">{item.description}</p>}
@@ -172,29 +172,29 @@ export default function PublicTenders({ query }) {
   return <section ref={contentTop} className="scroll-mt-24 mx-auto w-full max-w-7xl space-y-4 px-4 py-6 sm:px-6" aria-label="Public tenders">
     {detail ? <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" className={field} onClick={() => update("tender", null)}>Back to public tenders</button>{token && <button type="button" aria-pressed={watch} className={field} onClick={() => setWatch(!watch)}>{watch ? "Hide watchlist" : "My watchlist"}</button>}</div> :
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900" aria-label="Tender filters">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 p-4 sm:px-5 dark:border-slate-800">
-          <div><h2 className="text-lg font-semibold">Public tenders</h2><p className="mt-1 text-sm text-slate-500" role="status">{results ? (results.total ?? results.items?.length ?? 0).toLocaleString() + " tenders" : problem ? "Tender count unavailable" : "Loading tenders…"}{sme === "suitable" && " · Suitable for SMEs"}</p></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 pb-0 pt-3">
+          <h2 className="text-lg font-semibold">Public tenders</h2>
           {token && <button type="button" aria-pressed={watch} className={field} onClick={() => setWatch(!watch)}>{watch ? "Hide watchlist" : "My watchlist"}</button>}
         </div>
-        <div className="space-y-4 p-4 sm:p-5">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="space-y-3 p-3 sm:px-4">
+          <div className="grid gap-3 sm:grid-cols-3">
             <label className="grid min-w-0 gap-1.5 text-xs font-medium">Notice status<select value={stage} onChange={e=>update("stage",e.target.value)} className={field}>{Object.entries(stages).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-            <label className="grid min-w-0 gap-1.5 text-xs font-medium">SME suitability<select value={sme} onChange={e=>update("sme",e.target.value)} className={field}><option value="suitable">Suitable for SMEs</option><option value="all">All tenders</option><option value="unspecified">Suitability not specified</option></select></label>
             <label className="grid min-w-0 gap-1.5 text-xs font-medium">Industry (CPV)<select className={field + " min-w-0 w-full"} value={industry} onChange={e=>update("industry",e.target.value)}><option value="">All industries</option>{Object.entries(industries).map(([code,label])=><option key={code} value={code}>{label}</option>)}</select></label>
             <label className="grid min-w-0 gap-1.5 text-xs font-medium">Location<input className={field + " min-w-0 w-full"} value={location} placeholder="Region or delivery location" onChange={e=>update("location",e.target.value)}/></label>
           </div>
           <details className="rounded-xl border border-slate-200 dark:border-slate-700"><summary className="cursor-pointer px-3 py-2.5 text-sm font-medium">More filters{(category || from || to) && " · Active"}</summary>
-            <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-3 dark:border-slate-800">
+            <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2 xl:grid-cols-4 dark:border-slate-800">
+              <label className="grid min-w-0 gap-1.5 text-xs font-medium">SME suitability<select value={sme} onChange={e=>update("sme",e.target.value)} className={field}><option value="suitable">Suitable for SMEs</option><option value="all">All tenders</option><option value="unspecified">Suitability not specified</option></select></label>
               <label className="grid min-w-0 gap-1.5 text-xs font-medium">Contract type<select className={field + " min-w-0 w-full"} value={category} onChange={e=>update("category",e.target.value)}><option value="">All types</option><option value="goods">Goods</option><option value="services">Services</option><option value="works">Works</option></select></label>
               <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline from<input type="date" className={field + " min-w-0 w-full"} value={from} max={to || undefined} onChange={e=>update("deadline_from",e.target.value)}/></label>
               <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline to<input type="date" className={field + " min-w-0 w-full"} value={to} min={from || undefined} onChange={e=>update("deadline_to",e.target.value)}/></label>
             </div>
           </details>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-            <p>{sme === "suitable" ? "SME suitability is stated by the buyer in the official notice." : "Notices without a suitability statement are labelled separately."}</p>
+          {[industries[industry],location,category,from && "From " + from,to && "To " + to].some(Boolean) && <div className="flex flex-wrap gap-2">{[industries[industry],location,category,from && "From " + from,to && "To " + to].filter(Boolean).map(label=><span key={label} className="rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">{label}</span>)}</div>}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-800">
+            <p role="status">{results ? (results.total ?? results.items?.length ?? 0).toLocaleString() + " tenders" : problem ? "Tender count unavailable" : "Loading tenders…"}{sme === "suitable" && " · Suitable for SMEs"}</p>
             <button type="button" className="font-semibold text-brand-700 underline" onClick={()=>{const next=new URLSearchParams(params);["industry","location","category","deadline_from","deadline_to","stage","q","sme"].forEach(key=>next.delete(key));setParams(next);}}>Clear filters</button>
           </div>
-          {[industries[industry],location,category,from && "From " + from,to && "To " + to].some(Boolean) && <div className="flex flex-wrap gap-2">{[industries[industry],location,category,from && "From " + from,to && "To " + to].filter(Boolean).map(label=><span key={label} className="rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">{label}</span>)}</div>}
         </div>
       </div>}
     {results?.last_sync && <p className="text-xs text-slate-500">Last updated: {day(results.last_sync)}</p>}
@@ -207,7 +207,7 @@ export default function PublicTenders({ query }) {
     </div>}
     {results?.last_sync && results.stale && <p className="text-sm text-amber-700 dark:text-amber-300">Dates and availability may have changed. Confirm the deadline with the buyer before submitting.</p>}
     {!results && !problem && <p role="status">Loading notices…</p>}
-    {results && (detail ? <div className="space-y-5"><TenderEvaluation notice={results} token={token} workspaceId={workspaceId} /><TenderDetail item={results}>{saveAction(results)}</TenderDetail></div> :
+    {results && (detail ? <TenderDetail item={results} evaluation={<TenderEvaluation notice={results} token={token} workspaceId={workspaceId} />}>{saveAction(results)}</TenderDetail> :
       <>
         {!results.items.length && <div className={box + " space-y-2 py-6"}>
           <h3 className="font-semibold">No tenders match your filters</h3>

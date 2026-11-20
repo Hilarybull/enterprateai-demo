@@ -338,7 +338,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
 
 
 async def build_summary(orch, user_id: str, business_id: str, email: str | None = None,
-                        with_context: bool = False) -> dict[str, Any]:
+                        with_context: bool = False, refresh_rates: bool = False) -> dict[str, Any]:
     from app.modules.agent.orchestrator import AccessDenied
 
     rt = orch.rt
@@ -384,6 +384,12 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
         actor = bz.build_actor(user_id=user_id, email=email, business_id=business_id, owner_id=owner_id, membership=None, policy=policy)
     else:
         actor, _ = await orch.actor_for(user_id, business_id, email)      # business scope enforced (raises if no access)
+    if refresh_rates:
+        # Reuse the authorised record before computing totals. Rebuilding the whole
+        # summary after a rate refresh repeats all the policy, task and billing reads.
+        from app.modules.agent import fx
+        if fx.currencies_used(data):
+            await fx.ensure(orch, business_id, data)
     plan = own_plan if (user_id == owner_id and isinstance(own_plan, str) and own_plan) else await rt.meter.plan(owner_id)
     from app.modules.agent.config import with_dev_overrides
     ent = {"plan": plan, "is_paid": plan != "explorer", **with_dev_overrides(await rt.store.plan_limits(plan))}

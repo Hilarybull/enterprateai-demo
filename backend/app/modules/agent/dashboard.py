@@ -1661,7 +1661,7 @@ async def build_dashboard(orch, user_id: str, business_id: str, email: str | Non
     authoritative services. Access (business scope and role) is checked by the Agent summary
     before anything is read."""
     from app.modules.agent import summary as summary_mod
-    summary = await summary_mod.build_summary(orch, user_id, business_id, email, with_context=True)
+    summary = await summary_mod.build_summary(orch, user_id, business_id, email, with_context=True, refresh_rates=True)
     ctx = summary.pop("_ctx")
     data, policy, now, approvals = ctx["data"], ctx["policy"], ctx["now"], ctx["pending"]
     ent = summary["entitlement"]

@@ -10,6 +10,9 @@ import { forgetDashboard, recallDashboard, rememberDashboard } from "../lib/dash
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 
+// Recommendation loading/error and workspace isolation have their own component tests.
+vi.mock("../components/dashboard/TenderRecommendations", () => ({ default: () => <section aria-label="Tender recommendations" /> }));
+
 const OPERATING_DEFAULTS = [/Paste a customer enquiry/, /Enquiry to Quote/, /Quote to Invoice/, /Payment Follow-up/, /Receipt Sending/, /Risk & Concentration/,
   /Essentials/, /Validate My Idea/, /Business Health Report/, /Total Revenue/];
 
@@ -46,7 +49,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("dashboard before its composition arrives", () => {
-  it("shows the Agent row as soon as its own summary arrives, before the figures (QA, 16 Oct)", async () => {
+  it("loads the composed dashboard without a duplicate Agent summary request", async () => {
     globalThis.fetch = vi.fn((url) => {
       const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
       if (/\/businesses\/ws1\/dashboard(\?|$)/.test(String(url))) return new Promise((resolve) => { release = () => resolve(json(preLaunch)); });
@@ -54,11 +57,23 @@ describe("dashboard before its composition arrives", () => {
       return Promise.resolve(json({}));
     });
     mount();
-    await waitFor(() => expect(document.querySelector("[data-agent-row-early]")).toBeTruthy());
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(globalThis.fetch.mock.calls.some(([url]) => /\/agent\/summary/.test(String(url)))).toBe(false);
     expect(screen.getByRole("status", { name: "Loading your dashboard" })).toBeTruthy();      // the figures still loading below it
     await act(async () => { release(); });
     await screen.findByText("Pre-launch stage");
     expect(document.querySelector("[data-agent-row-early]")).toBeNull();      // the full page, with one Agent row
+  });
+
+  it("keeps recommendations and the fallback Agent panel available when composition fails", async () => {
+    globalThis.fetch = vi.fn((url) => Promise.resolve(new Response(JSON.stringify(
+      /\/agent\/summary/.test(String(url)) ? { suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [] } : {}
+    ), { status: /\/dashboard$/.test(String(url)) ? 503 : 200 })));
+    mount();
+    await screen.findByRole("alert");
+    await waitFor(() => expect(document.querySelector("[data-agent-row-early]")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "Tender recommendations" })).toBeTruthy();
+    expect(globalThis.fetch.mock.calls.filter(([url]) => /\/agent\/summary/.test(String(url)))).toHaveLength(1);
   });
 
 

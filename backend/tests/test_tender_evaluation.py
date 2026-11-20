@@ -113,3 +113,20 @@ def test_tender_explanation_works_without_business_profile_and_filters_false_cit
     assert len(result["overview"]) == 1
     assert result["overview"][0]["evidence"][0]["notice_id"] == "tender-1"
     assert "imported" not in " ".join(result["limitations"])
+
+
+def test_summary_only_response_is_valid_and_saved_review_reopens_without_generation(monkeypatch):
+    raw = {"overview": [{"heading": "What the buyer needs", "explanation": "Managed IT support.", "evidence": [{"source": "description", "quote": "managed IT support"}]}]}
+    row, llm = setup(monkeypatch, raw)
+    async def scenario():
+        result = await evaluation.evaluate("owner", "A", "tender-1")
+        assert result["overview"] and result["findings"] == []
+        saved = await evaluation.saved_evaluation("owner", "A", "tender-1")
+        assert saved == {"evaluation": result, "stale": False}
+        llm.generate_text.assert_awaited_once()
+        row["data"]["workspace_profile"]["company_name"] = "Updated"
+        assert (await evaluation.saved_evaluation("owner", "A", "tender-1"))["stale"]
+        with pytest.raises(HTTPException) as denied:
+            await evaluation.saved_evaluation("outsider", "A", "tender-1")
+        assert denied.value.status_code == 404
+    asyncio.run(scenario())

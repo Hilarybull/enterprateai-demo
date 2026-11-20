@@ -1854,9 +1854,7 @@ async def _rates_refreshed(business_id: str) -> bool:
 @router.get("/businesses/{business_id}/agent/summary")
 async def agent_summary(business_id: str, user=Depends(get_current_user)):
     try:
-        s = await summary_mod.build_summary(get_orchestrator(), user["id"], business_id, user.get("email"))
-        if await _rates_refreshed(business_id):      # documents in other currencies: today's rates first, then the totals
-            s = await summary_mod.build_summary(get_orchestrator(), user["id"], business_id, user.get("email"))
+        s = await summary_mod.build_summary(get_orchestrator(), user["id"], business_id, user.get("email"), refresh_rates=True)
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:
@@ -1866,7 +1864,7 @@ async def agent_summary(business_id: str, user=Depends(get_current_user)):
     # read, the details stay hidden: never shown by mistake, and the summary still loads.
     from app.modules.agent.dashboard import vague_for_free
     try:
-        free = (await get_orchestrator().entitlement(business_id)).get("plan") == "explorer"
+        free = s["entitlement"].get("plan") == "explorer"
     except Exception:      # noqa: BLE001
         logger.warning("plan not read for the summary of %s", business_id, exc_info=True)
         free = True
@@ -1972,10 +1970,6 @@ async def adaptive_dashboard(business_id: str, preview_pathway: str | None = Que
         d = await dash.build_dashboard(get_orchestrator(), user["id"], business_id, user.get("email"),
                                        preview_pathway=None if production else preview_pathway,
                                        preview_stage=None if production else preview_stage)
-        if await _rates_refreshed(business_id):      # access is checked: today's rates stored, then the totals in them
-            d = await dash.build_dashboard(get_orchestrator(), user["id"], business_id, user.get("email"),
-                                           preview_pathway=None if production else preview_pathway,
-                                           preview_stage=None if production else preview_stage)
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:

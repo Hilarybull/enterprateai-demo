@@ -1,3 +1,15 @@
+## 20 November 2026: paginated recommendations and saved evaluation popups
+
+See [tender popup verification](marketplace-tender-popup-verification.md) for implementation, live AI fixture verification, regression results and rollback details. No migration or deployment.
+
+## 20 November 2026: dashboard slow-response recovery
+
+Reported successful dashboard, Agent summary and proposal inbox responses took 41–51 seconds, exceeding the generic 30-second browser timeout. The dashboard now uses a 90-second budget and requests its composed summary once; the separate Agent endpoint is only a fallback. Fallback loading does not delay the retry control or hide an available Agent panel. Tender recommendations render independently during dashboard loading and failure.
+
+Exchange rates are refreshed against the already authorised business record before summary calculations, avoiding the second full composition and repeated policy, task, billing and business reads. The Agent endpoint reuses its existing entitlement rather than reading it again. Workspace checks still precede the refresh. No schema or configuration change; rollback is a code revert.
+
+Verification: 45 backend dashboard/currency/access regression checks passed. All 13 frontend dashboard/recommendation regression checks passed, including a successful response after 51 seconds and independent failure recovery. Production build passed with existing CSS minification and bundle-size warnings. Live database latency has not been remeasured; the reported inbox latency remains a separate observation. No deployment or push. Carry forward live AI generation, real signup email verification, connected buyer-to-contract and full payment lifecycle verification.
+
 # Marketplace procurement Sprint 0 handoff
 
 This is a checkout audit. The source PRD reports eight production workflows. Production operation of each workflow has not been independently verified.
@@ -182,3 +194,12 @@ Starter pricing now lists Tender and Tender Evaluation; Request for Quotation re
 Verification before staging push: 52 backend tests passed, including sourcing, tender filtering/evaluation, HTTP dispatch and payment regressions. Two Chromium fixture journeys passed (responsive tender evaluation at 390/768/1440 px and empty industry filter/reset with no external notice redirect). Production frontend build passed; existing CSS/chunk warnings remain. The Stripe credit receipt table required by migration 056 was confirmed available in the configured database by a read-only check; a full checkout journey remains unverified. No new SQL migration is needed for this filter repair. Configuration/schema readiness must still be checked for other environments.
 
 Latest changes are intended for demo staging only. Live AI, real signup email, connected buyer-to-contract and checkout-to-plan verification remain outstanding. Earlier notes saying this local patch has not been pushed describe its state at that time.
+# 19 November 2026: Dashboard tender recommendations
+
+Implemented a private `/public-tenders/recommendations?workspace_id=...` read endpoint and responsive dashboard card in both dashboard render paths. Workspace ownership is checked before reading profile data or searching. Matching uses saved industry, service names/categories and catalogue product names/categories against published tender titles and CPV classifications. Counts cover all matching pages, deduplicate listing IDs, and separate currently open notices from awards; the top three of each include reasons and internal detail links. No model call or credit charge is involved. Business descriptions, customer records and contact details are excluded from matching.
+
+Missing capabilities prompt the user to update their business profile. Unavailable searches show a retry rather than zero matches. Workspace changes unmount the previous request state so late responses cannot display another business's recommendations. Awarded contracts are clearly labelled as potential subcontracting research leads; subcontracting availability and eligibility are not asserted. Stale opportunities receive a user-facing caution.
+
+Verification: 25 backend tests passed (`test_tender_recommendations.py` and `test_public_tenders.py`), including pagination/counts, lifecycle separation, duplicate notices, irrelevant matches, missing profiles, unavailable service and actual HTTP cross-workspace denial. Eleven frontend tests passed (three recommendation tests and eight existing DashboardPage regressions), including internal links, stale workspace responses and friendly retry. Production frontend build passed with existing CSS/bundle warnings. New card uses one column on narrow screens and two at medium widths; a connected browser/mobile journey and live business matching were not exercised in this slice.
+
+No migration or configuration changes are required. Rollback: remove the dashboard component integration and recommendations endpoint/module. Changes are local; no push or deployment was performed for this slice. Carry forward live AI generation, real signup email verification, connected buyer-to-contract and full checkout/renewal/expiry verification.

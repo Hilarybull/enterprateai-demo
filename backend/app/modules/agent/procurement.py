@@ -103,7 +103,7 @@ async def run(orch, user: dict, body, known: dict, args: dict | None = None) -> 
             else:
                 result = await tender_evaluation.evaluate(user_id, workspace_id, tender_id)
                 state["tender_id"] = tender_id
-                steps = [finding["next_step"] for finding in result["findings"]]
+                steps = result.get("next_steps") or [finding["next_step"] for finding in result["findings"]]
                 explanation = "\n\n".join(item["heading"] + ": " + item["explanation"] for item in result.get("overview", []))
                 reply = _reply((explanation + "\n\n" if explanation else "") + result["verdict"] + "\n\nWhat to do next:\n" + "\n".join("• " + step for step in steps),
                                status="tender_evaluation", tender_evaluation=result)
