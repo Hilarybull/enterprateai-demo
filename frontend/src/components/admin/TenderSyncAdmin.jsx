@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../api/client";
 
 const attemptStatus = { running: "Running", succeeded: "Succeeded", failed: "Failed", interrupted: "Interrupted" };
@@ -11,6 +11,8 @@ export default function TenderSyncAdmin() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [schedule, setSchedule] = useState(null);
+  const scheduleDirty = useRef(false);
 
   const [history, setHistory] = useState(null);
   const [historyProblem, setHistoryProblem] = useState("");
@@ -21,6 +23,7 @@ export default function TenderSyncAdmin() {
     try {
       next = await apiRequest("/public-tenders/admin/health", "GET");
       setHealth(next);
+      if (!scheduleDirty.current) setSchedule({ enabled: next.scheduled, interval_minutes: next.interval_minutes ?? 180, import_scope: next.import_scope ?? "all" });
     } catch (error) {
       setProblem(error.message);
       return;
@@ -51,14 +54,21 @@ export default function TenderSyncAdmin() {
     finally { setBusy(false); }
   }
 
-  async function toggleSchedule() {
+  function editSchedule(values) {
+    scheduleDirty.current = true;
+    setSchedule((current) => ({ ...current, ...values }));
+  }
+
+  async function saveSchedule(event) {
+    event.preventDefault();
     setSavingSchedule(true);
     setProblem("");
     setNote("");
     try {
-      const { scheduled } = await apiRequest("/public-tenders/admin/schedule", "PUT", { enabled: !health.scheduled });
-      setHealth((current) => ({ ...current, scheduled }));
-      setNote(scheduled ? "Automatic sync is on." : "Automatic sync is off. Any active sync will finish.");
+      const result = await apiRequest("/public-tenders/admin/schedule", "PUT", { ...schedule, interval_minutes: Number(schedule.interval_minutes) });
+      scheduleDirty.current = false;
+      setHealth((current) => ({ ...current, ...result }));
+      setNote("Sync settings saved. Changes apply to the next sync; any active sync will finish.");
     } catch (error) { setProblem(error.message); }
     finally { setSavingSchedule(false); }
   }
@@ -111,18 +121,36 @@ export default function TenderSyncAdmin() {
         {retryPending && <p className="text-sm text-slate-600 dark:text-slate-300">Retry available {when(health.retry_at)}.</p>}
         {note && !showError && !problem && <p role="status" className="text-sm text-slate-600 dark:text-slate-300">{note}</p>}
         {health && <>
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+          <form onSubmit={saveSchedule} className="space-y-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold" id="tender-auto-sync-label">Automatic sync</p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Checks every five minutes while catching up, then syncs about every three hours.</p>
-              {health.schedule_configurable === false && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">Apply migration 052 to change this setting here.</p>}
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Choose how often to sync and which new tenders to include.</p>
+              {!health.preferences_configurable && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">Apply migration 057 to configure the sync interval and import scope.</p>}
             </div>
-            <button type="button" role="switch" aria-checked={health.scheduled} aria-labelledby="tender-auto-sync-label"
-              onClick={toggleSchedule} disabled={savingSchedule || health.schedule_configurable === false}
-              className={`inline-flex min-h-11 min-w-16 shrink-0 items-center justify-center rounded-full border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 ${health.scheduled ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"}`}>
-              {savingSchedule ? "Saving..." : health.scheduled ? "On" : "Off"}
+            <button type="button" role="switch" aria-checked={schedule?.enabled ?? false} aria-labelledby="tender-auto-sync-label"
+              onClick={() => editSchedule({ enabled: !schedule.enabled })} disabled={savingSchedule || !health.preferences_configurable}
+              className={`inline-flex min-h-11 min-w-16 shrink-0 items-center justify-center rounded-full border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50 ${schedule?.enabled ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"}`}>
+              {schedule?.enabled ? "On" : "Off"}
             </button>
           </div>
+          {schedule && <fieldset disabled={savingSchedule || !health.preferences_configurable} className="grid min-w-0 gap-4 sm:grid-cols-2 disabled:opacity-50">
+            <label className="min-w-0 text-sm font-medium">Sync interval (minutes)
+              <input type="number" min="5" max="1440" step="1" required value={schedule.interval_minutes}
+                onChange={(event) => editSchedule({ interval_minutes: event.target.value })}
+                className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 bg-transparent px-3 dark:border-slate-600" />
+              <span className="mt-1 block text-xs font-normal text-slate-500">5 minutes to 24 hours. Scheduled runs may start up to five minutes later.</span>
+            </label>
+            <label className="min-w-0 text-sm font-medium">New tenders to include
+              <select value={schedule.import_scope} onChange={(event) => editSchedule({ import_scope: event.target.value })}
+                className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 dark:border-slate-600 dark:bg-slate-900">
+                <option value="suitable">Suitable for SMEs</option><option value="all">All tenders</option>
+              </select>
+            </label>
+          </fieldset>}
+          <p className="text-xs text-slate-500 dark:text-slate-400">SME suitability uses the buyer’s published information. Existing tenders keep receiving updates, including deadline changes and closures. Changing scope does not remove saved listings.</p>
+          <button type="submit" disabled={savingSchedule || !health.preferences_configurable} className="min-h-11 w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 sm:w-auto">{savingSchedule ? "Saving..." : "Save sync settings"}</button>
+          </form>
           <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {metrics.map(([label, value]) => <div key={label} className="min-w-0 rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800">
               <dt className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</dt>

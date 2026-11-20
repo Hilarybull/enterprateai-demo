@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, StrictBool, Field
 
 from app.modules.admin.router import require_admin
 from app.modules.tenders import service
@@ -66,11 +66,14 @@ async def dismiss_error(body: DismissErrorIn, _user=Depends(require_admin)):
 
 class ScheduleIn(BaseModel):
     enabled: StrictBool
+    interval_minutes: int | None = Field(default=None, strict=True, ge=5, le=1440)
+    import_scope: Literal["suitable", "all"] | None = None
 
 
 @router.put("/admin/schedule")
 async def update_schedule(body: ScheduleIn, _user=Depends(require_admin)):
-    result = await service.set_automatic_sync(body.enabled)
+    result = await service.set_automatic_sync(body.enabled, interval_minutes=body.interval_minutes,
+                                              import_scope=body.import_scope)
     _schedule_changed.set()
     return result
 

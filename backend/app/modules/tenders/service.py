@@ -285,15 +285,23 @@ async def scheduled_sync_enabled():
     return automatic_enabled(row)
 
 
-async def set_automatic_sync(value):
+async def set_automatic_sync(value, *, interval_minutes=None, import_scope=None):
+    payload = {"automatic_sync": value}
+    result = {"scheduled": value}
+    if interval_minutes is not None:
+        payload["interval_minutes"] = interval_minutes
+        result["interval_minutes"] = interval_minutes
+    if import_scope is not None:
+        payload["import_scope"] = import_scope
+        result["import_scope"] = import_scope
     try:
-        updated = await sb_update("fts_sync", filters=[("id", "eq", SOURCE)], payload={"automatic_sync": value})
+        updated = await sb_update("fts_sync", filters=[("id", "eq", SOURCE)], payload=payload)
     except Exception as exc:
         logger.warning("Could not save automatic tender sync", exc_info=True)
         raise HTTPException(503, "Could not save the schedule. Check that the tender sync migrations are applied.") from exc
     if not updated:
         raise HTTPException(503, "The tender sync configuration is unavailable.")
-    return {"scheduled": value}
+    return result
 
 
 async def sync_once(*, manual=False):
@@ -352,7 +360,9 @@ async def sync_health():
             "history_available": "error_dismissed_for" in row,
             "error_dismissed": bool(row.get("error") and row.get("last_attempt") and
                                     row.get("error_dismissed_for") == row.get("last_attempt")),
-            "summary": row.get("summary"), "scheduled": automatic_enabled(row), "schedule_configurable": "automatic_sync" in row}
+            "summary": row.get("summary"), "scheduled": automatic_enabled(row), "schedule_configurable": "automatic_sync" in row,
+            "preferences_configurable": "interval_minutes" in row and "import_scope" in row,
+            "interval_minutes": row.get("interval_minutes", 180), "import_scope": row.get("import_scope", "all")}
 
 
 async def sync_history():
