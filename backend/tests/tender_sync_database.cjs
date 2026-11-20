@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
   await db.exec(readFileSync(resolve(__dirname, '../migrations/057_tender_sync_preferences.sql'), 'utf8'));
   const lease = '11111111-1111-4111-8111-111111111111';
   const scalar = async (sql, params = []) => Object.values((await db.query(sql, params)).rows[0])[0];
+  assert.equal(await scalar('select import_scope from fts_sync'), 'suitable', 'SME suitability is the default without admin configuration');
   const acquire = (time, manual = false, id = lease) => db.query('select * from fts_acquire($1, $2, $3)', [id, time, manual]);
   const now = new Date();
   await db.exec('update fts_sync set interval_minutes=60');

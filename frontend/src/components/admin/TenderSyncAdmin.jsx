@@ -23,7 +23,7 @@ export default function TenderSyncAdmin() {
     try {
       next = await apiRequest("/public-tenders/admin/health", "GET");
       setHealth(next);
-      if (!scheduleDirty.current) setSchedule({ enabled: next.scheduled, interval_minutes: next.interval_minutes ?? 180, import_scope: next.import_scope ?? "all" });
+      if (!scheduleDirty.current) setSchedule({ enabled: next.scheduled, interval_minutes: next.interval_minutes ?? 180, import_scope: next.import_scope ?? "suitable" });
     } catch (error) {
       setProblem(error.message);
       return;
