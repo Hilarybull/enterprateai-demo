@@ -176,7 +176,7 @@ export default function StartPage({ framed = false }) {
     if (!words || !known?.business_id || goesStraightOn(sessionId)) return false;      // already answered in the chat: started here, never back to it
     const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: known.business_id, text: words }, { timeoutMs: 12000 }).catch(() => null);
     // Funding, launch and an idea are chat conversations, also when the look-up was too slow to answer
-    const to = asked?.converse || (asked === null && TALKED.has(known.goal_key)) ? `/agent?chat=${encodeURIComponent(words)}` : asked?.kind ? `/dashboard?ask=${encodeURIComponent(words)}` : null;
+    const to = asked?.converse || asked?.kind || (asked === null && TALKED.has(known.goal_key)) ? `/agent?chat=${encodeURIComponent(words)}` : null;
     if (!to) return false;
     try { localStorage.removeItem("ea_task_session:anon"); localStorage.removeItem("ea_task_session"); } catch { /* fine without it */ }
     useWorkspaceStore.getState().setWorkspaceId(known.business_id);

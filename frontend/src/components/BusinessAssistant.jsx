@@ -4,15 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useInRouterContext, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useWorkspaceStore } from "../store/workspace";
-import { cameFrom, noteCameFrom } from "../lib/cameFrom";
-import { AFTER_WORDS, DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, caseChatPath, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
+import { cameFrom, forgetCameFrom, noteCameFrom } from "../lib/cameFrom";
+import { DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
 import { apiRequest } from "../api/client";
 import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
 import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
 import { checkLines, linesFromText } from "./agent/AgentBits";
-import { AgentGoalChat } from "./GoalLauncher";
 import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValueCard";
 import { resultHome } from "../lib/resultHome";
+import ChatDownload from "./agent/ChatDownload";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
 const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
@@ -144,20 +144,36 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // conversations, carry out tasks", "maybe the side"): on a wide screen the page makes room for it
   // Closed on every load (the owner's test, 27 Oct: on a phone it covered the screen each time): opened by the button or a
   // message sent to it, and it stays open from page to page while the app is open
-  const go = useInRouterContext() ? useNavigate() : (to) => window.location.assign(to);      // eslint-disable-line react-hooks/rules-of-hooks
+  const navigate = useInRouterContext() ? useNavigate() : (to) => window.location.assign(to);      // eslint-disable-line react-hooks/rules-of-hooks
+  const go = (to) => { noteCameFrom(chatId, to); navigate(to); };
   useEffect(() => { try { localStorage.removeItem("ea_panel_open"); } catch { /* nothing kept */ } }, []);
   const [loading, setLoading] = useState(false);
-  const [handingTo, setHandingTo] = useState("");      // handing over to a funding case or launch plan: what's being opened
   const [input, setInput] = useState("");
   // The conversation so far in this business is picked up again (it is shared with the Agent box).
   // The last conversation, brought back on every load (the owner's QA, 27 Oct); the others are in History
   const [messages, setMessages] = useState(() => [{ role: "assistant", content: intro }]);
   const [handedOver, setHandedOver] = useState(false);      // this conversation began with a request handed to it
   const [chatId, setChatId] = useState(newChatId);
+  useEffect(() => {
+    const leave = (event) => {
+      if (!event.detail?.to) return;
+      event.detail.handled = true;
+      noteCameFrom(chatId, event.detail.to);
+      navigate(event.detail.to);
+    };
+    window.addEventListener("ea:chat-navigate", leave);
+    return () => window.removeEventListener("ea:chat-navigate", leave);
+  }, [chatId, navigate]);
   const openedAt = useRef(new Date().toISOString());      // when the opening was said
-  const act = useMemo(() => chatActions(useWorkspaceStore.getState().workspaceId), []);      // eslint-disable-line react-hooks/exhaustive-deps
+  const bizId = useWorkspaceStore((st) => st.workspaceId);
+  const act = useMemo(() => chatActions(bizId), [bizId]);
   const [editing, setEditing] = useState(null);      // the draft the next message changes ("Edit", typed in the chat)
   const fileRef = useRef(null);
+  useEffect(() => {
+    const upload = () => { if (!loading && bizId) fileRef.current?.click(); };
+    window.addEventListener("ea:chat-upload", upload);
+    return () => window.removeEventListener("ea:chat-upload", upload);
+  }, [loading, bizId]);
   const push = (...said) => setMessages((prev) => [...prev, ...said]);
   const mine = (content) => ({ role: "user", content, at: new Date().toISOString() });
   const startEdit = (item) => {
@@ -167,6 +183,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const runScenario = async (kind, label) => { push(mine(label)); setLoading(true); try { push(await act.scenario(kind, { onWaiting: () => push(SLOW()) })); } finally { setLoading(false); } };
   const attachFile = async (file) => {
     if (!file) return;
+    sent.current = true;
     push(mine(`Attached ${file.name}`));
     setLoading(true);
     try { push(await act.attach(file)); } finally { setLoading(false); }
@@ -186,7 +203,6 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     return () => window.removeEventListener("ea:chat-review", open);
   }, [act]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [history, setHistory] = useState(null);      // the list, while it is open
-  const bizId = useWorkspaceStore((st) => st.workspaceId);
   const sent = useRef(false);      // a message was sent here: the last conversation is never brought back over it
   const [restored, setRestored] = useState(false);      // the last conversation was brought back on load
   const gone = useRef(false);      // the Agent Centre was left: a reply still coming is saved, not shown
@@ -195,6 +211,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     if (!bizId) return undefined;
     let live = true;
     const backTo = cameFrom()?.chat;      // back from a page its link opened: that same conversation (the owner, 29 Oct)
+    if (backTo) forgetCameFrom();
     listChats(bizId).then(async (r) => {
       // The panel's own conversations only: a funding case's, a launch plan's or the idea's thread belongs to its page
       const own = (r?.items || []).filter((c) => !isModuleThread(c.id));
@@ -494,28 +511,28 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   }
 
   /** One reply from the Agent, put where it belongs: a message, a question in a dialog, or a task to watch. */
-  function deliver(routed, businessId) {
+  async function deliver(routed, businessId) {
     const parts = routed.kind === "multi" ? routed.results || [] : [routed];
     const single = parts.length === 1 ? parts[0] : null;
-    if (single?.handover && single.case_id) {
-      // Funding or launch: carried on on its own page, this exchange already in its chat (the owner, 31 Oct: "it should have
-      // opened the funding flow… and handed over the request well")
-      const id = `case-${single.case_id}`;
-      const at = new Date().toISOString();
-      const reply = { role: "assistant", at, content: replyText(single), ...(single.cards ? { cards: single.cards } : {}),
-        prompts: (single.actions || []).filter((a) => a.prompt).map((a) => ({ label: a.label, prompt: a.prompt })) };
-      setHandingTo(single.handover.startsWith("/launch") ? "Opening your launch plan…" : "Opening your funding case…");      // working, never a message that sits there (the owner, 2 Nov)
-      getChat(businessId, id).then((c) => c?.messages || [], () => []).then((had) => saveChat(businessId, id, [...had, { role: "user", at, content: single.asked || "" }, reply]))
-        .catch(() => null).finally(() => { setHandingTo(""); go(single.handover); });
-      return undefined;
-    }
+    // Specialist replies, including legacy handover responses, belong to this thread.
+    // Render their words, result cards and explicit actions without opening another chat.
     const run = single?.kind === "workflow" && !((single.runs || []).length > 1) ? single.run : null;
     if (run && !["succeeded", "cancelled"].includes(run.status)) return flow.follow(run);
     // A guided chat (funding, launch, customers, risks, an idea): carried on here in the panel, as in the Agent Centre (the
     // owner, 27 Oct: "all these agentic flows need to be conversational... a conversation panel")
     if (single?.kind === "check") {
-      // One open card for a goal: asking again replaces it, never the same question twice on screen (the owner, 3 Nov)
-      setMessages((prev) => [...prev.filter((m) => !(m.check && m.check.goal === single.goal_key)), { role: "assistant", content: "", check: { said: single.said || "", goal: single.goal_key, at: Date.now() } }]);
+      const page = { need_funding: "funding", launch: "launch", test_idea: "idea", more_customers: "customers", business_risks: "risks", price_offer: "pricing" }[single.goal_key];
+      if (page) {
+        try {
+          const result = await submitAgentRequest({ businessId, page, text: single.said || single.message || "Help me with this check",
+            sourceChannel: "text", history: messages.slice(-18).filter(message => message.content) });
+          if (result.kind !== "check") return await deliver(result, businessId);
+        } catch (error) {
+          push({ role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(error, "I couldn’t complete that check just now. Please try again.") });
+          return undefined;
+        }
+      }
+      push({ role: "assistant", at: new Date().toISOString(), content: "I couldn’t complete that check just now. Please try again; your conversation is still here." });
       return undefined;
     }
     if (single?.kind === "needs_input") {
@@ -747,10 +764,6 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       setInput("");
       return;
     }
-    // A message handed over (from the landing page, after sign-in) stays here in the Agent Centre (the owner, 28 Oct: "I should
-    // be updating and populating here, not outside"); one typed here goes to its case's own thread, as before (27 Oct)
-    const there = fresh ? null : await caseChatPath(useWorkspaceStore.getState().workspaceId, question);
-    if (there) { setInput(""); go(there); return; }      // its own thread, never this one (the owner, 27 Oct)
     const nextMessages = [...(fresh ? [{ role: "assistant", content: intro }] : messages), { role: "user", content: question, at: new Date().toISOString() }];
     const trimmedMessages = nextMessages.slice(-20);
     setMessages(trimmedMessages);
@@ -774,7 +787,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         if (late.length && !isModuleThread(chatId)) saveChat(agentBusinessId, chatId, [...trimmedMessages.slice(1).filter((m) => m.content), ...late]).catch(() => {});
         return;
       }
-      deliver(routed, agentBusinessId);
+      await deliver(routed, agentBusinessId);
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // tasks and written answers use credits
       requestAnimationFrame(() => {
         listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" });
@@ -828,6 +841,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
   const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
   const card = (c, key) => {
+    if (c.type === "download") return <ChatDownload key={key} item={c} />;
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
     if (["records", "result", "next"].includes(c.type)) {
       const readiness = work.find((item) => item.id && String(item.id) === String(c.case_id));
@@ -912,18 +926,15 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             {message.at && <span className="mt-1 text-[12px] text-slate-500">{clock(message.at)}</span>}
           </div>
         ) : (
-          // its cards first, then its words under them, as in the case chats (the owner, 1 Nov)
-          <div key={`a-${index}`} className={`flex gap-3 ${cardsToShow(shown, index).length ? "flex-col-reverse" : "flex-col"}`}>
-            {/* Recommended next actions come after the reply's words (the owner, 1 Nov) */}
-            {cardsToShow(shown, index).some((c) => AFTER_WORDS.has(c.type)) && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => (AFTER_WORDS.has(c.type) ? <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div> : null))}</div>}
+          <div key={`a-${index}`} className="flex flex-col gap-3">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
               <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
                 {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}><Rich text={message.content} /></p>}
                 {message.content ? <ReplyTools text={message.content} at={message.at} /> : message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
-                {message.check && <div className="mt-2 whitespace-normal" data-panel-chat><AgentGoalChat key={`${message.check.goal}:${message.check.at}`} text={message.check.said} /></div>}
+                {message.check && <button type="button" onClick={() => send(message.check.said || "Help me continue this check")} className="mt-2 min-h-11 rounded-lg border border-brand-200 px-3 py-2 text-sm font-semibold text-brand-700">Continue this check here</button>}
                 {message.link && (
-                  <a href={message.link} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
+                  <a href={message.link} onClick={() => noteCameFrom(chatId, message.link)} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
                     {message.link === "/pricing" ? "See plans" : message.link === "/agent" ? "See your tasks" : "See details"}
                   </a>
                 )}
@@ -939,12 +950,12 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                 )}
               </div>
             </div>
-            {cardsToShow(shown, index).some((c) => !AFTER_WORDS.has(c.type)) && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => (AFTER_WORDS.has(c.type) ? null : <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>))}</div>}
+            {cardsToShow(shown, index).length > 0 && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>)}</div>}
           </div>
         )))}
-        {loading || working || handingTo ? (
+        {loading || working ? (
           <div className="flex items-center gap-4"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
-            <span className="text-[14px] text-slate-500">{handingTo || (working && !loading ? "Working on it…" : "Thinking…")}</span></div>
+            <span className="text-[14px] text-slate-500">{working && !loading ? "Working on it…" : "Thinking…"}</span></div>
         ) : null}
         {flow.element}
       </div>

@@ -4,6 +4,7 @@ import logoUrl from "../../enterprate-logo.png";
 import { useAuthStore } from "../../store/auth";
 import { useWorkspaceStore } from "../../store/workspace";
 import { getMarketplaceProfile } from "../../lib/directory";
+import BackToChat from "../BackToChat";
 
 // The one header for the public Marketplace: the directory and listings, a business's public
 // profile and the claim journey. Signed in: "List My Business" and "Dashboard". Otherwise
@@ -72,6 +73,7 @@ export default function MarketplaceHeader({ onList, managing = false }) {
           )}
         </div>
       </div>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6"><BackToChat /></div>
     </header>
   );
 }

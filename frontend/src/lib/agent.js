@@ -336,13 +336,10 @@ export function toSidePanel(text) {
   try { window.dispatchEvent(new CustomEvent("ea:chat", { detail })); } catch { return false; }
   return detail.handled;
 }
-/** Where a funding or launch message is carried on (the owner's mockups, 27 Oct): its case's Assistant tab when there is one
- *  case to open, with the message sent there; null for anything else (or no answer within a few seconds). */
-export async function caseChatPath(businessId, text) {
-  const said = String(text || "").trim();
-  if (!businessId || !said) return null;
-  const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: businessId, text: said }, { timeoutMs: 10000 }).catch(() => null);
-  return asked?.converse && asked.to ? `${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(said.slice(0, 500))}` : null;
+/** Kept for older callers: typed requests stay in their current conversation.
+ * Specialists run behind /agent/requests; opening their workspace is an explicit action. */
+export async function caseChatPath() {
+  return null;
 }
 export const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 

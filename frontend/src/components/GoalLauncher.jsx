@@ -211,9 +211,7 @@ export function useGoalFlow({ inApp = false } = {}) {
       if (!inApp && here && ws.business_id && said) {
         const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: ws.business_id, text: said }, { timeoutMs: 12000 }).catch(() => null);
         // Funding and launch are conversations, in the chat panel (the owner, 27 Oct); any other case question, the dashboard Agent
-        if (asked?.converse && asked.to) { navigate(`${asked.to}${asked.to.includes("?") ? "&" : "?"}message=${encodeURIComponent(said)}`); return true; }
-        if (asked?.converse) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }      // the one general chat
-        if (asked?.kind) { navigate(`/dashboard?ask=${encodeURIComponent(said)}`); return true; }
+        if (asked?.converse || asked?.kind) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }
       }
       const startTask = (check) => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws }, check);
       try {

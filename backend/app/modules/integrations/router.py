@@ -19,7 +19,7 @@ from app.core.supabase import get_supabase_client, sb_select, sb_upsert, sb_upda
 from app.modules.credits.service import normalise_plan_key
 from app.shared.auth.deps import get_current_user
 from app.shared.auth.security import create_access_token, decode_token
-from app.modules.idea_validation.service import get_user_workspace, upsert_user_workspace
+from app.modules.idea_validation.service import get_user_workspace, get_workspace, update_workspace
 from app.modules.integrations import quickbooks as qb
 from app.modules.integrations import xero as xero_mod
 from app.modules.integrations import zoho as zoho_mod
@@ -40,6 +40,7 @@ class SyncRequest(BaseModel):
     direction: SyncDirection = "import"
     mode: Optional[ImportMode] = "new_only"
     source_currency: Optional[str] = None
+    business_id: Optional[str] = None
 
 PROVIDERS: dict[str, dict] = {
     "quickbooks": {"label": "QuickBooks", "group": "financial"},
@@ -448,7 +449,21 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
     }
 
     # Load workspace data
-    ws = await get_user_workspace(user_id=user["id"])
+    business_id = payload.business_id if payload else None
+    ws = await get_workspace(user_id=user["id"], workspace_id=business_id) if business_id else await get_user_workspace(user_id=user["id"])
+    if not ws:
+        raise HTTPException(400, "Choose a business before importing data.")
+    # Pin every write to the same business that was read, even if another workspace is updated meanwhile.
+    from app.modules.agent.router import get_orchestrator
+    from app.modules.agent.orchestrator import AccessDenied
+    try:
+        actor, _ = await get_orchestrator().actor_for(user["id"], str(ws.id), user.get("email"))
+    except AccessDenied as exc:
+        raise HTTPException(404, "Business not found.") from exc
+    if not (actor.can_prepare or actor.is_owner):
+        raise HTTPException(403, "Your role does not include importing business records.")
+    async def save_import(data_patch):
+        return await update_workspace(user_id=user["id"], workspace_id=str(ws.id), data_patch=data_patch)
     ws_data = (ws.data or {}) if ws else {}
     financials = ws_data.get("financials", {})
     catalogue = ws_data.get("catalogue", {})
@@ -491,7 +506,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
             "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
         }
-        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+        await save_import({"catalogue": merged_catalogue})
 
         existing_financials = financials if isinstance(financials, dict) else {}
         merged_financials = dict(existing_financials)
@@ -504,7 +519,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
                 existing_financials.get("expenses", []), imported["expenses"], mode=mode
             )
         if imported.get("invoices") or imported.get("expenses"):
-            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+            await save_import({"financials": merged_financials})
 
         if mode == "new_only":
             total_imported = max(0, (
@@ -554,7 +569,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
             "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
         }
-        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+        await save_import({"catalogue": merged_catalogue})
 
         existing_financials = financials if isinstance(financials, dict) else {}
         merged_financials = dict(existing_financials)
@@ -571,7 +586,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
                 existing_financials.get("quotes", []), imported["quotes"], mode=mode
             )
         if imported.get("invoices") or imported.get("expenses") or imported.get("quotes"):
-            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+            await save_import({"financials": merged_financials})
 
         if mode == "new_only":
             total_imported = max(0, (
@@ -622,7 +637,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
             "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), imported.get("vendors", []), kind="vendors", now_iso=now, mode=mode),
         }
-        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+        await save_import({"catalogue": merged_catalogue})
 
         # Merge financials (invoices, quotes)
         existing_financials = financials if isinstance(financials, dict) else {}
@@ -636,7 +651,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
                 existing_financials.get("quotes", []), imported["quotes"], mode=mode
             )
         if imported.get("invoices") or imported.get("quotes"):
-            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+            await save_import({"financials": merged_financials})
 
         if mode == "new_only":
             total_imported = max(0, (
@@ -667,7 +682,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             "customers": zoho_mod._merge_catalogue_lists(existing_catalogue.get("customers", []), imported.get("customers", []), kind="customers", now_iso=now, mode=mode),
             "vendors": zoho_mod._merge_catalogue_lists(existing_catalogue.get("vendors", []), [], kind="vendors", now_iso=now, mode=mode),
         }
-        await upsert_user_workspace(user_id=user["id"], data_patch={"catalogue": merged_catalogue})
+        await save_import({"catalogue": merged_catalogue})
 
         existing_financials = financials if isinstance(financials, dict) else {}
         merged_financials = dict(existing_financials)
@@ -675,7 +690,7 @@ async def sync(provider: Provider, payload: SyncRequest | None = None, user=Depe
             merged_financials["invoices"] = zoho_mod._merge_financials_list(
                 existing_financials.get("invoices", []), imported["invoices"], mode=mode
             )
-            await upsert_user_workspace(user_id=user["id"], data_patch={"financials": merged_financials})
+            await save_import({"financials": merged_financials})
 
         if mode == "new_only":
             total_imported = max(0, (
@@ -729,7 +744,7 @@ async def share_invoice_email(
         f"<h2 style=\"margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a;\">{type_label} shared with you</h2>"
         f"<p style=\"margin:0 0 12px;\"><strong>{escape(body.workspace_name)}</strong> shared "
         f"{article} {type_label} with you via EnterprateAI.</p>"
-        f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(body.share_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(body.share_url)}\" "
         "style=\"display:inline-block;padding:14px 32px;border-radius:8px;background:#4f46e5;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;\">"
         f"Open {type_label}</a></p>"

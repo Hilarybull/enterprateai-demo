@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest } from "../api/client";
+import { ensureWorkspaceId } from "../store/workspace";
 
 const PROVIDER_INFO = {
   stripe: {
@@ -465,7 +466,9 @@ export default function IntegrationPanel({ providers, onWorkspaceRefresh, refres
     setSyncResult(null);
     setError("");
     try {
-      const body = { direction: "import", mode };
+      const businessId = await ensureWorkspaceId();
+      if (!businessId) throw new Error("Choose a business before importing data.");
+      const body = { direction: "import", mode, business_id: businessId };
       if (sourceCurrency) body.source_currency = sourceCurrency;
       const res = await apiRequest(`/integrations/${provider}/sync`, "POST", body, { timeoutMs: 120000 });
       setSyncResult(res);

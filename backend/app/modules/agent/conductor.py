@@ -48,7 +48,8 @@ def _context(data: dict) -> dict:
             "currency": bz.currency_of(data), "stage": p.get("business_stage") or p.get("operating_stage"), "sector": p.get("primary_industry"),
             "revenue_all_time": f.get("revenue_all_time"), "paying_customers": f.get("clients") or 0,
             "idea": {k: v for k, v in idea.items() if v not in (None, "") and not str(k).startswith("_")} or None,
-            "idea_validations": history or None, "drafts_waiting": drafts or None}
+            "idea_validations": history or None, "drafts_waiting": drafts or None,
+            "chat_documents": [{k: item.get(k) for k in ("id", "name", "kind")} for item in data.get("agent_files") or [] if isinstance(item, dict)][:20]}
 
 
 def _thread(data: dict, user_id: str) -> list[dict]:

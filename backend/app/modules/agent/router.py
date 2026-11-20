@@ -359,7 +359,7 @@ def _chat_message(m: dict) -> dict | None:
 
 
 _CARD_TYPES = {"records", "result", "next", "score_change", "choose", "progress", "approvals", "idea_inputs", "viability", "launch_fit", "risk",
-               "scenario", "preview", "segments", "findings", "steps", "options", "research_again", "pending", "check_card", "check_result", "rechecking"}
+               "scenario", "preview", "segments", "findings", "steps", "options", "research_again", "pending", "check_card", "check_result", "rechecking", "download"}
 
 
 def _card_kept(x: dict) -> dict:
@@ -367,6 +367,8 @@ def _card_kept(x: dict) -> dict:
     out then), a preview keeps which draft it was, to open again (the owner's QA, 27 Oct: "the chat is lost after a reload")."""
     out = {k: x[k] for k in ("type", "case_id", "before", "after", "price", "reuse", "score", "options", "topics", "fixed") if x.get(k) is not None}
     short = lambda v, n=200: str(v or "")[:n]      # noqa: E731
+    if x.get("type") == "download":
+        out.update({k: short(x.get(k), 200) for k in ("file_id", "name", "format", "business_id")})
     if x.get("type") == "scenario":
         out.update({"title": short(x.get("title"), 120), "summary": short(x.get("summary"), 600), "months": x.get("months") if isinstance(x.get("months"), int) else None,
                     "worse": bool(x.get("worse")), "kind": short(x.get("kind"), 40),
@@ -477,6 +479,18 @@ async def chat_attach(business_id: str, file: UploadFile = File(...), user=Depen
     except Exception as e:      # noqa: BLE001 - said plainly
         message = getattr(e, "message", None) or str(e) or "That file couldn't be saved."
         raise HTTPException(status_code=400, detail=message) from e
+
+
+@router.get("/businesses/{business_id}/agent/files/{file_id}")
+async def download_chat_file(business_id: str, file_id: str, user=Depends(get_current_user)):
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    from app.modules.agent.chat_files import file_record
+    _known_id(file_id)
+    file = await file_record(get_orchestrator(), user, business_id, file_id)
+    return Response(file["content"], media_type=file["content_type"], headers={
+        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(file["name"], safe=""),
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 class SignOffIn(BaseModel):
@@ -898,6 +912,7 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 return _result(led)
         # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
         from app.modules.agent import converse_check
+        check_topics = {goal: name for name, goal in converse_check.GOALS.items()}
         resolved = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key")
         other = resolved not in (None, "need_funding", "launch", "test_idea") and resolved != converse_check.GOALS.get(body.page or "")
         # A receipt, an invoice, a quotation or another document is its own task, never the open funding or launch chat's (the
@@ -907,24 +922,38 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         if any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules) and not converse.wants_funding(body.text):
             other = True
             if body.page:
-                # Asked on a module's page: the Agent Centre does the whole task, questions and all (the owner, 31 Oct: an
-                # invoice's answer went to the idea's chat, "why is it not flexible")
-                return _result({"kind": "answer", "elsewhere": "/agent", "message": "I'll do that in the Agent Centre."})
+                task_capability = next((cap for cap, rx in _task_rules if cap in _TASKS and rx.search(body.text)), None)
+                if task_capability in WORKFLOWS:
+                    try:
+                        return _result(await get_orchestrator().submit(AgentRequest(
+                            requesting_actor_id=user["id"], business_id=body.business_id,
+                            source_channel=body.source_channel, raw_input=body.text,
+                            requested_capability=task_capability, params={}, locale=body.locale,
+                            history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]],
+                        ), email=user.get("email")))
+                    except AccessDenied as exc:
+                        raise _denied(exc)
+                    except Conflict as exc:
+                        raise _conflict(exc)
         # An earlier conversation opened from History carries on as it was (the owner, 27 Oct: "can't continue previous convo")
         earlier = [{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]]
         was = next((k for t in reversed(earlier) if t["role"] == "user"
                     for k in (("funding" if converse.wants_funding(t["content"]) else "idea" if converse_idea.wants_idea(t["content"])
-                               else "launch" if converse_launch.wants_launch(t["content"]) else None),) if k), None)
+                               else "launch" if converse_launch.wants_launch(t["content"]) else
+                               check_topics.get((_goals_for_routing.resolve(text=t["content"]) or {}).get("goal_key"))),) if k), None)
         clock = get_orchestrator().rt.clock()
         # Launch as a conversation too (the owner, 27 Oct: "let's do other flows"); funding words first, as before
         # An idea too (the owner's mockups, 27 Oct): "is it worth launching?" is the idea's, and so is "am I ready to launch?"
         # asked about the idea being tested
         in_idea = converse.in_conversation(known, user["id"], clock, "idea")
+        active_check = next((name for name in converse_check.GOALS
+                             if converse.in_conversation(known, user["id"], clock, name)), None)
         topic = ("funding" if converse.wants_funding(body.text) else "idea" if converse_idea.wants_idea(body.text) else
                  "idea" if in_idea and converse_launch.wants_launch(body.text) and not re.search(r"\b(?:new|another|second)\b", body.text, re.I) else
                  "launch" if converse_launch.wants_launch(body.text) else
+                 check_topics.get(resolved) if resolved in check_topics else
                  None if other else "funding" if converse.in_conversation(known, user["id"], clock) else
-                 "launch" if converse.in_conversation(known, user["id"], clock, "launch") else "idea" if in_idea else was)
+                 "launch" if converse.in_conversation(known, user["id"], clock, "launch") else "idea" if in_idea else active_check or was)
         if body.page and not other:
             # A module page's own thread (the owner, 27 Oct: a launch reply was saved in the idea's chat): its own topic, unless the
             # message plainly belongs to another module, which is taken there and never answered here
@@ -933,8 +962,9 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                          "launch" if body.page == "funding" and converse_launch.wants_launch(body.text) else
                          "idea" if body.page == "launch" and converse_idea.wants_idea(body.text) else None)
             if elsewhere:
-                return _result(await _elsewhere(user, body.business_id, elsewhere))
-            topic = body.page
+                topic = elsewhere
+            else:
+                topic = body.page
         # The answer to the business plans' "Open one, or create a new one?" is theirs, never a funding or launch chat's that was
         # open (the owner, 28 Oct: "new one...yam farming" became "a new funding case for yam farming")
         said_last = [t["content"] for t in reversed(earlier) if t["role"] == "assistant"][:3]
@@ -973,7 +1003,7 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                     **{k: converse_check.turn for k in converse_check.GOALS}}[topic]
             try:
                 talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
-                                    **({"plan_id": body.case_id} if topic == "launch" and body.case_id else {}),
+                                    **({"plan_id": body.case_id} if topic == "launch" and body.page == "launch" and body.case_id else {}),
                                     **({"on_page": True} if topic == "launch" and body.page == "launch" else {}),
                                     **({"topic": topic} if topic in converse_check.GOALS else {}))
             except converse.OutOfCredits as e:
@@ -989,11 +1019,19 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
                 except Exception:      # noqa: BLE001 - slow or several plans: answered here
                     logger.info("no case to hand over to for %s", body.business_id, exc_info=True)
             if talked and not body.page and topic in ("funding", "launch") and talked.get("case_id"):
-                # Asked in the Agent Centre: carried on on its own page, with this exchange (the owner, 31 Oct: "it should have just
-                # opened the funding flow… and handed over the request well")
-                talked = {**talked, "handover": f"/{topic}/{talked['case_id']}?tab=assistant", "asked": body.text.strip()}
+                # Workspaces remain available on request; the specialist's answer stays in this conversation.
+                target = f"/{topic}/{talked['case_id']}"
+                actions = list(talked.get("actions") or [])
+                if not actions:
+                    actions.append({"label": "View funding case" if topic == "funding" else "View launch plan", "to": target})
+                talked = {**talked, "actions": actions}
             if talked:
                 return _result(talked)
+            if topic in converse_check.GOALS:
+                # A specialist outage must not spawn a second composer in the main conversation.
+                return _result({"kind": "answer", "conversational": True,
+                                "message": "I couldn’t complete that check just now. Please try again; your conversation is still here.",
+                                "actions": [{"label": "View saved check", "to": converse_check.PAGE[topic]}]})
     if body.text and not body.capability and body.business_id:
         # "Change the amount in my funding readiness to £60,000": a change to the one funding case, confirmed first, never a
         # new intake (the owner's QA, 15 Oct).

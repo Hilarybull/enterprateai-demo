@@ -1,6 +1,7 @@
 import UkDateInput from "../components/UkDateInput";
 import AgentRows, { TYPE_OF, TYPES } from "../components/agent/AgentRows";
 import AgentChat from "../components/BusinessAssistant";
+import { noteCameFrom } from "../lib/cameFrom";
 import { DraftDrawer } from "../components/agent/DraftEditor";
 import ResultsList, { useResultsCount } from "../components/agent/ResultsList";
 import { useCallback, useEffect, useState } from "react";
@@ -595,8 +596,12 @@ export default function AgentCentrePage() {
       <div className={CARD} data-side="quick">
         <p className={TITLE}>Quick actions</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
-          <button type="button" onClick={() => pick("documents")} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Upload documents</button>
-          <button type="button" onClick={() => navigate("/integrations")} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Connect data</button>
+          <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("ea:chat-upload"))} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Upload documents</button>
+          <button type="button" onClick={() => {
+            const detail = { to: "/integrations" };
+            window.dispatchEvent(new CustomEvent("ea:chat-navigate", { detail }));
+            if (!detail.handled) { noteCameFrom(null, detail.to); navigate(detail.to); }
+          }} className="flex-1 whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-slate-900 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-100">Connect data</button>
         </div>
       </div>
     </>
@@ -622,7 +627,7 @@ export default function AgentCentrePage() {
       {error && <p role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13.5px] text-rose-700">{error}</p>}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]" data-agent-centre>
-        {workspaceId && <AgentChat ctx={ctx} work={work} waiting={waiting} onWaitingChanged={() => { load(); setWorkTick((t) => t + 1); }} />}
+        {workspaceId && <AgentChat key={workspaceId} ctx={ctx} work={work} waiting={waiting} onWaitingChanged={() => { load(); setWorkTick((t) => t + 1); }} />}
         {/* one tab open: its list takes the column's height and scrolls inside it */}
         <aside className={`hidden min-h-0 min-w-0 xl:block ${listOpen ? "xl:flex xl:flex-col" : "space-y-4 overflow-y-auto pr-0.5"}`} aria-label="Tasks">{panel}{listOpen ? null : side}</aside>
         {viewing === "profile" && <ProfileSheet business={ctx?.business} businessId={workspaceId} onClose={closeView} />}

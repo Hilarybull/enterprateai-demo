@@ -10,6 +10,16 @@ from test_goal_onboarding import world, _funding, OWNER, run  # noqa: F401
 from app.modules.agent import converse, research
 
 
+@pytest.fixture(autouse=True)
+def no_background_connections(monkeypatch):
+    # These API tests use Env's in-memory services, including during application startup.
+    from unittest.mock import AsyncMock
+    import app.main as main
+    monkeypatch.setattr(main, "connect_to_mongo", AsyncMock())
+    for name in ("start_agent_scheduler", "start_tender_scheduler", "start_activation_scheduler"):
+        monkeypatch.setattr(main, name, lambda: None)
+
+
 class _Model:
     """Replies in turn with what the live model would decide."""
     def __init__(self, *replies):
@@ -621,11 +631,42 @@ def test_replace_it_with_nothing_asked_is_left_to_the_conversation(talk):
     assert out["message"] == "What would you like to replace?" or "replace" in out["message"].lower()
 
 
-def test_a_funding_message_in_the_agent_centre_opens_its_case_even_if_nothing_changed(talk):
-    """The owner, 3 Nov: "why didn't it switch to funding on detecting funding?" """
+def test_a_funding_message_in_the_agent_centre_returns_its_result_without_redirecting(talk):
+    """Specialists answer inside the main thread; opening the workspace is optional."""
     env, ask, model, cid = talk
     model.replies += [{"say": "You're at 40/100 so far."}]
     out = ask("How ready am I for funding?")
-    assert out["handover"] == f"/funding/{cid}?tab=assistant" and out["case_id"] == str(cid)
+    assert "handover" not in out and out["case_id"] == str(cid)
+    assert out["actions"]      # Useful next actions remain available inside the same conversation.
     model.replies += [{"say": "You're at 40/100 so far."}]
     assert "handover" not in ask("How ready am I for funding?", page="funding")      # already on its page
+
+
+def test_switching_specialists_keeps_the_current_chat_and_does_not_reuse_another_cases_id(talk, monkeypatch):
+    env, ask, model, cid = talk
+    from unittest.mock import AsyncMock
+    from app.modules.agent import converse_launch
+
+    delegated = AsyncMock(return_value={"kind": "answer", "message": "Your launch needs a delivery plan.",
+                                       "case_id": "launch-case", "actions": []})
+    monkeypatch.setattr(converse_launch, "turn", delegated)
+    history = [{"role": "user", "content": "I need funding"}, {"role": "assistant", "content": "What is the funding for?"}]
+    out = ask("I want to launch my product", page="funding", case_id=str(cid), history=history)
+    assert out["message"] == "Your launch needs a delivery plan."
+    assert "handover" not in out
+    assert delegated.await_count == 1
+    assert "plan_id" not in delegated.call_args.kwargs
+    assert delegated.call_args.kwargs["history"] == history
+
+
+@pytest.mark.parametrize("message,topic", [("I want more customers", "customers"), ("Help me understand my business risks", "risks")])
+def test_other_checks_return_specialist_results_in_the_main_thread(talk, monkeypatch, message, topic):
+    from unittest.mock import AsyncMock
+    from app.modules.agent import converse_check
+    env, ask, model, cid = talk
+    delegated = AsyncMock(return_value={"kind": "answer", "message": "Your check result and next steps.", "actions": []})
+    monkeypatch.setattr(converse_check, "turn", delegated)
+    out = ask(message)
+    assert out["kind"] == "answer" and out["message"] == "Your check result and next steps."
+    assert "handover" not in out
+    assert delegated.call_args.kwargs["topic"] == topic

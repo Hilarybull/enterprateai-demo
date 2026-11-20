@@ -23,7 +23,8 @@ export function cameFrom() {
  *  the way back showed on a launch plan opened later) */
 export function opensHere(got, pathname) {
   if (!got?.opens) return false;
-  return pathname === got.opens || (got.opens === "/validation" && pathname === "/results");
+  return pathname === got.opens || (got.opens === "/validation" && pathname === "/results")
+    || (got.opens === "/integrations" && pathname === "/integrations/callback");
 }
 
 export function forgetCameFrom() {

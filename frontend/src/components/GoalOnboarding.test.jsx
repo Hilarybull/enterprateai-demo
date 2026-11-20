@@ -398,9 +398,9 @@ describe("the task card", () => {
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "help me with money" } });
     await click(heroSend());      // the launcher's Send (it replaced the Start button)
     await click(within(card()).getByRole("button", { name: "Something else" }));
-    expect(within(card()).getByText(/^No problem\./)).toBeTruthy();
+    expect(within(card()).getByLabelText("Describe what you need")).toBeTruthy();
     expect(card().querySelector("[data-checkpoint]")).toBeNull();
-    await click(within(card()).getAllByRole("button", { name: "Ask for something else" })[0]);
+    await click(within(card()).getByRole("button", { name: "Start again" }));
     expect(screen.queryByRole("region", { name: "Your task" })).toBeNull();
     expect(screen.getByLabelText(PROMPT)).toBeTruthy();
   });
@@ -649,6 +649,16 @@ describe("carrying on after sign-in", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
     expect(posts(/readiness-question$/)[0].body).toEqual({ business_id: "biz-1", text: words });
     expect(posts(/\/prepare$/).length).toBe(0);
+  });
+
+  it("a guest's saved request continues in the main chat after sign-in when an existing case is found", async () => {
+    answer = path => /attach-user$/.test(path)
+      ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /readiness-question$/.test(path) ? { kind: "funding", to: "/funding/existing?tab=results" } : {};
+    mount();
+    const words = "I need funding: £50,000. The business is trading.";
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
+    expect(posts(/\/prepare$/)).toHaveLength(0);
   });
 
   it("a goal the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
@@ -1029,6 +1039,15 @@ describe("the chat's currency (the owner's brief, 20 Oct)", () => {
 });
 
 describe("signed in, the homepage's chat runs by the side, on the page (the owner's QA, 23 Oct)", () => {
+  it("an existing case question goes straight to the main conversation with the original request", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    useWorkspaceStore.setState({ workspaceId: "ws1" });
+    answer = path => /readiness-question$/.test(path) ? { kind: "funding", to: "/funding/existing?tab=results" } : {};
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent("I need funding")}`));
+    expect(posts(/task-sessions$/)).toHaveLength(0);
+  });
   it("starts the chat with the workspace, and never jumps to the dashboard first", async () => {
     useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
     useWorkspaceStore.setState({ workspaceId: "ws1" });

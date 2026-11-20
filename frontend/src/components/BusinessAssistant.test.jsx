@@ -1,4 +1,4 @@
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 // The chat bubble is the Agent: one entry point, the conversation sent with every message,
 // what an answer costs, and what it remembers.
 import React from "react";
@@ -43,6 +43,73 @@ async function ask(text) {
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
 }
 const sent = (pattern) => calls.filter((c) => c.method === "POST" && pattern.test(c.path));
+
+it("the upload quick action opens the chat picker and follows the selected business", async () => {
+  await open();
+  const picker = document.querySelector("[data-chat-file]");
+  const click = vi.spyOn(picker, "click");
+  act(() => { window.dispatchEvent(new CustomEvent("ea:chat-upload")); });
+  expect(click).toHaveBeenCalledTimes(1);
+  act(() => { useWorkspaceStore.setState({ workspaceId: "ws-9" }); });
+  const file = new File(["Revenue,300"], "figures.csv", { type: "text/csv" });
+  await act(async () => { fireEvent.change(picker, { target: { files: [file] } }); });
+  expect(sent(/\/agent\/chat\/attach$/).at(-1).path).toContain("/businesses/ws-9/");
+  expect(screen.getByText("Attached figures.csv")).toBeTruthy();
+});
+
+function ChatLocation() { return <p data-testid="chat-location">{useLocation().pathname}</p>; }
+
+it("sidebar navigation remembers the current conversation for the return action", async () => {
+  window.history.replaceState(null, "", "/agent");
+  render(<MemoryRouter initialEntries={["/agent"]}><BusinessAssistant waiting={{ count: 0, items: [] }} /><ChatLocation /></MemoryRouter>);
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent("ea:chat-navigate", { detail: { to: "/integrations" } }));
+  });
+  expect(screen.getByTestId("chat-location").textContent).toBe("/integrations");
+  const back = JSON.parse(sessionStorage.getItem("ea_came_from"));
+  expect(back).toMatchObject({ to: "/agent", opens: "/integrations", name: "Agent Centre" });
+  expect(typeof back.chat).toBe("string");
+  expect(back.chat.length).toBeGreaterThan(0);
+  window.history.replaceState(null, "", "/");
+});
+
+it.each([["more_customers", "customers"], ["business_risks", "risks"], ["price_offer", "pricing"]])("%s check is delegated without adding a second chat composer", async (goal_key, page) => {
+  replies = [{ kind: "check", goal_key, said: "Help me with this check" },
+    { kind: "answer", conversational: true, message: "I checked your records. What would you like to improve first?", actions: [] }];
+  render(<MemoryRouter initialEntries={["/agent"]}><BusinessAssistant waiting={{ count: 0, items: [] }} /><ChatLocation /></MemoryRouter>);
+  await ask("Help me with this check");
+  expect(await screen.findByText("I checked your records. What would you like to improve first?")).toBeTruthy();
+  expect(sent(/\/agent\/requests$/).at(-1).body).toMatchObject({ page, text: "Help me with this check" });
+  expect(document.querySelector("[data-panel-chat]")).toBeNull();
+  expect(screen.getAllByPlaceholderText(/Ask EnterprateAI anything/)).toHaveLength(1);
+  expect(screen.getByTestId("chat-location").textContent).toBe("/agent");
+});
+
+it.each([
+  ["funding", "I need funding", "/funding/f1?tab=assistant"],
+  ["launch", "Help me launch my product", "/launch/l1?tab=assistant"],
+  ["idea", "Help me explore my idea", "/check/idea?tab=assistant"],
+])("%s specialist replies and follow-ups remain in the main conversation", async (kind, request, handover) => {
+  replies = [
+    { kind: "answer", conversational: true, case_id: "case-1", handover, message: `Here is your ${kind} result.`,
+      actions: [{ label: "Explain the next step", kind: "explain", prompt: "What does that mean?" }] },
+    { kind: "answer", conversational: true, message: "Here is what that step means." },
+    { kind: "answer", conversational: true, message: "Let's prepare the quotation. Who is it for?" },
+  ];
+  render(<MemoryRouter initialEntries={["/agent"]}><BusinessAssistant waiting={{ count: 0, items: [] }} /><ChatLocation /></MemoryRouter>);
+  await ask(request);
+  expect(await screen.findByText(`Here is your ${kind} result.`)).toBeTruthy();
+  expect(screen.getByTestId("chat-location").textContent).toBe("/agent");
+  expect(calls.some(call => /readiness-question|\/chats\/case-/.test(call.path))).toBe(false);
+  await ask("What does that mean?");
+  expect(await screen.findByText("Here is what that step means.")).toBeTruthy();
+  expect(sent(/\/agent\/requests$/).at(-1).body.history).toEqual(expect.arrayContaining([
+    { role: "user", content: request }, { role: "assistant", content: `Here is your ${kind} result.` },
+  ]));
+  await ask("Draft a quotation instead");
+  expect(await screen.findByText("Let's prepare the quotation. Who is it for?")).toBeTruthy();
+  expect(screen.getByTestId("chat-location").textContent).toBe("/agent");
+});
 
 describe("the chat bubble is the Agent", () => {
   it("uses the business name the rest of the app shows, and never says what an answer costs", async () => {

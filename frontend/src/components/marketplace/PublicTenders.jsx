@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { pageNumbers } from "../Pagination";
 import TenderEvaluation from "./TenderEvaluation";
 import { apiRequest } from "../../api/client";
 import { useAuthStore } from "../../store/auth";
@@ -96,6 +97,7 @@ function Listing({ item, onOpen, children }) {
 
 export default function PublicTenders({ query }) {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const token = useAuthStore((state) => state.token);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const detail = params.get("tender");
@@ -151,6 +153,13 @@ export default function PublicTenders({ query }) {
   }, [token, scope]);
 
   async function toggle(item) {
+    if (!token) {
+      const next = new URLSearchParams(params);
+      next.set("tab", "tenders");
+      next.set("tender", item.id);
+      navigate("/login?next=" + encodeURIComponent("/marketplace?" + next));
+      return;
+    }
     ++watchVersion.current;
     const wasSaved = saved.some((entry) => entry.id === item.id);
     setBusy(true);
@@ -165,9 +174,11 @@ export default function PublicTenders({ query }) {
     finally { setBusy(false); }
   }
 
-  const saveAction = (item) => token ? <button type="button" className={field} disabled={busy} onClick={() => toggle(item)}>
-    {saved.some((entry) => entry.id === item.id) ? "Remove from watchlist" : "Save to watchlist"}
-  </button> : <Link className="underline" to={"/login?next=" + encodeURIComponent("/marketplace?tab=tenders&tender=" + encodeURIComponent(item.id))}>Sign in to save</Link>;
+  const saveAction = (item) => <button type="button" className={field + " min-h-11"} disabled={busy} onClick={() => toggle(item)}>
+    {token && saved.some((entry) => entry.id === item.id) ? "Remove from watchlist" : "Save to watchlist"}
+  </button>;
+  const pages = results?.total == null ? Math.min(500, page + Number(Boolean(results?.more)))
+    : Math.min(500, Math.max(1, Math.ceil(results.total / (results.page_size || 24))));
 
   return <section ref={contentTop} className="scroll-mt-24 mx-auto w-full max-w-7xl space-y-4 px-4 py-6 sm:px-6" aria-label="Public tenders">
     {detail ? <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" className={field} onClick={() => update("tender", null)}>Back to public tenders</button>{token && <button type="button" aria-pressed={watch} className={field} onClick={() => setWatch(!watch)}>{watch ? "Hide watchlist" : "My watchlist"}</button>}</div> :
@@ -213,9 +224,17 @@ export default function PublicTenders({ query }) {
         </div>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{results.items.map((item) =>
           <Listing key={item.id} item={item} onOpen={() => update("tender", item.id)}>{saveAction(item)}</Listing>)}</div>
-        {(page > 1 || results.more) && <nav className="flex gap-3" aria-label="Tender pages">
-          <button type="button" className={field} disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button>
-          <button type="button" className={field} disabled={!results.more || page >= 500} onClick={() => setPage(page + 1)}>Next</button>
+        {pages > 1 && <nav className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between dark:border-slate-700" aria-label="Tender pages">
+          <p className="text-sm text-slate-500 dark:text-slate-400" aria-live="polite">Page {page} of {pages}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button type="button" className={field + " min-h-11 disabled:opacity-40"} disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button>
+            {pageNumbers(pages, page).map((number, index) => number === "…"
+              ? <span key={`gap-${index}`} aria-hidden="true" className="px-1 text-slate-400">…</span>
+              : <button key={number} type="button" aria-label={`Page ${number}`} aria-current={number === page ? "page" : undefined}
+                  className={"min-h-11 min-w-11 rounded-lg border px-3 py-2 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 " + (number === page ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-brand-400 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200")}
+                  onClick={() => setPage(number)}>{number}</button>)}
+            <button type="button" className={field + " min-h-11 disabled:opacity-40"} disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</button>
+          </div>
         </nav>}
       </>)}
     <p className="text-xs text-slate-500">Contains Find a Tender information from the Cabinet Office, licensed under the <a className="underline" href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/">Open Government Licence v3.0</a>, except where otherwise stated.</p>
