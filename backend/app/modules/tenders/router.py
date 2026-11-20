@@ -51,8 +51,9 @@ async def health(_user=Depends(require_admin)):
 
 
 @router.get("/admin/history")
-async def history(_user=Depends(require_admin)):
-    return {"items": await service.sync_history()}
+async def history(before: datetime | None = None, page_size: int = Query(10, ge=1, le=50),
+                  _user=Depends(require_admin)):
+    return await service.sync_history(before=before, page_size=page_size)
 
 
 class DismissErrorIn(BaseModel):

@@ -15,3 +15,11 @@ Verification:
 - `node backend/tests/tender_sync_database.cjs <installed @electric-sql/pglite path>`: temporary PostgreSQL checks for duplicate pages, repeated imports, updates without SME flags, stale notice ordering, closures, scope changes, distinct lots, lease protection, interval enforcement, permissions and repeated migration application. No live database is used.
 
 Source documentation: https://www.gov.uk/government/publications/open-contracting and https://www.find-tender.service.gov.uk/apidocumentation/1.0/GET-ocdsReleasePackages.
+
+## Admin layout and history pagination
+
+Automatic interval/scope controls appear only while the switch is on. Switching off hides them immediately, while keeping a save action for the pending change. Saved interval/scope values are retained when switching back on. Status metrics appear above the settings; history uses compact status badges and stacked rows on small screens.
+
+History is fetched from the database 10 attempts at a time, newest first, with Previous/Next navigation. A timestamp cursor avoids shifting older pages when new attempts arrive. Failed page loads offer retry, and navigation ignores superseded responses. This replaces the previous fixed 30-entry history limit and needs no additional database migration.
+
+Verified: 25 backend checks, 5 component checks, and a Chromium browser check for controls, history navigation and no horizontal overflow at 360, 390, 768 and 1440 pixels.

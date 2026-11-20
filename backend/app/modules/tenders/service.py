@@ -365,8 +365,15 @@ async def sync_health():
             "interval_minutes": row.get("interval_minutes", 180), "import_scope": row.get("import_scope", "all")}
 
 
-async def sync_history():
-    return await sb_select("fts_sync_history", order="attempted_at", desc=True, limit=30) or []
+async def sync_history(*, before=None, page_size=10):
+    # Cursor pagination keeps older pages stable while new attempts arrive.
+    filters = [("attempted_at", "lt", before.isoformat())] if before else []
+    rows = await sb_select("fts_sync_history", filters=filters, order="attempted_at", desc=True,
+                           limit=page_size + 1) or []
+    items = rows[:page_size]
+    more = len(rows) > page_size
+    return {"items": items, "more": more,
+            "next_before": items[-1]["attempted_at"] if items and more else None}
 
 
 async def dismiss_sync_error(attempt):

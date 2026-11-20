@@ -42,3 +42,39 @@ test("disables settings when the database upgrade is missing", async () => {
   expect((await screen.findByRole("button", { name: "Save sync settings" })).disabled).toBe(true);
   expect(screen.getByRole("switch").disabled).toBe(true);
 });
+
+test("shows automatic settings only while enabled and saves disabling", async () => {
+  apiRequest.mockResolvedValue({ ...health, scheduled: false });
+  render(<TenderSyncAdmin />);
+  const toggle = await screen.findByRole("switch");
+  expect(screen.queryByLabelText(/Sync interval/)).toBeNull();
+  expect(screen.queryByLabelText("New tenders to include")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save sync settings" })).toBeNull();
+  fireEvent.click(toggle);
+  const input = screen.getByLabelText(/Sync interval/);
+  fireEvent.change(input, { target: { value: "45" } });
+  fireEvent.click(toggle);
+  expect(screen.queryByLabelText(/Sync interval/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save sync settings" }));
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith("/public-tenders/admin/schedule", "PUT", {
+    enabled: false, interval_minutes: 45, import_scope: "suitable" }));
+});
+
+test("loads older history on demand and returns to the first page", async () => {
+  const first = { attempted_at: "2026-11-20T12:00:00Z", status: "succeeded" };
+  const older = { attempted_at: "2026-11-19T12:00:00Z", status: "failed", error: "Source unavailable" };
+  apiRequest.mockImplementation(async (url) => url.includes("/history?")
+    ? url.includes("before=") ? { items: [older], more: false, next_before: null }
+      : { items: [first], more: true, next_before: first.attempted_at }
+    : { ...health, history_available: true });
+  render(<TenderSyncAdmin />);
+  fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+  expect(await screen.findByText("Source unavailable")).toBeTruthy();
+  expect(screen.getByText("Page 2")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Next" }).disabled).toBe(true);
+  expect(apiRequest).toHaveBeenCalledWith("/public-tenders/admin/history?page_size=10&before=2026-11-20T12%3A00%3A00Z", "GET");
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(await screen.findByText("Succeeded")).toBeTruthy();
+  expect(screen.getByText("Page 1")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Previous" }).disabled).toBe(true);
+});
