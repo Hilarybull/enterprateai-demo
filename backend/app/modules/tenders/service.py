@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -271,13 +270,9 @@ async def ingest_window(client, start, end, apply_page, *, pause=asyncio.sleep):
     raise FeedError("Find a Tender window exceeded 50 pages")
 
 
-def enabled():
-    return os.getenv("FTS_SYNC_ENABLED", "").strip().lower() in {"1", "true", "yes"}
-
-
 def automatic_enabled(row):
-    setting = row.get("automatic_sync")
-    return enabled() if setting is None else setting is True
+    # Automatic sync starts only after an administrator explicitly enables it.
+    return row.get("automatic_sync") is True
 
 
 async def scheduled_sync_enabled():
@@ -467,10 +462,12 @@ async def set_saved(user_id, workspace_id, listing_id, saved):
 
 def conversation_filters(brief, query=None, stage=None):
     if stage not in STAGES:
-        stage = next((value for expression, value in ((r"\bclosed\b", "closed"), (r"\bawards?\b", "award"),
-                                                       (r"\bplanning\b", "planning"), (r"\ball\b", "all"))
+        stage = next((value for expression, value in ((r"\bclosed\b", "closed"), (r"\baward(?:ed|s)?\b", "award"),
+                                                       (r"\bplanning\b", "planning"), (r"\ball (?:notice )?(?:stages|statuses)\b", "all"))
                       if re.search(expression, brief, re.I)), "open")
     if not isinstance(query, str):
-        query = re.sub(r"\b(?:show|find|search|browse|list|me|any|the|for|in|uk|public|open|tenders?|opportunities|notices|closed|awards?|planning|all)\b",
-                       " ", brief, flags=re.I)
+        query = brief
+    query = re.sub(r"\b(?:what['’]s|at the moment|right now)\b", " ", query, flags=re.I)
+    query = re.sub(r"\b(?:show|find|search|browse|list|get|me|any|the|for|in|uk|public|open|tenders?|opportunities|notices|closed|award(?:ed|s)?|contracts?|planning|all|what|which|are|is|there|available|now|today|currently|current|latest|please|can|could|you|do|we|have|a|an|stages|statuses|smes?|suitable)\b",
+                   " ", query, flags=re.I)
     return " ".join(re.findall(r"[\w-]+", query))[:150], stage

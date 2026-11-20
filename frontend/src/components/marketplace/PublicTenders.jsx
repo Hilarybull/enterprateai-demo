@@ -193,26 +193,23 @@ export default function PublicTenders({ query }) {
           {[industries[industry],location,category,from && "From " + from,to && "To " + to].some(Boolean) && <div className="flex flex-wrap gap-2">{[industries[industry],location,category,from && "From " + from,to && "To " + to].filter(Boolean).map(label=><span key={label} className="rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">{label}</span>)}</div>}
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-xs text-slate-500 dark:border-slate-800">
             <p role="status">{results ? (results.total ?? results.items?.length ?? 0).toLocaleString() + " tenders" : problem ? "Tender count unavailable" : "Loading tenders…"}{sme === "suitable" && " · Suitable for SMEs"}</p>
-            <button type="button" className="font-semibold text-brand-700 underline" onClick={()=>{const next=new URLSearchParams(params);["industry","location","category","deadline_from","deadline_to","stage","q","sme"].forEach(key=>next.delete(key));setParams(next);}}>Clear filters</button>
+            <button type="button" className="inline-flex min-h-10 items-center justify-center rounded-lg border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500" onClick={()=>{const next=new URLSearchParams(params);["industry","location","category","deadline_from","deadline_to","stage","q","sme"].forEach(key=>next.delete(key));setParams(next);}}>Clear filters</button>
           </div>
         </div>
       </div>}
-    {results?.last_sync && <p className="text-xs text-slate-500">Last updated: {day(results.last_sync)}</p>}
-    <p className="text-sm text-slate-600 dark:text-slate-300">Explore tender requirements here. When you are ready to bid, use the buyer’s submission service.</p>
     {problem && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><p>{problem}</p><button type="button" className="rounded-lg border border-rose-300 px-3 py-2 font-semibold" onClick={()=>setRetry(v=>v+1)}>Try again</button></div>}
     {watch && token && <div className="space-y-2">
       <h2 className="font-semibold">My watchlist</h2>
       {!saved.length && <p className="text-sm">No notices saved in this workspace.</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{saved.map((item) => <Listing key={item.id} item={item} onOpen={() => update("tender", item.id)}>{saveAction(item)}</Listing>)}</div>
     </div>}
-    {results?.last_sync && results.stale && <p className="text-sm text-amber-700 dark:text-amber-300">Dates and availability may have changed. Confirm the deadline with the buyer before submitting.</p>}
     {!results && !problem && <p role="status">Loading notices…</p>}
     {results && (detail ? <TenderDetail item={results} evaluation={<TenderEvaluation notice={results} token={token} workspaceId={workspaceId} />}>{saveAction(results)}</TenderDetail> :
       <>
         {!results.items.length && <div className={box + " space-y-2 py-6"}>
           <h3 className="font-semibold">No tenders match your filters</h3>
           <p className="text-sm text-slate-600 dark:text-slate-300">Try another industry, location or notice status, or clear your filters to see more tenders.</p>
-          <button type="button" className="text-sm font-semibold text-brand-700 underline" onClick={()=>{const next=new URLSearchParams(params);["industry","location","category","deadline_from","deadline_to","stage","q","sme"].forEach(key=>next.delete(key));setPage(1);setParams(next);}}>Clear search filters</button>
+          <button type="button" className="inline-flex min-h-10 items-center justify-center rounded-lg border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500" onClick={()=>{const next=new URLSearchParams(params);["industry","location","category","deadline_from","deadline_to","stage","q","sme"].forEach(key=>next.delete(key));setPage(1);setParams(next);}}>Clear search filters</button>
         </div>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{results.items.map((item) =>
           <Listing key={item.id} item={item} onOpen={() => update("tender", item.id)}>{saveAction(item)}</Listing>)}</div>

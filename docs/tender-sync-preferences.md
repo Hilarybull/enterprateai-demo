@@ -23,3 +23,13 @@ Automatic interval/scope controls appear only while the switch is on. Switching 
 History is fetched from the database 10 attempts at a time, newest first, with Previous/Next navigation. A timestamp cursor avoids shifting older pages when new attempts arrive. Failed page loads offer retry, and navigation ignores superseded responses. This replaces the previous fixed 30-entry history limit and needs no additional database migration.
 
 Verified: 25 backend checks, 5 component checks, and a Chromium browser check for controls, history navigation and no horizontal overflow at 360, 390, 768 and 1440 pixels.
+
+## Shared demo/local verification and tender discovery
+
+On 20 November 2026, the shared local/demo database already contained upgrade 057. Its settings were confirmed as `import_scope=suitable`, `interval_minutes=180`, and automatic sync off after testing. Missing/null preferences now also mean off, regardless of the legacy environment switch; only an explicit administrator setting enables automatic runs.
+
+A controlled check temporarily enabled a five-minute interval and invoked the real background scheduler. It called sync with `manual=False`. The upstream source request timed out, leaving the checkpoint and saved listings intact and recording a failed attempt with retry delay. Both the source homepage and a one-release API request also timed out from this machine. Automatic sync was restored to off and the interval to 180 minutes. A successful live source retrieval remains unverified; this is not a completed import.
+
+Agent discovery now removes conversational framing from general questions instead of passing words such as “what are available now” as mandatory search terms. It reports the shared index's total count, formats deadlines for people and links to internal tender details. Requests for business matches call the same matching service as the dashboard; awarded-contract questions use the award stage. The Marketplace removes the generic update/availability/submission notices, uses buttons for clearing filters, and shows one preview per category when both open and awarded matches exist, with paginated “See more” results.
+
+Verification for these follow-up changes: 42 focused backend checks in demo, 38 in the local checkout, 5 dashboard component checks, and the demo frontend build passed. The existing browser popup fixture remained on its loading state and timed out; it did not provide a passing browser verification for this follow-up. The earlier passing responsive admin-panel check is separate.

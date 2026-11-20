@@ -6,6 +6,7 @@ import re
 from time import perf_counter
 from urllib.parse import quote
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -28,7 +29,7 @@ TOOL = {
         },
     },
 }
-_INTENT = re.compile(r"\b(rfqs?|rfps?|request for (?:quotation|proposal)|procurement|sourc(?:e|ing) suppliers|find (?:me )?(?:a |some )?(?:suppliers?|vendors?)|supplier match(?:ing|es)?|(?:public |uk )?tenders?|evaluate (?:the |these )?proposals?)\b", re.I)
+_INTENT = re.compile(r"\b(rfqs?|rfps?|request for (?:quotation|proposal)|procurement|sourc(?:e|ing) suppliers|find (?:me )?(?:a |some )?(?:suppliers?|vendors?)|supplier match(?:ing|es)?|(?:public |uk )?tenders?|awarded contracts?|evaluate (?:the |these )?proposals?)\b", re.I)
 _OTHER = re.compile(r"\b(?:business plan|funding readiness|launch readiness|idea validation|create (?:an? )?invoice)\b", re.I)
 _ACTION = re.compile(r"\b(?:send|publish|invite|submit|award|sign)\b", re.I)
 _DOCUMENT = re.compile(r"\b(rfq|rfp|request for quotation|request for proposal)\b", re.I)
@@ -83,7 +84,7 @@ async def run(orch, user: dict, body, known: dict, args: dict | None = None) -> 
     if _INTENT.search(text) and not explicit.get("action") and not args.get("action") and _DOCUMENT.search(text):
         action = "draft"
     if not action:
-        action = ("tender_evaluation" if re.search(r"\b(?:evaluate|assess|review|fit|alignment)\b.*\btender", text, re.I) else "tenders" if re.search(r"\b(?:public |uk )?tenders?\b", text, re.I)
+        action = ("tender_evaluation" if re.search(r"\b(?:evaluate|assess|review|fit|alignment)\b.*\btender", text, re.I) else "tenders" if re.search(r"\b(?:(?:public |uk )?tenders?|awarded contracts?)\b", text, re.I)
                   else "evaluation" if _EVAL.search(text)
                   else "match" if _MATCH.search(text) and not _DOCUMENT.search(text) else "draft")
     prior_brief = previous.get("brief") if pending or (reference and action == "draft") else None
@@ -112,18 +113,43 @@ async def run(orch, user: dict, body, known: dict, args: dict | None = None) -> 
             from app.modules.tenders import service as tenders
 
             query, stage = tenders.conversation_filters(text, args.get("query"), args.get("stage"))
-            result = await tenders.search(query, stage, limit=5)
-            items = result["items"]
-            lines = [f'{item["title"]} ({item["buyer"] or "buyer not published"}, {item["status"]})'
-                     + (f', deadline {item["deadline"]}' if item.get("deadline") else ", deadline not published")
-                     + (f', {item["currency"]} {item["amount"]}' if item.get("amount") is not None else ", value not disclosed")
-                     + f' - {item["url"]}' for item in items]
-            message = "Find a Tender listings:\n" + "\n".join(lines) if lines else "No UK notices match that search."
-            if result["stale"]:
-                message += "\nThe index may be out of date. Check the official notice."
-            reply = _reply(message, status="tenders", tenders=items)
-            page = "/marketplace?tab=tenders&stage=" + stage + "&q=" + quote(query, safe="")
-            reply["actions"] = [{"label": "Open Public Tenders", "to": page},
+            matches_business = bool(re.search(r"\b(?:match\w*|recommend\w*|my business|our business|for me|for us|suit(?:able|ed) (?:to|for) (?:me|us))\b", text, re.I))
+            matched = None
+            if matches_business and stage in {"open", "award"}:
+                from app.modules.tenders.recommendations import recommend
+                matched = await recommend(user_id, workspace_id, stage=stage, page_size=5)
+                items = [{**item, "status": stage} for item in matched["items"]]
+                total = matched["total"]
+                page = "/dashboard"
+            else:
+                result = await tenders.search(query, stage, limit=5)
+                items = result["items"]
+                total = result.get("total", len(items))
+                page = "/marketplace?tab=tenders&stage=" + stage
+                if query:
+                    page += "&q=" + quote(query, safe="")
+            lines = []
+            for item in items:
+                deadline = tenders.timestamp(item.get("deadline"))
+                details = [item.get("buyer") or "Buyer not published"]
+                if deadline:
+                    details.append("deadline " + deadline.astimezone(ZoneInfo("Europe/London")).strftime("%d %b %Y, %H:%M") + " UK time")
+                if item.get("amount") is not None:
+                    details.append(f'{item.get("currency") or ""} {item["amount"]:,.2f}'.strip())
+                target = "/marketplace?tab=tenders&tender=" + quote(item["id"], safe="") if item.get("id") else page
+                lines.append(f'• [{item["title"]}]({target}) — ' + "; ".join(details))
+            label = {"open": "open tenders", "award": "awarded contracts", "closed": "closed tenders", "planning": "planned opportunities"}.get(stage, "tenders")
+            message = f'I found {total} {label}' + (" matching your business" if matches_business and matched else "") + "."
+            if lines:
+                message += " Here are " + ("the closest matches" if matched else "some to explore") + ":\n\n" + "\n".join(lines)
+            elif matched and matched.get("profile_needed"):
+                message = "Add your industry and services to your business profile so I can match relevant tenders. You can browse available tenders in Marketplace meanwhile."
+                page = "/marketplace?tab=tenders"
+            else:
+                message = "I couldn’t find " + ("business matches" if matched else "tenders matching those filters") + ". You can browse all open tenders or try another industry."
+            reply = _reply(message, status="tenders", tenders=items, total=total,
+                           query=query if not matched else "", stage=stage)
+            reply["actions"] = [{"label": "View your tender matches" if matched else "Open Public Tenders", "to": page},
                                 *({"label": "View tender: " + item["title"][:64],
                                    "to": "/marketplace?tab=tenders&tender=" + quote(item["id"], safe="")} for item in items if item.get("id"))]
         elif action == "evaluation":

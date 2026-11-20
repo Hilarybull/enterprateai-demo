@@ -183,13 +183,14 @@ def test_procurement_conversation_uses_shared_search(monkeypatch):
     response = asyncio.run(procurement.run(None, {"id": "buyer"}, request, {}))
     search.assert_awaited_once_with("catering", "open", limit=5)
     assert response["procurement"]["tenders"][0]["url"] == url
-    assert url in response["message"]
+    assert url not in response["message"]
+    assert "/marketplace?tab=tenders" in response["message"]
 
 
-def test_automatic_sync_preference_overrides_startup_default(monkeypatch):
+def test_automatic_sync_is_off_until_admin_enables_it(monkeypatch):
     monkeypatch.setenv("FTS_SYNC_ENABLED", "1")
-    assert service.automatic_enabled({})
-    assert service.automatic_enabled({"automatic_sync": None})
+    assert not service.automatic_enabled({})
+    assert not service.automatic_enabled({"automatic_sync": None})
     assert not service.automatic_enabled({"automatic_sync": False})
     monkeypatch.setenv("FTS_SYNC_ENABLED", "0")
     assert service.automatic_enabled({"automatic_sync": True})

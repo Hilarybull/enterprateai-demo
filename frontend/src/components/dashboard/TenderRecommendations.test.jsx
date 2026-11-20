@@ -55,3 +55,16 @@ it("shows two previews and opens all matches with next and previous pages", asyn
   fireEvent.click(dialog.getByRole("button", { name: "Close popup" }));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("shows one preview per group when open and awarded matches are both available", async () => {
+  apiRequest.mockResolvedValue({ workspace_id: "one", open_count: 4, award_count: 2, stale: true,
+    open: [{ id: "open-1", title: "Open first", reasons: [] }, { id: "open-2", title: "Open second", reasons: [] }],
+    awards: [{ id: "award-1", title: "Award first", reasons: [] }, { id: "award-2", title: "Award second", reasons: [] }] });
+  render(<MemoryRouter><TenderRecommendations workspaceId="one" /></MemoryRouter>);
+  expect(await screen.findByText("Open first")).toBeTruthy();
+  expect(screen.getByText("Award first")).toBeTruthy();
+  expect(screen.queryByText("Open second")).toBeNull();
+  expect(screen.queryByText("Award second")).toBeNull();
+  expect(screen.getAllByRole("button", { name: /See more/ })).toHaveLength(2);
+  expect(screen.queryByText(/Some opportunities may have changed/)).toBeNull();
+});

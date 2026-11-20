@@ -14,6 +14,7 @@ function Recommendations({ workspaceId }) {
   const [retry, setRetry] = useState(0);
   const [popupStage, setPopupStage] = useState(null);
   const hasAwards = data?.award_count > 0 && Array.isArray(data?.awards) && data.awards.length > 0;
+  const previewLimit = hasAwards ? 1 : 2;
   useEffect(() => {
     let active = true;
     setFailed(false);
@@ -29,12 +30,11 @@ function Recommendations({ workspaceId }) {
       : data.profile_needed ? <p className="text-sm text-slate-600">Add your industry and services so EnterprateAI can find relevant tenders. <Link className="text-brand-600 underline" to="/account?section=workspace">Update business profile</Link></p>
       : <>
         <p className="text-sm text-slate-600 dark:text-slate-300">{data.open_count} open tender{data.open_count === 1 ? "" : "s"} match your business.{hasAwards && <> {data.award_count} related awarded contract{data.award_count === 1 ? "" : "s"} to research for potential subcontracting.</>}</p>
-        {data.stale && <p className="text-xs text-amber-700">Some opportunities may have changed. Check the tender details before acting.</p>}
         <div className={`grid min-w-0 gap-5 ${hasAwards ? "md:grid-cols-2" : ""}`}>
           {[["Open tenders", data.open || [], "open", data.open_count], ...(hasAwards ? [["Awarded contracts", data.awards, "award", data.award_count]] : [])].map(([title, items, stage, count]) => <div key={stage} className="min-w-0 space-y-3">
             <h3 className="font-semibold">{title}</h3>
-            {items.length ? items.slice(0, 2).map(item => <TenderMatch key={item.id} item={item} stage={stage} />) : <p className="text-sm text-slate-500">No matching {title.toLowerCase()} available right now.</p>}
-            {count > 2 && <button type="button" className="min-h-10 rounded-xl border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={() => setPopupStage(stage)}>See more <span className="text-xs">({count})</span></button>}
+            {items.length ? items.slice(0, previewLimit).map(item => <TenderMatch key={item.id} item={item} stage={stage} />) : <p className="text-sm text-slate-500">No matching {title.toLowerCase()} available right now.</p>}
+            {count > previewLimit && <button type="button" className="min-h-10 rounded-xl border border-brand-200 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50" onClick={() => setPopupStage(stage)}>See more <span className="text-xs">({count})</span></button>}
           </div>)}
         </div>
         <p className="text-xs text-slate-500">Matches use your saved industry, services and products.{hasAwards && " An award does not confirm that subcontracting is available."}</p>
