@@ -31,8 +31,11 @@ function Recommendations({ workspaceId }) {
   if (data && !failed && !(data.open_count > 0 || data.award_count > 0)) return null;
   if (dismissed) return <button type="button" className="min-h-11 rounded-lg px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => { try { localStorage.removeItem(dismissKey); } catch {} setDismissed(false); }}>Show tender recommendations</button>;
   return <section aria-label="Tender recommendations" className="relative min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-    <div className="absolute right-1 top-1"><button type="button" aria-label="Dismiss tender recommendations" className="min-h-11 min-w-11 rounded-lg text-slate-500 hover:bg-slate-100" onClick={() => { try { localStorage.setItem(dismissKey, "1"); } catch {} setDismissed(true); }}>×</button></div>
-    <div className="!mt-0 flex flex-wrap items-start justify-between gap-3 pr-8"><div><p className="text-xs font-semibold uppercase tracking-wide text-brand-600">EnterprateAI opportunities</p><h2 className="mt-1 text-lg font-semibold">Tenders for your business</h2></div><Link className="inline-flex min-h-10 items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500" to="/marketplace?tab=tenders">Browse tenders</Link></div>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+      <div className="min-w-0 break-words"><p className="text-xs font-semibold uppercase tracking-wide text-brand-600">EnterprateAI opportunities</p><h2 className="mt-1 text-lg font-semibold">Tenders for your business</h2></div>
+      <Link className="col-span-2 col-start-1 row-start-2 inline-flex min-h-11 items-center justify-center rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:col-span-1 sm:col-start-2 sm:row-start-1" to="/marketplace?tab=tenders">Browse tenders</Link>
+      <button type="button" aria-label="Dismiss tender recommendations" className="col-start-2 row-start-1 min-h-11 min-w-11 rounded-lg text-slate-500 hover:bg-slate-100 sm:col-start-3" onClick={() => { try { localStorage.setItem(dismissKey, "1"); } catch {} setDismissed(true); }}>×</button>
+    </div>
     {failed ? <div role="alert" className="text-sm text-slate-600">We couldn’t load your tender recommendations. <button type="button" className="font-semibold text-brand-600 underline" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>
       : !data ? <p role="status" className="text-sm text-slate-500">Finding opportunities for your business…</p>
       : data.profile_needed ? <p className="text-sm text-slate-600">Add your industry and services so EnterprateAI can find relevant tenders. <Link className="text-brand-600 underline" to="/account?section=workspace">Update business profile</Link></p>
@@ -45,7 +48,7 @@ function Recommendations({ workspaceId }) {
           </div>)}
         </div>
         <div className="flex flex-wrap gap-3">{[["open", data.open_count], ...(hasAwards ? [["award", data.award_count]] : [])].filter(([,count]) => count > previewLimit).map(([stage,count]) => <button key={stage} type="button" className="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700" onClick={() => setPopupStage(stage)}>See more {hasBoth ? stage === "award" ? "awarded contracts" : "open tenders" : ""} <span className="text-xs">({count})</span></button>)}</div>
-        <p className="text-xs text-slate-500">Matches use your saved industry, services and products.{hasAwards && " An award does not confirm that subcontracting is available."}</p>
+        {hasAwards && <p className="text-xs text-slate-500">An award does not confirm that subcontracting is available.</p>}
       </>}
     {popupStage && <TenderMatchesPopup workspaceId={workspaceId} stage={popupStage} onClose={() => setPopupStage(null)} />}
   </section>;
