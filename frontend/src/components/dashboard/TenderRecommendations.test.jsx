@@ -5,6 +5,13 @@ import { apiRequest } from "../../api/client";
 import TenderRecommendations from "./TenderRecommendations";
 vi.mock("../../api/client", () => ({ apiRequest: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
+it("hides the entire card when neither open nor awarded matches exist", async () => {
+  localStorage.clear();
+  apiRequest.mockResolvedValue({ workspace_id: "empty", open_count: 0, award_count: 0, open: [], awards: [] });
+  render(<MemoryRouter><TenderRecommendations workspaceId="empty" /></MemoryRouter>);
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Tender recommendations" })).toBeNull());
+  expect(screen.queryByText(/0 open tenders/)).toBeNull();
+});
 it("puts coloured see-more controls after both groups and remembers dismissal per workspace", async () => {
   localStorage.clear();
   apiRequest.mockResolvedValue({ workspace_id: "dismiss", open_count: 4, award_count: 2,
@@ -36,7 +43,7 @@ it("never carries recommendations into another workspace", async () => {
   apiRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; })).mockResolvedValue({ workspace_id: "two", profile_needed: true });
   const view = render(<MemoryRouter><TenderRecommendations workspaceId="one" /></MemoryRouter>);
   view.rerender(<MemoryRouter><TenderRecommendations workspaceId="two" /></MemoryRouter>);
-  await screen.findByText(/Add your industry/);
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Tender recommendations" })).toBeNull());
   resolveFirst({ workspace_id: "one", open_count: 99, award_count: 0, open: [], awards: [] });
   await waitFor(() => expect(screen.queryByText(/99 open/)).toBeNull());
 });

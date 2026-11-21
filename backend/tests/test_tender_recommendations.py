@@ -18,6 +18,17 @@ def test_generic_frameworks_are_not_technology_matches():
     assert rec.match({"title": "Software development services"}, labels)[0] > 0
 
 
+def test_consulting_and_flight_capabilities_match_real_scope_without_generic_frameworks():
+    labels = rec.capabilities({"workspace_profile": {"primary_industry": "consulting", "services": [{"service_name": "Flight", "service_description": "Flight test"}]}})
+    assert "consulting" in labels and "Flight" in labels
+    assert rec.match({"title": "Export Growth and International Market Access Programme", "cpv": "79411000"}, labels)[0] > 0
+    assert rec.match({"title": "Coaching services", "cpv": "79414000"}, labels)[0] > 0
+    assert rec.match({"title": "Flight testing services"}, labels)[0] > 0
+    assert rec.match({"title": "Sludge Belt Dryers Framework Agreement"}, labels)[0] == 0
+    assert rec.match({"title": "Software Resellers", "industry": "IT services: consulting, software development, Internet and support", "cpv": "72000000"}, ["consulting"])[0] == 0
+    assert rec.match({"title": "Nuclear engineering system partner", "cpv": "71300000", "cpv_classifications": [{"id": "79400000", "description": "Business and management consultancy"}]}, ["consulting"])[0] == 0
+
+
 def test_capabilities_ignore_contacts_and_generic_profile():
     assert rec.capabilities({"workspace_profile": {"primary_industry": "Other", "about_company": "medical records", "email": "catering@example.com"}}) == []
     labels = rec.capabilities({"workspace_profile": {"primary_industry": "Healthcare", "secondary_industries": "Medical", "services": [{"service_name": "Mobility assessments"}]}})

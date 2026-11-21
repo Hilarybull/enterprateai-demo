@@ -26,6 +26,7 @@ function Recommendations({ workspaceId }) {
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [workspaceId, retry, dismissed]);
+  if (data && !failed && !(data.open_count > 0 || data.award_count > 0)) return null;
   if (dismissed) return <button type="button" className="min-h-11 rounded-lg px-3 py-2 text-sm font-semibold text-brand-700" onClick={() => { try { localStorage.removeItem(dismissKey); } catch {} setDismissed(false); }}>Show tender recommendations</button>;
   return <section aria-label="Tender recommendations" className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
     <div className="flex justify-end"><button type="button" aria-label="Dismiss tender recommendations" className="min-h-11 min-w-11 rounded-lg text-slate-500 hover:bg-slate-100" onClick={() => { try { localStorage.setItem(dismissKey, "1"); } catch {} setDismissed(true); }}>×</button></div>

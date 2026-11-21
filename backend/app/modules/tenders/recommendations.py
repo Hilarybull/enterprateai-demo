@@ -5,11 +5,18 @@ from app.modules.proposals import sourcing
 from app.modules.tenders import service
 
 STOP = set("the and for with from your our business services service solutions company other general providing provide delivery product products ltd limited industry".split())
-STOP.update("framework frameworks agreement agreements contract contracts project projects programme programmes procurement provision consulting consultancy management adoption".split())
+STOP.update("framework frameworks agreement agreements contract contracts project projects programme programmes procurement provision management adoption".split())
+SPECIFIC = set("software cloud cybersecurity ai digital automation data computer internet network saas crm erp chatbot flight aviation aircraft aerospace".split())
 
 
 def tokens(value):
-    return {word.rstrip("s") for word in re.findall(r"[a-z]{2,}", str(value).lower()) if word not in STOP and word not in {"of", "to", "in", "on", "by", "as", "an", "is", "be", "or"}}
+    words = {word.rstrip("s") for word in re.findall(r"[a-z]{2,}", str(value).lower()) if word not in STOP and word not in {"of", "to", "in", "on", "by", "as", "an", "is", "be", "or"}}
+    if words & {"consulting", "consultancy", "consultant", "advisory"}:
+        words -= {"consultancy", "consultant", "advisory"}
+        words.add("consulting")
+    if {"artificial", "intelligence"} <= words:
+        words.add("ai")
+    return words
 
 
 def capabilities(data):
@@ -33,11 +40,22 @@ def match(notice, labels):
     content = " ".join(str(notice.get(key) or "") for key in ("title", "industry"))
     content += " " + " ".join(str(item.get("description") or "") for item in notice.get("cpv_classifications") or [] if isinstance(item, dict))
     words = tokens(content)
+    title_words = tokens(notice.get("title"))
+    codes = [str(notice.get("cpv") or ""), *[str(item.get("id") or "") for item in notice.get("cpv_classifications") or [] if isinstance(item, dict)]]
+    primary_code = str(notice.get("cpv") or next((code for code in codes if code), ""))
+    consultancy_category = primary_code.startswith(("794", "721", "72224", "726"))
     reasons, score = [], 0
     for label in labels:
         meaningful = tokens(label)
         overlap = meaningful & words
-        if overlap and (len(meaningful) == 1 or len(overlap) >= 2):
+        # The broad IT category 72000000 mentions consulting even for software resales.
+        # General consulting needs actual consultancy scope or a specific consultancy code.
+        if meaningful == {"consulting"}:
+            if "consulting" in title_words or consultancy_category:
+                score += 2
+                reasons.append(f"Matches your saved capability: {label}")
+            continue
+        if overlap and (len(meaningful) == 1 or len(overlap) >= 2 or overlap & SPECIFIC):
             score += len(overlap)
             reasons.append(f"Matches your saved capability: {label}")
     return score, reasons[:3]
