@@ -4,6 +4,7 @@ import { submitAgentRequest } from "../../lib/agent";
 import { ensureWorkspaceId, useWorkspaceStore } from "../../store/workspace";
 import { apiRequest } from "../../api/client";
 import Popup from "../Popup";
+import CreditConfirmModal from "../CreditConfirmModal";
 import TenderText from "./TenderText";
 import { evidenceLabel, evidenceValue } from "./tenderEvidence";
 
@@ -26,6 +27,7 @@ function Evaluation({ notice, token, workspaceId }) {
   const [showResult, setShowResult] = useState(false);
   const [checking, setChecking] = useState(false);
   const [stale, setStale] = useState(false);
+  const [confirmCredits, setConfirmCredits] = useState(false);
   const generation = useRef(0);
   const nextSteps = result?.next_steps || result?.findings?.map(finding => finding.next_step) || [];
   useEffect(() => {
@@ -69,13 +71,16 @@ function Evaluation({ notice, token, workspaceId }) {
   }
   return <section className="space-y-4 rounded-xl border border-brand-200 bg-brand-50/30 p-4 dark:border-brand-800 dark:bg-brand-950/20" aria-label="Tender evaluation">
     <div className="space-y-3"><div><h3 className="font-semibold">Understand this tender</h3><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Get a clear summary of the requirements, deadlines, how to respond and what to do next.</p></div>
-      <div>{!token ? <Link className={button + " block text-center"} to={"/login?next=" + encodeURIComponent("/marketplace?tab=tenders&tender=" + encodeURIComponent(notice.id))}>Evaluate This Tender for Me</Link> : <button type="button" className={button} disabled={busy || checking} onClick={() => result ? setShowResult(true) : evaluate()}>{busy ? "Analysing tender…" : checking ? "Checking saved evaluation…" : result ? "View saved evaluation" : "Evaluate This Tender for Me · 20 credits"}</button>}</div>
+      <div>{!token ? <Link className={button + " block text-center"} to={"/login?next=" + encodeURIComponent("/marketplace?tab=tenders&tender=" + encodeURIComponent(notice.id))}>Evaluate This Tender for Me</Link> : <button type="button" className={button} disabled={busy || checking} onClick={() => result ? setShowResult(true) : setConfirmCredits(true)}>{busy ? "Analysing tender…" : checking ? "Checking saved evaluation…" : result ? "View saved evaluation" : "Evaluate This Tender for Me"}</button>}</div>
       {result && <p className="text-xs text-slate-500">Saved for your business{result.generated_at ? " · " + new Date(result.generated_at).toLocaleDateString("en-GB") : ""}</p>}
     </div>
     {busy && <p role="status" className="text-sm">Reading the tender requirements and preparing your next steps…</p>}
     {problem && <p role="alert" className="text-sm text-rose-700">{problem}</p>}
+    {confirmCredits && <CreditConfirmModal featureName="Tender evaluation" featureCode="tender_evaluation" creditCost={20}
+      confirmLabel="Continue" topUpLabel="Top up" onCancel={() => setConfirmCredits(false)}
+      onConfirm={() => { setConfirmCredits(false); void evaluate(); }} />}
     {result && showResult && <Popup title="Your tender evaluation" onClose={() => setShowResult(false)}><div className="space-y-4" aria-live="polite">
-      {stale && <div className="space-y-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>This saved evaluation uses earlier tender or business details.</p><button type="button" disabled={busy} className="font-semibold underline" onClick={evaluate}>{busy ? "Updating…" : "Update evaluation"}</button></div>}
+      {stale && <div className="space-y-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>This saved evaluation uses earlier tender or business details.</p><button type="button" disabled={busy} className="font-semibold underline" onClick={() => { setShowResult(false); setConfirmCredits(true); }}>{busy ? "Updating…" : "Update evaluation"}</button></div>}
       {result.overview?.length > 0 && <section className="space-y-3 rounded-xl bg-white p-4 dark:bg-slate-900"><h4 className="font-semibold">Tender explained</h4>{result.overview.map((item,index)=><article key={index} className="space-y-1 text-sm"><h5 className="font-semibold">{item.heading}</h5><p><TenderText>{item.explanation}</TenderText></p><details className="text-xs text-slate-500"><summary>Supporting information</summary>{item.evidence.map((ref,i)=><Evidence key={i} reference={ref} notice={notice} />)}</details></article>)}</section>}
       <div className="rounded-xl bg-white p-4 dark:bg-slate-900"><p className="text-xs text-slate-500">Evaluation for {result.business_name}</p><h4 className="mt-1 font-semibold">{result.verdict}</h4></div>
       <div className="space-y-3">{result.findings.map((finding,index)=><article key={index} className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900">

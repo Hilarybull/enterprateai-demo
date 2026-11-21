@@ -9,7 +9,7 @@ import { useAuthStore } from "../store/auth";
  *
  * `featureCode`: the price list's code (the server's answer wins). `creditCost`: shown only if the check can't be made.
  */
-export default function CreditConfirmModal({ featureName, featureCode = null, creditCost = 0, onConfirm, onCancel }) {
+export default function CreditConfirmModal({ featureName, featureCode = null, creditCost = 0, onConfirm, onCancel, confirmLabel, topUpLabel }) {
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const creditBalance = useAuthStore((s) => s.creditBalance);
   const [check, setCheck] = useState(featureCode ? null : { cost: creditCost, entitled: true });
@@ -102,12 +102,12 @@ export default function CreditConfirmModal({ featureName, featureCode = null, cr
             </button>
             {check.entitled && canAfford ? (
               <button type="button" onClick={onConfirm} className="flex-1 rounded-xl bg-brand-600 py-2 text-sm font-bold text-white hover:bg-brand-700 transition">
-                Use {cost} credit{cost !== 1 ? "s" : ""}
+                {confirmLabel || `Use ${cost} credit${cost !== 1 ? "s" : ""}`}
               </button>
             ) : (
               <button type="button" onClick={() => { onCancel(); window.location.href = "/pricing"; }}
                 className="flex-1 rounded-xl bg-brand-600 py-2 text-sm font-bold text-white hover:bg-brand-700 transition">
-                {check.entitled ? "Get more credits" : `See ${check.refusal?.minimum_plan_label || "the"} plan`}
+                {check.entitled ? topUpLabel || "Get more credits" : `See ${check.refusal?.minimum_plan_label || "the"} plan`}
               </button>
             )}
           </div>
