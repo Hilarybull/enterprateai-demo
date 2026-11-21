@@ -4,6 +4,7 @@ import { submitAgentRequest } from "../../lib/agent";
 import { ensureWorkspaceId, useWorkspaceStore } from "../../store/workspace";
 import { apiRequest } from "../../api/client";
 import Popup from "../Popup";
+import TenderText from "./TenderText";
 import { evidenceLabel, evidenceValue } from "./tenderEvidence";
 
 const labels = { aligned: "Aligned", partial: "Partial fit", gap: "Gap to address", unknown: "Information needed", unsupported: "Unverified finding" };
@@ -68,22 +69,22 @@ function Evaluation({ notice, token, workspaceId }) {
   }
   return <section className="space-y-4 rounded-xl border border-brand-200 bg-brand-50/30 p-4 dark:border-brand-800 dark:bg-brand-950/20" aria-label="Tender evaluation">
     <div className="space-y-3"><div><h3 className="font-semibold">Understand this tender</h3><p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Get a clear summary of the requirements, deadlines, how to respond and what to do next.</p></div>
-      <div>{!token ? <Link className={button + " block text-center"} to={"/login?next=" + encodeURIComponent("/marketplace?tab=tenders&tender=" + encodeURIComponent(notice.id))}>Evaluate This Tender for Me</Link> : <button type="button" className={button} disabled={busy || checking} onClick={() => result ? setShowResult(true) : evaluate()}>{busy ? "Analysing tender…" : checking ? "Checking saved evaluation…" : result ? "View saved evaluation" : "Evaluate This Tender for Me"}</button>}</div>
+      <div>{!token ? <Link className={button + " block text-center"} to={"/login?next=" + encodeURIComponent("/marketplace?tab=tenders&tender=" + encodeURIComponent(notice.id))}>Evaluate This Tender for Me</Link> : <button type="button" className={button} disabled={busy || checking} onClick={() => result ? setShowResult(true) : evaluate()}>{busy ? "Analysing tender…" : checking ? "Checking saved evaluation…" : result ? "View saved evaluation" : "Evaluate This Tender for Me · 20 credits"}</button>}</div>
       {result && <p className="text-xs text-slate-500">Saved for your business{result.generated_at ? " · " + new Date(result.generated_at).toLocaleDateString("en-GB") : ""}</p>}
     </div>
     {busy && <p role="status" className="text-sm">Reading the tender requirements and preparing your next steps…</p>}
     {problem && <p role="alert" className="text-sm text-rose-700">{problem}</p>}
     {result && showResult && <Popup title="Your tender evaluation" onClose={() => setShowResult(false)}><div className="space-y-4" aria-live="polite">
       {stale && <div className="space-y-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>This saved evaluation uses earlier tender or business details.</p><button type="button" disabled={busy} className="font-semibold underline" onClick={evaluate}>{busy ? "Updating…" : "Update evaluation"}</button></div>}
-      {result.overview?.length > 0 && <section className="space-y-3 rounded-xl bg-white p-4 dark:bg-slate-900"><h4 className="font-semibold">Tender explained</h4>{result.overview.map((item,index)=><article key={index} className="space-y-1 text-sm"><h5 className="font-semibold">{item.heading}</h5><p>{item.explanation}</p><details className="text-xs text-slate-500"><summary>Supporting information</summary>{item.evidence.map((ref,i)=><Evidence key={i} reference={ref} notice={notice} />)}</details></article>)}</section>}
+      {result.overview?.length > 0 && <section className="space-y-3 rounded-xl bg-white p-4 dark:bg-slate-900"><h4 className="font-semibold">Tender explained</h4>{result.overview.map((item,index)=><article key={index} className="space-y-1 text-sm"><h5 className="font-semibold">{item.heading}</h5><p><TenderText>{item.explanation}</TenderText></p><details className="text-xs text-slate-500"><summary>Supporting information</summary>{item.evidence.map((ref,i)=><Evidence key={i} reference={ref} notice={notice} />)}</details></article>)}</section>}
       <div className="rounded-xl bg-white p-4 dark:bg-slate-900"><p className="text-xs text-slate-500">Evaluation for {result.business_name}</p><h4 className="mt-1 font-semibold">{result.verdict}</h4></div>
       <div className="space-y-3">{result.findings.map((finding,index)=><article key={index} className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900">
-        <div className="flex flex-wrap items-start justify-between gap-2"><h4 className="font-semibold">{finding.requirement}</h4><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold dark:bg-slate-800">{labels[finding.alignment] || "Information needed"}</span></div>
-        <p>{finding.explanation}</p>
+        <div className="flex flex-wrap items-start justify-between gap-2"><h4 className="font-semibold"><TenderText>{finding.requirement}</TenderText></h4><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold dark:bg-slate-800">{labels[finding.alignment] || "Information needed"}</span></div>
+        <p><TenderText>{finding.explanation}</TenderText></p>
         <dl className="grid min-w-0 gap-3 md:grid-cols-2">{[["From the tender",finding.tender_evidence],["From your business profile",finding.business_evidence]].map(([label,items])=><div key={label} className="min-w-0"><dt className="font-medium">{label}</dt><dd className="mt-1 space-y-2 break-words text-slate-600 dark:text-slate-300">{items?.length ? items.map((item,i)=><Evidence key={i} reference={item} notice={notice} />) : "No supporting information available."}</dd></div>)}</dl>
       </article>)}</div>
-      {nextSteps.length > 0 && <section className="space-y-3 rounded-xl border border-brand-200 bg-white p-4 dark:border-brand-800 dark:bg-slate-900"><h4 className="font-semibold">What to do next</h4><ol className="list-decimal space-y-2 pl-5 text-sm">{nextSteps.map((step,index)=><li key={index}>{step}</li>)}</ol><Link className="inline-block text-sm font-semibold text-brand-700 underline" to="/account?section=workspace">Update your business profile</Link></section>}
-      <div className="space-y-1 text-xs text-slate-500">{result.limitations?.map((line,i)=><p key={i}>{line}</p>)}</div>
+      {nextSteps.length > 0 && <section className="space-y-3 rounded-xl border border-brand-200 bg-white p-4 dark:border-brand-800 dark:bg-slate-900"><h4 className="font-semibold">What to do next</h4><ol className="list-decimal space-y-2 pl-5 text-sm">{nextSteps.map((step,index)=><li key={index}><TenderText>{step}</TenderText></li>)}</ol><Link className="inline-block text-sm font-semibold text-brand-700 underline" to="/account?section=workspace">Update your business profile</Link></section>}
+      <div className="space-y-1 text-xs text-slate-500">{result.limitations?.map((line,i)=><p key={i}><TenderText>{line}</TenderText></p>)}</div>
     </div></Popup>}
   </section>;
 }

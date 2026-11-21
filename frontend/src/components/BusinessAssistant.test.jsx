@@ -59,6 +59,20 @@ it("the upload quick action opens the chat picker and follows the selected busin
 
 function ChatLocation() { return <p data-testid="chat-location">{useLocation().pathname}</p>; }
 
+it("old checklist links list the items in chat and each item continues there", async () => {
+  replies = [{ kind: "answer", message: "Nine things remain.", actions: [{ label: "See all 9", to: "/funding/case?tab=overview" }] },
+    { kind: "answer", message: "Here are the remaining items.", cards: [{ type: "readiness_tasks", case_id: "case", topic: "funding", title: "Your remaining funding items", items: [{ title: "Confirm your target amount" }] }] },
+    { kind: "answer", message: "What amount would you like to confirm?" }];
+  render(<MemoryRouter initialEntries={["/agent"]}><BusinessAssistant waiting={{ count: 0, items: [] }} /><ChatLocation /></MemoryRouter>);
+  await ask("Update my case");
+  await act(async () => { fireEvent.click(await screen.findByRole("link", { name: "See all 9" })); });
+  expect(await screen.findByText("1. Confirm your target amount")).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Work on this" })); });
+  expect(await screen.findByText("What amount would you like to confirm?")).toBeTruthy();
+  expect(sent(/\/agent\/requests$/).at(-1).body.text).toContain("Confirm your target amount");
+  expect(screen.getByTestId("chat-location").textContent).toBe("/agent");
+});
+
 it("sidebar navigation remembers the current conversation for the return action", async () => {
   window.history.replaceState(null, "", "/agent");
   render(<MemoryRouter initialEntries={["/agent"]}><BusinessAssistant waiting={{ count: 0, items: [] }} /><ChatLocation /></MemoryRouter>);

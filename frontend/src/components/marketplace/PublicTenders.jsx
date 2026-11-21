@@ -32,7 +32,7 @@ function TenderDetail({ item, children, evaluation }) {
           {[["Submission deadline",day(item.deadline)],["Published value",value(item)],["Industry",item.industry || industries[item.cpv?.slice(0,2)] || "Not published"],["Location",item.region || "Not published"],["SME suitability",item.sme_suitable === true ? "Suitable for SMEs" : item.sme_suitable === false ? "Not marked suitable for SMEs" : "Not specified"],["Contract type",item.category || "Not published"],["Published",day(item.published_at)],["Contract starts",day(item.contract_start)],["Contract ends",day(item.contract_end)]].map(([label, val])=><div key={label}><dt className="text-slate-500">{label}</dt><dd className="mt-1 font-medium">{val}</dd></div>)}
         </dl>
       </header>
-      {[["About this tender",item.description || "Description not published."],["How to submit",instructions],["Eligibility and participation",item.eligibility || "Check the tender documents for further details."],["Evaluation and award criteria",item.award_criteria || "Check the tender documents for further details."],["Procurement procedure",item.procedure || "Check the tender documents for further details."]].map(([label,content])=><section key={label} className={box + " space-y-3 sm:p-6"}><h3 className="font-semibold">{label}</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{readable(content)}</p></section>)}
+      {[["About this tender",item.description || "Description not published."],...(item.status === "award" ? [] : [["How to submit",instructions]]),["Eligibility and participation",item.eligibility || "Check the tender documents for further details."],["Evaluation and award criteria",item.award_criteria || "Check the tender documents for further details."],["Procurement procedure",item.procedure || "Check the tender documents for further details."]].map(([label,content])=><section key={label} className={box + " space-y-3 sm:p-6"}><h3 className="font-semibold">{label}</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{readable(content)}</p></section>)}
       <section className={box + " space-y-3 sm:p-6"}><h3 className="font-semibold">Documents and supporting information</h3>
         {!documents.length && <p className="text-sm">No supporting documents are available here.</p>}
         <ul className="space-y-3">{documents.map((doc,i)=><li key={i} className="break-words text-sm"><a className="font-semibold text-brand-700 underline" href={sourceLink(doc.url)} target="_blank" rel="noopener noreferrer">{doc.title || "Tender document"} ↗</a>{doc.description && <p className="mt-1">{readable(doc.description)}</p>}</li>)}</ul>
@@ -104,6 +104,7 @@ export default function PublicTenders({ query }) {
   const industry = params.get("industry") || "";
   const sme = ["all", "unspecified"].includes(params.get("sme")) ? params.get("sme") : "suitable";
   const [retry, setRetry] = useState(0);
+  const [accessGate, setAccessGate] = useState(null);
   const location = params.get("location") || "";
   const category = params.get("category") || "";
   const from = params.get("deadline_from") || "";
@@ -134,12 +135,17 @@ export default function PublicTenders({ query }) {
     const path = detail ? "/" + encodeURIComponent(detail) : "?" + filters;
     setResults(null);
     setProblem("");
+    setAccessGate(null);
     const timer = setTimeout(() => {
       apiRequest("/public-tenders" + path, "GET").then((data) => { if (active) setResults(data); })
-        .catch((error) => { if (active) setProblem("We couldn’t load tenders. Please try again."); });
+        .catch((error) => { if (active) {
+          if (detail && error.status === 401) setAccessGate("signin");
+          else if (detail && (error.data?.detail?.code === "TENDER_PREVIEW_LIMIT" || error.code === "TENDER_PREVIEW_LIMIT")) setAccessGate("upgrade");
+          else setProblem("We couldn’t load tenders. Please try again.");
+        } });
     }, detail ? 0 : 200);
     return () => { active = false; clearTimeout(timer); };
-  }, [detail, query, stage, page, industry, location, category, from, to, sme, retry]);
+  }, [detail, query, stage, page, industry, location, category, from, to, sme, retry, token]);
   useEffect(() => { if (detail && results) contentTop.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [detail, results]);
 
   useEffect(() => {
@@ -214,7 +220,12 @@ export default function PublicTenders({ query }) {
       {!saved.length && <p className="text-sm">No notices saved in this workspace.</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{saved.map((item) => <Listing key={item.id} item={item} onOpen={() => update("tender", item.id)}>{saveAction(item)}</Listing>)}</div>
     </div>}
-    {!results && !problem && <p role="status">Loading notices…</p>}
+    {accessGate && <section className={box + " space-y-4 border-brand-200 p-6"}>
+      <h2 className="text-xl font-semibold">{accessGate === "upgrade" ? "Your next opportunity is waiting" : "Explore your first two tenders free"}</h2>
+      <p className="text-sm text-slate-600">{accessGate === "upgrade" ? "You’ve explored your two free tenders. Upgrade to Starter to unlock more contract opportunities, detailed requirements and AI tender evaluation." : "Sign in to explore tender details and discover opportunities for your business."}</p>
+      <button type="button" className="min-h-11 rounded-xl bg-brand-600 px-5 py-3 font-semibold text-white hover:bg-brand-700" onClick={() => navigate(accessGate === "upgrade" ? "/pricing" : "/login?next=" + encodeURIComponent("/marketplace?" + params.toString()))}>{accessGate === "upgrade" ? "Unlock more tenders" : "Sign in to explore"}</button>
+    </section>}
+    {!results && !problem && !accessGate && <p role="status">Loading notices…</p>}
     {results && (detail ? <TenderDetail item={results} evaluation={<TenderEvaluation notice={results} token={token} workspaceId={workspaceId} />}>{saveAction(results)}</TenderDetail> :
       <>
         {!results.items.length && <div className={box + " space-y-2 py-6"}>
@@ -237,6 +248,5 @@ export default function PublicTenders({ query }) {
           </div>
         </nav>}
       </>)}
-    <p className="text-xs text-slate-500">Contains Find a Tender information from the Cabinet Office, licensed under the <a className="underline" href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/">Open Government Licence v3.0</a>, except where otherwise stated.</p>
   </section>;
 }

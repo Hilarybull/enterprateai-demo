@@ -10,6 +10,14 @@ from app.modules.tenders.router import router
 from app.shared.auth.deps import get_current_user
 
 
+def test_generic_frameworks_are_not_technology_matches():
+    labels = ["AI Adoption Framework", "Software development"]
+    for title in ["Sludge Belt Dryers Framework Agreement", "Reablement Framework", "Construction Development Framework"]:
+        assert rec.match({"title": title}, labels)[0] == 0
+    assert rec.match({"title": "AI Implementation Platform"}, labels)[0] > 0
+    assert rec.match({"title": "Software development services"}, labels)[0] > 0
+
+
 def test_capabilities_ignore_contacts_and_generic_profile():
     assert rec.capabilities({"workspace_profile": {"primary_industry": "Other", "about_company": "medical records", "email": "catering@example.com"}}) == []
     labels = rec.capabilities({"workspace_profile": {"primary_industry": "Healthcare", "secondary_industries": "Medical", "services": [{"service_name": "Mobility assessments"}]}})

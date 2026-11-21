@@ -3,7 +3,7 @@ real model, search or charge is used. A business can have many launches, so a ne
 import pytest
 
 from test_goal_onboarding import world, OWNER, run  # noqa: F401
-from test_round14_converse_funding import _Model
+from test_round14_converse_funding import _Model, no_background_connections  # noqa: F401
 from app.modules.agent import research
 
 
@@ -39,7 +39,8 @@ def test_a_launch_said_in_a_sentence_becomes_a_plan_and_is_checked(talk):
     plan = _plans(env)[0]["data"]
     assert plan["name"] == "Car wash subscription" and plan["geography"] == "Abuja" and plan["customers"]["target_segment"] == "office workers"
     assert float(plan["offer"]["price"]) == 15000 and float(plan["economics"]["price_per_unit"]) == 15000
-    assert out["actions"][0]["label"] == "Open your launch plan" and out["actions"][0]["to"].startswith("/launch/")
+    assert out["actions"][0]["label"] == "Review remaining items" and "to" not in out["actions"][0]
+    assert "launch case here" in out["actions"][0]["prompt"]
 
 
 def test_a_follow_up_updates_the_plan_being_talked_about(talk):
@@ -178,7 +179,8 @@ def test_fill_them_drafts_every_blank_field_with_estimates_for_review(talk, monk
                                                                  "offer.launch_scope": "Cooking pots sold at local markets in Abuja"}})})()
     monkeypatch.setattr(research, "_default_llm", lambda *_a, **_k: _Writer())
     out = ask("fill them", page="launch", case_id=str(pot["id"]))
-    assert out["message"].startswith("I've added") and "review=1" in out["actions"][0]["to"]
+    assert out["message"].startswith("I've added") and "to" not in out["actions"][0]
+    assert "review" in out["actions"][0]["prompt"].lower()
     from app.modules.readiness.service import service_for
     drafts = run(service_for(env.orch).store.get("subjects", pot["id"]))["data"]["agent_drafts"]
     assert drafts["economics.price_per_unit"]["value"] == "8000" and "estimate" in drafts["economics.price_per_unit"]["source"]

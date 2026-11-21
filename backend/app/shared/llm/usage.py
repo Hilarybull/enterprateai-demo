@@ -15,6 +15,8 @@ OPENAI_PRICING_USD_PER_1M = {
 }
 
 ANTHROPIC_PRICING_USD_PER_1M = {
+    # Anthropic's published standard API rates, checked 21 November 2026.
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00},
     "claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},

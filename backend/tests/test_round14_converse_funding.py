@@ -52,7 +52,8 @@ def test_a_question_is_answered_from_the_case(talk):
     model.replies.append({"say": "You're getting there, the forecast is the next thing.", "buttons": [{"kind": "open_case"}]})
     out = ask("How ready am I for funding?")
     assert out["kind"] == "answer" and out["message"].startswith("You're getting there")
-    assert out["actions"] == [{"label": "Open your funding case", "to": f"/funding/{cid}?tab=overview"}]
+    assert out["actions"][0]["label"] == "Review remaining items"
+    assert "to" not in out["actions"][0] and "funding case here" in out["actions"][0]["prompt"]
     seen = model.prompts[0]["CASE"]
     assert seen["exists"] and float(seen["target_amount"]) == 50000      # the model sees the case
 
@@ -298,7 +299,7 @@ def test_whats_missing_shows_the_gaps_card_beside_the_words(talk):
     model.replies += [{"say": "You're at 40/100."}, {"say": "The forecast and the use of funds are the main gaps."}]
     ask("How ready am I for funding?")
     out = ask("Only 40? What's missing?")
-    assert [c["type"] for c in out.get("cards") or []] == ["result"]      # the gaps; what to do next is recommended in the words (31 Oct)
+    assert [c["type"] for c in out.get("cards") or []] == ["result", "readiness_tasks"]
 
 
 # The owner's recheck, 28 Oct
@@ -394,8 +395,11 @@ def test_a_research_start_that_is_refused_says_why_and_never_spins(world, monkey
 def test_research_started_from_the_chat_is_in_active_at_once(world):
     env, store, client, who = world
     who["user"] = OWNER
+    from app.modules.agent.assistant_context import STARTED
+    from datetime import timedelta
+    env.now = STARTED + timedelta(minutes=1)
     from datetime import datetime, timezone
-    run(env.orch.rt.business.mutate("A", lambda d: d.update({"agent_working": {"c1": {"at": datetime.now(timezone.utc).isoformat(), "topic": "funding"}}})))
+    run(env.orch.rt.business.mutate("A", lambda d: d.update({"agent_working": {"c1": {"at": env.orch.rt.clock().isoformat(), "topic": "funding"}}})))
     out = client.get("/businesses/A/workflow-runs?bucket=active").json()
     assert any(r["title"] == "Do all for me: Funding readiness" for r in out["items"]) and out["counts"]["active"] >= 1
 

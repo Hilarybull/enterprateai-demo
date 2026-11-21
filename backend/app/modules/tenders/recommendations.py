@@ -5,10 +5,11 @@ from app.modules.proposals import sourcing
 from app.modules.tenders import service
 
 STOP = set("the and for with from your our business services service solutions company other general providing provide delivery product products ltd limited industry".split())
+STOP.update("framework frameworks agreement agreements contract contracts project projects programme programmes procurement provision consulting consultancy management adoption".split())
 
 
 def tokens(value):
-    return {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", str(value).lower()) if word not in STOP}
+    return {word.rstrip("s") for word in re.findall(r"[a-z]{2,}", str(value).lower()) if word not in STOP and word not in {"of", "to", "in", "on", "by", "as", "an", "is", "be", "or"}}
 
 
 def capabilities(data):
@@ -21,6 +22,9 @@ def capabilities(data):
     for item in (data.get("financials") or {}).get("products") or []:
         if isinstance(item, dict):
             values.extend(item.get(key) for key in ("name", "category"))
+    for item in (data.get("catalogue") or {}).get("products") or []:
+        if isinstance(item, dict):
+            values.extend(item.get(key) for key in ("name", "category"))
     return list(dict.fromkeys(value.strip() for value in values if isinstance(value, str) and tokens(value)))[:40]
 
 
@@ -31,8 +35,9 @@ def match(notice, labels):
     words = tokens(content)
     reasons, score = [], 0
     for label in labels:
-        overlap = tokens(label) & words
-        if overlap:
+        meaningful = tokens(label)
+        overlap = meaningful & words
+        if overlap and (len(meaningful) == 1 or len(overlap) >= 2):
             score += len(overlap)
             reasons.append(f"Matches your saved capability: {label}")
     return score, reasons[:3]

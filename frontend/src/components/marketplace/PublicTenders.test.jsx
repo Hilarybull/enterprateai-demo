@@ -31,6 +31,19 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+test("a third free tender shows an upgrade invitation instead of a load error", async () => {
+  signedIn = true;
+  apiRequest.mockImplementation(async path => {
+    if (path.includes("/watchlist")) return { items: [] };
+    throw { status: 403, data: { detail: { code: "TENDER_PREVIEW_LIMIT" } } };
+  });
+  render(<MemoryRouter initialEntries={["/marketplace?tab=tenders&tender=third"]}><PublicTenders query="" /><Where /></MemoryRouter>);
+  expect(await screen.findByRole("heading", { name: "Your next opportunity is waiting" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Unlock more tenders" }));
+  expect(screen.getByTestId("location").textContent).toBe("/pricing");
+});
+
 test("shows available page numbers, loads a selected page and preserves filters", async () => {
   mount();
   const pagination = within(await screen.findByRole("navigation", { name: "Tender pages" }));

@@ -22,6 +22,16 @@ def release(notice="000101-2026", date="2026-11-17T12:00:00Z", tags=None, status
                 "tenderPeriod": {"endDate": "2026-12-01T12:00:00Z"}, "value": {"amount": 0, "currency": "GBP"}}}
 
 
+def test_awarded_contract_dates_come_from_the_matching_contract():
+    item = release(tags=["award"], status="complete")
+    item["awards"] = [{"id": "award1"}]
+    item["contracts"] = [{"awardID": "other", "period": {"startDate": "2000-01-01"}},
+                         {"awardID": "award1", "period": {"startDate": "2027-01-01", "endDate": "2030-01-01"}}]
+    details = service.parse_release(item)["listings"][0]["details"]
+    assert details["contract_start"] == "2027-01-01"
+    assert details["contract_end"] == "2030-01-01"
+
+
 def test_source_classification_and_missing_fields_are_distinct(monkeypatch):
     monkeypatch.setattr(service, "utc_now", lambda: NOW)
     cases = [(release(), "open"), (release(tags=["planning"], status="planned"), "planning"),
@@ -133,7 +143,7 @@ def test_public_routes_and_watchlist_auth(monkeypatch):
     client = TestClient(app)
     assert client.get("/public-tenders").status_code == 200
     search.assert_awaited_once_with("", "open", 1, industry="", location="", category="", deadline_from=None, deadline_to=None, sme="suitable")
-    assert client.get("/public-tenders/test").json()["title"] == "Catering"
+    assert client.get("/public-tenders/test").status_code in (401, 403)
     assert client.get("/public-tenders?stage=bad").status_code == 422
     assert client.get("/public-tenders/watchlist?workspace_id=private").status_code in (401, 403)
     assert client.post("/public-tenders/admin/sync").status_code in (401, 403)

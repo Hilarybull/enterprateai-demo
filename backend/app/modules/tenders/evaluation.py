@@ -130,6 +130,12 @@ async def evaluate(user_id, workspace_id, listing_id):
     cached = ((row.get("data") or {}).get("tender_evaluations") or {}).get(listing_id)
     if cached and cached.get("snapshot") == snapshot and cached.get("prompt_version") == PROMPT_VERSION:
         return cached
+    from app.modules.credits.service import credit_guard
+    async with credit_guard(user_id, "tender_evaluation"):
+        return await _generate_evaluation(user_id, workspace_id, listing_id, row, business, tender, snapshot)
+
+
+async def _generate_evaluation(user_id, workspace_id, listing_id, row, business, tender, snapshot):
     from app.shared.llm.openai_client import pick_llm_for_user
     try:
         llm = await pick_llm_for_user(user_id)
@@ -144,7 +150,7 @@ async def evaluate(user_id, workspace_id, listing_id):
                    "invent eligibility criteria, access linked documents, guarantee qualification or make a bid decision. Give a concrete next step for each finding.",
             prompt=json.dumps({"notice_id": listing_id, "workspace_id": workspace_id, "tender_sources": tender,
                                "business_sources": business, "schema": Assessment.model_json_schema()}),
-            feature="proposal_evaluation", max_tokens=5500,
+            feature="tender_evaluation", max_tokens=5500,
         )
         raw = (answer.text or "").strip()
         fenced = re.fullmatch(r"`{3}(?:json)?\s*(.*?)\s*`{3}", raw, flags=re.S | re.I)

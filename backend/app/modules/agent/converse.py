@@ -24,6 +24,8 @@ STAGES = ("idea", "pre_revenue", "trading", "growing")
 
 # How the Agent talks: the owner's brief (27 Oct, "Role and Identity"), condensed so each reply stays quick
 _MANNER = (
+    "Keep readiness work in this conversation. Completed research leads to reviewing saved drafts, not another Do it all offer. "
+    "Use the saved research and drafts; help the owner edit, approve or reject them here. Only propose fresh research when they explicitly request it. "
     "You are EnterprateAI's business agent: a naturally conversational partner to a small business owner, not a form or a "
     "workflow. Understand before you respond: read their message with the conversation so far (TURNS), what they mean, and "
     "whether they want an answer, a discussion, advice, clarification or an action, and whether they already told you. Reply to "
@@ -150,6 +152,8 @@ class OutOfCredits(Exception):
     def __init__(self, needed: int, have: int):
         super().__init__("out of credits")
         self.needed, self.have = needed, have
+
+
 
 
 async def paid_reply(orch, user: dict, call):
@@ -1035,7 +1039,7 @@ MISSING = re.compile(r"\b(?:what(?:'| i)?s (?:missing|left|holding (?:it|me) bac
 
 
 def asks_gaps(text: str) -> bool:
-    return bool(MISSING.search(str(text or "")))
+    return bool(MISSING.search(str(text or "")) or re.search(r"\b(?:see|show|list)\b.{0,35}\b(?:all|remaining|outstanding|items|things|steps)\b", str(text or ""), re.I))
 
 
 def asks_help(text: str) -> bool:
@@ -1070,6 +1074,23 @@ def _no(text: str) -> bool:
 async def _said(orch, user: dict, business_id: str, text: str, say: str, actions: list, now: datetime, pending: dict | None = None,
                 topic: str = "funding", keep: dict | None = None, cards: list | None = None) -> dict:
     """The reply, kept with the conversation (and what is waiting for a yes, if anything)."""
+    from app.modules.agent.readiness_chat import conversation_actions, remaining_card
+    cards = [{**card, "topic": topic} if card.get("type") == "progress" else card for card in cards or []]
+    if asks_gaps(text) or re.search(r"\b(?:review|approve|accept|reject|edit)\b.*\bdrafts?\b", text, re.I):
+        try:
+            remaining = await remaining_card(orch, user, business_id, topic, actions, cards)
+            if remaining:
+                cards = [*(cards or []), remaining]
+        except Exception:
+            logger.info("readiness items unavailable for %s", business_id, exc_info=True)
+    actions = conversation_actions(actions)
+    if topic in {"funding", "launch"} and any(re.search(r"\b(?:do|fill|get) (?:it )?all\b", str(action.get("prompt") or ""), re.I) for action in actions):
+        from app.modules.agent import research
+        saved = await orch.rt.business.load(business_id) or {}
+        current_id = next((str(card["case_id"]) for card in cards if card.get("case_id")), None)
+        if current_id and research.research_state(saved, "need_funding" if topic == "funding" else topic, case_id=current_id).get("run_id"):
+            actions = [action for action in actions if not re.search(r"\b(?:do|fill|get) (?:it )?all\b", str(action.get("prompt") or ""), re.I)]
+            actions.append({"label": "Review saved drafts", "kind": "explain", "prompt": f"Show all remaining items and saved drafts on my {topic} case here."})
     def _keep(d: dict) -> None:
         convo = d.setdefault("agent_conversations", {})
         mine = convo.get(str(user["id"])) or {}
@@ -1175,6 +1196,13 @@ async def _ask_do_all(orch, user: dict, business_id: str, case: dict, data: dict
                       keep: dict | None = None, only: list[str] | None = None, go_now: bool = False) -> dict:
     """ "Do all for me", asked in the conversation (the owner, 27 Oct): what it researches and its price, then "Shall I start?". """
     from app.modules.agent import goal_router
+    if not only and not re.search(r"\b(?:research again|run (?:it|the research|do it all) again|refresh (?:the )?research)\b", text, re.I):
+        from app.modules.agent import research
+        state = research.research_state(data, "need_funding" if topic == "funding" else topic, now=now, case_id=str(case["id"]))
+        if state.get("run_id"):
+            return await _said(orch, user, business_id, "Show all remaining items and drafts",
+                "The research for this case is already saved. Let's review its drafts and finish the remaining details here. Nothing has been restarted or charged.",
+                [], now, topic=topic, keep=keep, cards=[{"type": "result", "case_id": str(case["id"])}])
     if topic == "funding" and not only:
         held = await _ask_to_settle(orch, user, business_id, case, data, text, now)
         if held:
@@ -1221,6 +1249,11 @@ async def _start_do_all(orch, user: dict, business_id: str, case: dict, asked: d
                         keep: dict | None = None) -> dict:
     """The yes: the research starts and carries on by itself; the owner is told it has, and where it will be."""
     from app.modules.agent import goal_router
+    if not asked.get("only") and not asked.get("fresh"):
+        from app.modules.agent import research
+        saved = await orch.rt.business.load(business_id) or {}
+        if research.research_state(saved, "need_funding" if topic == "funding" else topic, case_id=str(case["id"])).get("run_id"):
+            return await _ask_do_all(orch, user, business_id, case, saved, "Review saved drafts", now, topic=topic, keep=keep)
     if not asked.get("only") and not await goal_router.may_do_all(user["id"], "launch" if topic == "launch" else "need_funding"):
         # The plan again at the very start, never "Started" on a plan that doesn't include it: its own answer instead (the owner, 1 Nov)
         return await _ask_do_all(orch, user, business_id, case, await orch.rt.business.load(business_id) or {}, text, now, topic=topic, keep=keep)

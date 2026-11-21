@@ -5,6 +5,24 @@ import { apiRequest } from "../../api/client";
 import TenderRecommendations from "./TenderRecommendations";
 vi.mock("../../api/client", () => ({ apiRequest: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
+it("puts coloured see-more controls after both groups and remembers dismissal per workspace", async () => {
+  localStorage.clear();
+  apiRequest.mockResolvedValue({ workspace_id: "dismiss", open_count: 4, award_count: 2,
+    open: [{ id: "open", title: "Open preview", reasons: [] }], awards: [{ id: "award", title: "Award preview", reasons: [] }] });
+  const view = render(<MemoryRouter><TenderRecommendations workspaceId="dismiss" /></MemoryRouter>);
+  await screen.findByText("Award preview");
+  const button = screen.getByRole("button", { name: /See more open tenders/ });
+  expect(screen.getByText("Award preview").compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(button.className).toContain("bg-brand-600");
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss tender recommendations" }));
+  expect(screen.queryByRole("region", { name: "Tender recommendations" })).toBeNull();
+  view.unmount();
+  render(<MemoryRouter><TenderRecommendations workspaceId="dismiss" /></MemoryRouter>);
+  expect(screen.getByRole("button", { name: "Show tender recommendations" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Show tender recommendations" }));
+  expect(await screen.findByText("Award preview")).toBeTruthy();
+  localStorage.clear();
+});
 it("shows real counts, reasons and internal notice links", async () => {
   apiRequest.mockResolvedValue({ workspace_id: "one", open_count: 20, award_count: 4, open: [{ id: "notice:1", title: "Medical assessments", reasons: ["Matches your saved capability: Healthcare"] }], awards: [{ id: "award:1", title: "Healthcare contract", reasons: ["Matches your saved capability: Healthcare"] }] });
   render(<MemoryRouter><TenderRecommendations workspaceId="one" /></MemoryRouter>);

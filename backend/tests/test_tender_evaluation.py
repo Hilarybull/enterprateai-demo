@@ -35,12 +35,21 @@ def test_evidence_is_resolved_to_notice_and_workspace_and_missing_is_unknown():
 
 
 def setup(monkeypatch, response=RAW):
+    from contextlib import asynccontextmanager
+    credit_calls = []
+    @asynccontextmanager
+    async def credits(user, feature, **kwargs):
+        assert feature == "tender_evaluation"
+        credit_calls.append(feature)
+        yield {}
+    monkeypatch.setattr("app.modules.credits.service.credit_guard", credits)
     row={"id":"A","user_id":"owner","data":deepcopy(PROFILE)}
     async def owned(user,workspace):
         if (user,workspace)!=("owner","A"):raise HTTPException(404)
         return deepcopy(row)
     async def write(_,data):row["data"]=data;return True
     llm=SimpleNamespace(generate_text=AsyncMock(return_value=SimpleNamespace(text=json.dumps(response),model="fixture")))
+    llm.credit_calls = credit_calls
     monkeypatch.setattr(sourcing,"_owned_workspace",owned)
     monkeypatch.setattr(sourcing,"_write",write)
     monkeypatch.setattr(evaluation.service,"get_listing",AsyncMock(return_value=NOTICE))
@@ -56,6 +65,7 @@ def test_evaluation_has_steps_is_private_audited_and_retry_cached(monkeypatch):
         assert first["business_name"] == "Example IT"
         assert await evaluation.evaluate("owner","A","tender-1") == first
         llm.generate_text.assert_awaited_once()
+        assert llm.credit_calls == ["tender_evaluation"]
         assert row["data"]["sourcing_history"]["tender:tender-1"][0]["event_type"] == "tender_evaluated"
         with pytest.raises(HTTPException) as error:await evaluation.evaluate("other","A","tender-1")
         assert error.value.status_code == 404

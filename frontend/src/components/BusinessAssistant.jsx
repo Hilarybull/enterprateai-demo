@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { cameFrom, forgetCameFrom, noteCameFrom } from "../lib/cameFrom";
 import { DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
 import { apiRequest } from "../api/client";
+import ReadinessProgress from "./agent/ReadinessProgress";
 import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
 import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
 import { checkLines, linesFromText } from "./agent/AgentBits";
@@ -841,6 +842,28 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
   const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
   const card = (c, key) => {
+    if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onReady={(result) => {
+      setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id ? result : item) })));
+      loadWaiting();
+    }} />;
+    if (c.type === "check_result" && c.result) return <section key={key} aria-label="Your check result" className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      <h3 className="font-semibold">{c.result.headline || "Your check result"}</h3>
+      {c.result.missing?.length > 0 && <ul className="mt-3 space-y-2">{c.result.missing.map((item, i) => <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"><span>{item}</span><button type="button" disabled={loading} onClick={() => send(`Help me address this item from my ${c.goal || "business"} check: ${item}. Use my saved data and work through it here, one question at a time.`)} className="min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-brand-700">Work on this</button></li>)}</ul>}
+    </section>;
+    if (c.type === "readiness_tasks") return <section key={key} aria-label={c.title} className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      <h3 className="font-semibold">{c.title}</h3>
+      {c.drafts?.length > 0 && <div className="mt-3 space-y-3"><p className="font-semibold">Drafts ready for your review</p>{c.drafts.map((draft, i) => <div key={i} className="rounded-lg border border-brand-200 p-3">
+        <p className="font-medium">{draft.label}</p><p className="mt-1 whitespace-pre-wrap">{draft.value}</p><p className="mt-1 text-xs text-slate-500">{draft.source}</p>
+        <div className="mt-2 flex flex-wrap gap-2">{["Approve", "Edit", "Reject"].map(action => <button key={action} type="button" disabled={loading} className="min-h-11 rounded-lg border px-3 py-2" onClick={() => {
+          const instruction = `${action} the ${draft.label} draft on my ${c.topic} case`;
+          if (action === "Edit") { setInput(`${instruction}: `); } else void send(instruction);
+        }}>{action}</button>)}</div>
+      </div>)}</div>}
+      {!c.items?.length ? <p className="mt-2">No outstanding items on this check.</p> : <ol className="mt-3 space-y-3">{c.items.map((item, i) => <li key={i} className="rounded-lg border border-slate-200 p-3">
+        <p className="font-medium">{i + 1}. {item.title}</p>{item.detail && <p className="mt-1 text-slate-600">{item.detail}</p>}
+        <button type="button" disabled={loading} onClick={() => send(`Help me complete this ${c.topic} item: ${item.title}. Use my saved business data and existing drafts. Ask me for missing details here, one at a time, and show proposed changes for my confirmation.`)} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-brand-700 disabled:opacity-50">Work on this</button>
+      </li>)}</ol>}
+    </section>;
     if (c.type === "download") return <ChatDownload key={key} item={c} />;
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
     if (["records", "result", "next"].includes(c.type)) {
@@ -852,7 +875,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (readiness) return <section key={key} aria-label={c.type === "next" ? "Recommended next step" : "Readiness result"} data-readiness-card={c.type} className="max-w-xl rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-sm">
         <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
           <p className="mt-1 text-slate-700">{readiness.detail}</p></div>
-          <button type="button" onClick={() => go(readiness.to)} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">{c.type === "next" ? "See next steps" : "Open"}</button></div>
+          <button type="button" onClick={() => send(`List every remaining item for ${readiness.title} here and help me work through them one at a time.`)} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">See next steps</button></div>
       </section>;
       return null;
     }
@@ -946,7 +969,13 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                   </div>
                 )}
                 {(message.links || []).length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">{message.links.map((l) => <a key={l.to} href={l.to} onClick={() => noteCameFrom(chatId, l.to)} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</a>)}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">{message.links.map((l) => <a key={l.to} href={l.to} onClick={(event) => {
+                    const match = /^\/(funding|launch)\/[^/?]+/.exec(l.to || "");
+                    if (match && !/^View workspace/i.test(l.label || "")) {
+                      event.preventDefault();
+                      void send(`List every remaining item on my ${match[1]} case here, including drafts waiting for review. Help me attend to them one at a time in this conversation.`);
+                    } else noteCameFrom(chatId, l.to);
+                  }} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</a>)}</div>
                 )}
               </div>
             </div>

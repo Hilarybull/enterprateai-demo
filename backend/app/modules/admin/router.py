@@ -168,6 +168,10 @@ def _rollup_agent(rows: list, charges: list, user_email_map: dict[str, str]) -> 
 
 
 def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
+    from app.shared.llm.usage import estimate_cost_usd
+    rows = [{**row, "estimated_cost_usd": estimate_cost_usd(str(row.get("provider") or ""), str(row.get("model") or ""),
+              int(row.get("input_tokens") or 0), int(row.get("output_tokens") or 0))}
+            if row.get("estimated_cost_usd") is None else row for row in rows]
     def amount(value) -> float:
         try:
             return float(value or 0)
@@ -185,26 +189,28 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
             label = str(row.get(key) or "unknown")
             if label_key:
                 label = f"{row.get(key) or 'unknown'} / {row.get(label_key) or 'unknown'}"
-            item = acc.setdefault(label, {"label": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+            item = acc.setdefault(label, {"label": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "unpriced_calls": 0})
             item["calls"] += 1
             item["tokens"] += int(row.get("total_tokens") or 0)
             item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+            item["unpriced_calls"] += int(row.get("estimated_cost_usd") is None)
         out = sorted(acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)
         for item in out:
-            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6) if item["unpriced_calls"] < item["calls"] else None
         return out[:limit]
 
     user_acc: dict[str, dict] = {}
     for row in rows:
         user_id = str(row.get("user_id") or "")
         label = user_email_map.get(user_id, user_id or "unknown")
-        item = user_acc.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+        item = user_acc.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "unpriced_calls": 0})
         item["calls"] += 1
         item["tokens"] += int(row.get("total_tokens") or 0)
         item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+        item["unpriced_calls"] += int(row.get("estimated_cost_usd") is None)
     top_users = sorted(user_acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)[:8]
     for item in top_users:
-        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6) if item["unpriced_calls"] < item["calls"] else None
 
     recent = []
     for row in rows[:25]:
@@ -219,7 +225,7 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
             "input_tokens": int(row.get("input_tokens") or 0),
             "output_tokens": int(row.get("output_tokens") or 0),
             "total_tokens": int(row.get("total_tokens") or 0),
-            "estimated_cost_usd": round(amount(row.get("estimated_cost_usd")), 6),
+            "estimated_cost_usd": round(amount(row.get("estimated_cost_usd")), 6) if row.get("estimated_cost_usd") is not None else None,
             "created_at": row.get("created_at"),
         })
 
@@ -228,7 +234,8 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
         "total_tokens": total_tokens,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "estimated_cost_usd": round(total_cost, 6),
+        "estimated_cost_usd": round(total_cost, 6) if any(r.get("estimated_cost_usd") is not None for r in rows) else None,
+        "unpriced_calls": sum(r.get("estimated_cost_usd") is None for r in rows),
         "by_feature": grouped("feature"),
         "by_model": grouped("provider", "model"),
         "by_user": top_users,

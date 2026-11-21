@@ -23,7 +23,7 @@ HOST = "www.find-tender.service.gov.uk"
 ORIGIN = f"https://{HOST}"
 ENDPOINT = "/api/1.0/ocdsReleasePackages"
 SOURCE = "find-a-tender"
-DETAILS_VERSION = 2
+DETAILS_VERSION = 3
 PAGE_LIMIT = 100
 STAGES = ("open", "planning", "award", "closed", "other", "all")
 NOTICE = re.compile(r"[0-9]{6}-[0-9]{4}")
@@ -175,6 +175,12 @@ def parse_release(raw) -> dict:
         if not classification:
             classification = next((mapping(i.get("classification")) for i in items if mapping(i.get("classification"))), {})
         classifications = [classification] if classification else []
+        effective_lot = lot
+        if status == "award":
+            awarded_contract = next((contract for contract in objects(release.get("contracts")) if award.get("id") and contract.get("awardID") == award["id"]), {})
+            period = mapping(awarded_contract.get("period") or award.get("contractPeriod"))
+            if period:
+                effective_lot = {**lot, "contractPeriod": {**period, **mapping(lot.get("contractPeriod"))}}
         for holder in [lot, tender, *items]:
             for entry in [mapping(holder.get("classification")), *objects(holder.get("additionalClassifications"))]:
                 if entry.get("scheme") == "CPV" and text(entry.get("id")) and not any(c.get("id") == entry["id"] for c in classifications):
@@ -194,7 +200,7 @@ def parse_release(raw) -> dict:
                         "category": text(tender.get("mainProcurementCategory")),
                         "industry": text(classification.get("description")),
                         "cpv_classifications": [{"id": c.get("id"), "description": text(c.get("description"))} for c in classifications],
-                        **notice_sections(tender, lot),
+                        **notice_sections(tender, effective_lot),
                         "cpv": text(classification.get("id"), 30), "region": ", ".join(sorted(regions))[:500] or None},
         })
     return decoded
@@ -342,6 +348,15 @@ def public_listing(row):
             "published_at": row["published_at"], "deadline": row["deadline"], "observed_at": row.get("observed_at"), **details}
 
 
+def public_preview(row):
+    full = public_listing(row)
+    preview = {key: value for key, value in full.items() if key in {
+        "id", "ocid", "notice_id", "status", "source", "url", "title", "buyer", "industry", "region", "deadline",
+        "published_at", "observed_at", "amount", "currency", "category", "cpv", "cpv_classifications", "lot_id", "sme_suitable"}}
+    preview["description"] = str(full.get("description") or "")[:220]
+    return preview
+
+
 async def sync_health():
     try:
         row = await sb_select("fts_sync", filters=[("id", "eq", SOURCE)], single=True) or {}
@@ -415,7 +430,7 @@ async def search(q="", stage="open", page=1, limit=24, industry="", location="",
         raise HTTPException(503, "Tender search is temporarily unavailable. Please try again.") from exc
     health = await sync_health()
     rows, total = result.get("items", []), result.get("total", 0)
-    return {"items": [public_listing(row) for row in rows], "total": total,
+    return {"items": [public_preview(row) for row in rows], "total": total,
             "more": page * limit < total, "page": page, "page_size": limit,
             "last_sync": health["last_sync"], "stale": health["stale"]}
 
@@ -427,13 +442,16 @@ async def get_listing(listing_id):
         raise HTTPException(503, "The tender index is unavailable.") from exc
     if not row or not row["details"].get("title"):
         raise HTTPException(404, "Tender listing not found.")
-    if row["details"].get("projection_version", 0) < DETAILS_VERSION:
-        history = await sb_select("fts_release_history", filters=[("notice_id", "eq", row["notice_id"]), ("ocid", "eq", row["ocid"])], order="observed_at", desc=True, limit=1) or []
+    if row["details"].get("projection_version", 0) < DETAILS_VERSION or not row["details"].get("eligibility"):
+        history = await sb_select("fts_release_history", filters=[("ocid", "eq", row["ocid"])], order="observed_at", desc=True, limit=25) or []
         if history:
-            parsed = parse_release(history[0].get("payload"))
-            projection = next((item for item in parsed.get("listings", []) if item["id"] == row["id"]), None)
-            if projection:
-                row = {**row, "details": {**row["details"], **{key: value for key, value in projection["details"].items() if value is not None and value != []}}}
+            missing = {"eligibility", "award_criteria", "submission_instructions", "submission_url", "procedure", "contract_start", "contract_end", "industry", "cpv", "cpv_classifications", "documents"}
+            for release in history:
+                parsed = parse_release(release.get("payload"))
+                projection = next((item for item in parsed.get("listings", []) if item["id"] == row["id"]), None)
+                if projection:
+                    row = {**row, "details": {**row["details"], **{key: value for key, value in projection["details"].items()
+                        if value is not None and value != [] and ((release.get("notice_id") == row["notice_id"] and row["details"].get("projection_version", 0) < DETAILS_VERSION) or key in missing and not row["details"].get(key))}}}
     health = await sync_health()
     return {**public_listing(row), "last_sync": health["last_sync"], "stale": health["stale"]}
 
@@ -444,7 +462,7 @@ async def watchlist(user_id, workspace_id):
     saved = await sb_select("fts_watchlist", filters=scope, columns="listing_id", order="saved_at", desc=True) or []
     ids = [row["listing_id"] for row in saved]
     rows = await sb_select("fts_listings", filters=[("id", "in", ids)]) if ids else []
-    by_id = {row["id"]: public_listing(row) for row in rows or [] if row["details"].get("title")}
+    by_id = {row["id"]: public_preview(row) for row in rows or [] if row["details"].get("title")}
     return {"items": [by_id[id_] for id_ in ids if id_ in by_id]}
 
 

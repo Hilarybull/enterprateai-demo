@@ -95,8 +95,11 @@ async def _manual_sync():
 
 
 @router.get("/{listing_id}")
-async def detail(listing_id: str):
-    return await service.get_listing(listing_id)
+async def detail(listing_id: str, user=Depends(get_current_user)):
+    from app.modules.tenders.access import require_detail_access
+    notice = await service.get_listing(listing_id)
+    await require_detail_access(user["id"], notice)
+    return notice
 
 
 @router.get("/{listing_id}/evaluation")

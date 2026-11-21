@@ -2704,7 +2704,7 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-6 tabular-nums text-slate-500">
                           <span className="w-10 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-20 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-20 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
@@ -2910,7 +2910,7 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
                           <span className="w-8 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-16 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
@@ -2938,7 +2938,7 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
                           <span className="w-8 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-16 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
@@ -2969,7 +2969,7 @@ export default function AdminPage() {
                           <td className="py-2 pr-4 text-[12px] text-slate-700 font-mono">{row.email}</td>
                           <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{row.calls}</td>
                           <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{(row.tokens || 0).toLocaleString()}</td>
-                          <td className="py-2 text-right text-[12px] tabular-nums text-slate-700 font-semibold">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                          <td className="py-2 text-right text-[12px] tabular-nums text-slate-700 font-semibold">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3107,7 +3107,7 @@ export default function AdminPage() {
                                   <td className="py-1.5 pr-3 text-slate-500">{row.provider} / {row.model}</td>
                                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.input_tokens || 0).toLocaleString()}</td>
                                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.output_tokens || 0).toLocaleString()}</td>
-                                  <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                                  <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</td>
                                 </tr>
                               ))}
                             </tbody>

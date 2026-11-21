@@ -737,8 +737,8 @@ export default function AdminClaims({ section, onSection, superadmin = false, on
         <section aria-label="Directory at a glance" className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
           <KpiTile label="Indexed" value={funnel.profiles.total ?? 0} />
           <KpiTile label="Requests waiting" value={funnel.requests_waiting ?? 0} />
-          <KpiTile label="Claims started" value={events.BusinessClaimStarted ?? 0} />
-          <KpiTile label="Verified" value={funnel.profiles.claimed ?? 0} />
+          <KpiTile label="Claim attempts (all time)" value={events.BusinessClaimStarted ?? 0} />
+          <KpiTile label="Ownership verified" value={funnel.profiles.claimed ?? 0} />
           <KpiTile label="Published" value={funnel.profiles.published ?? 0} />
           <KpiTile label="Suppressed" value={funnel.profiles.suppressed ?? 0} />
           <KpiTile label="Reports open" value={funnel.reports_open ?? queue?.reports?.length ?? 0} />

@@ -92,7 +92,8 @@ def next_actions(topic: str, result: dict | None) -> list[dict]:
     for a in (result or {}).get("free_next_actions") or []:
         if a.get("save") or not a.get("to") or not str(a.get("label") or "").strip():
             continue
-        out.append({"label": str(a["label"])[:40], "to": a["to"]})
+        out.append({"label": str(a["label"])[:40], "kind": "explain",
+                    "prompt": f"Help me {str(a['label']).strip()} here. Use my saved business data, ask for missing details in this conversation, and show changes for my confirmation."})
     return out[:2]
 
 

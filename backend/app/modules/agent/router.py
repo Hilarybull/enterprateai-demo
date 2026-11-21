@@ -359,7 +359,7 @@ def _chat_message(m: dict) -> dict | None:
 
 
 _CARD_TYPES = {"records", "result", "next", "score_change", "choose", "progress", "approvals", "idea_inputs", "viability", "launch_fit", "risk",
-               "scenario", "preview", "segments", "findings", "steps", "options", "research_again", "pending", "check_card", "check_result", "rechecking", "download"}
+               "scenario", "preview", "segments", "findings", "steps", "options", "research_again", "pending", "check_card", "check_result", "rechecking", "download", "readiness_tasks"}
 
 
 def _card_kept(x: dict) -> dict:
@@ -369,6 +369,14 @@ def _card_kept(x: dict) -> dict:
     short = lambda v, n=200: str(v or "")[:n]      # noqa: E731
     if x.get("type") == "download":
         out.update({k: short(x.get(k), 200) for k in ("file_id", "name", "format", "business_id")})
+    if x.get("type") == "readiness_tasks":
+        out.update({"title": short(x.get("title")), "topic": short(x.get("topic")),
+                    "items": [{"title": short(item.get("title"), 300), "detail": short(item.get("detail"), 600)}
+                              for item in x.get("items") or [] if isinstance(item, dict)],
+                    "drafts": [{"label": short(d.get("label"), 300), "value": short(d.get("value"), 12000), "source": short(d.get("source"), 300)}
+                               for d in x.get("drafts") or [] if isinstance(d, dict)]})
+    if x.get("type") == "progress":
+        out["topic"] = short(x.get("topic"))
     if x.get("type") == "scenario":
         out.update({"title": short(x.get("title"), 120), "summary": short(x.get("summary"), 600), "months": x.get("months") if isinstance(x.get("months"), int) else None,
                     "worse": bool(x.get("worse")), "kind": short(x.get("kind"), 40),
@@ -491,6 +499,32 @@ async def download_chat_file(business_id: str, file_id: str, user=Depends(get_cu
     return Response(file["content"], media_type=file["content_type"], headers={
         "Content-Disposition": "attachment; filename*=UTF-8''" + quote(file["name"], safe=""),
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@router.get("/businesses/{business_id}/agent/readiness-work/{topic}/{case_id}")
+async def readiness_work_status(business_id: str, topic: str, case_id: str, user=Depends(get_current_user)):
+    if topic not in {"funding", "launch"}:
+        raise HTTPException(404, "Check not found.")
+    orch = get_orchestrator()
+    try:
+        actor, _ = await orch.actor_for(user["id"], business_id, user.get("email"))
+    except AccessDenied as exc:
+        raise _denied(exc)
+    if not actor.can_view:
+        raise HTTPException(403, "You do not have access to this check.")
+    data = await orch.rt.business.load(business_id) or {}
+    active = (data.get("agent_working") or {}).get(case_id)
+    if active and not active.get("failed"):
+        return {"working": True}
+    if active and active.get("failed"):
+        return {"working": False, "problem": "The research could not finish. Your saved work is available for review."}
+    from app.modules.agent import research
+    if not research.research_state(data, "need_funding" if topic == "funding" else topic, case_id=case_id).get("run_id"):
+        return {"working": True}
+    from app.modules.agent.readiness_chat import remaining_card
+    card = await remaining_card(orch, user, business_id, topic, [], [{"case_id": case_id}])
+    return {"working": False, "card": card}
+
 
 
 class SignOffIn(BaseModel):

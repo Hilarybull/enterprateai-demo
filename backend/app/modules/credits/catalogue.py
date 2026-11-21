@@ -17,6 +17,7 @@ System v2 spec, §6, "Do not charge 10 credits merely because the user clicks Ru
 from __future__ import annotations
 
 FEATURES: dict[str, tuple[str, int, bool, str, bool, bool]] = {
+    "tender_evaluation": ("Tender Evaluation", 20, True, "starter_insight", True, True),
     # migration 016 (credit system v2)
     "idea_validation": ("Idea Validation", 25, True, "explorer", True, True),      # Basic: 25 credits, every plan (044, the owner 31 Oct)
     "idea_validation_comprehensive": ("Idea Validation (Comprehensive)", 25, True, "starter_insight", True, True),
