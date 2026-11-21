@@ -312,31 +312,54 @@ async def sync_once(*, manual=False):
     if not rows:
         return {"status": "deferred"}
     checkpoint = timestamp(rows[0]["checkpoint"])
-    end = min(now.replace(microsecond=0), checkpoint + timedelta(hours=12))
-    start = checkpoint - timedelta(minutes=5)
+    target = now.replace(microsecond=0)
     filters = [("id", "eq", SOURCE), ("lease_id", "eq", lease)]
     async def apply_page(items):
         try:
+            # A first import can take several windows. Keep the same fenced lease alive.
+            renewed = await sb_update("fts_sync", filters=filters, payload={
+                "lease_until": (utc_now() + timedelta(minutes=20)).isoformat()})
+            if not renewed:
+                raise FeedError("Find a Tender sync lease expired")
             return int(await sb_rpc("fts_apply_page", {"p_lease": lease, "p_rows": items}) or 0)
         except Exception as exc:
             raise FeedError("Could not save a Find a Tender release page") from exc
     try:
+        summary = {"pages": 0, "seen": 0, "imported": 0, "quarantined": 0, "windows": 0}
         async with httpx.AsyncClient(timeout=30, follow_redirects=False, headers={
             "Accept": "application/json", "User-Agent": "EnterprateAI public tender discovery"
         }) as client:
-            summary = await ingest_window(client, start, end, apply_page)
+            # One click catches up to the time it was requested, rather than stopping
+            # after the first (often empty) half-day of the initial seven-day backlog.
+            for _ in range(32):
+                end = min(target, checkpoint + timedelta(hours=12))
+                batch = await ingest_window(client, checkpoint - timedelta(minutes=5), end, apply_page)
+                for key in ("pages", "seen", "imported", "quarantined"):
+                    summary[key] += batch[key]
+                summary["windows"] += 1
+                summary["catching_up"] = end < target
+                saved = await sb_update("fts_sync", filters=filters, payload={
+                    "checkpoint": end.isoformat(), "summary": summary.copy(),
+                    "lease_until": (utc_now() + timedelta(minutes=20)).isoformat()})
+                if not saved:
+                    raise FeedError("Find a Tender sync lease expired")
+                checkpoint = end
+                if not summary["catching_up"]:
+                    break
+                await asyncio.sleep(12)
         await sb_update("fts_sync", filters=filters, payload={"checkpoint": end.isoformat(),
                         "last_success": utc_now().isoformat(), "retry_at": None, "error": None,
                         "summary": summary, "lease_id": None, "lease_until": None})
-        return {"status": "synced", **summary}
+        return {"status": "catching_up" if summary["catching_up"] else "synced", **summary}
     except Exception as exc:
         delay = exc.retry_after if isinstance(exc, FeedError) else 300
         error = str(exc) if isinstance(exc, FeedError) else "Could not finish the Find a Tender import"
         logger.warning("Find a Tender import: %s", error, exc_info=True)
-        # Keep the old checkpoint so partially committed pages replay safely.
+        # Completed windows stay committed; only the unfinished window replays.
         await sb_update("fts_sync", filters=filters, payload={"error": error, "retry_at": (
             utc_now() + timedelta(seconds=delay)).isoformat(), "lease_id": None, "lease_until": None})
         return {"status": "failed", "error": error}
+
 
 
 def public_listing(row):

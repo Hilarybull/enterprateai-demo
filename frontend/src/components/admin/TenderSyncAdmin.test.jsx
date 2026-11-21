@@ -13,6 +13,17 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+test("a completed old batch is shown as incomplete catch-up, not up to date", async () => {
+  apiRequest.mockResolvedValue({ ...health, last_sync: new Date().toISOString(),
+    checkpoint: new Date(Date.now() - 6 * 86400000).toISOString(), stale: true,
+    summary: { imported: 1, quarantined: 0, pages: 1, catching_up: true } });
+  render(<TenderSyncAdmin />);
+  expect(await screen.findByText("More notices to import")).toBeTruthy();
+  expect(screen.getByText(/Sync now continues from the last saved date/)).toBeTruthy();
+  expect(screen.getByText(/1 source updates processed/)).toBeTruthy();
+  expect(screen.queryByText("Listings up to date")).toBeNull();
+});
+
 test("saves the administrator's interval and scope together", async () => {
   render(<TenderSyncAdmin />);
   fireEvent.change(await screen.findByLabelText(/Sync interval/), { target: { value: "60" } });

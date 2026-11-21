@@ -116,7 +116,8 @@ export default function TenderSyncAdmin() {
 
   const showError = health?.error && !health.error_dismissed && !health.running;
   const retryPending = Date.parse(health?.retry_at || "") > Date.now();
-  const state = !health ? "Checking status" : health.running ? "Import running" : health.error ? "Last import failed" : !health.last_sync ? "First import pending" : health.stale ? "Listings may be out of date" : "Listings up to date";
+  const catchingUp = Boolean(health?.summary?.catching_up || (health?.checkpoint && Date.now() - Date.parse(health.checkpoint) > 6 * 3600000));
+  const state = !health ? "Checking status" : health.running ? catchingUp ? "Catching up on tender notices" : "Import running" : health.error ? "Last import failed" : !health.last_sync ? "First import pending" : catchingUp ? "More notices to import" : "Listings up to date";
   const tone = health?.running ? "bg-brand-50 text-brand-700 dark:bg-indigo-950 dark:text-indigo-200"
     : health?.error ? "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200"
     : health && !health.stale ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200"
@@ -151,6 +152,7 @@ export default function TenderSyncAdmin() {
         </div>}
         {retryPending && <p className="text-sm text-slate-600 dark:text-slate-300">Retry available {when(health.retry_at)}.</p>}
         {note && !showError && !problem && <p role="status" className="text-sm text-slate-600 dark:text-slate-300">{note}</p>}
+        {catchingUp && <p className="text-sm text-slate-600 dark:text-slate-300">{health.running ? "Importing the remaining dates. Matching SME tenders appear as each batch is saved." : "The source has not been fully processed yet. Sync now continues from the last saved date."}</p>}
         {health && <>
           <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {metrics.map(([label, value]) => <div key={label} className="min-w-0 rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800">
@@ -210,7 +212,7 @@ export default function TenderSyncAdmin() {
                 </div>
                 <div className="text-slate-600 dark:text-slate-300">
                   {entry.error && <p>{entry.error}</p>}
-                  {entry.summary && <p>{entry.summary.imported} new versions, {entry.summary.quarantined} rejected, {entry.summary.pages} pages</p>}
+                  {entry.summary && <p>{entry.summary.imported} source updates processed, {entry.summary.quarantined} rejected, {entry.summary.pages} pages{entry.summary.catching_up ? " · More dates remain" : ""}</p>}
                   {entry.finished_at && <p className="text-xs">Finished {when(entry.finished_at)}</p>}
                 </div>
               </li>)}
@@ -223,7 +225,7 @@ export default function TenderSyncAdmin() {
               </div>
             </nav>}
           </section>
-          {health.summary && <p className="text-sm text-slate-600 dark:text-slate-300">Last import: {health.summary.imported} new versions, {health.summary.quarantined} rejected, {health.summary.pages} pages.</p>}
+          {health.summary && <p className="text-sm text-slate-600 dark:text-slate-300">Last import: {health.summary.imported} source updates processed, {health.summary.quarantined} rejected, {health.summary.pages} pages. Source updates include notices that may not qualify for the selected SME filter.</p>}
         </>}
       </div>
     </section>

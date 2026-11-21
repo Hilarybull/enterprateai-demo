@@ -134,6 +134,45 @@ def test_sync_failure_retains_checkpoint_and_success_advances(monkeypatch):
     assert update.call_args.kwargs["payload"]["checkpoint"] == NOW.isoformat()
 
 
+def test_one_sync_catches_up_all_windows_and_totals_source_versions(monkeypatch):
+    checkpoint = NOW - timedelta(hours=30)
+    monkeypatch.setattr(service, "utc_now", lambda: NOW)
+    monkeypatch.setattr(service, "sb_rpc", AsyncMock(return_value=[{"checkpoint": checkpoint.isoformat()}]))
+    update = AsyncMock(return_value=[{}])
+    monkeypatch.setattr(service, "sb_update", update)
+    window = AsyncMock(side_effect=[
+        {"pages": 1, "seen": 1, "imported": 1, "quarantined": 0},
+        {"pages": 2, "seen": 100, "imported": 90, "quarantined": 2},
+        {"pages": 1, "seen": 40, "imported": 30, "quarantined": 0},
+    ])
+    monkeypatch.setattr(service, "ingest_window", window)
+    pause = AsyncMock()
+    monkeypatch.setattr(service.asyncio, "sleep", pause)
+    result = asyncio.run(service.sync_once(manual=True))
+    assert result == {"status": "synced", "windows": 3, "pages": 4, "seen": 141,
+                      "imported": 121, "quarantined": 2, "catching_up": False}
+    assert [call.args[2] for call in window.await_args_list] == [checkpoint + timedelta(hours=12), checkpoint + timedelta(hours=24), NOW]
+    assert pause.await_count == 2
+    assert update.call_args.kwargs["payload"]["checkpoint"] == NOW.isoformat()
+    assert update.call_args.kwargs["payload"]["lease_id"] is None
+
+
+def test_catchup_failure_keeps_completed_window_and_releases_lease(monkeypatch):
+    checkpoint = NOW - timedelta(days=2)
+    monkeypatch.setattr(service, "utc_now", lambda: NOW)
+    monkeypatch.setattr(service, "sb_rpc", AsyncMock(return_value=[{"checkpoint": checkpoint.isoformat()}]))
+    update = AsyncMock(return_value=[{}])
+    monkeypatch.setattr(service, "sb_update", update)
+    monkeypatch.setattr(service, "ingest_window", AsyncMock(side_effect=[
+        {"pages": 1, "seen": 0, "imported": 0, "quarantined": 0}, service.FeedError("Source unavailable", 42)]))
+    monkeypatch.setattr(service.asyncio, "sleep", AsyncMock())
+    assert asyncio.run(service.sync_once(manual=True))["status"] == "failed"
+    saved = [c.kwargs["payload"] for c in update.await_args_list]
+    assert saved[0]["checkpoint"] == (checkpoint + timedelta(hours=12)).isoformat()
+    assert saved[0]["summary"]["catching_up"] is True
+    assert "checkpoint" not in saved[-1] and saved[-1]["lease_id"] is None
+
+
 def test_public_routes_and_watchlist_auth(monkeypatch):
     app = FastAPI()
     app.include_router(router)
