@@ -47,7 +47,7 @@ function Recommendations({ workspaceId }) {
             {items.slice(0, previewLimit).map(item => <TenderMatch key={item.id} item={item} stage={stage} />)}
           </div>)}
         </div>
-        <div className="flex flex-wrap gap-3">{[["open", data.open_count], ...(hasAwards ? [["award", data.award_count]] : [])].filter(([,count]) => count > previewLimit).map(([stage,count]) => <button key={stage} type="button" className="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700" onClick={() => setPopupStage(stage)}>See more {hasBoth ? stage === "award" ? "awarded contracts" : "open tenders" : ""} <span className="text-xs">({count})</span></button>)}</div>
+        <div className="flex flex-wrap justify-center gap-3">{[["open", data.open_count], ...(hasAwards ? [["award", data.award_count]] : [])].filter(([,count]) => count > previewLimit).map(([stage,count]) => <button key={stage} type="button" className="min-h-11 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700" onClick={() => setPopupStage(stage)}>See more {hasBoth ? stage === "award" ? "awarded contracts" : "open tenders" : ""} <span className="text-xs">({count})</span></button>)}</div>
         {hasAwards && <p className="text-xs text-slate-500">An award does not confirm that subcontracting is available.</p>}
       </>}
     {popupStage && <TenderMatchesPopup workspaceId={workspaceId} stage={popupStage} onClose={() => setPopupStage(null)} />}
