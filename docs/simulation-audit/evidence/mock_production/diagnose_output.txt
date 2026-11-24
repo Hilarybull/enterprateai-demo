@@ -1,0 +1,8 @@
+Archetype                             as built            no seasonality                  no trend
+A_steady               WAPE  15.2% bias  +1.0%   WAPE   9.5% bias  +0.2%   WAPE  14.4% bias  +2.0%
+B_growing              WAPE  11.0% bias  -6.2%   WAPE   9.7% bias  -5.7%   WAPE  11.5% bias  -8.7%
+C_seasonal             WAPE   8.8% bias  -0.1%   WAPE  36.5% bias  +4.0%   WAPE   8.4% bias  -0.4%
+D_seasonal_growing     WAPE   9.4% bias  -3.3%   WAPE  27.3% bias +12.1%   WAPE   9.7% bias  -5.3%
+E_young                WAPE   9.4% bias  +1.0%   WAPE   9.4% bias  +1.0%   WAPE   9.2% bias  +1.2%
+F_declining            WAPE  11.5% bias  +4.2%   WAPE  11.5% bias  +4.8%   WAPE  17.5% bias +15.5%
+G_sudden_drop          WAPE  11.9% bias  +9.8%   WAPE  10.1% bias  +8.3%   WAPE  17.4% bias +17.3%

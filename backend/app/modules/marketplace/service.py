@@ -216,36 +216,98 @@ async def get_listing_status(*, user_id: str, workspace_id: str | None = None) -
     }
 
 
-async def publish_workspace(*, user_id: str, workspace_id: str | None = None) -> dict:
+async def publish_workspace(*, user: dict, workspace_id: str | None = None) -> dict:
+    user_id = user["id"]
     ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     ws_id, data = _ws_fields(ws)
-    if not data.get("workspace_profile"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Complete your workspace profile before publishing to the marketplace",
-        )
-    if not await has_paid_access(user_id):
+    now = datetime.now(timezone.utc).isoformat()
+    existing_marketplace = data.get("marketplace") or {}
+    existing_public = existing_marketplace.get("profile") or {}
+    existing_profile = data.get("workspace_profile") or {}
+    company_name = str(existing_profile.get("company_name") or existing_public.get("name") or getattr(ws, "name", None) or "My workspace").strip() or "My workspace"
+    user_email = str(user.get("email") or existing_profile.get("email") or existing_public.get("public_email") or "").strip()
+    profile = dict(existing_profile)
+    if not profile.get("company_name"):
+        profile["company_name"] = company_name
+    if not profile.get("business_type"):
+        profile["business_type"] = "startup"
+    if not profile.get("primary_industry"):
+        profile["primary_industry"] = "other"
+    if not profile.get("about_company"):
+        profile["about_company"] = f"{company_name} is building its business with EnterprateAI."
+    if not profile.get("country"):
+        profile["country"] = "Online"
+    if not profile.get("city"):
+        profile["city"] = "Online"
+    if not profile.get("operating_stage"):
+        profile["operating_stage"] = "idea"
+    if not profile.get("delivery_model"):
+        profile["delivery_model"] = "manual"
+    if user_email and not profile.get("email"):
+        profile["email"] = user_email
+    catalogue_products = [p for p in ((data.get("catalogue") or {}).get("products") or []) if isinstance(p, dict) and p.get("name") and not p.get("archived") and p.get("marketplace_listed", True) is not False]
+    service_tags = [str(tag).strip() for tag in (existing_public.get("service_tags") or profile.get("service_tags") or []) if str(tag).strip()]
+    if not service_tags:
+        service_tags = [str(s.get("service_name") or "").strip() for s in (profile.get("services") or []) if str(s.get("service_name") or "").strip()]
+    if not service_tags:
+        service_tags = [str(p.get("name") or "").strip() for p in catalogue_products if str(p.get("name") or "").strip()]
+    if not service_tags:
+        service_tags = [str(profile.get("primary_industry") or profile.get("business_type") or "General services").strip()]
+    if not profile.get("services"):
+        profile["services"] = [{"service_name": tag, "service_category": str(profile.get("primary_industry") or "other"), "service_description": None} for tag in service_tags[:5]]
+    public_profile = dict(existing_public)
+    if not public_profile.get("description"):
+        public_profile["description"] = str(profile.get("about_company") or f"{company_name} is building its business with EnterprateAI.")
+    if profile.get("website") and not public_profile.get("website"):
+        public_profile["website"] = profile.get("website")
+    if not public_profile.get("service_area"):
+        public_profile["service_area"] = ", ".join(x for x in (profile.get("city"), profile.get("country")) if x) or "Online"
+    if not public_profile.get("contact_preference"):
+        public_profile["contact_preference"] = "enquiry_form"
+    if user_email and not public_profile.get("public_email"):
+        public_profile["public_email"] = user_email
+    if profile.get("phone_number") and not public_profile.get("public_phone"):
+        public_profile["public_phone"] = profile.get("phone_number")
+    public_profile["service_tags"] = service_tags[:12]
+    public_profile["revision"] = int(public_profile.get("revision") or 0)
+    public_profile["updated_at"] = now
+    public_profile["updated_by"] = user_id
+
+    draft = dict(data)
+    draft["workspace_profile"] = profile
+    draft["marketplace"] = {**existing_marketplace, "profile": public_profile}
+
+    from app.modules.plans.access import effective_plan_key
+    from app.modules.plans.capabilities import PLAN_LABEL, quota
+    plan = await effective_plan_key(user_id)
+    limit = quota(plan, "marketplace_listings")      # Explorer 1, Starter 10, Decision Engine no limit (the pricing PDF)
+    if limit is not None:
         published = await sb_select(
             "workspaces",
             filters=[("user_id", "eq", user_id), ("data", "cs", {"marketplace": {"is_active": True}})],
             columns="id",
         )
-        if any(str(w["id"]) != ws_id for w in (published or [])):
+        if len([w for w in (published or []) if str(w["id"]) != ws_id]) >= limit:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="The Explorer plan includes 1 marketplace listing. Unlist your other business or upgrade for multiple listings.",
+                detail=f"The {PLAN_LABEL.get(plan, 'Explorer')} plan includes {limit} marketplace listing{'' if limit == 1 else 's'}. Unlist another business or upgrade for more.",
             )
-    now = datetime.now(timezone.utc).isoformat()
-    existing_marketplace = data.get("marketplace") or {}
+    from app.modules.marketplace.directory import activation_of, marketplace_settings
+    check = activation_of(marketplace_settings(draft), verified_claim=bool((draft.get("marketplace") or {}).get("claim_state") == "verified"))
+    if not check["ready"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Complete your marketplace details before publishing")
     marketplace_data = {
         **existing_marketplace,
         "is_active": True,
+        "profile": public_profile,
         "published_at": existing_marketplace.get("published_at") or now,
         "updated_at": now,
     }
     merged = dict(data)
+    # The workspace profile is kept exactly as the owner left it (the owner's QA, 21 Oct: "other", "startup" and "… is
+    # building its business with EnterprateAI" appeared on it): the defaults above are only the listing's.
     merged["marketplace"] = marketplace_data
     updated = await sb_update(
         "workspaces",
@@ -258,6 +320,7 @@ async def publish_workspace(*, user_id: str, workspace_id: str | None = None) ->
             detail="Failed to publish listing. Please try again.",
         )
     return {"workspace_id": ws_id, "is_published": True, "published_at": marketplace_data["published_at"], "has_profile": True}
+
 
 
 async def unpublish_workspace(*, user_id: str, workspace_id: str | None = None) -> dict:
@@ -392,9 +455,22 @@ async def list_public_proposal_requests(*, search: str | None = None, page: int 
                 "company_industry": profile.get("primary_industry", ""),
                 "company_country": profile.get("country", ""),
             })
+    for req in await _directory_rfps():      # RFPs the team published for businesses that haven't claimed their profile
+        if search and search.strip().lower() not in " ".join([req.get("title") or "", req.get("description") or "", req.get("category") or "", req.get("company_name") or ""]).lower():
+            continue
+        results.append(req)
     total = len(results)
     start = (page - 1) * page_size
     return {"items": results[start: start + page_size], "total": total}
+
+
+async def _directory_rfps() -> list[dict]:
+    try:
+        from app.modules.marketplace.directory_router import enabled, get_service
+        return await get_service().public_rfps() if enabled() else []
+    except Exception:      # noqa: BLE001 - the directory's requests are an addition; the rest still lists
+        logger.warning("Directory RFPs could not be listed", exc_info=True)
+        return []
 
 
 async def get_public_proposal_request(*, request_id: str) -> dict:
@@ -434,6 +510,9 @@ async def get_public_proposal_request(*, request_id: str) -> dict:
                 "company_industry": profile.get("primary_industry", ""),
                 "company_country": profile.get("country", ""),
             }
+    for req in await _directory_rfps():
+        if req.get("id") == request_id:
+            return req
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
 
 
@@ -554,6 +633,7 @@ async def submit_rfq(
     customer_company: str | None = None,
     needed_by: str | None = None,
     listing: str | None = None,
+    sourced_request_id: str | None = None,
 ) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
@@ -575,10 +655,14 @@ async def submit_rfq(
                   and str(r.get("created_at") or "") >= recent
                   and str(r.get("customer_email") or "").strip().lower() == str(customer_email or "").strip().lower()
                   and r.get("items") == items and (r.get("message") or "") == (message or "")), None)
+    if sourced_request_id:
+        again = next((r for r in rfq_requests if r.get("id") == sourced_request_id), None)
     if again:
+        if sourced_request_id and again.get("sender_workspace_id") != sender_workspace_id:
+            raise HTTPException(409, "Request identifier already in use.")
         await _hand_rfq_to_agent(workspace_id, again["id"])      # safe to repeat: still one task
         return again
-    rfq_id = str(uuid4())
+    rfq_id = sourced_request_id or str(uuid4())
     rfq = {
         "id": rfq_id,
         "workspace_id": workspace_id,
@@ -596,7 +680,12 @@ async def submit_rfq(
     }
     rfq_requests.append(rfq)
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
-    await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": merged, "updated_at": now})
+    filters = [("id", "eq", workspace_id)]
+    if sourced_request_id:
+        filters.append(("updated_at", "eq", ws["updated_at"]))
+    updated = await sb_update("workspaces", filters=filters, payload={"data": merged, "updated_at": now})
+    if sourced_request_id and not updated:
+        raise HTTPException(409, "Supplier records changed. Retry sending this draft.")
 
     # Record the outbound RFQ in the sender's workspace for tracking
     if sender_user_id and sender_workspace_id and sender_workspace_id != workspace_id:
@@ -622,6 +711,22 @@ async def submit_rfq(
 
     await _hand_rfq_to_agent(workspace_id, rfq_id)
     return rfq
+
+
+async def note_sent_request(user_id: str, workspace_id: str, request_id: str, recipient: str, items: list[dict], message: str | None) -> None:
+    """The sender's own copy of a request left on an unclaimed profile, so it shows among the requests they've sent."""
+    try:
+        ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id), ("user_id", "eq", user_id)], single=True)
+        if not ws:
+            return
+        data = ws.get("data") or {}
+        fin = data.get("financials") or {}
+        now = datetime.now(timezone.utc).isoformat()
+        sent = [{"id": request_id, "recipient_workspace_id": None, "recipient_company_name": recipient, "items": items,
+                 "message": message, "status": "pending", "created_at": now}, *(fin.get("sent_rfqs") or [])]
+        await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": {**data, "financials": {**fin, "sent_rfqs": sent}}, "updated_at": now})
+    except Exception:      # noqa: BLE001 - never fails the request itself
+        logging.getLogger(__name__).warning("could not record a sent request", exc_info=True)
 
 
 async def _hand_rfq_to_agent(workspace_id: str, rfq_id: str) -> None:
@@ -829,7 +934,9 @@ async def _approve_rfq(
                 "filename": f"Quotation-{quote['quotation_id']}.pdf",
                 "content": base64.b64encode(pdf_bytes).decode(),
             }]
-        await send_email_via_resend(
+        await send_email_via_resend(kind="quote_sent",
+            values={"customer_name": rfq.get("customer_name") or "there", "business_name": company_name, "reference": quote["quotation_id"],
+                    "total": f"\xa3{quote['total_amount']:,.2f}", "valid_days": validity_days},
             to_email=rfq["customer_email"],
             subject=f"Quotation received from {company_name}",
             text_content=(
@@ -1015,15 +1122,27 @@ async def record_profile_view(
     return {"recorded": True}
 
 
-async def get_profile_views(*, user_id: str, workspace_id: str | None = None) -> dict:
-    ws = await _load_workspace(user_id, workspace_id)
+async def get_profile_views(*, user_id: str, workspace_id: str | None = None, user_email: str | None = None) -> dict:
+    from app.modules.marketplace.directory import DirectoryService
+
+    is_superadmin = DirectoryService.is_superadmin({"email": user_email})
+    if is_superadmin and workspace_id:
+        ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    else:
+        ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    if _ws_owner(ws) != str(user_id) and not is_superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Profile views are available only to the profile owner and superadmin.")
     _, data = _ws_fields(ws)
     marketplace = data.get("marketplace") or {}
     views = list(marketplace.get("profile_views") or [])
     recent = list(reversed(views[-100:]))
-    return {"views": recent, "total": len(views)}
+    try:
+        baseline = max(0, int(marketplace.get("profile_views_baseline") or 0))
+    except (TypeError, ValueError):
+        baseline = 0
+    return {"views": recent, "total": baseline + len(views)}
 
 
 _MAX_QUESTIONS_PER_QUOTE = 10
@@ -1099,7 +1218,8 @@ async def ask_about_quote(*, token: str, viewer_email: str, message: str) -> dic
             cta=("Open the quotation", link),
             note=f"Reply to this email to answer {escape(customer)} directly. The quotation stays open until they accept or decline it.",
         )
-        await send_email_via_resend(
+        await send_email_via_resend(kind="quote_question",
+            values={"customer_name": customer, "reference": ref, "question": text, "business_name": company, "link": link},
             to_email=owner_email, subject=f"Question about quotation {ref} from {customer}",
             text_content=(f"{customer} has a question about quotation {ref}:\n\n{text}\n\n"
                           f"Reply to this email to answer them directly.\n{link}\n"),
@@ -1216,7 +1336,7 @@ async def quote_status_for_customer(*, token: str, viewer_email: str = "") -> di
 
 
 async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, title: str, intro: str, body_html: str = "",
-                         reply_to: str | None = None) -> bool:
+                         reply_to: str | None = None, values: dict | None = None) -> bool:
     """Tell the business what its customer did. Replies go to the customer where known."""
     from app.core.config import get_settings
     from app.modules.agent.documents import _email
@@ -1228,7 +1348,7 @@ async def _notify_seller(ws: dict, data: dict, quote: dict, *, subject: str, tit
     link = f"{get_settings().frontend_url.rstrip('/')}/operations?tab=Sales"
     html = _email(company=company, title=title, preheader=intro, intro=intro, blocks=[body_html] if body_html else [],
                   cta=("Open in Business Operations", link))
-    res = await send_email_via_resend(to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
+    res = await send_email_via_resend(kind="quote_customer_action", values={**(values or {}), "business_name": company, "link": link}, to_email=owner, subject=subject, text_content=f"{intro}\n\n{link}\n",
                                       html_content=html, sender_name="EnterprateAI",
                                       reply_to_email=reply_to if reply_to and "@" in reply_to else None)
     return bool(res.sent)
@@ -1294,10 +1414,12 @@ async def respond_to_quote(*, token: str, viewer_email: str, action: str, signer
             pass
         _in_background(_notify_seller(ws, data, quote, subject=f"{customer} accepted quotation {ref}", title=f"Quotation {ref} accepted",
                                       intro=f"{escape(customer)} accepted quotation {escape(str(ref))}, signed by {escape(quote['acceptance']['name'])}.",
-                                      reply_to=quote.get("customer_email")))
+                                      reply_to=quote.get("customer_email"),
+                                      values={"customer_name": customer, "outcome": "accepted", "reference": ref, "detail": f"Signed by {quote['acceptance']['name']}."}))
     else:
         why = quote.get("declined_reason")
         _in_background(_notify_seller(ws, data, quote, subject=f"{customer} declined quotation {ref}", title=f"Quotation {ref} declined",
                                       intro=f"{escape(customer)} declined quotation {escape(str(ref))}." + (f" Their reason: {escape(why)}" if why else ""),
-                                      reply_to=quote.get("customer_email")))
+                                      reply_to=quote.get("customer_email"),
+                                      values={"customer_name": customer, "outcome": "declined", "reference": ref, "detail": f"Their reason: {why}" if why else ""}))
     return {"action": new_status, "quote_id": quote_id}

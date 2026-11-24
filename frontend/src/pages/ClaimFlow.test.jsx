@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import ClaimFlowPage from "./ClaimFlowPage";
 import DirectoryProfilePage from "./DirectoryProfilePage";
+import MarketplaceListings from "./MarketplaceListings";
 import { confirmDialog } from "../lib/dialog";
 import MarketplaceProfilePage from "./MarketplaceProfilePage";
 import MarketplaceModerationPage from "./MarketplaceModerationPage";
@@ -113,7 +114,7 @@ describe("public profile (W02 and W12)", () => {
     expect(screen.getByRole("heading", { name: "Northwind Advisory Ltd" }).closest("section").textContent).toContain("NA");      // the initials mark
     // One badge, in the header; what it means is beside it on request, and in the trust card.
     expect(screen.getAllByText("Business profile not yet claimed").length).toBe(1);
-    expect(screen.getByRole("heading", { name: "About this badge" }).closest("section").textContent).toContain("This profile is based on public sources");
+    expect(screen.queryByRole("heading", { name: "About this badge" })).toBeNull();
     const info = screen.getByRole("button", { name: /Based on public sources · Companies House/ });
     expect(info.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(info);
@@ -129,6 +130,41 @@ describe("public profile (W02 and W12)", () => {
     expect(sent("POST", /\/view$/).length).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "Claim this Business for Free" }));
     expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}?invite=tok123`);      // the invitation travels with the claim
+  });
+
+  it("its owner sees how many people viewed the profile; a visitor never does", async () => {
+    const views = { total: 206, last_7_days: 12, last_30_days: 48, last_viewed_at: new Date().toISOString() };
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...claimed, owner_controls: true, business_id: "ws9", views } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Profile visits");
+    expect(document.querySelector("[data-visits-headline]").textContent).toBe("206 people may have viewed your profile");
+    expect(screen.queryByText("Last 7 days")).toBeNull();
+    expect(screen.queryByText("Last 30 days")).toBeNull();
+    expect(screen.getByText("Only you can see this.")).toBeTruthy();
+    cleanup();
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: claimed }) }, { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Owner-verified");
+    expect(screen.queryByText("Profile visits")).toBeNull();
+  });
+
+  it.each([claimed, unclaimed])("hides visits from non-owners even when the response contains counts ($claimed)", async (profile) => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...profile, owner_controls: false, views: { total: 233 } } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByRole("heading", { name: "Northwind Advisory Ltd" });
+    expect(screen.queryByText("Profile visits")).toBeNull();
+    expect(document.querySelector("[data-visits-headline]")).toBeNull();
+  });
+
+  it("shows visits to the superadmin without granting owner controls", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...unclaimed, owner_controls: false, can_view_profile_views: true, views: { total: 233 } } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Profile visits");
+    expect(document.querySelector("[data-visits-headline]").textContent).toContain("233");
+    expect(screen.queryByRole("region", { name: "Your profile" })).toBeNull();
   });
 
   it("a claimed profile shows what the owner confirmed and only the actions they switched on", async () => {
@@ -153,7 +189,7 @@ describe("public profile (W02 and W12)", () => {
     const ways = screen.getByRole("heading", { name: "How to work with us" }).closest("section");
     expect([...ways.querySelectorAll("[data-ways] > li")].map((li) => within(li).getByRole("button").textContent)).toEqual(["Ask a question", "Send a proposal"]);
     expect(ways.textContent).toContain("Send a message and get a reply from the business.");
-    expect(screen.queryByText(/RFQs|Subcontracting|^Apply$/)).toBeNull();      // no jargon pills, no vague "Apply"
+    expect(within(ways).queryByText(/RFQs|Subcontracting|^Apply$/)).toBeNull();      // no jargon pills, no vague "Apply"
     expect(screen.getByRole("heading", { name: "Contact Northwind Advisory Ltd" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Claim this Business/ })).toBeNull();
     expect(document.querySelector("[data-owner-bar]")).toBeNull();          // owner controls only for the owner
@@ -163,12 +199,20 @@ describe("public profile (W02 and W12)", () => {
     expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=products&business=ws9");
   });
 
+  it("a service on an unclaimed profile opens the same quote form with that service on the first line", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...unclaimed, held_requests_open: true, service_tags: ["Strategy", "Pricing"] } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}?request=quote&service=Pricing`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    const form = await screen.findByRole("form", { name: "Request a quote" });
+    expect(within(form).getByRole("combobox", { name: "Item 1" }).value).toBe("Pricing");
+  });
+
   it("with quotes on, the main button and each offering ask for a quote, with that offering already filled in", async () => {
     routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...claimed, since: "2026-10-02T09:00:00+00:00", opportunities: { ...claimed.opportunities, rfqs: true } } }) },
       { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     const header = (await screen.findByRole("heading", { name: "Northwind Advisory Ltd" })).closest("section");
-    expect(header.querySelector("[data-meta]").textContent).toContain("On EnterprateAI since Oct 2026");
+    expect(header.querySelector("[data-meta]").textContent).not.toContain("On EnterprateAI since");
     expect(within(header).getByRole("button", { name: "Request a quote" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Get a quote from Northwind Advisory Ltd" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Request a quote: Pricing review" }));
@@ -184,22 +228,24 @@ describe("public profile (W02 and W12)", () => {
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     const bar = await screen.findByRole("region", { name: "Your profile" });
     expect(bar.textContent).toContain("You're viewing your public profile");
-    expect(within(bar).getAllByRole("button").map((x) => x.textContent)).toEqual(["Edit profile", "Opportunity settings", "Verify", "Unlist", "View as visitor", "Manage"]);
-    expect(within(bar).getByRole("button", { name: "Manage" }).parentElement.className).toContain("md:hidden");      // one menu on a phone
+    fireEvent.click(within(bar).getByRole("button", { name: "Profile options" }));
+    expect(within(bar).getAllByRole("menuitem").map((x) => x.textContent)).toEqual(["Edit profile", "Opportunity settings", "Verify", "Unlist", "View as visitor"]);      // one menu on a phone
     expect(screen.queryByText("You manage this profile")).toBeNull();        // no longer a card in the public sidebar
     // What is keeping it off the Marketplace, said to the owner only.
     expect(screen.getByText(/Only you can see this page/).closest("[role=alert]").textContent).toContain("Write a real description");
-    fireEvent.click(within(bar).getByRole("button", { name: "View as visitor" }));
+    fireEvent.click(within(bar).getByRole("menuitem", { name: "View as visitor" }));
     expect(screen.queryByText(/Only you can see this page/)).toBeNull();
     expect(screen.getByText("This is what a visitor sees")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Back to your view" }));
     // Unlist asks first.
     confirmDialog.mockResolvedValueOnce(false);
-    fireEvent.click(within(screen.getByRole("region", { name: "Your profile" })).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Profile options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unlist" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(confirmDialog.mock.calls[0][1]).toMatchObject({ title: "Unlist your business?", confirmLabel: "Unlist", danger: true });
     expect(sent("POST", /activate$/).length).toBe(0);
-    fireEvent.click(within(screen.getByRole("region", { name: "Your profile" })).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Profile options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unlist" }));
     await waitFor(() => expect(sent("POST", /activate$/)[0].body).toEqual({ publish: false }));
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/marketplace/profile?business=ws9"));
   });
@@ -263,9 +309,10 @@ describe("claim journey (W03 to W11)", () => {
       { method: "GET", match: /businesses\/ws1\/marketplace-profile$/, reply: () => ({ body: settings({ business_id: "ws1" }) }) }];
     mount(`/marketplace/claim/${base.slug}?intent=INT-1`, <ClaimFlowPage />, "/marketplace/claim/:slug");
     await screen.findByText("Which EnterprateAI business should this profile belong to?");      // no introduction again: straight to where they were
+    expect(screen.queryByText(/Other Co/)).toBeNull();      // a workspace that is plainly another business is not offered
+    expect(screen.getByLabelText(/as its own business/)).toBeTruthy();
     expect(sent("POST", /\/claims$/)[0].body).toMatchObject({ intent: "INT-1" });
-    expect(screen.getByLabelText(/Northwind \(existing\) · likely the same business/).checked).toBe(true);
-    expect(screen.getByLabelText(/Other Co/).disabled).toBe(true);        // already has a profile: can't be given a second
+    expect(screen.getByLabelText(/Northwind \(existing\) is this business/).checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Confirm Business" }));
     await screen.findByText("Verify that you manage Northwind Advisory Ltd");
     expect(sent("POST", /\/match$/)[0].body).toEqual({ business_id: "ws1" });
@@ -291,7 +338,8 @@ describe("claim journey (W03 to W11)", () => {
     mount(`/marketplace/claim/${base.slug}?intent=INT-1`, <ClaimFlowPage />, "/marketplace/claim/:slug");
     await screen.findByText("Claim under review");
     expect(screen.getByText("Editing the public profile")).toBeTruthy();
-    expect(screen.getByText("Evidence for review · 5 Oct 2026")).toBeTruthy();
+    expect(screen.getByText(/^Evidence for review · 5 Oct 2026 at \d{2}:\d{2}$/)).toBeTruthy();      // with the time (QA P3)
+    expect(document.querySelector("[data-claim-ref]").textContent).toMatch(/^CLM-[A-Z0-9]{2,8}$/);      // never the raw UUID
     expect(screen.queryByLabelText("Public description")).toBeNull();     // no owner controls before approval
     fireEvent.click(screen.getByRole("button", { name: "Return to Marketplace" }));
     expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=businesses");
@@ -512,7 +560,7 @@ describe("QA round 2", () => {
       reports: [{ id: "r1", kind: "unlist", message: "Please remove.", created_at: "2026-10-05T09:00:00Z", needs_another_reviewer: true }] } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: { BusinessClaimStarted: 2 }, reports_open: 1, profiles: { total: 2, published: 2, claimed: 0, suppressed: 0 } } }) },
       { method: "POST", match: /normalise-locations$/, reply: () => ({ body: { count: 1, changed: [] } }) }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const mine = (await screen.findByText("Northwind Advisory Ltd")).closest("tr");
     expect(within(mine).getByText("Needs another reviewer")).toBeTruthy();
     expect(within(mine).queryByRole("button", { name: "Review" })).toBeNull();
@@ -528,40 +576,27 @@ describe("QA round 2", () => {
     expect(screen.queryByRole("button", { name: "Unlist the profile" })).toBeNull();      // the report is about their own business's profile
     // The directory at a glance, as tiles.
     const tiles = screen.getByRole("region", { name: "Directory at a glance" });
-    expect(["Indexed", "Claims started", "Verified", "Published", "Suppressed", "Reports open"].every((label) => within(tiles).getByText(label))).toBe(true);
+    expect(["Indexed", "Requests waiting", "Claim attempts (all time)", "Ownership verified", "Published", "Suppressed", "Reports open"].every((label) => within(tiles).getByText(label))).toBe(true);
     expect(within(tiles).getByText("Reports open").parentElement.textContent).toBe("Reports open1");
     fireEvent.click(screen.getByRole("tab", { name: "Index & invites" }));
     fireEvent.click(screen.getByRole("button", { name: "Tidy stored locations" }));
     await screen.findByText("Tidied 1 profile. Their old addresses still open.");
   });
 
-  it("R-2: asks whether an existing profile is theirs before publishing, and keeps the answer on the server", async () => {
+  it("publishing never waits on a possible match; the match stays on the page to claim or dismiss (the owner, 26 Oct)", async () => {
     useWorkspaceStore.setState({ workspaceId: "ws9" });
     const match = { ...unclaimed, matched_on: "website" };
-    let answered = false;
-    const mine = (over = {}) => settings({ directory: null, activation: { ready: true, items: [{ key: "description", label: "A public description", done: true }] }, possible_duplicates: answered ? [] : [match], ...over });
+    let published = false;
+    const mine = (over = {}) => settings({ directory: null, activation: { ready: true, items: [{ key: "description", label: "A public description", done: true }] }, possible_duplicates: [match], is_published: published, ...over });
     routes = [{ method: "GET", match: /businesses\/ws9\/marketplace-profile$/, reply: () => ({ body: mine() }) }, { method: "GET", match: /business-claims$/, reply: () => ({ body: { items: [] } }) },
-      { method: "POST", match: /duplicate-answers$/, reply: () => { answered = true; return { body: mine() }; } },
-      { method: "POST", match: /activate$/, reply: () => (answered ? { body: mine({ is_published: true }) }
-        : { status: 409, body: { detail: { code: "possible_duplicate", message: "x", profile: match } } }) }];
-    mount("/marketplace-profile", <MarketplaceProfilePage />, "/marketplace-profile");
-    await screen.findByText(/We found an existing Marketplace profile/);
-    expect(sent("GET", /claimable-businesses/).length).toBe(0);          // the server works out the matches; the page doesn't guess
-    fireEvent.click(screen.getByRole("button", { name: "Activate Marketplace Profile" }));
-    await screen.findByText("Before you publish: is this your business?");
-    expect(sent("POST", /activate$/).length).toBe(0);                     // nothing is published until they answer
-    fireEvent.click(screen.getByRole("button", { name: "Claim and link it" }));
-    expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}?source=signup_match`);
-    cleanup();
+      { method: "POST", match: /activate$/, reply: () => { published = true; return { body: mine() }; } }];
     mount("/marketplace-profile", <MarketplaceProfilePage />, "/marketplace-profile");
     await screen.findByText(/We found an existing Marketplace profile/);
     fireEvent.click(screen.getByRole("button", { name: "Activate Marketplace Profile" }));
-    fireEvent.click(await screen.findByRole("button", { name: "This isn't my business" }));
     await screen.findByText("Published. Your profile is now on the Marketplace.");
-    expect(sent("POST", /duplicate-answers$/)[0].body).toEqual({ profile_id: "p1", answer: "not_mine" });
-    expect(sent("POST", /activate$/).length).toBe(1);
-    expect(screen.queryByText(/We found an existing Marketplace profile/)).toBeNull();
-    expect(Object.keys(localStorage).some((k) => /not-mine/.test(k))).toBe(false);      // nothing kept in the browser
+    expect(sent("POST", /activate$/).length).toBe(1);                     // straight away, never held for the claim
+    expect(screen.queryByText("Before you publish: is this your business?")).toBeNull();
+    expect(screen.getByText(/We found an existing Marketplace profile/)).toBeTruthy();      // still there to claim or dismiss
   });
 
   it("R-2: a match the page didn't know about is still asked about when the server refuses", async () => {
@@ -582,7 +617,7 @@ describe("QA round 2", () => {
     mount("/marketplace", <Tabs />, "/marketplace");
     expect(screen.getByRole("tab", { name: "Business Directory" }).getAttribute("aria-selected")).toBe("true");
     await screen.findByText("Northwind Advisory Ltd");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Business Directory", "Products & Services", "Proposal Requests"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Business Directory", "Products & Services", "Proposal Requests", "Public Tenders"]);
     expect(screen.queryByRole("button", { name: /Publish Now/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Search the Marketplace"), { target: { value: "north" } });
     await waitFor(() => expect(sent("GET", /q=north/).length).toBe(1));
@@ -731,13 +766,13 @@ describe("QA round 5", () => {
     routes = [{ method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports: [], revocations: rows } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: {}, reports_open: 0, profiles: { total: 1, published: 1, claimed: 1, suppressed: 0 } } }) },
       { method: "POST", match: /business-claims\/c7\/review-decision$/, reply: () => { rows = []; return { body: { id: "c7", status: "revoked", revocation: "done" } }; } }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     await screen.findByRole("heading", { name: "Revocations waiting for a second reviewer" });
     expect(screen.getByText("You asked for this, so someone else has to confirm it.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Confirm revocation" })).toBeNull();
     cleanup();
     rows = [waiting()];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const confirm = await screen.findByRole("button", { name: "Confirm revocation" });
     expect(screen.getByText("The claim was verified in error")).toBeTruthy();
     expect(confirm.disabled).toBe(true);                                  // a decision needs a reason
@@ -751,7 +786,7 @@ describe("QA round 5", () => {
 describe("unclaimed profile visibility", () => {
   const listing = (over) => ({ method: "GET", match: /^\/marketplace\/businesses\?/, reply: () => ({ body: { enabled: true, total: 1, categories: [], items: [claimed], ...over } }) });
 
-  it("offers the 'Not yet claimed' filter only when unclaimed profiles are listed", async () => {
+  it("offers the 'Public listing' filter only when unclaimed profiles are listed", async () => {
     routes = [listing({ unclaimed_listed: false })];
     mount("/", <DirectoryResults query="" />, "/");
     await screen.findByText("Northwind Advisory Ltd");
@@ -761,7 +796,7 @@ describe("unclaimed profile visibility", () => {
     routes = [listing({ unclaimed_listed: true })];
     mount("/", <DirectoryResults query="" />, "/");
     await screen.findByText("Northwind Advisory Ltd");
-    expect(options()).toEqual(["Any status", "Verified only", "Created on EnterprateAI, not verified", "Not yet claimed"]);
+    expect(options()).toEqual(["Any status", "Verified only", "Created on EnterprateAI, not verified", "Public listing"]);
   });
 
   it("an invitation or lookup grant travels with every request for the profile, and on into the claim", async () => {
@@ -878,7 +913,7 @@ describe("admin area", () => {
     expect(within(table).getByText("Suppressed")).toBeTruthy();
     expect(within(table).getByText("Unpublished (quality)")).toBeTruthy();
     const menu = (name) => { fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` })); return screen.getByRole("menu"); };
-    expect(within(menu("Northwind Advisory Ltd")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Edit", "Archive", "Suppress", "View sources"]);
+    expect(within(menu("Northwind Advisory Ltd")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Archive", "Suppress", "View sources"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Copy invitation link" }));
     await screen.findByText("Invitation link for Northwind Advisory Ltd copied.");
     expect(copied[0]).toMatch(/\/marketplace\/claim\/northwind-advisory-ltd-leeds\?invite=tok-7$/);
@@ -899,8 +934,142 @@ describe("admin area", () => {
     expect(sent("POST", /moderation$/)[0].body).toEqual({ action: "suppress", reason: "Duplicate of another record." });
     // A suppressed row offers Restore, and can't be opened or invited.
     const items = within(menu("Harbour Legal LLP")).getAllByRole("menuitem");
-    expect(items.map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Edit", "Restore", "View sources"]);
+    expect(items.map((m) => m.textContent)).toEqual(["Copy invitation link", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Restore", "View sources"]);
     expect(items[0].disabled && items[1].disabled).toBe(true);
+  });
+
+  it("lists approved businesses first, with who decided and whether the person was emailed", async () => {
+    const decisions = { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [
+      { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "team@enterprate.test", decided_at: "2026-11-04T10:00:00Z", reason: "Director on the filing", email: "sent" },
+      { id: "c2", type: "claim", outcome: "approved", name: "Older Ltd", slug: "older", person: "o@older.test", links_to: "An existing business", decided_by: "A team member", decided_at: "2026-10-01T10:00:00Z", reason: "Checked", email: "before_emails" },
+      { id: "c3", type: "listing", outcome: "rejected", name: "Spam Co", slug: "spam", person: "s@spam.test", links_to: null, decided_by: "team@enterprate.test", decided_at: "2026-11-02T10:00:00Z", reason: "Not a real service", email: "failed" },
+    ] } }) };
+    routes = [funnel, queue, decisions];
+    mount("/", <AdminClaims section="decided" />, "/");
+    expect((await screen.findByRole("link", { name: "Francal" })).getAttribute("href")).toBe("/marketplace/business/francal");
+    expect(screen.getByText("Email sent")).toBeTruthy();
+    expect(screen.getByText("No email, decided earlier")).toBeTruthy();
+    expect(screen.queryByText("Spam Co")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rejected or removed (1)" }));
+    expect(screen.getByText("Spam Co")).toBeTruthy();
+    expect(screen.getByText("Email failed")).toBeTruthy();
+  });
+
+  it("Business Directory has Previous, Next and page numbers", async () => {
+    const row = (n) => ({ ...base, id: `b${n}`, slug: `biz-${n}`, name: `Business ${n}`, service_tags: [] });
+    routes = [{ method: "GET", match: /^\/marketplace\/businesses\?/, reply: ({ path }) => ({ body: { enabled: true, total: 50, categories: [], items: [row(Number(new URLSearchParams(path.split("?")[1]).get("page")))] } }) }];
+    mount("/", <DirectoryResults />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await screen.findByText("Business 2");
+    fireEvent.click(screen.getByRole("button", { name: "Page 3" }));
+    await screen.findByText("Business 3");
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByText("Business 2");
+    expect(screen.queryByText(/Narrow the search/)).toBeNull();
+  });
+
+  it("Products & Services loads every page of public services and shows them a page at a time", async () => {
+    const biz = (n) => ({ id: `p${n}`, slug: `p${n}`, name: `Biz ${n}`, service_tags: [`Service ${n}`], held_requests_open: true });
+    routes = [{ method: "GET", match: /^\/marketplace\/listings/, reply: () => ({ body: { items: [], total: 0 } }) },
+      { method: "GET", match: /^\/marketplace\/businesses\?/, reply: ({ path }) => { const from = (Number(new URLSearchParams(path.split("?")[1]).get("page")) - 1) * 60 + 1; return { body: { enabled: true, total: 70, items: Array.from({ length: Math.min(60, 70 - from + 1) }, (_, i) => biz(from + i)) } }; } }];
+    mount("/marketplace?tab=products", <MarketplaceListings />, "/marketplace");
+    expect(await screen.findByText("70 products")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Request Quotation" }).length).toBe(24);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getAllByRole("button", { name: "Request Quotation" }).length).toBe(24);
+  });
+
+  it("typing a business name suggests matching listings, and choosing one starts its claim", async () => {
+    routes = [{ method: "GET", match: /^\/marketplace\/business-suggestions\?q=red$/, reply: () => ({ body: { items: [
+      { id: "1", slug: "red-ltd", name: "Red Ltd", location: "Leeds", claimed: false }, { id: "2", slug: "redwood", name: "Redwood", claimed: true }] } }) }];
+    mount("/", <FindToClaim defaultOpen />, "/");
+    fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "r" } });
+    fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "red" } });
+    const list = await screen.findByRole("list", { name: "Matching businesses by name" }, { timeout: 2000 });
+    expect(within(list).getByText("Redwood")).toBeTruthy();
+    expect(within(list).getByText("Already claimed")).toBeTruthy();
+    fireEvent.click(within(list).getByText("Red Ltd"));
+    expect(screen.getByTestId("where").textContent).toBe("/marketplace/claim/red-ltd");
+  });
+
+  it("Products & Services lists the services of a public, unclaimed profile, and a quote goes through its profile", async () => {
+    const francal = { id: "p7", slug: "francal", name: "Francal", category: "Construction & Trades", location: "Florida", description: "Francal sells fashion accessories", service_tags: ["Suits", "Shoes"], held_requests_open: true };
+    const closed = { id: "p8", slug: "closed", name: "Closed Ltd", service_tags: ["Hidden service"], held_requests_open: false };
+    routes = [{ method: "GET", match: /^\/marketplace\/listings/, reply: () => ({ body: { items: [], total: 0 } }) },
+      { method: "GET", match: /^\/marketplace\/businesses\?/, reply: () => ({ body: { enabled: true, total: 2, items: [francal, closed] } }) }];
+    mount("/marketplace?tab=products", <MarketplaceListings />, "/marketplace");
+    const card = (await screen.findByRole("heading", { name: "Suits" })).closest("article");
+    expect(screen.getByRole("heading", { name: "Shoes" })).toBeTruthy();
+    expect(screen.queryByText("Hidden service")).toBeNull();
+    expect(screen.getByText("2 products")).toBeTruthy();
+    expect(sent("GET", /^\/marketplace\/businesses/)[0].path).toContain("trust=unclaimed");
+    fireEvent.click(within(card).getByRole("button", { name: "Request Quotation" }));
+    expect(screen.getByTestId("where").textContent).toBe("/marketplace/business/francal?request=quote&service=Suits");
+    expect(sent("POST", /\/marketplace\/rfq/)).toEqual([]);      // nothing is sent to a workspace that doesn't exist
+  });
+
+  it("a workspace closed by a revocation can be restored from Rejected or removed", async () => {
+    const row = { id: "c1", type: "claim", outcome: "removed", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: null, decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: false, workspace: { state: "closed", until: "2026-12-04T10:00:00Z" } };
+    routes = [funnel, queue, { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row], revoke_categories: [] } }) },
+      { method: "POST", match: /restore-workspace$/, reply: () => ({ body: { id: "c1", workspace: "restored" } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Rejected or removed (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore the workspace for Francal" }));
+    await waitFor(() => expect(sent("POST", /restore-workspace$/).length).toBe(1));
+  });
+
+  it("a report says which business it is about and who sent it", async () => {
+    const reports = [{ id: "r1", kind: "unlist", message: "Just remove it", created_at: "2026-11-04T10:00:00Z", needs_another_reviewer: false, reporter_email: "someone@example.com", profile: { name: "Francal", slug: "francal-florida", location: "Florida" } },
+      { id: "r2", kind: "correction", message: "Wrong address", created_at: "2026-11-04T10:00:00Z", needs_another_reviewer: false, reporter_email: null, profile: { name: "Older Ltd", slug: "older" } }];
+    routes = [funnel, { method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports, revocations: [] } }) }];
+    mount("/", <AdminClaims section="reports" />, "/");
+    expect((await screen.findByRole("link", { name: "Francal" })).getAttribute("href")).toBe("/marketplace/business/francal-florida");
+    expect(screen.getByText("someone@example.com")).toBeTruthy();
+    expect(screen.getByText("No email given")).toBeTruthy();
+  });
+
+  it("the number of requests waiting opens them in a popup, in full", async () => {
+    const profile = { id: "p1", slug: "francal", name: "Francal", publication: "published", requests_waiting: 1, service_tags: [] };
+    routes = [funnel, queue, { method: "GET", match: /directory\/unclaimed$/, reply: () => ({ body: { total: 1, items: [profile], options: { categories: [], providers: [], visibility: [] } } }) },
+      { method: "GET", match: /directory-profiles\/francal\/requests$/, reply: () => ({ body: { name: "Francal", slug: "francal", items: [{ id: "r1", kind: "quote", received_at: "2026-11-04T10:00:00Z", name: "Ada Buyer", email: "ada@buyer.test", company: "Ada Ltd", items: [{ name: "Suits", quantity: 2, notes: "Navy" }], details: "For a wedding" }] } }) }];
+    mount("/", <AdminClaims section="unclaimed" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Read 1 request for Francal" }));
+    const popup = await screen.findByRole("dialog", { name: "Requests for Francal" });
+    for (const text of ["Quote request", "Ada Buyer · Ada Ltd", "ada@buyer.test", "Suits × 2", "Navy", "For a wedding"]) expect(within(popup).getByText(text)).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Requests for Francal" })).toBeNull();
+  });
+
+  it("an approved claim can be revoked from Approved & rejected, with a category and a reason", async () => {
+    const row = { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: true, revocation: null, needs_another_reviewer: false };
+    const listing = { id: "p1", type: "listing", outcome: "approved", name: "Own Listing", slug: "own", person: "o@own.test", links_to: null, decided_by: "A team member", decided_at: "2026-11-03T10:00:00Z", reason: "", email: "sent" };
+    const decisions = { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row, listing], second_reviewer_required: true, revoke_categories: [{ key: "policy", label: "A breach of Marketplace policy" }] } }) };
+    routes = [funnel, queue, decisions, { method: "POST", match: /review-decision$/, reply: () => ({ body: { id: "c1", status: "verified", revocation: "awaiting_second_reviewer" } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke Francal" }));
+    expect(screen.queryByRole("button", { name: "Revoke Own Listing" })).toBeNull();      // a listing isn't a claim
+    const ask = screen.getByRole("button", { name: "Ask to revoke" });
+    expect(ask.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Why control is being removed"), { target: { value: "policy" } });
+    fireEvent.change(screen.getByLabelText(/Reason for the decision/), { target: { value: "test" } });
+    expect(ask.disabled).toBe(true);
+    expect(screen.getByText("Write a reason of at least 5 characters.")).toBeTruthy();      // says why it can't be pressed yet
+    fireEvent.change(screen.getByLabelText(/Reason for the decision/), { target: { value: "The documents were forged." } });
+    expect(screen.queryByText("Write a reason of at least 5 characters.")).toBeNull();
+    fireEvent.click(ask);
+    await waitFor(() => expect(sent("POST", /review-decision$/).length).toBe(1));
+    expect(sent("POST", /review-decision$/)[0].body).toEqual({ decision: "revoke", reason: "The documents were forged.", reason_category: "policy" });
+  });
+
+  it("a revocation someone else asked for is confirmed from the same row", async () => {
+    const row = { id: "c1", type: "claim", outcome: "approved", name: "Francal", slug: "francal", person: "owner@francal.test", links_to: "A new business", decided_by: "A team member", decided_at: "2026-11-04T10:00:00Z", reason: "Checked", email: "sent", revocable: true, needs_another_reviewer: false, revocation: { requested_by_you: false, category_label: "Fraud or impersonation", reason: "Forged filing" } };
+    routes = [funnel, queue, { method: "GET", match: /^\/admin\/marketplace\/decisions$/, reply: () => ({ body: { items: [row], second_reviewer_required: true, revoke_categories: [] } }) }];
+    mount("/", <AdminClaims section="decided" />, "/");
+    expect(await screen.findByText("Revocation waiting")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review revocation Francal" }));
+    expect(screen.getByText("Forged filing")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm revocation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep the claim" })).toBeTruthy();
   });
 
   it("design 6: the Marketplace section has its own tabs, driven by the sidebar or by itself", async () => {
@@ -908,13 +1077,13 @@ describe("admin area", () => {
     const onSection = vi.fn();
     mount("/", <AdminClaims section="queue" onSection={onSection} />, "/");
     await screen.findByText("Nothing is waiting.");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Queue", "Unclaimed profiles", "Reports", "Visibility", "Index & invites"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Index & invites", "Queue", "Approved & rejected", "Unclaimed profiles", "Reports", "Visibility"]);
     expect(screen.getByRole("tab", { name: "Queue" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "Index & invites" }));
     expect(onSection).toHaveBeenCalledWith("index");
     const tiles = screen.getByRole("region", { name: "Directory at a glance" });
-    expect(within(tiles).getByText("Claims started").parentElement.textContent).toBe("Claims started3");
-    expect(tiles.children.length).toBe(6);                                // its own six tiles, and no others
+    expect(within(tiles).getByText("Claim attempts (all time)").parentElement.textContent).toBe("Claim attempts (all time)3");
+    expect(tiles.children.length).toBe(7);                                // its own seven tiles, and no others
   });
 
   it("A-5: a moderator who isn't an administrator sees only the Marketplace section", async () => {
@@ -923,7 +1092,7 @@ describe("admin area", () => {
     mount("/ent-admin?section=marketplace", <AdminPage />, "/ent-admin");
     await screen.findByRole("heading", { level: 1, name: "Marketplace Claims" });
     const nav = screen.getAllByRole("navigation", { name: "Admin sections" })[0];
-    expect(within(nav).getAllByRole("button").map((b) => b.textContent.replace(/Decisions.*|Indexed,.*|Who sees.*|Add records.*/, ""))).toEqual(["Claims & reports", "Unclaimed profiles", "Visibility", "Index & invites"]);
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent.replace(/Decisions.*|Indexed,.*|Who sees.*|Add records.*|What's been.*/, ""))).toEqual(["Index & invites", "Claims & reports", "Approved & rejected", "Unclaimed profiles", "Visibility"]);
     expect(screen.queryByText("Platform health")).toBeNull();
     expect(screen.getByText("ADMIN", { exact: false, selector: "p" })).toBeTruthy();
     expect(sent("GET", /\/admin\/stats$/).length).toBe(0);                // never asks for what it may not see
@@ -934,6 +1103,23 @@ describe("admin area", () => {
     routes = [{ method: "GET", match: /admin\/marketplace\/access$/, reply: () => ({ body: { moderator: false } }) }];
     mount("/ent-admin", <AdminPage />, "/ent-admin");
     await screen.findByText("Access restricted");
+  });
+
+  it("Users: the superadmin opens every business a user owns for proposals", async () => {
+    useAuthStore.setState({ token: "t", email: "tech.support@enterprateai.com", hydrated: true });
+    const stats = { users: [{ id: "u1", email: "ada@example.test", created_at: "2026-11-01T10:00:00Z" }, { id: "u2", email: "bo@example.test", created_at: "2026-11-02T10:00:00Z" }],
+      workspaces: [{ id: "w1", name: "Ada One", owner_id: "u1", proposals_open: false }, { id: "w2", name: "Ada Two", owner_id: "u1", proposals_open: false }],
+      members: [], invitations: [], ai_usage: {} };
+    routes = [{ method: "GET", match: /\/admin\/stats$/, reply: () => ({ body: stats }) },
+      { method: "PATCH", match: /\/workspaces\/w\d\/proposals$/, reply: () => ({ body: { enabled: true, listing_live: false } }) }];
+    mount("/ent-admin?tab=users", <AdminPage />, "/ent-admin");
+    const open = await screen.findByRole("button", { name: "Open ada@example.test for proposals" });
+    expect(screen.getAllByText("No business").length).toBeGreaterThan(0);          // bo owns no business
+    fireEvent.click(open);
+    expect(await screen.findByText("their 2 businesses will be open for proposals. Marketplace listings aren't changed.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open for proposals" }));
+    await waitFor(() => expect(sent("PATCH", /\/workspaces\/w\d\/proposals$/).map((c) => [c.path.split("/").slice(-2)[0], c.body])).toEqual([["w1", { enabled: true }], ["w2", { enabled: true }]]));
+    expect(await screen.findByText("ada@example.test is open for proposals.")).toBeTruthy();
   });
 
   it("design 5 and A-1: one table with an empty state and pages, and tiles with sentence-case labels and a trend line", () => {
@@ -981,6 +1167,13 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     if (choice) fireEvent.click(screen.getByLabelText(choice));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    if (!choice) {
+      // No answer yet: Finish asks first and creates nothing (QA P0-3); "Decide later" is one tap away.
+      const ask = await screen.findByText(/Before we finish/);
+      expect(sent("POST", /onboarding$/).length).toBe(0);
+      fireEvent.click(within(ask.closest("[data-finish-match]")).getByLabelText("Decide later"));
+      fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    }
     await waitFor(() => expect(sent("POST", /onboarding$/).length).toBe(1));
     expect(sent("POST", /onboarding$/)[0].body.answers).toMatchObject({ company_name: "Northwind Advisory", registration_number: "12345678" });
   }
@@ -997,7 +1190,7 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     expect(sent("POST", /duplicate-answers$/)[0].body).toEqual({ profile_id: "p1", answer: "not_mine" });
   });
 
-  it("G-1: 'Decide later', or no answer at all, never holds up sign-up", async () => {
+  it("G-1: 'Decide later' never holds up sign-up; with no answer, Finish asks once first", async () => {
     await onboardTo("Decide later");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard"));
     expect(sent("POST", /duplicate-answers$/).length).toBe(0);
@@ -1095,7 +1288,7 @@ describe("businesses that sign up directly (G-1 to G-4)", () => {
     routes = [{ method: "GET", match: /admin\/marketplace\/claims/, reply: () => ({ body: { claims: [], reports: [], revocations: [], new_listings: rows, self_created_review: "post_publish" } }) },
       { method: "GET", match: /admin\/marketplace\/funnel$/, reply: () => ({ body: { events: {}, reports_open: 0, profiles: { total: 3, published: 2, claimed: 0, suppressed: 0 } } }) },
       { method: "POST", match: /listings\/.+\/review$/, reply: ({ path }) => { rows = rows.filter((r) => !path.includes(r.slug)); return { body: {} }; } }];
-    mount("/", <AdminClaims />, "/");
+    mount("/", <AdminClaims section="queue" />, "/");
     const table = await screen.findByRole("table", { name: "New listings" });
     expect(screen.getByRole("tab", { name: /^Queue/ }).textContent).toBe("Queue3");
     const first = within(table).getByText("Apex Consulting").closest("tr");
@@ -1136,7 +1329,7 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     expect(within(table).getByText("Public (override)")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Actions for Northwind Advisory Ltd" }));
     expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(
-      ["Copy invitation link", "Send invitation", "Open profile (moderator view)", "Change visibility", "Edit", "Archive", "Suppress", "View sources"]);
+      ["Copy invitation link", "Send invitation", "Open profile (moderator view)", "Change visibility", "Open for proposals", "Publish an RFP", "Edit", "Archive", "Suppress", "View sources"]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Change visibility" }));
     let form = screen.getByRole("form", { name: "Set visibility" });
     expect(within(form).getByText("Set visibility for Northwind Advisory Ltd")).toBeTruthy();
@@ -1174,6 +1367,8 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     expect(screen.queryByRole("menuitem", { name: "Send invitation" })).toBeNull();      // emails are off
     fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
     const form = screen.getByRole("form", { name: "Edit Northwind Advisory Ltd" });
+    fireEvent.change(within(form).getByLabelText(/About/), { target: { value: "Independent advisers helping small firms set prices." } });
+    fireEvent.change(within(form).getByLabelText(/Services/), { target: { value: "Strategy" } });
     expect(within(form).getByText(/kept in the profile's history/)).toBeTruthy();
     fireEvent.change(within(form).getByLabelText(/Town or region/), { target: { value: "14 Acacia Avenue, Leeds" } });
     fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
@@ -1182,7 +1377,7 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     fireEvent.change(within(form).getByLabelText("Reason for the change"), { target: { value: "Moved." } });
     fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
     await screen.findByText("Northwind Advisory Ltd saved: Ready · hidden (invite only).");
-    expect(sent("PATCH", /directory-profiles/)[1].body).toEqual({ changes: { location: "York" }, reason: "Moved." });      // only what changed
+    expect(sent("PATCH", /directory-profiles/)[1].body).toEqual({ changes: { location: "York", description: "Independent advisers helping small firms set prices.", service_tags: ["Strategy"] }, reason: "Moved." });      // only what changed
     fireEvent.click(screen.getByRole("button", { name: "Actions for Northwind Advisory Ltd" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     const ask = screen.getByRole("form", { name: "Archive Northwind Advisory Ltd" });
@@ -1410,6 +1605,54 @@ describe("round N", () => {
     fireEvent.click(screen.getByRole("button", { name: "AI fill: suggest my services" }));
     expect((await screen.findByText(/Services couldn't be suggested just now/)).getAttribute("role")).toBe("alert");
     expect(sent("PATCH", /marketplace-profile$/).length).toBe(0);            // nothing was saved
+  });
+});
+
+describe("QA P2-11: a claim already made", () => {
+  it("the profile says the claim is under review and links to it, instead of offering a new claim", async () => {
+    useAuthStore.setState({ token: "t", email: "me@northwind.test", hydrated: true });
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: { ok: true } }) },
+      { method: "GET", match: /^\/business-claims$/, reply: () => ({ body: { enabled: true, items: [claimOf({ status: "verification_pending", next_step: "pending_review", profile: { ...base } })] } }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    const go = await screen.findAllByRole("button", { name: "Your claim is under review" });
+    expect(screen.queryByRole("button", { name: unclaimed.claim?.cta || "Claim this Business for Free" })).toBeNull();
+    expect(document.querySelector("[data-my-claim]").textContent).toContain("being reviewed");
+    expect(screen.queryByText(/Claim it to control this profile/)).toBeNull();      // no sales pitch while it is reviewed (QA R9)
+    expect(screen.queryByRole("heading", { name: "Is this your business?" })).toBeNull();
+    fireEvent.click(go[0]);
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/marketplace/claim/${base.slug}`));
+  });
+
+  it("on the claim page, someone signed in sees step 1 as done", async () => {
+    useAuthStore.setState({ token: "t", email: "me@northwind.test", hydrated: true });
+    routes = [{ method: "GET", match: /marketplace\/businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "GET", match: /business-claims$/, reply: () => ({ body: { items: [] } }) }];
+    mount(`/marketplace/claim/${base.slug}`, <ClaimFlowPage />, "/marketplace/claim/:slug");
+    const done = await screen.findByText(/^Signed in/);
+    expect(done.closest("li").hasAttribute("data-step-done")).toBe(true);
+    expect(screen.queryByText("Sign in or create an account")).toBeNull();
+  });
+});
+
+describe("QA P3: the public profile", () => {
+  it("says the badge's meaning once, offers Request unlisting, and has a way back to the results", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: unclaimed }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: { ok: true } }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByRole("heading", { name: "Northwind Advisory Ltd" });
+    expect(screen.queryByRole("heading", { name: "About this badge" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Based on public sources/ }));
+    const card = screen.getByRole("note");
+    const sentences = card.textContent.split(/(?<=\.)\s*/).filter(Boolean);
+    expect(new Set(sentences).size).toBe(sentences.length);      // no sentence said twice
+    // QA R9: one sentence about where it came from, not two saying the same thing in different words.
+    expect((card.textContent.match(/public sources/g) || []).length).toBe(1);
+    expect(card.textContent).toContain("has not been confirmed by the business");
+    fireEvent.click(screen.getByRole("button", { name: "Request unlisting" }));
+    expect(screen.getByRole("combobox").value).toBe("unlist");
+    fireEvent.click(document.querySelector("[data-back-to-results]"));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/marketplace?tab=businesses"));
   });
 });
 

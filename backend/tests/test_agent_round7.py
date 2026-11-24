@@ -269,14 +269,16 @@ def test_a_reminder_skipped_at_approval_marks_the_send_step_skipped():
     assert env.comms.sent == []
 
 
-def test_no_customer_email_goes_to_needs_attention_and_can_be_fixed_in_place():
+def test_no_customer_email_goes_to_needs_approval_flagged_and_can_be_fixed_in_place():
+    """QA, 15 Oct: a draft with no address reaches Needs Approval, flagged "Email needed" (never failed or blocked)."""
     from app.modules.agent.summary import bucket_of
     env = Env()
     env.businesses["A"]["data"]["catalogue"]["customers"][0]["email"] = ""
     inv = overdue_invoice(env, customer_email="")
     r = followup(env, inv)["run"]
-    assert r["status"] == "failed" and r["substatus"] == "blocked" and r["reason_code"] == "invalid_customer_destination"
-    assert bucket_of(r) == "needs_attention" and r["summary"] == "BrightTech Ltd has no email on record for INV-inv1. Add it and I'll prepare the reminder."
+    assert r["status"] == "awaiting_approval" and bucket_of(r) == "needs_approval"
+    flagged = env.pending(r)[0]["payload"]
+    assert flagged["to_email"] == "" and flagged["email_needed"]["customer"] == "BrightTech Ltd"
     with pytest.raises(Conflict):
         run(env.orch.fix_customer_email(r["id"], OWNER, "not-an-email"))
     r = run(env.orch.fix_customer_email(r["id"], OWNER, "accounts@brighttech.test"))
@@ -419,17 +421,17 @@ def test_a_blocked_followup_is_reused_not_recreated_and_costs_no_quota():
     env = Env()
     inv = _no_email_invoice(env)
     first = followup(env, inv)["run"]
-    assert first["status"] == "failed" and first["reason_code"] == "invalid_customer_destination"
+    assert first["status"] == "awaiting_approval" and env.pending(first)[0]["payload"]["email_needed"]      # flagged "Email needed" (QA, 15 Oct)
     used = run(env.orch._usage("A"))["monthly_runs"]
     for _ in range(3):
         again = followup(env, inv)
-        assert again["run"]["id"] == first["id"] and again["duplicate"] and "already a task open" in again["message"]
+        assert again["run"]["id"] == first["id"] and again["duplicate"]
     general = env.submit(capability="payment_followup", channel="ui_action")      # "follow up on overdue invoices"
     assert general["run"]["id"] == first["id"] and general["duplicate"]
     runs = run(env.store.list_runs("A"))
     assert len(runs) == 1 and run(env.orch._usage("A"))["monthly_runs"] == used
     from app.modules.agent.summary import bucket_of
-    assert sum(1 for r in runs if bucket_of(r) == "needs_attention") == 1
+    assert sum(1 for r in runs if bucket_of(r) == "needs_approval") == 1
 
 
 def test_fixing_the_email_closes_older_duplicates_and_returns_their_quota():

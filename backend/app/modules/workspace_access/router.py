@@ -16,6 +16,7 @@ from app.modules.workspace_access.service import (
     remove_member,
     revoke_document_share,
     revoke_invitation,
+    set_member_credits,
     update_member,
 )
 from app.shared.auth.deps import get_current_user
@@ -89,6 +90,27 @@ async def update_workspace_member(
 ) -> dict:
     workspace_id = await get_owner_workspace_id(user["id"])
     return await update_member(member_id, workspace_id, payload.permission_type, payload.permissions)
+
+
+@router.get("/seats")
+async def get_workspace_seats(user=Depends(get_current_user)) -> dict:
+    """Seats on the owner's plan: included, extra bought, in use, free, and whether more can be bought."""
+    from app.modules.plans.team import seats
+    return await seats(user["id"])
+
+
+@router.patch("/members/{member_id}/credits")
+async def update_workspace_member_credits(member_id: str, payload: dict, user=Depends(get_current_user)) -> dict:
+    """{"monthly": 200} or {"monthly": null}: the member's monthly allowance from the team's pooled AI credits."""
+    workspace_id = await get_owner_workspace_id(user["id"])
+    monthly = payload.get("monthly")
+    if monthly is not None:
+        try:
+            monthly = int(monthly)
+        except (TypeError, ValueError):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=422, detail="Enter a whole number of credits, or leave it empty for no limit.")
+    return await set_member_credits(member_id, workspace_id, user["id"], monthly)
 
 
 @router.delete("/members/{member_id}", status_code=204, response_class=Response)

@@ -24,6 +24,7 @@ class RequirementIn(BaseModel):
     text: str
     mandatory: bool = False
     weight: int = 1
+    format: str = "text"
 
 
 class ProposalRequestIn(BaseModel):
@@ -39,6 +40,9 @@ class ProposalRequestIn(BaseModel):
     accepted_modes: list[str] = ["general"]
     accepted_categories: list[str] | None = None
     visibility: str = "marketplace"
+    specific_criteria: dict | None = None
+    invited_workspace_ids: list[str] = []
+    invite_emails: list[str] = []
 
 
 class ProposalRequestPatch(BaseModel):
@@ -54,6 +58,9 @@ class ProposalRequestPatch(BaseModel):
     accepted_modes: list[str] | None = None
     accepted_categories: list[str] | None = None
     visibility: str | None = None
+    specific_criteria: dict | None = None
+    invited_workspace_ids: list[str] | None = None
+    invite_emails: list[str] | None = None
 
 
 class ProposalRequestOut(BaseModel):
@@ -83,7 +90,8 @@ class StatusTransitionIn(BaseModel):
 
 class ProposalSubmitIn(BaseModel):
     request_id: str | None = None
-    recipient_workspace_id: str
+    recipient_workspace_id: str | None = None
+    directory_slug: str | None = None      # an RFP the team published for a business that hasn't claimed its profile
     title: str | None = None
     summary: str | None = None
     sections: list[dict] | None = None

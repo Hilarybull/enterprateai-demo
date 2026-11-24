@@ -1,11 +1,16 @@
 import { ContentSkeleton } from "./Skeleton";
+import BackToChat from "./BackToChat";
+import { welcomeWords } from "../lib/creditCopy";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useAuthStore } from "../store/auth";
 import { apiRequest, apiRequestCached, getApiBaseUrl, invalidateWorkspaceCache } from "../api/client";
+import { claimedEntities, myClaims, separateClaim } from "../lib/directory";
+import { alertDialog, confirmDialog } from "../lib/dialog";
 import logoUrl from "../enterprate-logo.png";
-import { useWorkspaceStore } from "../store/workspace";
-import BusinessAssistant from "./BusinessAssistant";
+import { openWorkspace, useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
+import { getAgentSummary } from "../lib/agent";
+import { AgentLauncher } from "./BusinessAssistant";
 import WorkspaceCompletion from "./WorkspaceCompletion";
 import { workspaceCompletion } from "../lib/workspaceCompletion";
 import InviteModal from "./InviteModal";
@@ -14,7 +19,17 @@ import WorkspacePrompt from "./WorkspacePrompt";
 import { WorkspaceProfilePanel } from "./WorkspaceProfileCard";
 import { getAcceptedServiceValidationEntry } from "../lib/acceptedValidation";
 import { hasModuleAccess, isPlatformModuleGranted, isPlatformModuleRestricted } from "../lib/permissions";
-import { planHasModuleAccess, planLabel } from "../lib/plans";
+import { accessLabel, planHasModuleAccess } from "../lib/plans";
+
+// Notifications read "27 Oct 2026" and "£216.00", never "10/27/2026" or "GBP216.00" (QA, 30 Oct)
+const noticeDay = (value) => {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+const noticeMoney = (amount, currency) => {
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(Number(amount) || 0); }
+  catch { return `${currency || ""} ${Number(amount || 0).toFixed(2)}`.trim(); }
+};
 import { TipsPrompt } from "../pages/EmailPreferencesPage";
 import { useDemoTour } from "../context/DemoTourContext";
 
@@ -28,23 +43,15 @@ const NAV = [
   { to: "/operations", label: "Business Operations", subtitle: "Sales, procurement & contracts", icon: "chart", moduleKey: "operations" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
-  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
+  { to: "/catalogue", label: "Master records", subtitle: "Products, customers, vendors & employees", icon: "box", moduleKey: "catalogue" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
+  // On the sidebar; only the landing page's top bar leaves it out (the owner, 2 Nov)
   { to: "/marketplace", label: "Marketplace", subtitle: "Discover businesses", icon: "store", moduleKey: null, public: true },
   { to: "/referrals", label: "Referrals", subtitle: "Earn 5% per referral", icon: "share", moduleKey: null, public: true },
 ];
 
 
-function initialsFromEmail(email) {
-  const e = String(email || "").trim();
-  if (!e) return "U";
-  const name = e.split("@")[0] || "U";
-  const parts = name.split(/[.\-_]+/).filter(Boolean);
-  const first = (parts[0] || name)[0] || "U";
-  const second = (parts[1] || "")[0] || "";
-  return (first + second).toUpperCase();
-}
 
 function Icon({ name, className = "h-4 w-4" }) {
   const base = { className, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2" };
@@ -58,6 +65,13 @@ function Icon({ name, className = "h-4 w-4" }) {
     return (
       <svg {...base}>
         <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    );
+  if (name === "spark")
+    return (
+      <svg {...base}>
+        <path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6z" />
+        <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
       </svg>
     );
   if (name === "grid")
@@ -336,15 +350,17 @@ export default function Layout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifToasts, setNotifToasts] = useState([]);
   useEffect(() => {
+    // One toast host for the app (lib/toast.js): the same id replaces its toast in place; at most 2 are kept.
     function onToast(e) {
-      const { kind, title, message } = e.detail || {};
-      if (!message) return;
-      setNotifToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, kind, title, message }]);
+      const { id, kind, title, message, actions } = e.detail || {};
+      if (!message && !title) return;
+      const next = { id: id || `${Date.now()}-${Math.random()}`, kind, title, message, actions };
+      setNotifToasts((t) => (t.some((x) => x.id === next.id) ? t.map((x) => (x.id === next.id ? next : x)) : [...t, next].slice(-2)));
     }
     window.addEventListener("ea:toast", onToast);
     return () => window.removeEventListener("ea:toast", onToast);
   }, []);
-  // Asked for from anywhere ("Name your business" on the Agent card): the business profile, where its name is.
+  // Asked for from anywhere on the Agent card: the business profile, where its name is.
   useEffect(() => {
     const open = () => setWorkspaceProfileOpen(true);
     window.addEventListener("ea:workspace:profile", open);
@@ -370,6 +386,7 @@ export default function Layout() {
   const [workspaceGateOpen, setWorkspaceGateOpen] = useState(false);
   const [workspaceGateReturn, setWorkspaceGateReturn] = useState("/dashboard");
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
+  const [claimedInWorkspaces, setClaimedInWorkspaces] = useState([]);      // the card's list: businesses claimed into a workspace already there
   const [allWorkspaces, setAllWorkspaces] = useState([]);
   const [switchingId, setSwitchingId] = useState(null);
   const creditBalance = useAuthStore((s) => s.creditBalance);
@@ -418,9 +435,10 @@ export default function Layout() {
   const enableHealthCheck = String(import.meta.env.ENABLE_HEALTH_CHECK ?? "false").toLowerCase() === "true";
   const acceptedAny = decisionStatus === "accepted" || serviceDecisionStatus === "accepted";
   const rejectedAny = decisionStatus === "rejected" || serviceDecisionStatus === "rejected";
+  const userName = useAuthStore((s) => s.name);
   const workspaceDisplayName = isMemberMode
     ? (memberWorkspaceName || "Shared workspace")
-    : (workspaceCompanyName || workspaceName || "My workspace");
+    : (workspaceCompanyName || workspaceName || userName || "My workspace");
   const email = useAuthStore((s) => s.email);
 
 
@@ -435,7 +453,6 @@ export default function Layout() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [workspaceSwitcherOpen]);
 
-  const userName = useAuthStore((s) => s.name);
   const userPicture = useAuthStore((s) => s.picture);
   // If the avatar image fails to load, show the user's initials instead of broken alt text.
   const [avatarFailedSrc, setAvatarFailedSrc] = useState(null);
@@ -445,8 +462,8 @@ export default function Layout() {
   const refreshGrants = useAuthStore((s) => s.refreshGrants);
   const subscription = useAuthStore((s) => s.subscription);
   const profileInitials = userName
-    ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || initialsFromEmail(email))
-    : initialsFromEmail(email);
+    ? (userName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U")
+    : "U";
 
   // Inside the app shell only the content area scrolls. If the browser ever scrolls the
   // page itself (e.g. to bring a focused field into view), put it straight back so the
@@ -585,12 +602,19 @@ export default function Layout() {
     }
 
     fetchCredits();
-    const id = setInterval(fetchCredits, 60000);
+    // One balance everywhere (the owner's QA, 21 Oct: the sidebar said 479 while a price said 454): refreshed every 20 s,
+    // on coming back to the page, and whenever a price or a spend is shown.
+    const id = setInterval(fetchCredits, 20000);
+    const onBack = () => { if (document.visibilityState !== "hidden") fetchCredits(); };
     window.addEventListener("ea:credits:refresh", fetchCredits);
+    window.addEventListener("focus", onBack);
+    document.addEventListener("visibilitychange", onBack);
     return () => {
       cancelled = true;
       clearInterval(id);
       window.removeEventListener("ea:credits:refresh", fetchCredits);
+      window.removeEventListener("focus", onBack);
+      document.removeEventListener("visibilitychange", onBack);
     };
   }, [token]);
 
@@ -628,10 +652,24 @@ export default function Layout() {
         // If user already has a workspace selected, reload that specific one.
         // Only fall back to /me (most-recently-updated) when nothing is pinned.
         const pinnedId = useWorkspaceStore.getState().workspaceId;
-        const ws = pinnedId
-          ? await apiRequestCached(`/validation/${pinnedId}`)
-          : await apiRequestCached("/validation/me");
+        const { ws, lost } = await openWorkspace(pinnedId);
         if (cancelled) return;
+        if (lost) {
+          // The workspace they were in has been closed: carry on in another one, or create a new one.
+          const gone = useWorkspaceStore.getState().workspaceName || "That workspace";
+          useWorkspaceStore.getState().setWorkspaceId(null);
+          if (ws) {
+            window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "info", title: "Workspace closed", message: `${gone} is no longer available on your account. You're now in ${ws.name || "your other workspace"}.` } }));
+          } else {
+            const shared = await apiRequest("/workspace/me/memberships", "GET").catch(() => []);
+            if (cancelled) return;
+            if (Array.isArray(shared) && shared.length > 0) throw new Error("HTTP 404: closed, and a shared workspace is left");
+            setWorkspaceName(null);
+            setWorkspaceLogo(null);
+            navigate("/onboarding?next=%2Fdashboard&workspace_closed=1", { replace: true });
+            return;
+          }
+        }
 
         // First sign-in (or a workspace that was never set up): show the
         // stepped workspace form once. Finishing or skipping it records
@@ -675,8 +713,17 @@ export default function Layout() {
           const newProposals = inboxItems
             .filter((p) => p.status === "SUBMITTED" && !p.viewed_at)
             .map((p) => ({ ...p, _notifType: "proposal" }));
-          setNotifications(visible([...overdueInvoices, ...pendingRfqs, ...newProposals]));
+          setNotifications((had) => visible([...overdueInvoices, ...pendingRfqs, ...newProposals, ...had.filter((n) => n._notifType?.startsWith("agent"))]));
         });
+        // P1.15: what the Agent needs, in the bell too, each opening its Agent Centre tab.
+        getAgentSummary(ws.id).then((sum) => {
+          if (cancelled || !sum) return;
+          const agent = [
+            ...(sum.needs_approval_count ? [{ id: `a${sum.needs_approval_count}`, _notifType: "agent_approval", count: sum.needs_approval_count }] : []),
+            ...(sum.needs_input_count ? [{ id: `i${sum.needs_input_count}`, _notifType: "agent_input", count: sum.needs_input_count }] : []),
+          ];
+          setNotifications((had) => visible([...had.filter((n) => !n._notifType?.startsWith("agent")), ...agent]));
+        }).catch(() => {});
         const status = ws?.data?.decision?.status;
         if (status === "accepted" || status === "rejected") setDecisionStatus(status);
         else setDecisionStatus(null);
@@ -692,10 +739,7 @@ export default function Layout() {
         setDraftIdeaValidation(ws?.data?.draft_idea_validation ?? null);
         if (!acceptedServiceEntry?.payload) setDraftServiceIdea(ws?.data?.draft_service_idea ?? null);
         if (ws?.data?.inputs || ws?.data?.assumptions) setInputs(ws.data.inputs || ws.data.assumptions);
-        const currency =
-          ws?.data?.idea_validation?.context?.currency ||
-          ws?.data?.business_profile?.currency ||
-          ws?.data?.business_context?.currency;
+        const currency = workspaceCurrencyOf(ws?.data);
         if (currency) setCurrency(currency);
         refreshWorkspaceData(); // signal data-dependent pages (e.g. Dashboard) to re-fetch
       } catch (e) {
@@ -753,7 +797,7 @@ export default function Layout() {
   const filteredNav = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
     const visibleNav = IS_LIVE ? NAV.filter((i) => !i.hideOnLive) : NAV;
-    const base = !q ? visibleNav : visibleNav.filter((i) => `${i.label} ${i.subtitle}`.toLowerCase().includes(q));
+    const base = !q ? visibleNav : visibleNav.filter((i) => `${i.label} ${i.subtitle} ${i.keywords || ""}`.toLowerCase().includes(q));
     return base.map((item) => {
       if (item.public) return { ...item, locked: false, planLocked: false };
       const planLocked = !planHasModuleAccess(
@@ -800,6 +844,43 @@ export default function Layout() {
   const isCreateWorkspaceRoute =
     location.pathname === "/validation" &&
     new URLSearchParams(location.search).get("from") === "module";
+
+  const switchToWorkspace = (ws) => {
+    if (!ws || ws.id === workspaceId) { setWorkspaceSwitcherOpen(false); return; }
+    setSwitchingId(ws.id);
+    try {
+      setWorkspaceId(ws.id);
+      setWorkspaceName(ws.name || null);
+      setWorkspaceLogo(ws.data?.workspace_profile?.logo_data_url || null);
+      setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
+      setDecisionStatus(ws.data?.decision_status || null);
+      setServiceDecisionStatus(ws.data?.service_decision_status || null);
+      setCurrency(workspaceCurrencyOf(ws.data) || null);
+      clearMemberMode();
+      invalidateWorkspaceCache();
+      window.dispatchEvent(new Event("ea:workspace:refresh"));
+    } finally {
+      setSwitchingId(null);
+      setWorkspaceSwitcherOpen(false);
+    }
+  };
+
+  // A business claimed into another workspace has nothing to switch to until it has its own.
+  const giveOwnWorkspace = async (c) => {
+    setWorkspaceSwitcherOpen(false);
+    const yes = await confirmDialog(`${c.name} gets its own workspace to switch to, and its profile, services and unanswered requests move there. ${c.inside} keeps its own records, and any request it has already answered.`,
+      { title: `Give ${c.name} its own workspace?`, confirmLabel: "Create workspace" });
+    if (!yes) return;
+    try {
+      const made = await separateClaim(c.id);
+      invalidateWorkspaceCache();
+      switchToWorkspace(await apiRequest(`/validation/${made.business_id}`, "GET"));
+      setMobileOpen(false);
+      navigate("/dashboard");
+    } catch (e) {
+      alertDialog(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : "That couldn't be done just now. Nothing was changed.");
+    }
+  };
 
   const Sidebar = (
     <aside className="flex h-full min-h-0 w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950 lg:w-[260px] lg:max-w-none xl:w-[320px] xl:px-5">
@@ -851,7 +932,7 @@ export default function Layout() {
         ))}
       </nav>
 
-      <div data-tour="workspace-panel" className="mt-3 max-h-[45%] shrink-0 overflow-y-auto rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800">
+      <div data-tour="workspace-panel" className={`mt-3 shrink-0 ${workspaceSwitcherOpen ? "" : "max-h-[45%] overflow-y-auto"} rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 dark:bg-slate-900/70 dark:ring-slate-800`}>
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
             {isMemberMode ? "Shared workspace" : "Workspace"}
@@ -880,9 +961,10 @@ export default function Layout() {
               }
               if (workspaceSwitcherOpen) { setWorkspaceSwitcherOpen(false); return; }
               try {
-                const list = await apiRequest("/validation/list", "GET");
+                const [list, claims] = await Promise.all([apiRequest("/validation/list", "GET"), myClaims().catch(() => null)]);
                 setAllWorkspaces(list || []);
-              } catch { setAllWorkspaces([]); }
+                setClaimedInWorkspaces(claimedEntities(claims?.items, list));
+              } catch { setAllWorkspaces([]); setClaimedInWorkspaces([]); }
               setWorkspaceSwitcherOpen(true);
             }}
             className="flex min-w-0 flex-1 items-center justify-between gap-1 text-left text-base font-semibold text-slate-900 dark:text-slate-100 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
@@ -896,7 +978,7 @@ export default function Layout() {
             <WorkspaceCompletion completion={completion} onClick={() => setMobileOpen(false)} />
           )}
           {workspaceSwitcherOpen && (
-            <div className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900 overflow-hidden">
+            <div data-workspace-list className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
               {allWorkspaces.length === 0 && (
                 <div className="px-3 py-2 text-[12px] text-slate-400">No workspaces found</div>
               )}
@@ -908,25 +990,7 @@ export default function Layout() {
                     key={ws.id}
                     type="button"
                     disabled={switchingId != null}
-                    onClick={async () => {
-                      if (isActive) { setWorkspaceSwitcherOpen(false); return; }
-                      setSwitchingId(ws.id);
-                      try {
-                        setWorkspaceId(ws.id);
-                        setWorkspaceName(ws.name || null);
-                        setWorkspaceLogo(ws.data?.workspace_profile?.logo_data_url || null);
-                        setWorkspaceCompanyName(ws.data?.workspace_profile?.company_name || null);
-                        setDecisionStatus(ws.data?.decision_status || null);
-                        setServiceDecisionStatus(ws.data?.service_decision_status || null);
-                        setCurrency(ws.data?.currency || "GBP");
-                        clearMemberMode();
-                        invalidateWorkspaceCache();
-                        window.dispatchEvent(new Event("ea:workspace:refresh"));
-                      } finally {
-                        setSwitchingId(null);
-                        setWorkspaceSwitcherOpen(false);
-                      }
-                    }}
+                    onClick={() => switchToWorkspace(ws)}
                     className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800 ${isActive ? "bg-brand-50 dark:bg-brand-900/20" : ""}`}
                   >
                     <span className={`flex-1 truncate font-medium ${isActive ? "text-brand-700 dark:text-brand-400" : "text-slate-700 dark:text-slate-300"}`}>{name}</span>
@@ -935,6 +999,15 @@ export default function Layout() {
                   </button>
                 );
               })}
+              {claimedInWorkspaces.length > 0 && <p className="border-t border-slate-100 px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800">Claimed businesses</p>}
+              {claimedInWorkspaces.map((c) => (
+                <button key={c.id} type="button" disabled={switchingId != null} data-claimed-entity
+                  onClick={() => giveOwnWorkspace(c)}
+                  className="flex w-full flex-col px-3 py-2 text-left text-[13px] transition hover:bg-slate-50 dark:hover:bg-slate-800">
+                  <span className="w-full truncate font-medium text-slate-700 dark:text-slate-300">{c.name}</span>
+                  <span className="w-full truncate text-[11px] text-slate-500">in {c.inside}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -974,8 +1047,8 @@ export default function Layout() {
                       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2Z" />
                     </svg>
                     {platformGrants.length > 0 && ["free_trial", "explorer", "expired", ""].includes(subscription?.plan_key ?? "")
-                      ? "Privileged"
-                      : planLabel(subscription?.plan_key, subscription?.status)}
+                      ? "Explorer + extra access"
+                      : accessLabel(subscription)}
                   </button>
                   {platformGrants.length === 0 && (!subscription?.plan_key || ["free_trial", "explorer"].includes(subscription.plan_key)) && (
                     <button
@@ -989,6 +1062,16 @@ export default function Layout() {
                 </>
               )}
             </div>
+            {/* A paid plan that ended with no renewal, said plainly with the way back (the owner, 31 Oct: "the plan didn't
+                expire, no notification") */}
+            {subscription?.lapsed_plan_key && (
+              <p className="mt-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:bg-amber-900/20 dark:text-amber-200" data-plan-lapsed>
+                Your {accessLabel({ plan_key: subscription.lapsed_plan_key, status: "active" })} plan ended
+                {subscription.lapsed_at ? ` on ${new Date(subscription.lapsed_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""} as no payment came through.
+                Your work is all kept.{" "}
+                <button type="button" onClick={() => navigate("/pricing")} className="font-semibold underline">Renew it</button>
+              </p>
+            )}
             <button
               type="button"
               onClick={() => navigate("/credits")}
@@ -1006,7 +1089,7 @@ export default function Layout() {
                   : <span className="inline-block h-3.5 w-16 rounded bg-brand-200 dark:bg-slate-600 animate-pulse" />}
               </div>
               {creditInfo?.plan_code === "explorer" && platformGrants.length === 0 && (
-                <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5">Free trial allocation</div>
+                <div className="text-[10px] text-brand-400 dark:text-brand-500 mt-0.5" data-welcome-credits>{welcomeWords(creditInfo)}</div>
               )}
             </button>
             {showInviteUpgrade ? (
@@ -1069,7 +1152,7 @@ export default function Layout() {
         ) : null}
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
             {/* Sandbox mode banner */}
             {isDemoUser && (
               <div className="flex items-center justify-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-[11.5px] font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300">
@@ -1365,7 +1448,9 @@ export default function Layout() {
                     <div className="max-h-80 overflow-auto">
                       {notifications.length ? (
                         notifications.map((notif) => {
-                          const destination = notif._notifType === "overdue"
+                          const destination = notif._notifType === "agent_approval" ? "/agent?tab=approval"
+                            : notif._notifType === "agent_input" ? "/agent?tab=needs-you"
+                            : notif._notifType === "overdue"
                             ? `/operations?tab=Sales&sub=Invoices`
                             : notif._notifType === "rfq"
                             ? `/operations?tab=Sales&sub=Quotations`
@@ -1380,18 +1465,21 @@ export default function Layout() {
                                 navigate(destination);
                               }}
                             >
-                              {notif._notifType === "overdue" ? (
+                              {notif._notifType?.startsWith("agent") ? (
+                                <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100" data-agent-notification>
+                                  {notif._notifType === "agent_approval" ? `${notif.count} waiting for your approval` : `${notif.count} task${notif.count === 1 ? "" : "s"} need${notif.count === 1 ? "s" : ""} your answer`}</span>
+                              ) : notif._notifType === "overdue" ? (
                                 <>
                                   <div className="flex w-full items-center justify-between gap-2">
                                     <span className="text-[12px] font-semibold text-slate-800 dark:text-slate-100">{notif.customer_name || "Invoice"}</span>
                                     <span className="shrink-0 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">Overdue</span>
                                   </div>
                                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                                    Invoice overdue since {new Date(notif.due_date).toLocaleDateString()}
+                                    Invoice overdue since {noticeDay(notif.due_date)}
                                   </span>
                                   {notif.total_amount != null && (
                                     <span className="text-[10px] text-slate-400">
-                                      {notif.currency || ""}{Number(notif.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {noticeMoney(notif.total_amount, notif.currency)}
                                     </span>
                                   )}
                                 </>
@@ -1405,7 +1493,7 @@ export default function Layout() {
                                   {notif.items?.length > 0 && (
                                     <span className="w-full truncate text-[10px] text-slate-400">{notif.items.map((i) => i.name).join(", ")}</span>
                                   )}
-                                  <span className="text-[10px] text-slate-400">{notif.created_at ? new Date(notif.created_at).toLocaleDateString() : ""}</span>
+                                  <span className="text-[10px] text-slate-400">{notif.created_at ? noticeDay(notif.created_at) : ""}</span>
                                 </>
                               ) : (
                                 <>
@@ -1414,7 +1502,7 @@ export default function Layout() {
                                     <span className="shrink-0 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">Proposal</span>
                                   </div>
                                   <span className="text-[11px] text-slate-500 dark:text-slate-400">{notif.request_title || notif.title || "General Proposal"}</span>
-                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? new Date(notif.submitted_at).toLocaleDateString() : ""}</span>
+                                  <span className="text-[10px] text-slate-400">{notif.submitted_at ? noticeDay(notif.submitted_at) : ""}</span>
                                 </>
                               )}
                             </button>
@@ -1551,7 +1639,7 @@ export default function Layout() {
                     <>
                       <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Upgrade to unlock this module</h2>
                       <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-                        This feature isn't included in your current plan (<strong>{planLabel(subscription?.plan_key, subscription?.status)}</strong>).
+                        This feature isn't included in your current plan (<strong>{accessLabel(subscription)}</strong>).
                         Upgrade to access it.
                       </p>
                       <div className="mt-6 flex gap-3">
@@ -1588,7 +1676,7 @@ export default function Layout() {
                   )}
                 </div>
               ) : workspaceChecked ? (
-                <><Outlet /><TipsPrompt /></>
+                <><BackToChat /><Outlet /><TipsPrompt /></>
               ) : (
                 <ContentSkeleton />
               )}
@@ -1598,7 +1686,8 @@ export default function Layout() {
               the Agent Centre). It is the same Agent either way.
           <BusinessAssistant />
           */}
-          {!["/dashboard", "/agent"].some((p) => location.pathname === p || location.pathname.startsWith(`${p}/`)) && <BusinessAssistant />}
+          {/* The floating button opens the Agent Centre, the one general chat (the owner, 27 Oct) */}
+          <AgentLauncher />
         </main>
       </div>
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
@@ -1616,3 +1705,4 @@ export default function Layout() {
     </div>
   );
 }
+

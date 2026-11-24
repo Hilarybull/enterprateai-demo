@@ -1,0 +1,83 @@
+{
+ "Please change who owns customer acquisition to Hilary": {
+  "kind": "answer",
+  "message": "Updated Who owns customer acquisition: Not set → Hilary.",
+  "actions": [
+   {
+    "label": "Undo",
+    "kind": "explain",
+    "prompt": "Undo"
+   }
+  ],
+  "conversational": true,
+  "changed": [
+   "updated"
+  ],
+  "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1"
+ },
+ "Apply": {
+  "kind": "answer",
+  "message": "I couldn't write an answer just now. Nothing was charged; please ask again."
+ },
+ "any loan or grant that i can apply to at the moment?": {
+  "kind": "answer",
+  "message": "I'll search for programmes, lenders and investors that fit your case (its country, kind of funding, amount and sector), each with its source. This one is free. Shall I start?",
+  "actions": [
+   {
+    "label": "Search",
+    "kind": "explain",
+    "prompt": "Yes, start"
+   },
+   {
+    "label": "Not now",
+    "kind": "explain",
+    "prompt": "Not now"
+   }
+  ],
+  "conversational": true,
+  "cards": [
+   {
+    "type": "choose",
+    "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1",
+    "price": 0,
+    "topics": [
+     "Equity schemes (United Kingdom)"
+    ],
+    "reuse": false,
+    "options": true
+   }
+  ]
+ },
+ "ready now?": {
+  "kind": "answer",
+  "message": "I'll research market size and growth (United Kingdom), equity schemes (United Kingdom) and monthly fixed costs for your case, and draft what I can. This one is free. Shall I start?",
+  "actions": [
+   {
+    "label": "Start",
+    "kind": "explain",
+    "prompt": "Yes, start"
+   },
+   {
+    "label": "Not now",
+    "kind": "explain",
+    "prompt": "Not now"
+   }
+  ],
+  "conversational": true,
+  "cards": [
+   {
+    "type": "choose",
+    "case_id": "8e3b0fbb-dbe3-4718-8dbb-716f1b2ed1e1",
+    "price": 0,
+    "topics": [
+     "Market size and growth (United Kingdom)",
+     "Equity schemes (United Kingdom)",
+     "Monthly fixed costs",
+     "Sales a month"
+    ],
+    "reuse": false,
+    "fixed": true
+   }
+  ]
+ }
+}

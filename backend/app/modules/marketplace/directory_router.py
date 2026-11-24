@@ -65,6 +65,40 @@ class LookupIn(BaseModel):
     website: str | None = Field(default=None, max_length=200)
 
 
+class IndexFillIn(BaseModel):
+    field: str = Field(default="description", max_length=20)
+    record: dict[str, Any]
+
+
+class HeldRequestIn(BaseModel):
+    kind: str = Field(default="enquiry", max_length=20)
+    name: str = Field(max_length=120)
+    email: str = Field(max_length=200)
+    company: str | None = Field(default=None, max_length=200)
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    details: str = Field(default="", max_length=2000)
+    needed_by: str | None = Field(default=None, max_length=40)
+    title: str | None = Field(default=None, max_length=200)      # a proposal's title
+    request_id: str | None = Field(default=None, max_length=64)      # the RFP it answers
+
+
+class HeldProposalsIn(BaseModel):
+    enabled: bool
+
+
+class TeamRfpIn(BaseModel):
+    title: str = Field(max_length=200)
+    description: str = Field(max_length=2000)
+    budget_range: str | None = Field(default=None, max_length=80)
+    budget_currency: str | None = Field(default=None, max_length=3)
+    deadline: str | None = Field(default=None, max_length=40)
+    requirements: list[str] = Field(default_factory=list, max_length=20)
+
+
+class TeamMemberIn(BaseModel):
+    email: str = Field(max_length=200)
+
+
 class VisibilityIn(BaseModel):
     unclaimed_visibility: str = Field(max_length=20)
 
@@ -163,6 +197,14 @@ class ModerateIn(BaseModel):
     reason: str = Field(max_length=2000)
 
 
+class AddProfileViewsIn(BaseModel):
+    additional_views: int = Field(gt=0, le=1_000_000)
+
+
+class SetProfileViewsIn(BaseModel):
+    total_views: int = Field(ge=0, le=1_000_000)
+
+
 class InvitationIn(BaseModel):
     by_hand: bool = False      # a link the moderator copies to pass on personally: nothing is sent
     reason: str = "profile_control"
@@ -171,6 +213,15 @@ class InvitationIn(BaseModel):
 
 
 # ── public discovery ──────────────────────────────────────────────────────────
+
+@router.get("/marketplace/business-suggestions")
+async def business_suggestions(q: str = Query(default="", max_length=120), company_number: str = Query(default="", max_length=80),
+                               website: str = Query(default="", max_length=200)):
+    """As someone types a name, registered number, or website: public matching profiles only."""
+    if not enabled():
+        return {"items": []}
+    return {"items": await _run(get_service().suggest_names(q, company_number=company_number, website=website))}
+
 
 @router.get("/marketplace/businesses")
 async def search_businesses(q: str = Query(default="", max_length=120), category: str = Query(default="", max_length=80),
@@ -191,7 +242,8 @@ def _via(invite: str = Query(default="", max_length=200), access: str = Query(de
 async def claim_lookup(body: LookupIn, request: Request, user=Depends(get_optional_user)):
     """Find and claim your business: an exact name with its company number or website. Limited per caller."""
     _on()
-    client = f"user:{user['id']}" if user else f"ip:{request.client.host if request.client else 'unknown'}"
+    from app.shared.limits import client_ip
+    client = f"user:{user['id']}" if user else f"ip:{client_ip(request)}"
     return await _run(get_service().find_to_claim(name=body.name, company_number=body.company_number or "", website=body.website or "", client=client))
 
 
@@ -214,9 +266,11 @@ async def read_business(ref: str, user=Depends(get_optional_user), via: dict = D
 
 
 @router.post("/marketplace/businesses/{ref}/view", status_code=202)
-async def record_view(ref: str, user=Depends(get_optional_user), via: dict = Depends(_via)):
+async def record_view(ref: str, request: Request, user=Depends(get_optional_user), via: dict = Depends(_via)):
     _on()
-    await _run(get_service().record_view(ref, user, via))
+    from app.shared.limits import client_ip
+    visitor = f"user:{user['id']}" if user else f"ip:{client_ip(request)}"      # one visit per visitor a day; only a hash is kept
+    await _run(get_service().record_view(ref, user, via, visitor))
     return {"ok": True}
 
 
@@ -225,6 +279,31 @@ async def report_business(ref: str, body: ReportIn, user=Depends(get_optional_us
     """Correct a profile or ask for it to be unlisted. No account or claim is needed."""
     _on()
     return await _run(get_service().report(ref, kind=body.kind, message=body.message, reporter_email=body.email, viewer=user, via=via))
+
+
+@router.post("/marketplace/businesses/{ref}/requests", status_code=201)
+async def leave_a_request(ref: str, body: HeldRequestIn, request: Request, user=Depends(get_optional_user), via: dict = Depends(_via)):
+    """A quote or a question for a business that hasn't claimed its profile. No account is needed. Kept until a claim is verified."""
+    from app.shared.limits import client_ip, hit
+    from app.shared.turnstile import require_human
+    _on()
+    if not user:
+        await require_human(request)
+    if not hit(f"held-request:{client_ip(request)}", 20, 3600):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"code": "rate_limited", "message": "That's been tried too many times. Please wait a while and try again."})
+    sender_workspace_id = None
+    if user:
+        try:
+            from app.modules.idea_validation.service import get_user_workspace
+            mine = await get_user_workspace(user_id=user["id"])
+            sender_workspace_id = str(mine.get("id", "") if isinstance(mine, dict) else mine.id) if mine else None
+        except Exception:      # noqa: BLE001 - their own copy is a convenience; the request still goes in
+            sender_workspace_id = None
+    saved = await _run(get_service().hold_request(ref, body.model_dump(), viewer=user, via=via, sender_workspace_id=sender_workspace_id))
+    if saved.pop("new") and user and sender_workspace_id and body.kind != "proposal":
+        from app.modules.marketplace.service import note_sent_request
+        await note_sent_request(user["id"], sender_workspace_id, saved["id"], saved["business_name"], body.items or [{"name": "A question", "quantity": 1, "notes": None}], body.details or None)
+    return saved
 
 
 @router.post("/marketplace/directory-profiles/{ref}/claim-intents", status_code=201)
@@ -346,6 +425,30 @@ async def _write_with_ai(user_id: str, prompt: str) -> str:
     return str((result or {}).get("suggestion") or (result or {}).get("text") or "")
 
 
+async def _write_for_the_team(user_id: str, prompt: str) -> str:
+    """The same writing for EnterprateAI's own team, who are not spending a business's credits."""
+    from app.modules.idea_validation.market_research_service import _call_claude, _call_openai
+    try:
+        result = await _call_claude(prompt, user_id=user_id, feature="suggest_field")
+    except Exception:      # noqa: BLE001 - the second provider is the fallback
+        result = await _call_openai(prompt, user_id=user_id, feature="suggest_field")
+    return str((result or {}).get("suggestion") or (result or {}).get("text") or "")
+
+
+@router.post("/admin/marketplace/directory/suggest-description")
+async def suggest_index_description(body: IndexFillIn, user=Depends(get_current_user)):
+    """AI fill on the team's add and edit forms. Nothing is saved; the words go into the form."""
+    from app.shared import limits
+    _on()
+    svc = get_service()
+    if not await svc.can_moderate(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not available.")
+    if not limits.hit(f"index-ai:{user['id']}", 60, 3600):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"code": "rate_limited", "message": "That's been tried too many times. Please wait a while and try again."})
+    fill = svc.suggest_index_services if body.field == "service_tags" else svc.suggest_index_description
+    return await _run(fill(user, body.record, lambda prompt: _write_for_the_team(user["id"], prompt)))
+
+
 @router.post("/businesses/{business_id}/marketplace-profile/suggest-description")
 async def suggest_marketplace_description(business_id: str, body: DescribeIn | None = None, user=Depends(get_current_user)):
     """AI fill for the public description. Returns words for the form; nothing is saved or published."""
@@ -387,7 +490,32 @@ async def answer_possible_duplicate(business_id: str, body: DuplicateAnswerIn, u
 @router.get("/admin/marketplace/access")
 async def moderator_access(user=Depends(get_current_user)):
     """Whether the caller may use the moderation tools (so the page can say so rather than fail)."""
-    return {"moderator": enabled() and dir_mod.DirectoryService.is_admin(user)}
+    if not enabled():
+        return {"moderator": False}
+    if dir_mod.DirectoryService.is_admin(user):
+        return {"moderator": True}
+    if await get_service().is_team_member(user):
+        return {"moderator": True, "team": True}
+    return {"moderator": False}
+
+
+@router.get("/admin/marketplace/team")
+async def read_team(user=Depends(get_current_user)):
+    """The internal team who add and manage profiles for claiming. Only the administrator sees and changes it."""
+    _on()
+    return await _run(get_service().team(user))
+
+
+@router.post("/admin/marketplace/team")
+async def add_team_member(body: TeamMemberIn, user=Depends(get_current_user)):
+    _on()
+    return await _run(get_service().add_team_member(user, body.email))
+
+
+@router.delete("/admin/marketplace/team/{email}")
+async def remove_team_member(email: str, user=Depends(get_current_user)):
+    _on()
+    return await _run(get_service().remove_team_member(user, email))
 
 
 @router.get("/admin/marketplace/settings")
@@ -422,6 +550,31 @@ async def normalise_locations(user=Depends(get_current_user)):
 @router.get("/admin/marketplace/claims")
 async def review_queue(status_: str = Query(default="pending", alias="status"), user=Depends(get_current_user)):
     return await _run(get_service().review_queue(user, status_))
+
+
+@router.get("/admin/marketplace/decisions")
+async def decisions(user=Depends(get_current_user)):
+    return await _run(get_service().decisions(user))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/views")
+async def add_profile_views(ref: str, body: AddProfileViewsIn, user=Depends(get_current_user)):
+    return await _run(get_service().add_profile_views(user, ref, body.additional_views))
+
+
+@router.put("/admin/marketplace/directory-profiles/{ref}/views")
+async def set_profile_views(ref: str, body: SetProfileViewsIn, user=Depends(get_current_user)):
+    return await _run(get_service().set_profile_views(user, ref, body.total_views))
+
+
+@router.post("/business-claims/{claim_id}/separate")
+async def separate_claim(claim_id: str, user=Depends(get_current_user)):
+    return await _run(get_service().separate_claim(user, claim_id))
+
+
+@router.post("/business-claims/{claim_id}/restore-workspace")
+async def restore_workspace(claim_id: str, user=Depends(get_current_user)):
+    return await _run(get_service().restore_workspace(user, claim_id))
 
 
 @router.post("/business-claims/{claim_id}/review-decision")
@@ -480,6 +633,33 @@ async def review_listing(ref: str, body: ListingReviewIn, user=Depends(get_curre
     return await _run(get_service().review_listing(user, ref, decision=body.decision, reason=body.reason))
 
 
+@router.get("/admin/marketplace/directory-profiles/{ref}/requests")
+async def waiting_requests(ref: str, user=Depends(get_current_user)):
+    return await _run(get_service().waiting_requests(user, ref))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/proposals-open")
+async def held_proposals_open(ref: str, body: HeldProposalsIn, user=Depends(get_current_user)):
+    """Open (or close) a profile nobody has claimed for proposals. Changes are kept in the directory's event log."""
+    return await _run(get_service().set_held_proposals(user, ref, body.enabled))
+
+
+@router.get("/admin/marketplace/directory-profiles/{ref}/rfps")
+async def profile_rfps(ref: str, user=Depends(get_current_user)):
+    return await _run(get_service().profile_rfps(user, ref))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/rfps", status_code=201)
+async def publish_rfp(ref: str, body: TeamRfpIn, user=Depends(get_current_user)):
+    """Publish a request for proposals on behalf of a business that hasn't claimed its profile."""
+    return await _run(get_service().publish_rfp(user, ref, body.model_dump()))
+
+
+@router.post("/admin/marketplace/directory-profiles/{ref}/rfps/{rfp_id}/close")
+async def close_rfp(ref: str, rfp_id: str, user=Depends(get_current_user)):
+    return await _run(get_service().close_rfp(user, ref, rfp_id))
+
+
 @router.get("/admin/marketplace/directory-profiles/{ref}/sources")
 async def profile_sources(ref: str, user=Depends(get_current_user)):
     return await _run(get_service().profile_sources(user, ref))
@@ -494,3 +674,39 @@ async def moderate_profile(ref: str, body: ModerateIn, user=Depends(get_current_
 @router.get("/admin/marketplace/funnel")
 async def funnel(user=Depends(get_current_user)):
     return await _run(get_service().funnel(user))
+
+
+# ── the Marketplace's own timed jobs: the Monday reminders, and workspaces closed by a revocation (deleted after 30 days) ──
+
+_sweep_task = None
+
+
+async def _sweep_loop(interval_s: int) -> None:
+    import asyncio
+    import logging
+    runs = 0
+    while True:
+        try:
+            await get_service().send_claim_reminders(pause=0.6)
+            if runs % 72 == 0:      # about every six hours
+                await get_service().sweep_closed_workspaces()
+            runs += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:      # noqa: BLE001 - tried again next run; tables not set up on this server land here too
+            logging.getLogger(__name__).warning("Marketplace timed job failed: %s", e)
+        await asyncio.sleep(interval_s)
+
+
+def start_workspace_sweep(interval_s: int = 300) -> None:
+    import asyncio
+    global _sweep_task
+    if _sweep_task is None or _sweep_task.done():
+        _sweep_task = asyncio.get_event_loop().create_task(_sweep_loop(interval_s))
+
+
+def stop_workspace_sweep() -> None:
+    global _sweep_task
+    if _sweep_task and not _sweep_task.done():
+        _sweep_task.cancel()
+    _sweep_task = None

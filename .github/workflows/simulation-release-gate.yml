@@ -1,0 +1,76 @@
+# Simulation release gate (docs/simulation-audit/11-phase7-changes.md): every change to the simulation must pass it.
+name: Simulation release gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/modules/scenario_intelligence/**"
+      - "backend/app/modules/agent/figures.py"
+      - "backend/app/modules/agent/chat_actions.py"
+      - "backend/app/engines/**"
+      - "backend/app/modules/idea_validation/**"
+      - "backend/app/modules/business_assistant/service.py"
+      - "frontend/src/pages/Simulation*"
+      - "frontend/src/lib/financialIntelligence*"
+      - "frontend/src/lib/contracts/**"
+      - "frontend/src/lib/narratives/**"
+      - "frontend/src/components/admin/SimulationAccuracyAdmin*"
+      - "backend/tests/test_simulation_*.py"
+      - "docs/simulation-audit/**"
+      - "scripts/simulation_release_gate.py"
+  push:
+    branches: [main]
+    paths:
+      - "backend/app/modules/scenario_intelligence/**"
+      - "backend/app/modules/agent/figures.py"
+      - "backend/app/modules/agent/chat_actions.py"
+      - "backend/app/engines/**"
+      - "backend/app/modules/idea_validation/**"
+      - "backend/app/modules/business_assistant/service.py"
+      - "frontend/src/pages/Simulation*"
+      - "frontend/src/lib/financialIntelligence*"
+      - "frontend/src/lib/contracts/**"
+      - "frontend/src/lib/narratives/**"
+      - "frontend/src/components/admin/SimulationAccuracyAdmin*"
+      - "backend/tests/test_simulation_*.py"
+      - "docs/simulation-audit/**"
+      - "scripts/simulation_release_gate.py"
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install backend and test tools
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run the release gate
+        env:
+          ENVIRONMENT: test
+        run: python scripts/simulation_release_gate.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Check simulation screens and reports
+        working-directory: frontend
+        run: npm test -- src/pages/SimulationImpact.test.js src/pages/SimulationFirstRun.test.jsx src/pages/SimulationPhase5.test.js src/pages/SimulationPhase6.test.jsx src/lib/SimulationReport.test.js src/lib/financialIntelligence.runrate.test.js src/components/admin/SimulationAccuracyAdmin.test.jsx
+      - name: Build the app
+        working-directory: frontend
+        run: npm run build

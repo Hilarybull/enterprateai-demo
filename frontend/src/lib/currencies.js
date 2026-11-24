@@ -48,6 +48,7 @@ export function getCurrencySymbol(code) {
   try {
     return (0).toLocaleString("en", {
       style: "currency",
+      currencyDisplay: "narrowSymbol",
       currency: c,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,

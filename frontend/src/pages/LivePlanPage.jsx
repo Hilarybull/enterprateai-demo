@@ -1,3 +1,6 @@
+import { safeHtml } from "../lib/safeHtml";
+import { formatCurrency } from "../lib/format";
+import { refusalMessage } from "../lib/entitlement";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest, getApiBaseUrl } from "../api/client";
@@ -138,12 +141,12 @@ export default function BusinessPlanPage() {
         setPlanMissing(true);
       } else {
         if (message.includes("FEATURE_NOT_ENTITLED")) {
-          if (!hasBlueprintGrant) setError("Upgrade to the Decision Engine plan to create a live business plan.");
+          if (!hasBlueprintGrant) setError(refusalMessage(err, "Live Business Plan Intelligence is included from the Decision Engine plan."));
         } else if (message.includes("NETWORK_ERROR")) {
           setError("Network error - please try again.");
           setShowLivePlanWorkspace(true);
         } else {
-          setError(message.replace(/^HTTP \d+:\s*/, ""));
+          setError(refusalMessage(err, message.replace(/^HTTP \d+:\s*/, "")));
           setShowLivePlanWorkspace(true);
         }
       }
@@ -174,11 +177,11 @@ export default function BusinessPlanPage() {
     } catch (err) {
       const message = String(err?.message || "");
       if (message.includes("FEATURE_NOT_ENTITLED")) {
-        setError("Your account is not entitled to create a live business plan. Ask the admin to grant Blueprint access.");
+        setError(refusalMessage(err, "Live Business Plan Intelligence is included from the Decision Engine plan."));
       } else if (message.includes("NETWORK_ERROR")) {
         setError("Network error - please try again.");
       } else {
-        setError(message.replace(/^HTTP \d+:\s*/, ""));
+        setError(refusalMessage(err, message.replace(/^HTTP \d+:\s*/, "")));
       }
     } finally {
       setCreating(false);
@@ -459,7 +462,7 @@ export default function BusinessPlanPage() {
                       {(previewData.extracted?.unique_value_proposition || previewData.extracted?.description || previewData.extracted?.business_description) && (
                         <div
                           className="mt-1.5 text-xs text-slate-600 line-clamp-3"
-                          dangerouslySetInnerHTML={{ __html: markdownToHtml(previewData.extracted.unique_value_proposition || previewData.extracted.description || previewData.extracted.business_description) }}
+                          dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(previewData.extracted.unique_value_proposition || previewData.extracted.description || previewData.extracted.business_description)) }}
                         />
                       )}
                     </div>
@@ -591,7 +594,7 @@ export default function BusinessPlanPage() {
                         {aMap.products_services.map((p, i) => {
                           const name = typeof p === "string" ? p : (p?.name || "");
                           const price = typeof p === "object"
-                            ? (p?.price_label || (p?.unit_price != null ? `£${Number(p.unit_price).toLocaleString()}` : null) || (p?.base_price != null ? `£${Number(p.base_price).toLocaleString()}` : null))
+                            ? (p?.price_label || (p?.unit_price != null ? formatCurrency(Number(p.unit_price), p?.currency || useWorkspaceStore.getState().currency || "GBP") : null) || (p?.base_price != null ? formatCurrency(Number(p.base_price), p?.currency || useWorkspaceStore.getState().currency || "GBP") : null))
                             : null;
                           return (
                             <div key={i} className="flex items-center justify-between gap-2 text-xs">
@@ -655,7 +658,7 @@ export default function BusinessPlanPage() {
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-600">Key Assumptions</div>
                       <ul className="space-y-0.5 pl-3 list-disc text-xs text-slate-700 marker:text-amber-400">
                         {aMap.key_assumptions.slice(0, 4).map((a, i) => (
-                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: markdownToHtml(String(a)) }} />
+                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(String(a))) }} />
                         ))}
                       </ul>
                     </div>
@@ -667,7 +670,7 @@ export default function BusinessPlanPage() {
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-600">Main Risks</div>
                       <ul className="space-y-0.5 pl-3 list-disc text-xs text-slate-700 marker:text-rose-400">
                         {aMap.main_risks.slice(0, 3).map((r, i) => (
-                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: markdownToHtml(String(r)) }} />
+                          <li key={i} className="leading-snug" dangerouslySetInnerHTML={{ __html: safeHtml(markdownToHtml(String(r))) }} />
                         ))}
                       </ul>
                     </div>

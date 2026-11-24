@@ -1,4 +1,6 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { CardIcon, ActionMenu } from "../components/MasterRecordUI";
+import EmployeeRecords from "../components/EmployeeRecords";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useRef } from "react";
 import html2pdf from "html2pdf.js";
@@ -75,6 +77,7 @@ export default function CataloguePage() {
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const refreshWorkspaceData = useWorkspaceStore((s) => s.refreshWorkspaceData);
   const wsDoc = useWorkspaceStore((s) => s.wsDoc);
+  const [marketplaceStatus, setMarketplaceStatus] = useState(null);
   const navigate = useNavigate();
 
   function canCatalogueFeature(featureKey) {
@@ -88,6 +91,7 @@ export default function CataloguePage() {
     if (canCatalogueFeature("manage_products")) return "products";
     if (canCatalogueFeature("manage_customers")) return "customers";
     if (canCatalogueFeature("manage_vendors")) return "vendors";
+    if (canCatalogueFeature("manage_employees")) return "employees";
     return "overview";
   }
 
@@ -96,6 +100,7 @@ export default function CataloguePage() {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [profileServices, setProfileServices] = useState([]);
   const [catalogueIntegrations, setCatalogueIntegrations] = useState({
     crm: { hubspot: "not_connected", salesforce: "not_connected", zoho_crm: "not_connected" },
@@ -121,10 +126,22 @@ export default function CataloguePage() {
     const t = searchParams.get("tab");
     if (t) { setActiveTab(t); setSearchParams({}, { replace: true }); }
   }, []); // eslint-disable-line
+
+  useEffect(() => {
+    let alive = true;
+    if (!workspaceId) {
+      setMarketplaceStatus(null);
+      return () => { alive = false; };
+    }
+    apiRequest("/marketplace/status", "GET")
+      .then((res) => { if (alive) setMarketplaceStatus(res); })
+      .catch(() => { if (alive) setMarketplaceStatus(null); });
+    return () => { alive = false; };
+  }, [workspaceId, workspaceDataRefreshTrigger]);
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
-  const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
+  const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true, employees: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
   const currency = useWorkspaceStore((s) => s.currency);
 
@@ -135,6 +152,7 @@ export default function CataloguePage() {
       products: !canCatalogueFeature("manage_products"),
       customers: !canCatalogueFeature("manage_customers"),
       vendors: !canCatalogueFeature("manage_vendors"),
+      employees: !canCatalogueFeature("manage_employees"),
     };
     if (locked[activeTab]) setActiveTab(firstAccessibleCatalogueTab());
   }, [activeTab, canViewCatalogueOverview, isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
@@ -154,21 +172,24 @@ export default function CataloguePage() {
     });
     const productRows = activeProducts.map(p => {
       const sellPrice = Math.max(0, Number(p.base_price || 0) - Number(p.discount || 0));
+      // B4: a cost never given is unknown, not 0 (a 0 cost showed a 100% margin).
+      const costKnown = [p.cost_of_sales, p.unit_cost].some((v) => v !== null && v !== undefined && v !== "");
       const cos = Number(p.cost_of_sales || p.unit_cost || 0);
-      const margin = sellPrice > 0 ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
-      return { name: p.name || "—", category: p.category || p.product_type || "—", price: formatCurrency(sellPrice, cur), cos: formatCurrency(cos, cur), margin: margin != null ? `${margin}%` : "—" };
+      const margin = sellPrice > 0 && costKnown ? (((sellPrice - cos) / sellPrice) * 100).toFixed(1) : null;
+      return { name: p.name || "Not set", category: (() => { const t = String(p.category || p.product_type || p.type || "").trim(); return t && t.toLowerCase() !== "other" ? t[0].toUpperCase() + t.slice(1) : String(p.product_type || p.type || "service")[0].toUpperCase() + String(p.product_type || p.type || "service").slice(1); })(), price: p.price_needed && !(Number(p.base_price) > 0) ? "Price needed" : formatCurrency(sellPrice, p.currency || cur), cos: costKnown ? formatCurrency(cos, p.currency || cur) : "Unknown", margin: margin != null ? `${margin}%` : !costKnown && sellPrice > 0 ? "Cost unknown" : "Not set" };
     });
     const customerRows = figures
       .sort((a, b) => b.revenue - a.revenue || b.outstanding - a.outstanding)
-      .map((c) => ({ name: c.name || "—", invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(c.outstanding, cur),
-        terms: c.payment_terms ? `${c.payment_terms}d` : "—" }));
+      .map((c) => ({ name: c.name || "Not set", invoices: c.invoices, revenue: formatCurrency(c.revenue, cur), outstanding: formatCurrency(c.outstanding, cur),
+        terms: c.payment_terms ? `${c.payment_terms}d` : "Not set" }));
     const vendorRows = activeVendors.map(v => ({
-      name: v.name || "—", category: v.vendor_type || v.category || "—",
-      terms: v.payment_terms ? `${v.payment_terms}d` : "—",
+      name: v.name || "Not set", category: v.vendor_type || v.category || "Not set",
+      terms: v.payment_terms ? `${v.payment_terms}d` : "Not set",
       spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
     }));
-    return { productRows, customerRows, vendorRows, cur };
-  }, [products, customers, vendors, reportFinancials, currency]);
+    const employeeRows = employees.filter(e => !e.archived).map(e => ({ name: e.name || "Not set", role: e.job_title || "Not set", department: e.department || "Not set", email: e.email || "Not set", phone: e.phone || "Not set", startDate: e.start_date ? String(e.start_date).slice(0, 10).split("-").reverse().join("/") : "Not set" }));
+    return { productRows, customerRows, vendorRows, employeeRows, cur };
+  }, [products, customers, vendors, employees, reportFinancials, currency]);
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -221,67 +242,6 @@ export default function CataloguePage() {
   const [vendorIndustryOther, setVendorIndustryOther] = useState(false);
   const customerIndustryCategory = customerIndustryOther ? "Other" : (customerForm.industry || "");
   const vendorIndustryCategory = vendorIndustryOther ? "Other" : (vendorForm.industry || "");
-
-  function CardIcon({ tone = "bg-brand-50 text-brand-600", children }) {
-    return (
-      <div className={`flex h-9 w-9 items-center justify-center rounded-2xl ${tone}`}>
-        {children}
-      </div>
-    );
-  }
-
-  function ActionMenu({ items, label = "More actions" }) {
-    const [open, setOpen] = useState(false);
-    const menuRef = useRef(null);
-
-    useEffect(() => {
-      if (!open) return;
-      function handleClickOutside(event) {
-        if (!menuRef.current || menuRef.current.contains(event.target)) return;
-        setOpen(false);
-      }
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [open]);
-
-    return (
-      <div ref={menuRef} className="relative shrink-0">
-        <button
-          type="button"
-          aria-label={label}
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-            <circle cx="5" cy="12" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="19" cy="12" r="2" />
-          </svg>
-        </button>
-        {open ? (
-          <div className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-lg">
-            {items.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  item.onClick?.();
-                }}
-                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs ${
-                  item.tone === "danger"
-                    ? "text-rose-600 hover:bg-rose-50"
-                    : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
 
   function ProductTypeIcon({ type, className = "h-4 w-4" }) {
     const isService = String(type || "").toLowerCase() === "service";
@@ -375,8 +335,9 @@ export default function CataloguePage() {
     return str || "Payment terms";
   }
 
-  function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }) {
-    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "—"}</td>`).join("");
+  function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, employeeRows = null, cur }) {
+    const escapeCell = value => String(value ?? "Not set").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${escapeCell(c)}</td>`).join("");
     const hdr = (cells) => cells.map((c) => `<th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;text-align:left;">${c}</th>`).join("");
     const table = (headers, rows) => `
       <table style="width:100%;border-collapse:collapse;margin-top:8px;">
@@ -390,20 +351,21 @@ export default function CataloguePage() {
         ${content}
       </div>`;
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
-    return `<!doctype html><html><head><meta charset="utf-8"/><title>Catalogue Report</title>
+    return `<!doctype html><html><head><meta charset="utf-8"/><title>Master records report</title>
 <style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}</style>
 </head><body>
 <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;">
   <div>
     ${logoSrc ? `<img src="${logoSrc}" style="display:block;max-width:140px;max-height:56px;margin-bottom:10px;"/>` : ""}
-    <div style="font-size:20px;font-weight:700;">${workspaceName || "EnterprateAI"}</div>
-    <div style="font-size:12px;color:#64748b;">Catalogue Report</div>
+    <div style="font-size:20px;font-weight:700;">${escapeCell(workspaceName || "EnterprateAI")}</div>
+    <div style="font-size:12px;color:#64748b;">Master records report</div>
   </div>
   <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
 </div>
-${productRows !== null ? section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Category","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin]))) : ""}
+${productRows !== null ? section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Type","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin]))) : ""}
 ${customerRows !== null ? section("Customers","Revenue earned and outstanding per customer.",table(["Name","Invoices","Revenue earned","Outstanding","Payment terms"],customerRows.map((c)=>[c.name,c.invoices,c.revenue,c.outstanding,c.terms]))) : ""}
 ${vendorRows !== null ? section("Vendors","Supplier list and total spend from paid expenses.",table(["Name","Category","Payment terms","Total spent"],vendorRows.map((v)=>[v.name,v.category,v.terms,v.spent]))) : ""}
+${employeeRows !== null ? section("Employees", "Active team members from Master records.", table(["Name", "Job title", "Department", "Work email", "Phone", "Start date"], employeeRows.map(e => [e.name, e.role, e.department, e.email, e.phone, e.startDate]))) : ""}
 </body></html>`;
   }
 
@@ -420,7 +382,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       document.body.appendChild(container);
       await html2pdf()
         .set({
-          filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`,
+          filename: `master-records-report-${new Date().toISOString().slice(0, 10)}.pdf`,
           margin: [10, 10, 10, 10],
           pagebreak: { mode: ["css", "legacy", "avoid-all"] },
           image: { type: "jpeg", quality: 0.98 },
@@ -558,6 +520,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setProducts(Array.isArray(cat.products) ? cat.products : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
     setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
+    setEmployees(Array.isArray(cat.employees) ? cat.employees : []);
     setProfileServices(Array.isArray(ws?.data?.workspace_profile?.services) ? ws.data.workspace_profile.services : []);
     setCatalogueIntegrations({
       crm: {
@@ -651,6 +614,10 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     await apiRequest(`/validation/${workspaceId}`, "PATCH", { data: { catalogue: next } });
     invalidateWorkspaceCache();
     useWorkspaceStore.getState().clearWsDoc();
+    refreshWorkspaceData();
+  }
+  async function publishMarketplaceWorkspace() {
+    await apiRequest("/marketplace/publish", "POST", { workspace_id: workspaceId });
     refreshWorkspaceData();
   }
   async function persistCatalogueIntegrations(next) {
@@ -847,11 +814,19 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   }
 
   async function toggleMarketplaceListing(productId, currentlyListed) {
+    const nextListed = !currentlyListed;
+    const previousProducts = products;
     const nextProducts = products.map((product) =>
-      product.id === productId ? { ...product, marketplace_listed: !currentlyListed } : product
+      product.id === productId ? { ...product, marketplace_listed: nextListed } : product
     );
     setProducts(nextProducts);
-    await persist({ products: nextProducts, customers, vendors });
+    try {
+      if (nextListed) await publishMarketplaceWorkspace();
+      await persist({ products: nextProducts, customers, vendors });
+    } catch (e) {
+      setProducts(previousProducts);
+      setError(e instanceof Error ? e.message : "Could not list on the Marketplace.");
+    }
   }
 
   function deleteEntity(kind, id) {
@@ -960,8 +935,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   return (
     <div>
       <PageHeader
-        title="Catalogue"
-        description="Manage products, customers, and suppliers for reuse across invoices and documents."
+        title="Master records"
+        description="Your products, customers, vendors and employees, together in one place."
         badge={{ text: "Beta", tone: "slate" }}
       />
 
@@ -979,16 +954,20 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       <div className="mt-6">
         <SegmentedTabs
           value={activeTab}
+          className="flex-wrap"
           onChange={setActiveTab}
           options={[
             ...(canViewCatalogueOverview ? [{ value: "overview", label: "Overview" }] : []),
             ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products", "data-tour": "catalogue-products-tab" }] : []),
             ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers", "data-tour": "catalogue-customers-tab" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
+            ...(canCatalogueFeature("manage_employees") ? [{ value: "employees", label: "Employees" }] : []),
             { value: "report", label: "Report" },
           ]}
         />
       </div>
+
+      {activeTab === "employees" && canCatalogueFeature("manage_employees") ? <div className="mt-6"><EmployeeRecords key={workspaceId} employees={employees} onSave={async next => { await persist({ employees: next }); setEmployees(next); }} /></div> : null}
 
       {activeTab === "overview" ? (
         <div className="mt-6 space-y-4">
@@ -1032,9 +1011,9 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   {catalogueDrill.items.map((item) => (
                     <div key={item.id} className="flex items-center justify-between gap-4 py-2.5">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-slate-800">{item.name || item.company_name || "—"}</div>
+                        <div className="truncate text-sm font-medium text-slate-800">{item.name || item.company_name || "Not set"}</div>
                         {catalogueDrill.type === "products" && (
-                          <div className="text-[11px] text-slate-400">{item.category || "No category"} · Sell: {formatCurrency(Number(item.base_price || 0), currency)}</div>
+                          <div className="text-[11px] text-slate-400">{item.category || "No category"} · Sell: {formatCurrency(Number(item.base_price || 0), item.currency || currency)}</div>
                         )}
                         {catalogueDrill.type === "customers" && (
                           <div className="text-[11px] text-slate-400">{item.email || item.contact_email || "No email"}{item.payment_terms ? ` · ${item.payment_terms}d terms` : ""}</div>
@@ -1044,7 +1023,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                         )}
                       </div>
                       {catalogueDrill.type === "products" && (
-                        <span className="shrink-0 text-sm font-semibold text-slate-700">{formatCurrency(Number(item.base_price || 0), currency)}</span>
+                        <span className="shrink-0 text-sm font-semibold text-slate-700">{formatCurrency(Number(item.base_price || 0), item.currency || currency)}</span>
                       )}
                     </div>
                   ))}
@@ -1097,7 +1076,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   }}
                   className="flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:opacity-40 transition-colors dark:text-brand-400 dark:hover:bg-brand-900/20"
                 >
-                  {descSuggesting ? "..." : "✦ AI Fill"}
+                  {descSuggesting ? "..." : "? AI Fill"}
                 </button>
               </div>
               <textarea
@@ -1207,19 +1186,19 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             <ProductTypeIcon type={p.type} />
                             <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${p.type === "product" ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700"}`}>{p.type}</span>
-                            {p.marketplace_listed === false ? (
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                                Hidden
-                              </span>
-                            ) : (
+                            {marketplaceStatus?.is_published && p.marketplace_listed !== false ? (
                               <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
                                 Listed
+                              </span>
+                            ) : (
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                Hidden
                               </span>
                             )}
                             {importBadge(p)}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {formatCurrency(p.base_price, currency)} base · {formatCurrency(p.cost_of_sales || 0, currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, currency)} freight` : ""}
+                            {p.price_needed && !(Number(p.base_price) > 0) ? <span className="font-semibold text-amber-700" data-price-needed>Price needed</span> : <>{formatCurrency(p.base_price, p.currency || currency)} base</>} · {formatCurrency(p.cost_of_sales || 0, p.currency || currency)} CoS{p.discount ? ` · ${formatCurrency(p.discount, p.currency || currency)} off` : ""}{p.freight_cost ? ` · ${formatCurrency(p.freight_cost, p.currency || currency)} freight` : ""}
                           </div>
                         </div>
                         <ActionMenu
@@ -1290,7 +1269,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{p.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago · Expires in {expiring} days
                       </div>
                     </div>
                     <ActionMenu
@@ -1464,8 +1443,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                             {importBadge(c)}
                           </div>
                           <div className="text-xs text-slate-500">
-                            {c.industry || "Industry"} • {formatPaymentTerms(c.payment_terms)} • {c.address || "Address on file"}
-                            {c.email ? ` • ${c.email}` : ""}{c.phone_number ? ` • ${c.phone_number}` : ""}
+                            {c.industry || "Industry"} · {formatPaymentTerms(c.payment_terms)} · {c.address || "Address on file"}
+                            {c.email ? ` · ${c.email}` : ""}{c.phone_number ? ` · ${c.phone_number}` : ""}
                           </div>
                         </div>
                         <ActionMenu items={[
@@ -1516,7 +1495,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{c.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago · Expires in {expiring} days
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1703,7 +1682,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
                             {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
-                            {v.email ? ` • ${v.email}` : ""}{v.phone_number ? ` • ${v.phone_number}` : ""}
+                            {v.email ? ` · ${v.email}` : ""}{v.phone_number ? ` · ${v.phone_number}` : ""}
                           </div>
                         </div>
                         <ActionMenu items={[
@@ -1754,7 +1733,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{v.name}</div>
                       <div className="text-xs text-slate-500">
-                        Archived {age} days ago • Expires in {expiring} days
+                        Archived {age} days ago · Expires in {expiring} days
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1788,7 +1767,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                   paginate
                   columns={[
                     { key: "name", label: "Name", bold: true },
-                    { key: "category", label: "Category" },
+                    { key: "category", label: "Type" },
                     { key: "price", label: "Sell price", right: true, bold: true },
                     { key: "cos", label: "Cost of sales", right: true },
                     { key: "margin", label: "Margin", right: true },
@@ -1839,12 +1818,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       {activeTab === "report" && (
         <div className="mt-6 space-y-5">
           {/* Filter controls */}
-          <SectionCard title="Generate Catalogue Report" subtitle="Select the sections to include, preview, then download as PDF.">
+          <SectionCard title="Generate Master records report" subtitle="Select the sections to include, preview, then download as PDF.">
             <div className="mt-3 flex flex-wrap gap-4">
               {[
                 { key: "products", label: "Products & Services" },
                 { key: "customers", label: "Customers" },
                 { key: "vendors", label: "Vendors" },
+                ...(canCatalogueFeature("manage_employees") ? [{ key: "employees", label: "Employees" }] : []),
               ].map(({ key, label }) => (
                 <label key={key} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
                   <input
@@ -1864,12 +1844,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <Button
                 size="sm"
                 onClick={() => {
-                  const { productRows, customerRows, vendorRows, cur } = reportRows;
+                  const { productRows, customerRows, vendorRows, employeeRows, cur } = reportRows;
                   const filteredProductRows = reportFilter.products ? productRows : null;
                   const filteredCustomerRows = reportFilter.customers ? customerRows : null;
                   const filteredVendorRows = reportFilter.vendors ? vendorRows : null;
-                  setReportPreviewHtml(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
-                  setPendingCatalogueReport(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
+                  const filteredEmployeeRows = reportFilter.employees && canCatalogueFeature("manage_employees") ? employeeRows : null;
+                  setReportPreviewHtml(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, employeeRows: filteredEmployeeRows, cur }));
+                  setPendingCatalogueReport(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, employeeRows: filteredEmployeeRows, cur }));
                 }}
               >
                 Generate &amp; Preview
@@ -1885,7 +1866,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                         container.innerHTML = pendingCatalogueReport;
                         container.style.cssText = "width:210mm;padding:12mm;box-sizing:border-box;font-size:13px;background:#fff;";
                         document.body.appendChild(container);
-                        await html2pdf().set({ filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`, margin: [10, 10, 10, 10], pagebreak: { mode: ["css", "legacy", "avoid-all"] }, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 3, useCORS: true, windowWidth: 794, backgroundColor: "#ffffff", letterRendering: true }, jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true } }).from(container).save();
+                        await html2pdf().set({ filename: `master-records-report-${new Date().toISOString().slice(0, 10)}.pdf`, margin: [10, 10, 10, 10], pagebreak: { mode: ["css", "legacy", "avoid-all"] }, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 3, useCORS: true, windowWidth: 794, backgroundColor: "#ffffff", letterRendering: true }, jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true } }).from(container).save();
                         document.body.removeChild(container);
                       } catch { setError("Unable to generate the PDF report."); }
                     }}
@@ -1904,7 +1885,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                 <iframe
                   srcDoc={reportPreviewHtml}
-                  title="Catalogue Report Preview"
+                  title="Master records report Preview"
                   className="h-[600px] w-full bg-white"
                   sandbox="allow-same-origin"
                 />
@@ -1916,7 +1897,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
 
       {loading ? (
         <div className="mt-4">
-          <div className="text-xs text-slate-500">Syncing catalogue...</div>
+          <div className="text-xs text-slate-500">Syncing master records...</div>
         </div>
       ) : null}
 
@@ -1953,9 +1934,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="mt-5 flex gap-3">
                 <button
                   className="flex-1 rounded-xl bg-brand-600 py-2.5 text-[13px] font-semibold text-white hover:bg-brand-700"
-                  onClick={() => {
-                    // Product is already in catalogue; marketplace_listed defaults true — nothing to do
-                    setAddToMarketModal(null);
+                  onClick={async () => {
+                    try {
+                      await publishMarketplaceWorkspace();
+                      setAddToMarketModal(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Could not list on the Marketplace.");
+                    }
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
@@ -1969,18 +1954,21 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                 <button
                   className="flex-1 rounded-xl border border-slate-200 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                   onClick={async () => {
-                    // Mark marketplace_listed: false so backend excludes it
-                    const updated = products.map((p) => p.id === addToMarketModal.id ? { ...p, marketplace_listed: false } : p);
-                    setProducts(updated);
-                    persist({ products: updated, customers, vendors });
-                    setAddToMarketModal(null);
+                    try {
+                      const updated = products.map((p) => p.id === addToMarketModal.id ? { ...p, marketplace_listed: false } : p);
+                      setProducts(updated);
+                      await persist({ products: updated, customers, vendors });
+                      setAddToMarketModal(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Could not hide from the Marketplace.");
+                    }
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M4 19 19 4" />
                       <path d="M9.5 9.5 3 16s4 5 9 5c1.7 0 3.2-.4 4.6-1.1" />
-                      <path d="M14.5 14.5 21 8s-4-5-9-5c-1.7 0-3.2.4-4.6 1.1" />
+                      <path d="M14.5 14.5 21 8s-4-5-9-5c1.7 0 3.2-.4 4.6 1.1" />
                     </svg>
                     Keep hidden
                   </span>
@@ -1993,4 +1981,3 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     </div>
   );
 }
-

@@ -27,13 +27,16 @@ _ADDS: dict[str, tuple[str, ...]] = {
         # them on any plan for AI Credits (First-Value PRD 4.2). Reading an inbound Marketplace request's
         # details is a separate lock (rfq_unlocked), which stays closed on Explorer.
         "enquiry_to_quote", "quote_to_cash",
+        # The business plan on every plan, paid for in credits (the owner, 31 Oct: "business plan, idea validation is free
+        # depending on the credits"): never turned away for the plan
+        "business_plan_draft",
     ),
     # Starter: proposals, chasing payments, scenarios (a few a month), risk
     # and the fragility index, readiness checks and launch preparation, and the wider document set.
     # The AI Business Plan Generator is Starter (the pricing PDF), as are launch and funding readiness, proposals and
     # sales letters, pricing and customer growth insights, and scenario simulations.
     "starter_insight": (
-        "business_plan_draft", "new_proposal", "sales_letter_draft", "payment_followup",
+        "new_proposal", "sales_letter_draft", "payment_followup",
         "scenario_help", "expansion_scenario", "risk_concentration",
         "readiness_refresh", "launch_evidence_gaps",
         "market_size", "price_test", "capacity_check", "offer_review",
@@ -54,10 +57,10 @@ for _plan in PLAN_ORDER:
 # How many of a thing a plan includes in a calendar month (or in all, for listings). None: no limit.
 # A task counted here is blocked, not charged, once the plan's number is used.
 QUOTAS: dict[str, dict[str, int | None]] = {
-    # The pricing PDF: Explorer 1 listing; Starter up to 10 listings and Scenario Simulations (no number given); Decision
-    # Engine unlimited listings.
+    # The pricing PDF: Explorer 1 listing; Starter up to 10 listings and 4 scenario simulations a month (the owner,
+    # 20 Oct 2026); Decision Engine unlimited listings and scenarios.
     "explorer":              {"scenario_help": 0, "marketplace_listings": 1},
-    "starter_insight":       {"scenario_help": None, "marketplace_listings": 10},
+    "starter_insight":       {"scenario_help": 4, "marketplace_listings": 10},
     "decision_engine":       {"scenario_help": None, "marketplace_listings": None},
     "growth_navigator":      {"scenario_help": None, "marketplace_listings": None},
     "strategic_business_os": {"scenario_help": None, "marketplace_listings": None},

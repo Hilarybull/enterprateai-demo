@@ -17,3 +17,5 @@ class BusinessAssistantChatResponse(BaseModel):
     answer: str
     provider: str
     model: str
+    credits_used: int = 0      # what this answer cost (0: it found nothing, declined, or only pointed at a task)
+    action: str | None = None  # E2: the owner asked for something done: the task that does it (started by the Agent, never described)

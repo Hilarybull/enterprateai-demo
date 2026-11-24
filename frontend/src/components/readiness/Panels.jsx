@@ -1,4 +1,6 @@
+import UkDateInput from "../UkDateInput";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ACTION_STATE, CHECK_STATE, CLASSIFICATION, FEATURES, contradiction, dateLabel, downloadMaterial, generateMaterial, getAssessment, getHistory, getMaterial,
   listMaterials, moneyLabel, monthLabel, newKey, readinessError, recordDecision, recordLaunch, reviewDocument, runScenario, updateAction, updateMaterial,
@@ -6,6 +8,33 @@ import {
 } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Panel, Pill, inputClass } from "./Fields";
+import DocumentShareModal from "../DocumentShareModal";
+import { apiRequest } from "../../api/client";
+import { addEvidence, attachEvidenceFile, downloadEvidenceFile } from "../../lib/readiness";
+
+/** A document or an earlier result, opened in a popup over the page (the owner's QA, 15 Oct), never under the list. */
+export function Popup({ title, subtitle, onClose, footer, children, wide = false }) {
+  useEffect(() => {
+    const key = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label={title} data-popup
+        className={`flex max-h-[90vh] w-full ${wide ? "max-w-4xl" : "max-w-3xl"} flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900`}>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <div className="min-w-0">
+            <p className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</p>
+            {subtitle && <p className="mt-0.5 text-[12.5px] text-slate-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-[13px] font-semibold text-slate-500 hover:text-slate-800">Close</button>
+        </div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-3 dark:border-slate-800">{footer}</div>}
+      </div>
+    </div>, document.body);
+}
 
 // ── Results ───────────────────────────────────────────────────────────────────
 
@@ -58,7 +87,7 @@ function CashFacts({ result, feature, currency }) {
   );
 }
 
-export function ResultView({ assessment, feature, currency, onOpenSection, historic = false }) {
+export function ResultView({ assessment, feature, currency, onOpenSection, historic = false, summary = null }) {
   const [open, setOpen] = useState({});
   const result = assessment?.result;
   if (!result) return null;
@@ -70,12 +99,13 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
       {fresh.status === "stale" && !historic && (
         <Notice tone="amber"><span className="font-semibold">This result is out of date.</span> {staleReason(fresh.reason)} It is being updated for you; until then it is kept as it was on {dateLabel(assessment.as_of)}.</Notice>
       )}
-      <Panel>
+      {summary ? <Panel>{summary}</Panel> : <Panel>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <Pill tone={cls.tone} mark={cls.mark} className="!text-sm">{cls.label}</Pill>
             <p className="mt-2 text-base font-bold text-slate-900 dark:text-slate-100">{result.headline}</p>
             <p className="mt-1 text-[13px] text-slate-500">{result.disclaimer}</p>
+            {result.route_note && <p className="mt-1 text-[13px] font-medium text-slate-700 dark:text-slate-300" data-route-note>{result.route_note}</p>}
           </div>
           <div className="text-right">
             <p className="text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{result.score_display ?? "—"}<span className="text-base font-semibold text-slate-400">{result.score_display !== null && result.score_display !== undefined ? " / 100" : ""}</span></p>
@@ -94,7 +124,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
           Checked on {dateLabel(assessment.as_of)} · {result.profile_title}, version {result.ruleset_version}
           {result.data_basis?.label ? ` · figures: ${result.data_basis.label}` : ""}. {result.status_note}
         </p>
-      </Panel>
+      </Panel>}
 
       <Panel title={meta.gatesTitle} description="Checked separately from the score. A confirmed failure means not ready, whatever the score.">
         <ul className="space-y-2">
@@ -104,7 +134,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
               <li key={g.code} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <p className="min-w-0 flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{g.label}</p>
-                  <Pill tone={st.tone} mark={st.mark}>{g.state === "failed" ? "Blocking" : g.state === "passed" ? "Clear" : st.label}</Pill>
+                  <Pill tone={st.tone} mark={st.mark}>{g.state === "failed" ? "Must fix" : g.state === "passed" ? "Clear" : st.label}</Pill>
                 </div>
                 {g.reason && <p className="mt-1 break-words text-[13px] text-slate-600 dark:text-slate-300">{g.reason}</p>}
                 {g.state === "failed" && <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200"><span className="font-semibold">To clear it:</span> {g.remedy}</p>}
@@ -122,7 +152,7 @@ export function ResultView({ assessment, feature, currency, onOpenSection, histo
                 className="flex w-full flex-wrap items-center justify-between gap-2 text-left">
                 <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{c.title} <span className="font-normal text-slate-400">· weight {c.weight}</span></span>
                 <span className="flex items-center gap-2">
-                  <span className="text-[13px] tabular-nums text-slate-600 dark:text-slate-300">{c.score === null ? "Not known yet" : `${c.score} / 100`}</span>
+                  <span className="text-[13px] tabular-nums text-slate-600 dark:text-slate-300">{c.score === null ? "Need from you" : `${c.score} / 100`}</span>
                   <span aria-hidden="true" className="text-slate-400">{open[c.code] ? "▾" : "▸"}</span>
                 </span>
               </button>
@@ -214,7 +244,7 @@ function ActionRow({ businessId, feature, subject, action, rank, onChanged, onOp
                 <input className={`mt-1 ${inputClass}`} defaultValue={action.owner || ""} onBlur={(e) => e.target.value !== (action.owner || "") && send({ owner: e.target.value })} />
               </label>
               <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Due date
-                <input type="date" className={`mt-1 ${inputClass}`} defaultValue={action.due_date || ""} onChange={(e) => send({ due_date: e.target.value })} />
+                <UkDateInput className={`mt-1 ${inputClass}`} defaultValue={action.due_date || ""} onChange={(v) => send({ due_date: v })} />
               </label>
               <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">State
                 <select className={`mt-1 ${inputClass}`} value={action.status} onChange={(e) => send({ status: e.target.value })}>
@@ -280,17 +310,108 @@ export function ActionsPanel({ businessId, feature, subject, onChanged, onOpenSe
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 
-export function RequiredDocuments({ businessId, subject, onChanged }) {
-  const docs = subject.profile_definition?.required_documents || [];
+// What is being reviewed, shown before "Mark as reviewed" (the owner's QA, 23 Oct): the case's own spending lines or
+// forecast, the document prepared here, or the owner's own document.
+function DocumentView({ businessId, subject, doc, entry }) {
+  const [prepared, setPrepared] = useState(null);
+  const [problem, setProblem] = useState("");
+  const cur = subject.data?.currency;
+  useEffect(() => {
+    if (!entry.artifact_id || doc.record) return;
+    getMaterial(businessId, "funding", subject.id, entry.artifact_id).then(setPrepared).catch((e) => setProblem(readinessError(e).message));
+  }, [businessId, subject.id, entry.artifact_id, doc.record]);
+  const box = "mt-2 max-h-80 overflow-auto rounded-lg bg-slate-50 p-3 text-[12.5px] text-slate-700 dark:bg-slate-800/60 dark:text-slate-200";
+  if (doc.record === "use_of_funds") {
+    const lines = (subject.data?.use_of_funds || []).filter((l) => l && (l.category || l.amount));
+    const total = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0);
+    if (!lines.length) return <p className={box}>No spending lines yet. Add them under Finances and use of funds.</p>;
+    return (
+      <div className={box} data-document-view>
+        <table className="w-full text-left">
+          <thead><tr className="text-slate-500"><th className="py-1 pr-3 font-semibold">Line</th><th className="py-1 pr-3 text-right font-semibold">Amount</th><th className="py-1 font-semibold">What it pays for</th></tr></thead>
+          <tbody>{lines.map((l, i) => (
+            <tr key={l.id || i} className="border-t border-slate-200 align-top dark:border-slate-700">
+              <td className="py-1 pr-3">{l.category || "Line"}{l.period ? ` · ${monthLabel(l.period)}` : ""}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{moneyLabel(l.amount, cur)}</td>
+              <td className="py-1">{l.purpose || l.rationale || ""}</td>
+            </tr>))}</tbody>
+          <tfoot><tr className="border-t border-slate-300 font-semibold dark:border-slate-600"><td className="py-1 pr-3">Total</td><td className="py-1 pr-3 text-right tabular-nums">{moneyLabel(total, cur)}</td><td /></tr></tfoot>
+        </table>
+      </div>
+    );
+  }
+  if (doc.record === "forecast") {
+    const f = subject.forecast?.data || {};
+    const months = (f.months || []).filter((m) => m && m.month);
+    if (!months.length) return <p className={box}>No forecast months yet. Add them under Finances and use of funds.</p>;
+    const shown = (v) => (v === "" || v == null ? "Not filled" : moneyLabel(v, cur));
+    return (
+      <div className={box} data-document-view>
+        {f.opening_cash != null && f.opening_cash !== "" && <p className="mb-1">Opening cash: <span className="font-semibold tabular-nums">{moneyLabel(f.opening_cash, cur)}</span></p>}
+        <table className="w-full text-left">
+          <thead><tr className="text-slate-500"><th className="py-1 pr-3 font-semibold">Month</th><th className="py-1 pr-3 text-right font-semibold">Money in</th><th className="py-1 text-right font-semibold">Money out</th></tr></thead>
+          <tbody>{months.map((m) => (
+            <tr key={m.month} className="border-t border-slate-200 dark:border-slate-700">
+              <td className="py-1 pr-3">{monthLabel(m.month)}</td>
+              <td className="py-1 pr-3 text-right tabular-nums">{shown(m.receipts)}</td>
+              <td className="py-1 text-right tabular-nums">{shown(m.payments)}</td>
+            </tr>))}</tbody>
+        </table>
+      </div>
+    );
+  }
+  if (entry.evidence_id) {
+    const e = (subject.evidence || []).find((x) => x.id === entry.evidence_id) || {};
+    const words = e.summary || e.description || e.notes;
+    return (
+      <div className={box} data-document-view>
+        <p className="font-semibold">{e.title || "Your document"}</p>
+        {words && <p className="mt-1 whitespace-pre-line">{words}</p>}
+        {e.has_file && <button type="button" onClick={() => downloadEvidenceFile(businessId, e.id, e.file_name).catch((x) => setProblem(x.message))} className="mt-2 font-semibold text-brand-700 hover:underline">Download {e.file_name || "the file"}</button>}
+        {problem && <p role="alert" className="mt-1 text-rose-700">{problem}</p>}
+      </div>
+    );
+  }
+  if (entry.artifact_id) {
+    if (problem) return <p role="alert" className={`${box} text-rose-700`}>{problem}</p>;
+    if (!prepared) return <p className={box} role="status">Loading the document…</p>;
+    return <div className={`${box} whitespace-pre-line`} data-document-view>{prepared.body || "This document is empty."}</div>;
+  }
+  return null;
+}
+
+const EQUITY_ONLY = ["executive_summary", "team_summary"];      // engine.EQUITY_ONLY_DOCUMENTS
+
+export function RequiredDocuments({ businessId, subject, onChanged, recheck = null }) {
+  // A loan or a grant isn't asked for the equity-only items, as its check and the pack strip count them (the owner, 26 Oct:
+  // "2 of 2" on the strip, the executive and team summaries still "to do" here)
+  const route = String(subject.data?.route_preference || "").toLowerCase();
+  const docs = (subject.profile_definition?.required_documents || []).filter((d) => !(["loan", "grant"].includes(route) && EQUITY_ONLY.includes(d.key)));
   const entries = subject.data?.documents || {};
   const assessed = Object.fromEntries((subject.assessment?.result?.documents || []).map((d) => [d.key, d]));
   const [problem, setProblem] = useState(null);
   const [note, setNote] = useState("");
+  const [viewing, setViewing] = useState({});
+  const [uploading, setUploading] = useState("");
   const can = subject.can || {};
+  // Your own document from your computer (the owner's QA, 23 Oct: the list only offered documents already added as
+  // evidence, so it was empty): saved as evidence dated today, with its file, and used for this document at once.
+  async function upload(d, file) {
+    if (!file) return;
+    setUploading(d.key);
+    await call(async () => {
+      const item = await addEvidence(businessId, "funding", { title: `${d.label}: ${file.name}`.slice(0, 200), type: "document", claim: d.label,
+        effective_date: todayLocal(), source: { kind: "file", reference: file.name }, links: [] });
+      await attachEvidenceFile(businessId, "funding", item.id, file);
+      return reviewDocument(businessId, subject.id, d.key, { evidence_id: item.id, artifact_id: null });
+    });
+    setUploading("");
+  }
   const archived = subject.status === "archived";
-  async function call(fn) {
+  // A review or a document changes the score: checked again at once, so the Overview's steps follow (23 Oct)
+  async function call(fn, { score = true } = {}) {
     setProblem(null);
-    try { onChanged(await fn()); } catch (e) { setProblem(readinessError(e).message); }
+    try { onChanged(await fn()); if (score) recheck?.(); } catch (e) { setProblem(readinessError(e).message); }
   }
   return (
     <div className="space-y-3">
@@ -299,6 +420,8 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
           const entry = entries[d.key] || {};
           const seen = assessed[d.key];
           const builtIn = d.record === "use_of_funds" ? "Taken from the use of funds in this case" : d.record === "forecast" ? "Taken from the forecast in this case" : null;
+          const provided = Boolean(builtIn || entry.artifact_id || entry.evidence_id);
+          const reviewed = entry.reviewed && !seen?.needs_review;
           return (
             <li key={d.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -316,12 +439,26 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
                     {(subject.evidence || []).filter((e) => e.type === "document").map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
                   </select>
                 )}
+                {!builtIn && can["funding.edit"] && !archived && (
+                  <label className={`inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 ${uploading ? "pointer-events-none opacity-60" : ""}`}>
+                    {uploading === d.key ? "Uploading…" : entry.evidence_id ? "Upload another" : "Upload a document"}
+                    <input type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-document-upload={d.key}
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; upload(d, f); }} />
+                  </label>
+                )}
+                {provided && (
+                  <Btn kind="link" aria-expanded={Boolean(viewing[d.key])} onClick={() => setViewing((v) => ({ ...v, [d.key]: !v[d.key] }))} data-document-toggle>
+                    {viewing[d.key] ? "Hide" : "View"}</Btn>
+                )}
                 {can["funding.review"] && !archived && (
-                  <Btn onClick={() => call(() => reviewDocument(businessId, subject.id, d.key, { reviewed: !(entry.reviewed && !seen?.needs_review) }))}>
-                    {entry.reviewed && !seen?.needs_review ? "Undo review" : "Mark as reviewed"}
+                  // Nothing to review until there is something to read (the owner's QA, 23 Oct)
+                  <Btn disabled={!provided && !reviewed} title={!provided && !reviewed ? "Add or choose the document first" : undefined}
+                    onClick={() => call(() => reviewDocument(businessId, subject.id, d.key, { reviewed: !reviewed }))}>
+                    {reviewed ? "Undo review" : "Mark as reviewed"}
                   </Btn>
                 )}
               </div>
+              {provided && viewing[d.key] && <DocumentView businessId={businessId} subject={subject} doc={d} entry={entry} />}
             </li>
           );
         })}
@@ -347,9 +484,21 @@ export function RequiredDocuments({ businessId, subject, onChanged }) {
   );
 }
 
+// What each document is for, on its card (the owner's QA, 27 Oct: "the Prepare actions as cards with a short description")
+const MATERIAL_ABOUT = {
+  readiness_report: "Where your case stands: score, findings and next steps.",
+  executive_summary: "One page for a funder: the need, the business and the plan.",
+  pitch_outline: "The order to tell your story in, slide by slide.",
+  launch_checklist: "What is done and what is left before you launch.",
+};
+const DOC_CARD = "rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
+
 export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
   const [state, setState] = useState({ loading: true, kinds: [], items: [] });
   const [openDoc, setOpenDoc] = useState(null);
+  const [showOld, setShowOld] = useState(false);      // earlier versions, replaced by a newer one
+  const [editingDoc, setEditingDoc] = useState(false);      // the document as a page first; Edit for its plain text
+  const [sharing, setSharing] = useState(null);      // the document being shared by link or email
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState("");
   const [problem, setProblem] = useState(null);
@@ -372,49 +521,95 @@ export function MaterialsPanel({ businessId, feature, subject, onChanged }) {
     setOpenDoc(doc); setBody(doc.body || ""); await load(); onChanged();
   });
 
-  if (state.loading) return <p className="text-[13px] text-slate-500" role="status">Loading documents…</p>;
+  if (state.loading) return <div className="grid gap-3 sm:grid-cols-2" role="status" aria-label="Loading documents">{[0, 1].map((i) => <div key={i} className={`${DOC_CARD} h-28 animate-pulse`} />)}</div>;
+  const shown = showOld ? state.items : state.items.filter((m) => m.status !== "superseded");
+  const canMake = Boolean(can[`${feature}.export`]) && Boolean(subject.assessment);
   return (
-    <div className="space-y-3">
-      {!subject.assessment && <Notice>Documents are prepared from a completed check. Run the check first.</Notice>}
-      <div className="flex flex-wrap gap-2">
-        {state.kinds.map((k) => (
-          <Btn key={k.kind} disabled={!can[`${feature}.export`] || !subject.assessment || Boolean(busy)} onClick={() => make(k.kind)}>
-            {busy === `make-${k.kind}` ? "Preparing…" : `Prepare ${k.title.toLowerCase()}`}
-          </Btn>
-        ))}
-      </div>
-      {problem && <Notice tone="rose" role="alert">{problem} Nothing was duplicated; you can try again.</Notice>}
-      <ul className="space-y-2">
-        {state.items.map((m) => (
-          <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{m.title} <span className="font-normal text-slate-400">· version {m.version}</span></p>
-              <p className="text-[12px] text-slate-500">From the check of {dateLabel(m.as_of)} · {m.status === "superseded" ? "Replaced by a newer version" : m.status === "reviewed" ? `Reviewed by ${m.reviewed_by}` : "Draft"}{m.edited ? " · edited" : ""}</p>
-              {m.needs_review && <p className="text-[12px] font-medium text-amber-700 dark:text-amber-300">Needs review: {m.needs_review_reason}</p>}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Btn onClick={() => open(m.id)}>Open</Btn>
-              <Btn disabled={!can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}>PDF</Btn>
-              <Btn disabled={!can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}>Text</Btn>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {openDoc && (
-        <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{openDoc.title} · version {openDoc.version}</p>
-            <Btn kind="link" onClick={() => setOpenDoc(null)}>Close</Btn>
+    <div className="space-y-5">
+      <section>
+        <p className="mb-2 text-[15px] font-bold text-slate-900 dark:text-slate-50">Your documents</p>
+        {shown.length ? (
+          // The latest of each document only (the owner's QA, 21 Oct); earlier versions are kept, behind one link
+          <ul className="grid gap-3 sm:grid-cols-2" data-case-docs>{shown.map((m) => (
+            <li key={m.id} className={DOC_CARD} data-case-doc>
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" onClick={() => open(m.id)} className="min-w-0 text-left">
+                  <span className="block text-[15px] font-semibold text-slate-900 hover:text-blue-700 dark:text-slate-50">{m.title}</span>
+                  <span className="block text-[12.5px] text-slate-500">Version {m.version} · {dateLabel(m.as_of)}{m.edited ? " · edited" : ""}</span>
+                </button>
+                <span className={`shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[12px] font-medium ${m.status === "reviewed" ? "bg-emerald-50 text-emerald-700" : m.status === "superseded" ? "bg-slate-100 text-slate-600" : "bg-amber-50 text-amber-800"}`}>
+                  {m.status === "reviewed" ? "Reviewed" : m.status === "superseded" ? "Replaced" : "Draft"}</span>
+              </div>
+              {m.needs_review && <p className="mt-2 text-[12.5px] font-medium text-amber-700 dark:text-amber-300">Needs review: {m.needs_review_reason}</p>}
+              <div className="mt-3 flex items-center gap-2">
+                <Btn kind="primary" disabled={Boolean(busy) || !can[`${feature}.export`]} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}>Download</Btn>
+                <MaterialMenu canExport={Boolean(can[`${feature}.export`])}
+                  onOpen={() => open(m.id)}
+                  onPdf={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "pdf"))}
+                  onText={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, m.id, "txt"))}
+                  onShare={() => setSharing(m)} />
+              </div>
+            </li>
+          ))}</ul>
+        ) : (
+          <div className={`${DOC_CARD} border-dashed text-center`} data-case-docs-empty>
+            <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-100">No documents yet</p>
+            <p className="mt-1 text-[13.5px] text-slate-500">{subject.assessment ? "Prepare one below. Each is written from your latest check; anything missing is shown as a gap, never filled in." : "Documents are prepared from a completed check. Run the check first."}</p>
           </div>
-          <p className="mt-1 text-[12px] text-slate-500">{openDoc.content?.footer} Anything missing is shown as a named gap, never filled in.</p>
-          <textarea aria-label={`${openDoc.title} text`} rows={18} className={`mt-2 font-mono !text-[12px] ${inputClass}`} value={body} readOnly={openDoc.status === "superseded" || !can[`${feature}.edit`]} onChange={(e) => setBody(e.target.value)} />
-          {openDoc.status !== "superseded" && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {can[`${feature}.edit`] && <Btn kind="primary" disabled={Boolean(busy) || body === (openDoc.body || "")} onClick={() => act("save", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { body, revision: openDoc.revision }); setOpenDoc(d); await load(); })}>Save changes</Btn>}
+        )}
+      </section>
+      <section>
+        <p className="mb-2 text-[15px] font-bold text-slate-900 dark:text-slate-50">Prepare a document</p>
+        <ul className="grid gap-3 sm:grid-cols-2" data-case-prepare>{state.kinds.map((k) => (
+          <li key={k.kind} className={`${DOC_CARD} flex flex-col`}>
+            <p className="text-[15px] font-semibold text-slate-900 dark:text-slate-50">{k.title}</p>
+            <p className="mt-1 flex-1 text-[13px] text-slate-500">{MATERIAL_ABOUT[k.kind] || "Written from your latest check."}</p>
+            <div className="mt-3"><Btn disabled={!canMake || Boolean(busy)} onClick={() => make(k.kind)}>{busy === `make-${k.kind}` ? "Preparing…" : "Prepare"}</Btn></div>
+          </li>
+        ))}</ul>
+      </section>
+      {problem && <Notice tone="rose" role="alert">{problem} Nothing was duplicated; you can try again.</Notice>}
+      {state.items.filter((m) => m.status === "superseded").length > 0 && (
+        <button type="button" onClick={() => setShowOld((v) => !v)} aria-expanded={showOld} className="text-[12.5px] font-semibold text-brand-700 hover:underline" data-earlier-versions>
+          {showOld ? "Hide earlier versions" : `Show earlier versions (${state.items.filter((m) => m.status === "superseded").length})`}</button>
+      )}
+      {sharing && (
+        <DocumentShareModal title={`Share ${sharing.title}`} subtitle="Choose who can use this link before generating it."
+          onClose={() => setSharing(null)}
+          onGenerate={async (config) => {
+            const doc = await getMaterial(businessId, feature, subject.id, sharing.id);
+            const out = await apiRequest("/blueprint/financial-documents/share", "POST", {
+              access_mode: config.access_mode || "link", email: config.email || null, expires_in_days: config.expires_in_days || 7,
+              type: `${feature}_material`, title: `${sharing.title} v${sharing.version}`.slice(0, 120), company_name: subject.title?.slice(0, 120) || "My business",
+              workspace_id: businessId, document_markdown: doc.body || sharing.title,
+            }, { timeoutMs: 120000 });
+            return { token: out?.token, url: `${window.location.origin}/share/${out?.token}`, emailSent: Boolean(out?.email_sent), emailError: out?.email_error || "" };
+          }}
+          onSendEmail={async ({ token, email }) => {
+            const res = await apiRequest(`/blueprint/share/${token}/email`, "POST", { email });
+            return { sent: Boolean(res?.sent), error: res?.error || "" };
+          }}
+          getMailtoHref={({ url, email }) => `mailto:${encodeURIComponent(email || "")}?subject=${encodeURIComponent(sharing.title)}&body=${encodeURIComponent(`Here is ${sharing.title}: ${url}`)}`} />
+      )}
+      {openDoc && (
+        <Popup title={`${openDoc.title} · version ${openDoc.version}`} subtitle={`${openDoc.content?.footer || ""} Anything missing is shown as a named gap, never filled in.`.trim()}
+          onClose={() => setOpenDoc(null)}
+          footer={openDoc.status !== "superseded" && (can[`${feature}.edit`] || can[`${feature}.review`]) ? (
+            <>
               {can[`${feature}.review`] && <Btn disabled={Boolean(busy)} onClick={() => act("review", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { reviewed: openDoc.status !== "reviewed" }); setOpenDoc(d); await load(); })}>{openDoc.status === "reviewed" ? "Back to draft" : "Mark as reviewed"}</Btn>}
-            </div>
-          )}
-        </div>
+              {can[`${feature}.edit`] && <Btn kind="primary" disabled={Boolean(busy) || body === (openDoc.body || "")} onClick={() => act("save", async () => { const d = await updateMaterial(businessId, feature, subject.id, openDoc.id, { body, revision: openDoc.revision }); setOpenDoc(d); await load(); })}>Save changes</Btn>}
+            </>
+          ) : null}>
+          <div className="mb-2 flex flex-wrap justify-end gap-2">
+            {can[`${feature}.edit`] && openDoc.status !== "superseded" && (
+              <Btn onClick={() => setEditingDoc((v) => !v)} data-doc-edit>{editingDoc ? "Done editing" : "Edit"}</Btn>
+            )}
+            <Btn disabled={Boolean(busy)} onClick={() => act("dl", () => downloadMaterial(businessId, feature, subject.id, openDoc.id, "pdf"))}>Download PDF</Btn>
+          </div>
+          {editingDoc
+            ? <textarea aria-label={`${openDoc.title} text`} rows={22} className={`!text-[13px] ${inputClass}`} value={body} onChange={(e) => setBody(e.target.value)} />
+            : <DocView text={body} />}
+        </Popup>
       )}
     </div>
   );
@@ -442,7 +637,7 @@ export function ScenarioPanel({ businessId, feature, subject, currency }) {
               <input type="text" inputMode="decimal" className={`mt-1 ${inputClass}`} value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
             </label>
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Received on
-              <input type="date" className={`mt-1 ${inputClass}`} value={form.receipt_date} onChange={(e) => setForm({ ...form, receipt_date: e.target.value })} />
+              <UkDateInput className={`mt-1 ${inputClass}`} value={form.receipt_date} onChange={(v) => setForm({ ...form, receipt_date: v })} />
             </label>
           </>
         ) : (
@@ -489,6 +684,69 @@ export function ScenarioPanel({ businessId, feature, subject, currency }) {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
+/** A prepared document as a page, like a PDF or Word file (the owner's QA, 21 Oct: it opened as raw text): a heading for
+ *  each section in capitals, "Label: value" lines and bullets as a list, the rest as paragraphs. */
+export function DocView({ text }) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  let list = null;
+  const flush = () => { if (list) { blocks.push({ kind: "list", items: list }); list = null; } };
+  lines.forEach((raw, n) => {
+    const line = raw.trim();
+    if (!line) { flush(); return; }
+    if (n === 0) { blocks.push({ kind: "title", text: line }); return; }
+    if (/^[A-Z0-9][A-Z0-9 &,/()'-]{2,}$/.test(line) && line === line.toUpperCase()) {
+      flush(); blocks.push({ kind: "heading", text: line.charAt(0) + line.slice(1).toLowerCase() }); return;
+    }
+    const bullet = line.match(/^[-*\u2022]\s+(.*)$/);
+    if (bullet) { (list ||= []).push(bullet[1]); return; }
+    flush(); blocks.push({ kind: "para", text: line });
+  });
+  flush();
+  const labelled = (t) => {
+    const m = t.match(/^([^:]{2,40}):\s+(.*)$/);
+    return m ? <><span className="font-semibold text-slate-900 dark:text-slate-100">{m[1]}:</span> {m[2]}</> : t;
+  };
+  return (
+    <article className="max-h-[60vh] overflow-y-auto rounded-lg border border-slate-200 bg-white px-8 py-7 text-[14px] leading-6 text-slate-700 shadow-inner dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" data-doc-view>
+      {blocks.map((b, i) => b.kind === "title" ? <h2 key={i} className="mb-4 text-[20px] font-bold text-slate-900 dark:text-slate-100">{b.text}</h2>
+        : b.kind === "heading" ? <h3 key={i} className="mb-2 mt-5 text-[15px] font-bold text-slate-900 dark:text-slate-100">{b.text}</h3>
+        : b.kind === "list" ? <ul key={i} className="mb-3 list-disc space-y-1 pl-5">{b.items.map((t, j) => <li key={j}>{labelled(t)}</li>)}</ul>
+        : <p key={i} className="mb-3">{labelled(b.text)}</p>)}
+    </article>
+  );
+}
+
+/** "···": Open, Download PDF, Download text, Share (by link or email). Closes on a choice, a click outside or Esc. */
+function MaterialMenu({ canExport, onOpen, onPdf, onText, onShare }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !e.target.closest?.("[data-material-menu]")) setOpen(false); };
+    window.addEventListener("keydown", close);
+    window.addEventListener("mousedown", close);
+    return () => { window.removeEventListener("keydown", close); window.removeEventListener("mousedown", close); };
+  }, [open]);
+  const pick = (fn) => () => { setOpen(false); fn(); };
+  const item = "block w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-200 dark:hover:bg-slate-800";
+  return (
+    <div className="relative" data-material-menu>
+      <button type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          <button type="button" role="menuitem" className={item} onClick={pick(onOpen)}>Open</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onPdf)}>Download PDF</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onText)}>Download text</button>
+          <button type="button" role="menuitem" className={item} disabled={!canExport} onClick={pick(onShare)}>Share by link or email</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function HistoryPanel({ businessId, feature, subject, currency }) {
   const [items, setItems] = useState(null);
   const [viewing, setViewing] = useState(null);
@@ -501,10 +759,12 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
   if (problem) return <Notice tone="rose" role="alert">{problem}</Notice>;
   if (!items) return <p className="text-[13px] text-slate-500" role="status">Loading history…</p>;
   if (!items.length) return <p className="text-[13px] text-slate-500">No checks have been run yet.</p>;
+  // Only the versions that changed something (the owner's brief, 20 Oct): a check run again with nothing new is left out.
+  const changed = items.filter((h, n) => n === 0 || !/^No changes since the last check/.test(String(h.what_changed || "")));
   return (
     <div className="space-y-3">
       <ul className="space-y-2">
-        {items.map((h) => {
+        {changed.map((h) => {
           const cls = CLASSIFICATION[h.classification];
           return (
             <li key={h.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
@@ -516,7 +776,8 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
                 {h.score !== null && h.score !== undefined ? `Score ${h.score} · ` : h.classification ? "No overall score · " : ""}{h.coverage !== null && h.coverage !== undefined ? `coverage ${h.coverage}% · ` : ""}
                 checklist {String(h.profile || "").split("@")[1] || ""}{h.requested_by ? ` · run by ${h.requested_by}` : ""}
               </p>
-              {h.changed_because?.length > 0 && <p className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">Changed since the check before because of {h.changed_because.join(" and ")}.</p>}
+              {h.what_changed ? <p className="mt-1 text-[12.5px] text-slate-700 dark:text-slate-200" data-what-changed>{h.what_changed}</p>
+                : h.changed_because?.length > 0 && <p className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">Changed since the check before because of {h.changed_because.join(" and ")}.</p>}
               {h.changed_because?.length > 0 && !h.comparable && <p className="text-[12px] text-amber-700 dark:text-amber-300">A different checklist version was used, so the scores are not directly comparable.</p>}
               {h.execution_status === "succeeded" && <Btn kind="link" className="mt-1 text-[12px]" onClick={async () => { try { setViewing(await getAssessment(businessId, feature, subject.id, h.id)); } catch (e) { setProblem(readinessError(e).message); } }}>View this result as it was</Btn>}
             </li>
@@ -524,10 +785,9 @@ export function HistoryPanel({ businessId, feature, subject, currency }) {
         })}
       </ul>
       {viewing && (
-        <div className="rounded-2xl border-2 border-dashed border-slate-300 p-3 dark:border-slate-700">
-          <div className="mb-2 flex items-center justify-between"><p className="text-sm font-bold text-slate-900 dark:text-slate-100">Result of {dateLabel(viewing.as_of)}, as it was</p><Btn kind="link" onClick={() => setViewing(null)}>Close</Btn></div>
+        <Popup wide title={`Result of ${dateLabel(viewing.as_of)}, as it was`} onClose={() => setViewing(null)}>
           <ResultView assessment={viewing} feature={feature} currency={currency} historic />
-        </div>
+        </Popup>
       )}
     </div>
   );
@@ -579,7 +839,7 @@ export function DecisionPanel({ businessId, subject, onChanged }) {
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <Btn kind="primary" disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "proceed", rationale, assessment_id: a?.id || null, acknowledged_risks: blockers.map((g) => g.label) }))}>Proceed</Btn>
             <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">New launch date
-              <input type="date" className={`mt-1 ${inputClass}`} disabled={!can} value={newDate} onChange={(e) => setNewDate(e.target.value)} />
+              <UkDateInput className={`mt-1 ${inputClass}`} disabled={!can} value={newDate} onChange={(v) => setNewDate(v)} />
             </label>
             <Btn disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "defer", rationale, new_target_date: newDate || null }))}>Defer to this date</Btn>
             <Btn kind="danger" disabled={!can || busy} onClick={() => call(() => recordDecision(businessId, subject.id, { decision: "cancel", rationale }))}>Cancel the launch</Btn>
@@ -591,7 +851,7 @@ export function DecisionPanel({ businessId, subject, onChanged }) {
         <Panel title="Record that the launch happened" description="Only once it has. You can record it whatever the last check said; the check's result is kept as it was.">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Date it launched
-              <input type="date" max={todayLocal()} className={`mt-1 ${inputClass}`} disabled={!can} value={actualDate} onChange={(e) => setActualDate(e.target.value)} />
+              <UkDateInput max={todayLocal()} className={`mt-1 ${inputClass}`} disabled={!can} value={actualDate} onChange={(v) => setActualDate(v)} />
             </label>
             <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">What actually launched
               <input className={`mt-1 ${inputClass}`} disabled={!can} value={scope} onChange={(e) => setScope(e.target.value)} placeholder="For example: two pilot clients" />

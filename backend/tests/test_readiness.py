@@ -61,6 +61,10 @@ def funding_case(env, *, forecast=True, assumptions=True, demand=True, attest=Tr
     for a in data["use_of_funds"]:
         a["period"] = period
     data.update(over)
+    # One funding case per business: a case made earlier in the same test is set aside first.
+    for r in run(svc.store.list("subjects", "A", kind=F)):
+        if r.get("status") != "cancelled":
+            run(svc.store.update("subjects", r["id"], {"status": "cancelled"}))
     case = run(svc.create_subject(OWNER, "A", F, data))
     cid = case["id"]
     if forecast:
@@ -111,7 +115,8 @@ def test_at01_all_criteria_met_and_gates_pass_is_ready_with_forecast_labels():
     assert a["execution_status"] == "succeeded"
     assert [c["score"] for c in r["criteria"]] == [100] * 8, [(c["code"], [(x["state"], x["reason"]) for x in c["checks"]]) for c in r["criteria"] if c["score"] != 100]
     assert all(g["state"] == "passed" for g in r["gates"]), r["gates"]
-    assert (r["score"], r["score_display"], r["classification"], r["coverage"]) == (100.0, 100, "ready", 100)
+    assert r["unfinished_areas"]      # every criterion met, with some answers still blank: never 100 (New-User Test F1)
+    assert (r["score"], r["score_display"], r["classification"], r["coverage"]) == (99.0, 99, "ready", 100)
     assert r["headline"] == "Prepared for initial equity discussions against this checklist."
     assert r["data_basis"]["label"] == "forecast" and "assumptions" in r["data_basis"]["note"]      # forecast labels stay visible
     assert r["confidence"]["level"] == "medium"                                                    # complete and current, but self-attested
@@ -149,7 +154,7 @@ def test_at04_allocations_short_of_the_target_fail_g2_whatever_the_score():
     env = Env()
     svc, cid = funding_case(env, use_of_funds=[{"id": "u1", "category": "People", "amount": "90000", "purpose": "Team", "period": "2026-10"}])
     r = assess(svc, cid)["result"]
-    assert gate(r, "G2")["state"] == "failed" and "10,000.00 is not allocated" in gate(r, "G2")["reason"]
+    assert gate(r, "G2")["state"] == "failed" and "£10,000 is not allocated" in gate(r, "G2")["reason"]
     assert r["classification"] == "not_ready" and r["score"] == 92.5 and r["blocker_count"] == 1
     assert r["gaps"][0]["code"] == "G2" and r["gaps"][0]["group"] == 1
     # The target is never changed to make the totals agree.
@@ -322,16 +327,16 @@ def test_at16_a_new_profile_version_keeps_history_reproducible_and_labels_the_co
     env = Env()
     svc, cid = funding_case(env)
     old = assess(svc, cid)
-    v2 = copy.deepcopy(rules.FUNDING_EQUITY_V1)
-    v2["version"] = "0.2"
+    v2 = copy.deepcopy(rules.FUNDING_EQUITY_V2)
+    v2["version"] = "0.3"
     v2["thresholds"] = {"conditionally_ready": 60, "ready": 101 - 1}
     monkeypatch.setitem(rules.PROFILES, rules.profile_key(v2), v2)
     monkeypatch.setitem(rules.CURRENT, F, rules.profile_key(v2))
     assert run(svc.get_subject(OWNER, "A", F, cid))["summary"]["freshness"] == "stale"                     # a newer checklist exists
     new = assess(svc, cid)
-    assert new["profile"].endswith("@0.2") and old["profile"].endswith("@0.1")
+    assert new["profile"].endswith("@0.3") and old["profile"].endswith("@0.2")
     history = run(svc.history(OWNER, "A", F, cid))
-    assert [h["profile"][-3:] for h in history] == ["0.2", "0.1"]
+    assert [h["profile"][-3:] for h in history] == ["0.3", "0.2"]
     assert history[0]["comparable"] is False and "a new version of the checklist" in history[0]["changed_because"]
     kept = run(svc.get_assessment(OWNER, "A", F, cid, old["id"]))
     assert kept["result"] == old["result"]                                                                 # the old result is untouched
@@ -347,20 +352,20 @@ def test_thresholds_at_exactly_60_and_80(points, expected):
     assert (out["score"], out["classification"]) == (float(points), expected)
 
 
-def test_a_score_that_is_not_whole_is_shown_to_one_decimal_never_rounded_across_a_threshold():
+def test_a_score_is_shown_as_a_whole_number_never_rounded_across_a_threshold():
     criteria = [{"weight": 79, "score": 100}, {"weight": 1, "score": 50}, {"weight": 20, "score": 0}]
     out = engine.classify(rules.FUNDING_EQUITY_V1, criteria, [])
-    assert out["score"] == 79.5 and out["score_display"] == 79.5 and out["classification"] == "conditionally_ready"
+    assert out["score"] == 79.5 and out["score_display"] == 79 and out["classification"] == "conditionally_ready"      # never "80" beside it
     low = engine.classify(rules.FUNDING_EQUITY_V1, [{"weight": 59, "score": 100}, {"weight": 1, "score": 50}, {"weight": 40, "score": 0}], [])
-    assert (low["score_display"], low["classification"]) == (59.5, "not_ready")          # never "60" beside "Not ready"
-    assert [engine.display_score(x) for x in (100.0, 52.5, 60, None)] == [100, 52.5, 60, None]
+    assert (low["score_display"], low["classification"]) == (59, "not_ready")            # never "60" beside "Not ready"
+    assert [engine.display_score(x) for x in (100.0, 52.5, 47.5, 60, 74.5, None)] == [100, 53, 48, 60, 74, None]      # whole numbers (22 Oct)
     env = Env()                                                                          # the header, the list and the dashboard show the same figure
     svc, cid = funding_case(env, use_of_funds=[{"id": "u1", "category": "People", "amount": "90000", "purpose": "Team", "period": "2026-10"}])
     a = assess(svc, cid)
     svc.store.rows["assessments"][a["id"]]["data"]["result"]["score_display"] = 93       # as saved before this change
     case = run(svc.get_subject(OWNER, "A", F, cid))
-    assert case["assessment"]["result"]["score_display"] == case["summary"]["score"] == 92.5
-    assert run(svc.history(OWNER, "A", F, cid))[0]["score"] == 92.5
+    assert case["assessment"]["result"]["score_display"] == case["summary"]["score"] == 93
+    assert run(svc.history(OWNER, "A", F, cid))[0]["score"] == 93      # whole numbers everywhere it is shown (22 Oct)
 
 
 def test_a_failed_gate_overrides_a_perfect_score_and_an_unknown_gate_is_never_ready():
@@ -534,8 +539,10 @@ def test_archived_cases_are_readable_but_need_reactivating_and_prefill_keeps_its
         with pytest.raises(Conflict):
             run(call)
     assert run(svc.set_status(OWNER, "A", F, case["id"], "reactivate"))["status"] == "active"
-    second = run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))                      # several named cases per business
-    assert {i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]} == {"Seed", "Bridge round"} and second["status"] == "draft"
+    with pytest.raises(Conflict) as second:                                                        # one funding case per business
+        run(svc.create_subject(OWNER, "A", F, {"title": "Bridge round"}))
+    assert second.value.code == "one_funding_case" and second.value.current["id"] == case["id"]
+    assert [i["title"] for i in run(svc.list_subjects(OWNER, "A", F))["items"]] == ["Seed"]
 
 
 def test_events_carry_scope_and_correlation_and_evidence_files_are_checked_on_download():
@@ -614,7 +621,8 @@ def test_lt01_everything_in_place_is_ready_and_nothing_launches_by_itself():
     r = a["result"]
     assert [c["score"] for c in r["criteria"]] == [100] * 8, [(c["code"], [(x["code"], x["state"], x["reason"]) for x in c["checks"]]) for c in r["criteria"] if c["score"] != 100]
     assert all(g["state"] == "passed" for g in r["gates"]), [(g["code"], g["state"], g["reason"]) for g in r["gates"]]
-    assert (r["score"], r["classification"], r["coverage"], r["gate_completeness"]) == (100.0, "ready", 100, 100)
+    assert r["unfinished_areas"]      # never 100 with answers still blank (New-User Test F1)
+    assert (r["score"], r["classification"], r["coverage"], r["gate_completeness"]) == (99.0, "ready", 100, 100)
     assert r["headline"] == "Prepared for the defined launch scope against this checklist."
     item = run(svc.get_subject(OWNER, "A", L, lid))
     assert item["status"] == "preparing" and "actual_launch" not in item["data"]              # ready is not launched
@@ -963,7 +971,7 @@ def test_the_same_inputs_and_ruleset_always_give_the_same_result():
     assert engine.assess(L, snap, rules.get_profile(a["profile"]), env.now.date()) == a["result"]
 
 
-def test_section_progress_is_separate_from_readiness_and_the_default_launch_is_the_nearest():
+def test_section_progress_is_separate_from_readiness_and_the_dashboard_shows_the_latest_launch():
     env = Env()
     svc = service_for(env.orch)
     later = run(svc.create_subject(OWNER, "A", L, {"name": "Later", "target_date": day(env, 200)}))
@@ -974,9 +982,11 @@ def test_section_progress_is_separate_from_readiness_and_the_default_launch_is_t
     assert soon["assessment"] is None and soon["summary"]["classification"] is None and soon["summary"]["score"] is None
     actor = run(env.orch.rt.business.actor(OWNER, "A", {}))
     picked = run(svc.dashboard_summaries("A", env.businesses["A"]["data"], actor, env.now))["launch"]
-    assert (picked["title"], picked["others"], picked["selection"]) == ("Soon", 2, "Your launch with the nearest date.")
-    run(svc.update_subject(OWNER, "A", L, later["id"], later["revision"], {"pinned": True}))
-    assert run(svc.dashboard_summaries("A", env.businesses["A"]["data"], actor, env.now))["launch"]["title"] == "Later"
+    assert (picked["title"], picked["others"], picked["selection"]) == ("Soon", 2, "Your most recent launch plan.")      # the latest made
+    run(svc.update_subject(OWNER, "A", L, later["id"], later["revision"], {"pinned": True}))      # every chat plan is pinned: pinning can't choose
+    assert run(svc.dashboard_summaries("A", env.businesses["A"]["data"], actor, env.now))["launch"]["title"] == "Soon"
+    run(svc.create_subject(OWNER, "A", L, {"name": "Newest", "target_date": day(env, 300)}))
+    assert run(svc.dashboard_summaries("A", env.businesses["A"]["data"], actor, env.now))["launch"]["title"] == "Newest"
     contract = {"business_id", "initiative_id", "launch_type", "scope", "target_date", "lifecycle_status", "assessment_id", "profile_version", "classification",
                 "score", "evidence_coverage", "gate_completeness", "confidence", "freshness", "blocker_count", "next_action_id"}
     assert contract <= set(picked)
@@ -1013,6 +1023,9 @@ def test_the_api_covers_the_journey_and_maps_errors(http):
     assert started.json()["result"]["classification"] == "insufficient_evidence" and gate(started.json()["result"], "G1")["state"] == "passed"
     assert client.post(f"/businesses/A/funding-cases/{cid}/assessments", json={"idempotency_key": "one"}).json()["id"] == started.json()["id"]
     assert len(client.get(f"/businesses/A/funding-cases/{cid}/assessments").json()["items"]) == 1
+    locked = client.post(f"/businesses/A/funding-cases/{cid}/materials", json={"kind": "readiness_report"})      # Starter: the pack is Decision Engine
+    assert locked.status_code == 403 and locked.json()["detail"]["minimum_plan_label"] == "Decision Engine"
+    env.meter.plans[OWNER] = "decision_engine"
     doc = client.post(f"/businesses/A/funding-cases/{cid}/materials", json={"kind": "readiness_report"})
     assert doc.status_code == 201
     pdf = client.get(f"/businesses/A/funding-cases/{cid}/materials/{doc.json()['id']}/download")
@@ -1021,7 +1034,7 @@ def test_the_api_covers_the_journey_and_maps_errors(http):
     assert client.get(f"/businesses/A/funding-cases/not-a-uuid").status_code == 404
     assert client.post(f"/businesses/A/launch-initiatives/{cid}/decisions", json={"decision": "proceed"}).status_code == 404      # a case is not a launch
     profiles = client.get("/readiness/profiles").json()
-    assert profiles["funding"]["current"]["key"] == "funding.equity.uk_service_software@0.1" and [u["route"] for u in profiles["funding"]["unavailable"]] == ["debt", "grant"]
+    assert profiles["funding"]["current"]["key"] == "funding.equity.uk_service_software@0.2" and [u["route"] for u in profiles["funding"]["unavailable"]] == ["debt", "grant"]
     who.update({"id": OUTSIDER, "email": OUTSIDER})
     for path in (f"/businesses/A/funding-cases/{cid}", "/businesses/A/funding-cases", "/businesses/A/evidence", f"/businesses/A/funding-cases/{cid}/assessments"):
         assert client.get(path).status_code == 404, path
@@ -1082,7 +1095,7 @@ def test_the_dashboard_shows_the_selected_launch_and_funding_case_from_their_che
     assert "can’t be assessed yet" in gaps["text"] and "Next: Attach at least one dated piece of customer or market evidence." in gaps["text"]
     contract = {"business_id", "case_id", "assessment_id", "profile_version", "classification", "score", "coverage", "confidence", "freshness",
                 "blocker_count", "next_action_id"}
-    assert contract <= set(d["funding_readiness"]) and d["funding_readiness"]["score"] is None and d["funding_readiness"]["coverage"] == 85
+    assert contract <= set(d["funding_readiness"]) and d["funding_readiness"]["score_partial"] is True and d["funding_readiness"]["score"] == d["funding_readiness"]["known_score"] and d["funding_readiness"]["coverage"] == 85
     # A change makes the card say the result is out of date; nothing is recalculated on the dashboard.
     item = run(svc.get_subject(OWNER, "A", L, lid))
     run(svc.update_subject(OWNER, "A", L, lid, item["revision"], {"audience": "Practice managers"}))
@@ -1222,11 +1235,11 @@ def test_f7_drafts_name_the_checklist_by_title_and_version():
     assess(svc, cid)
     for kind in ("executive_summary", "pitch_outline", "readiness_report"):
         doc = run(svc.generate_material(OWNER, "A", F, cid, kind))
-        assert doc["body"].rstrip().endswith("using the checklist Equity preparation, version 0.1. Figures are as they were on that date."), kind
+        assert doc["body"].rstrip().endswith("using the checklist Equity preparation, version 0.2. Figures are as they were on that date."), kind
         assert "funding.equity.uk_service_software" not in doc["body"] and "@0.1" not in doc["body"]
     _, lid = launch(env)
     assess(svc, lid, L)
-    assert "using the checklist Commercial service launch, version 0.1." in run(svc.generate_material(OWNER, "A", L, lid, "launch_checklist"))["body"]
+    assert "using the checklist Commercial service launch, version 0.2." in run(svc.generate_material(OWNER, "A", L, lid, "launch_checklist"))["body"]
 
 
 # ══ QA round 3 ════════════════════════════════════════════════════════════════
@@ -1354,21 +1367,21 @@ def test_c2_run_scenario_opens_the_scenario_it_names():
 def test_c3_the_launch_suggestion_is_worded_and_routed_from_the_launch_summary():
     env = Env()
     first = _suggestion(_pre(env), "stage_blockers")
-    assert (first["text"], first["action"]) == ("Your idea hasn't been scored yet: I'm scoring it before you launch.", {"to": "/validation"})
+    assert (first["text"], first["action"]) == ("Your idea hasn't been scored yet. I can score it before you launch.", {"to": "/validation"})
     env.businesses["A"]["data"]["decision"] = {"status": "accepted"}
     ok = _suggestion(_pre(env), "stage_blockers")
     assert (ok["text"], ok["action"]) == ("I need your launch date and scope before I can check your readiness.", {"to": "/launch"})
     svc, lid = launch(env, prerequisite="not_completed")
     waiting = _suggestion(_pre(env), "stage_blockers")
-    assert (waiting["text"], waiting["action"]) == ("I'm checking your launch evidence for gaps.", {"to": f"/launch/{lid}"})      # the Agent runs the check itself
+    assert (waiting["text"], waiting["action"]) == ("Check my launch evidence for gaps", {"to": f"/launch/{lid}"})      # no check running yet: offered (QA P1-5)
     assess(svc, lid, L)
     blocked = _suggestion(_pre(env), "stage_blockers")
-    assert (blocked["text"], blocked["action"]) == ("I'm checking your launch evidence for gaps.", {"to": f"/launch/{lid}"})
+    assert (blocked["text"], blocked["action"]) == ("Check my launch evidence for gaps", {"to": f"/launch/{lid}"})
     env2 = Env()
     svc2, lid2 = launch(env2, forecast=False)
     assess(svc2, lid2, L)
     gaps = _suggestion(_pre(env2), "stage_blockers")
-    assert (gaps["text"], gaps["action"]) == ("I'm checking your launch evidence for gaps.", {"to": f"/launch/{lid2}"})
+    assert (gaps["text"], gaps["action"]) == ("Check my launch evidence for gaps", {"to": f"/launch/{lid2}"})
     env3 = Env()
     svc3, lid3 = launch(env3)
     assess(svc3, lid3, L)
@@ -1377,7 +1390,7 @@ def test_c3_the_launch_suggestion_is_worded_and_routed_from_the_launch_summary()
 
 
 def test_c4_funding_pack_opens_the_funding_case_materials():
-    env = Env()
+    env = Env(plan="decision_engine")
     d = _pre(env)
     assert _suggestion(d, "stage_funding")["action"] == {"to": "/funding"} and _shortcut(d, "funding_pack")["action"] == {"to": "/funding"}
     _, cid = funding_case(env)
@@ -1401,7 +1414,7 @@ def test_c5_add_it_links_open_the_forecast_that_holds_the_figure():
 
 
 def test_c6_c7_the_old_checklist_is_the_setup_checklist_and_no_link_leaves_its_subject():
-    env = Env()
+    env = Env(plan="decision_engine")
     _, lid = launch(env, prerequisite="not_completed")
     _, cid = funding_case(env, demand=False)
     d = _pre(env)
@@ -1429,16 +1442,13 @@ def test_s1_a_scenario_the_plan_cannot_run_says_so_and_never_opens_a_disabled_ru
     assert dash.plan_allows_scenario("starter_insight", "tmpl_hire_staff") is False
     env = Env(plan="explorer")                                          # the free plan can run no manual scenario
     card = _card(_pre(env), "scenario")
-    assert card["cta"] == {"label": "See the scenario \u00b7 Pro", "to": "/pricing", "upgrade": True, "locked": True, "note": dash.SCENARIO_LOCK_NOTE,
-                           "unlocked_to": "/simulation?template=tmpl_cost_increase"}
-    assert card["note"] == dash.SCENARIO_LOCK_NOTE and card["detail"] is None and card["text"] == "I need your planned monthly costs in a launch plan before I can work out what a cost rise does to your runway."
+    # The free plan sees each insight in outline, with one way on (the free-plan insights rule): never a run it can't open.
+    assert card["cta"] == dash.UPGRADE and card["detail"] is None and card["note"] is None and card["agent_action"] is None
     env = Env(plan="explorer")
     operating(env)
     invoice(env, "late1", "Aftred", 149, paid=False, due_in=-8)
     step = _card(_dashboard(env), "next_step")
-    assert step["cta"] == {"label": "See plans", "to": "/pricing"}
-    assert step["text"] == "1 overdue (\u00a3149.00). Reminders are part of Agent tasks, which your plan doesn't include."
-    assert step["detail"] == "1 overdue \u00b7 \u00a3149.00"
+    assert step["cta"] == dash.UPGRADE and step["detail"] is None      # in outline on the free plan
     assert step["agent_action"] is None                                # nothing for the owner to start
     for d in (_pre(Env(plan="explorer")), _dashboard(env)):
         assert not [c for c in d["insights"] if str((c["cta"] or {}).get("to", "")).startswith("/simulation")]
@@ -1500,3 +1510,51 @@ def test_l2_an_invoice_saved_without_a_number_is_named_as_business_operations_na
     rows = [e["label"] for e in _card(_dashboard(env), "next_step")["why"]["evidence"]]
     assert set(rows) == {"INV-1160926", "INV-2160926", "INV-keep"} and "Invoice (no number)" not in rows
     assert dash.invoice_label({"id": "x"}) == "Invoice (no number)"    # only when there is truly nothing to go on
+
+
+def test_the_amount_and_date_are_confirmed_with_one_press_and_undone(http):
+    # The owner's QA, 22 Oct: "Confirm date" saves only timing_confirmed; the funding goal then counts, and Undo withdraws it.
+    env, client, who = http
+    made = client.post("/businesses/A/funding-cases", json={"data": {"title": "Loan", "target_amount": "500000", "currency": "NGN"}}).json()
+    cid = made["id"]
+    r = client.patch(f"/businesses/A/funding-cases/{cid}", json={"revision": made["revision"], "changes": {"receipt_date": day(env, 60)}}).json()
+    r = client.patch(f"/businesses/A/funding-cases/{cid}", json={"revision": r["revision"], "changes": {"timing_confirmed": False}}).json()
+    off = client.post(f"/businesses/A/funding-cases/{cid}/assessments", json={"idempotency_key": "off"}).json()
+    assert gate(off["result"], "G1")["state"] != "passed"
+    r = client.get(f"/businesses/A/funding-cases/{cid}").json()
+    on = client.patch(f"/businesses/A/funding-cases/{cid}", json={"revision": r["revision"], "changes": {"timing_confirmed": True}})
+    assert on.status_code == 200 and on.json()["data"]["timing_confirmed"] is True
+    ran = client.post(f"/businesses/A/funding-cases/{cid}/assessments", json={"idempotency_key": "on"}).json()
+    assert gate(ran["result"], "G1")["state"] == "passed"
+
+
+def test_a_new_title_starts_a_new_need_with_the_old_one_in_history(http):
+    # The owner's QA, 23 Oct: "Funds for Party" typed over "Loan for marketing" is a new need, not a rename.
+    env, client, who = http
+    made = client.post("/businesses/A/funding-cases", json={"data": {"title": "Loan for marketing", "target_amount": "500000", "currency": "NGN",
+                                                                     "purpose": "Marketing", "route_preference": "loan",
+                                                                     "milestones": [{"id": "m1", "outcome": "Marketing delivered", "due_date": day(env, 90)}]}}).json()
+    r = client.patch(f"/businesses/A/funding-cases/{made['id']}", json={"revision": made["revision"], "changes": {"title": "Funds for Party"}}).json()
+    out = client.post(f"/businesses/A/funding-cases/{made['id']}/new-need",
+                      json={"title": "Funds for Party", "purpose": "A party", "target_amount": 2000000})
+    assert out.status_code == 200, out.text
+    d = out.json()["data"]
+    assert (d["title"], d["purpose"], d["target_amount"]) == ("Funds for Party", "A party", 2000000)
+    assert not d.get("milestones")      # the old need's milestones are set aside with it
+    prev = d["previous_needs"][0]
+    assert prev["title"] == "₦500k loan for marketing" and prev["set_aside"]["milestones"][0]["outcome"] == "Marketing delivered"
+
+
+def test_a_launch_plans_confirmations_save_and_count(http):
+    # The owner's QA, 23 Oct: "I'm confirming and adopting things, yet my score is still 15": a launch plan's reviewer
+    # confirmation (C2.B) is saved and the check counts it; capacity is confirmed with the plan's "confirm" list.
+    env, client, who = http
+    lid = client.post("/businesses/A/launch-initiatives", json={"data": {"name": "Drone cleaning", "economics": {"price_per_unit": "4000", "variable_cost_per_unit": "1000", "fixed_costs_monthly": "35000"}}}).json()
+    out = client.post(f"/businesses/A/launch-initiatives/{lid['id']}/attestations", json={"code": "C2.B", "passed": True, "rationale": "Reviewed by the owner."})
+    assert out.status_code == 200, out.text
+    plan = client.get(f"/businesses/A/launch-initiatives/{lid['id']}").json()
+    ran = client.post(f"/businesses/A/launch-initiatives/{lid['id']}/assessments", json={"idempotency_key": "k1"}).json()
+    checks = {ch["code"]: ch["state"] for c in ran["result"]["criteria"] for ch in c["checks"]}
+    assert checks["C2.B"] == "passed", checks
+    capped = client.patch(f"/businesses/A/launch-initiatives/{lid['id']}", json={"revision": plan["revision"], "changes": {"delivery": {"capacity_available": "160", "capacity_committed": "0"}}, "confirm": ["capacity"]})
+    assert capped.status_code == 200 and capped.json()["data"]["delivery"]["capacity_confirmed_at"]

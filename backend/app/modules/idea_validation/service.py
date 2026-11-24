@@ -44,6 +44,11 @@ _FREE_PLAN_KEYS = {"free_trial", "explorer", "expired", ""}
 _LIFETIME_VALIDATION_LIMIT = 1
 
 
+def _unnamed(name) -> bool:
+    """A workspace with no real name yet: none, or the placeholder."""
+    return not str(name or "").strip() or str(name).strip() in ("My workspace", "Unnamed")
+
+
 async def create_workspace(
     *,
     user_id: str,
@@ -68,7 +73,7 @@ async def create_workspace(
             else:
                 merged[k] = v
         update = {"data": merged, "updated_at": now.isoformat()}
-        if name and name.strip():
+        if name and name.strip() and _unnamed(existing.get("name")):      # never renames a workspace that has a name
             update["name"] = name.strip()
         await sb_update(
             "workspaces",
@@ -87,6 +92,8 @@ async def create_workspace(
         "updated_at": now.isoformat(),
     }
     await sb_insert("workspaces", doc)
+    from app.modules.agent.autostart import off_for_new_workspace
+    await off_for_new_workspace(workspace_id, user_id)      # automatic starting off until the owner switches it on
     return workspace_id
 
 
@@ -458,15 +465,16 @@ async def evaluate(
                 starting_cash=iv_payload.cash.starting_cash if iv_payload.cash else 0.0
             )
 
+            # Audit F5: with no capacity answers, capacity is not assessed (it used to assume 1 person x 100 units)
             cap_inputs = CapacityCalcInputs(
                 demand_units_per_month=iv_payload.demand.expected_units_per_month or 1.0,
-                team_size=iv_payload.capacity.team_size if iv_payload.capacity else 1,
-                capacity_units_per_person_per_month=iv_payload.capacity.capacity_units_per_person_per_month if iv_payload.capacity else 100.0
-            )
+                team_size=iv_payload.capacity.team_size,
+                capacity_units_per_person_per_month=iv_payload.capacity.capacity_units_per_person_per_month
+            ) if iv_payload.capacity else None
 
-            sc_inputs = SalesCycleInputs(
-                sales_cycle_days=iv_payload.demand.sales_cycle_days or 30,
-                payment_terms_days=iv_payload.demand.payment_terms_days or 14
+            sc_inputs = SalesCycleInputs(      # None when not given: not assessed, never an assumed 30 / 14 days (audit F5)
+                sales_cycle_days=iv_payload.demand.sales_cycle_days,
+                payment_terms_days=iv_payload.demand.payment_terms_days
             )
 
             conc_inputs = ConcentrationInputs(
@@ -1235,6 +1243,11 @@ async def update_workspace(
 
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
+    from app.shared.master_records import prepare_employee_expenses
+    try:
+        prepare_employee_expenses(data_patch, merged)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if isinstance((data_patch or {}).get("financials"), dict):
         # Invoice numbers are unique per business and issued by the server; a duplicate typed
         # by hand is refused here (409), before anything is saved.
@@ -1256,8 +1269,22 @@ async def update_workspace(
                 from app.modules.addons.service import restore_locked_rfqs
                 v = {**v, "rfq_requests": restore_locked_rfqs(v["rfq_requests"], merged[k].get("rfq_requests") or [])}
             merged[k] = {**merged[k], **v}
+        elif k == "catalogue" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = {**merged[k], **v}
+        elif k == "workspace_profile" and isinstance(v, dict) and isinstance(merged.get(k), dict):
+            # QA D1: the company profile is merged, never replaced, by a whole-document save (the Registration
+            # wizard once sent {company_name, about_company} and every other confirmed onboarding answer was lost).
+            # A blank value never wipes one that is set; clearing a field is the profile endpoint's job.
+            merged[k] = {**merged[k], **{kk: vv for kk, vv in v.items() if vv not in (None, "", [], {}) or kk not in merged[k]}}
         else:
             merged[k] = v
+    # Documents keep the currency they were made in (the owner's QA, 16 Oct): one saved without its own currency gets the
+    # workspace's as it was before this save, so a currency change in the same or a later save never relabels it.
+    try:
+        from app.modules.agent import business as _bz
+        _bz.stamp_document_currencies(merged, _bz.currency_of(ws.data or {}))
+    except Exception:      # noqa: BLE001 - the save goes ahead; the next one stamps them
+        logger.info("document currencies not stamped for %s", workspace_id, exc_info=True)
 
     ws_name = (name and str(name).strip()) or ws.name or "Unnamed"
 
@@ -1269,7 +1296,9 @@ async def update_workspace(
         logger.exception("snapshot scheduling failed for workspace %s: %s", workspace_id, e)
 
     update = {"data": merged, "updated_at": now.isoformat()}
-    if name and str(name).strip():
+    # The workspace name is master data (the owner's QA, 16 Oct): a form save never renames a workspace. A name sent with a
+    # save only names one that has none yet (or still the placeholder); renaming is the workspace's own setting.
+    if name and str(name).strip() and _unnamed(ws.name):
         update["name"] = str(name).strip()
 
     try:

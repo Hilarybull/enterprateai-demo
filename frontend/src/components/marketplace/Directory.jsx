@@ -1,11 +1,12 @@
 import { SkeletonCard, SkeletonRegion } from "../Skeleton";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Pagination from "../Pagination";
 import { Link, useNavigate } from "react-router-dom";
 import { Btn, Notice, Panel, Pill, inputClass } from "../readiness/Fields";
-import { Initials } from "./MarketplaceHeader";
+import { BusinessMark } from "./MarketplaceHeader";
 import { useAuthStore } from "../../store/auth";
 import {
-  OPPORTUNITY_LABEL, TRUST_MARK, TRUST_TONE, activateMarketplaceProfile, claimLookup, directoryError, reportBusiness, searchBusinesses, suggestMarketplaceServices, suggestMarketplaceDescription, updateMarketplaceProfile,
+  OPPORTUNITY_LABEL, TRUST_MARK, TRUST_TONE, activateMarketplaceProfile, claimLookup, directoryError, reportBusiness, searchBusinesses, suggestBusinesses, suggestMarketplaceServices, suggestMarketplaceDescription, updateMarketplaceProfile,
   updateOpportunityPreferences,
 } from "../../lib/directory";
 
@@ -44,43 +45,52 @@ export function OpportunityChips({ opportunities }) {
 
 // ── W01: search and results ───────────────────────────────────────────────────
 
+const DIRECTORY_PAGE = 24;
+
 /** `stickyTop`: the height of whatever is fixed above (the Marketplace header), so the filter bar stays in view under it. */
-export function DirectoryResults({ query = "", stickyTop = 0 }) {
+export function DirectoryResults({ query = "", stickyTop = 0, toolbarAction }) {
   const [filters, setFilters] = useState({ category: "", location: "", trust: "", open_for: "" });
   const [state, setState] = useState({ loading: true, items: [], total: 0, categories: [] });
+  const [paged, setPaged] = useState({ page: 1, more: 1 });      // Previous, Next and the numbers; on a phone, "Load more" adds to the list
+  const top = useRef(null);
+  useEffect(() => { setPaged({ page: 1, more: 1 }); }, [query, filters]);
 
   useEffect(() => {
     let live = true;
-    setState((s) => ({ ...s, loading: true, problem: null }));
+    const adding = paged.more > 1;
+    setState((s) => ({ ...s, loading: !adding, problem: null }));
     const t = setTimeout(() => {
-      searchBusinesses({ q: query, ...filters })
-        .then((r) => live && setState({ loading: false, ...r }))
+      searchBusinesses({ q: query, ...filters, page: paged.page + paged.more - 1, page_size: DIRECTORY_PAGE })
+        .then((r) => live && setState((s) => ({ loading: false, ...r, items: adding ? [...s.items, ...(r.items || [])] : r.items })))
         .catch((e) => live && setState({ loading: false, items: [], total: 0, categories: [], problem: directoryError(e, "The directory couldn't be loaded.").message }));
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [query, filters]);
+  }, [query, filters, paged]);
 
   if (state.enabled === false) return <div className="pt-6"><Notice>The business directory isn't available yet.</Notice></div>;
   const set = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   const narrowed = Boolean(query.trim()) || Object.values(filters).some(Boolean);
   const field = `${inputClass} !py-2 !text-[13px]`;
   return (
-    <div>
+    <div ref={top} style={{ scrollMarginTop: stickyTop }}>
       <div style={{ top: stickyTop }} className="sticky z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 dark:border-slate-800 dark:bg-slate-950/95">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter businesses">
-          <select aria-label="Category" className={field} value={filters.category} onChange={set("category")}>
-            <option value="">All categories</option>
-            {(state.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input aria-label="Location or service area" className={field} value={filters.location} onChange={set("location")} placeholder="Location" />
-          <select aria-label="Profile status" className={field} value={filters.trust} onChange={set("trust")}>
-            <option value="">Any status</option><option value="claimed">Verified only</option><option value="created">Created on EnterprateAI, not verified</option>
-            {/* Offered only when unclaimed profiles are listed at all. */}
-            {state.unclaimed_listed && <option value="unclaimed">Not yet claimed</option>}
-          </select>
-          <select aria-label="Open for" className={field} value={filters.open_for} onChange={set("open_for")}>
-            <option value="">Any opportunity</option><option value="enquiries">Open for enquiries</option><option value="rfqs">Open for quote requests</option><option value="proposals">Open for proposals</option>
-          </select>
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter businesses">  
+            <select aria-label="Category" className={field} value={filters.category} onChange={set("category")}>  
+              <option value="">All categories</option>  
+              {(state.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}  
+            </select>  
+            <input aria-label="Location or service area" className={field} value={filters.location} onChange={set("location")} placeholder="Location" />  
+            <select aria-label="Profile status" className={field} value={filters.trust} onChange={set("trust")}>  
+              <option value="">Any status</option><option value="claimed">Verified only</option><option value="created">Created on EnterprateAI, not verified</option>  
+              {/* Offered only when unclaimed profiles are listed at all. */}  
+              {state.unclaimed_listed && <option value="unclaimed">Public listing</option>}  
+            </select>  
+            <select aria-label="Open for" className={field} value={filters.open_for} onChange={set("open_for")}>  
+              <option value="">Any opportunity</option><option value="enquiries">Open for enquiries</option><option value="rfqs">Open for quote requests</option><option value="proposals">Open for proposals</option>  
+            </select>  
+          </div>
+          {toolbarAction}
         </div>
       </div>
       <div className="space-y-4 pt-5">
@@ -99,7 +109,7 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                         {/* The badge has the top line to itself on every card, so names line up across a row. */}
                         <div className="flex justify-end"><TrustBadge trust={b.trust} /></div>
                         <div className="mt-2 flex items-center gap-3">
-                          <Initials name={b.name} size={40} />
+                          <BusinessMark name={b.name} logo={b.logo_data_url} size={40} />
                           <div className="min-w-0">
                             <h3 className="break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-100">{b.name}</h3>
                             <p className="truncate text-[12px] text-slate-500">{[b.category, b.location].filter(Boolean).join(" · ")}</p>
@@ -113,7 +123,7 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                           </p>
                         )}
                         <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-                          <OpportunityChips opportunities={b.opportunities} />
+                          <OpportunityChips opportunities={b.held_requests_open ? { ...b.opportunities, enquiries: true, rfqs: true } : b.opportunities} />
                           <span className="ml-auto shrink-0 whitespace-nowrap text-[13px] font-semibold text-brand-600 group-hover:underline dark:text-brand-300">View profile →</span>
                         </div>
                       </Link>
@@ -122,7 +132,8 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
                 })}
               </ul>
             )}
-        {!state.loading && state.total > state.items.length && <p className="text-[12px] text-slate-500">Showing {state.items.length} of {state.total}. Narrow the search to see the rest.</p>}
+        {!state.loading && <Pagination total={state.total} page={paged.page} more={paged.more} size={DIRECTORY_PAGE} noun="businesses" className="!px-0"
+          onPage={(page) => { setPaged({ page, more: 1 }); top.current?.scrollIntoView?.({ block: "start" }); }} onMore={(more) => setPaged((p) => ({ ...p, more }))} />}
       </div>
     </div>
   );
@@ -130,15 +141,38 @@ export function DirectoryResults({ query = "", stickyTop = 0 }) {
 
 // ── find and claim your business ──────────────────────────────────────────────
 
-/** An exact name with its company number or website: no browsing and no suggestions. A match
- *  goes to the claim introduction; a miss offers to create a profile instead. */
+/** Find a listed business by name, registered number, or website. A match goes to its profile;
+ *  the exact company-number/domain match is shown as the user enters it. */
 export function FindToClaim({ defaultOpen = false }) {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const [open, setOpen] = useState(defaultOpen);
   const [form, setForm] = useState({ name: "", company_number: "", website: "" });
   const [state, setState] = useState({});
-  const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setState({}); };
+  const set = (k) => (e) => { setForm((f) => ({ ...f, [k]: e.target.value })); setSuggestions((s) => ({ ...s, [k]: [] })); setState({}); };
+  const [suggestions, setSuggestions] = useState({ name: [], company_number: [], website: [] });
+  useEffect(() => {
+    let live = true;
+    const timers = [];
+    for (const field of ["name", "company_number", "website"]) {
+      const typed = form[field].trim();
+      const ready = field === "name" ? typed.length >= 2 : field === "company_number" ? typed.length >= 3 : typed.length >= 5;
+      if (!ready) { setSuggestions((s) => s[field].length ? { ...s, [field]: [] } : s); continue; }
+      timers.push(setTimeout(() => {
+        suggestBusinesses(field === "name" ? { q: typed } : { [field]: typed })
+          .then((r) => { if (live) setSuggestions((s) => ({ ...s, [field]: r.items || [] })); })
+          .catch(() => { if (live) setSuggestions((s) => ({ ...s, [field]: [] })); });
+      }, 120));
+    }
+    return () => { live = false; timers.forEach(clearTimeout); };
+  }, [form.name, form.company_number, form.website]);
+  const matchingBusinesses = (field) => suggestions[field]?.length > 0 && (
+    <ul aria-label={`Matching businesses by ${field.replace("_", " ")}`} data-claim-suggestions className="mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      {suggestions[field].map((b) => <li key={b.id}><button type="button" onClick={() => navigate(b.claimed ? `/marketplace/business/${b.slug}` : `/marketplace/claim/${b.slug}`)}
+        className="flex w-full flex-col px-3 py-2 text-left text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800"><span className="break-words font-semibold text-slate-800 dark:text-slate-100">{b.name}</span>
+          <span className="text-[12px] text-slate-500">{[b.location, b.claimed ? "Already claimed" : "Claim this business"].filter(Boolean).join(" · ")}</span></button></li>)}
+    </ul>
+  );
 
   async function find(e) {
     e.preventDefault();
@@ -168,11 +202,12 @@ export function FindToClaim({ defaultOpen = false }) {
       <p className="mt-0.5 text-[13px] text-slate-500">Enter the name exactly as it is registered or trades, with the company number or the website.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Business name
-          <input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} required /></label>{err("name")}</div>
+          <input className={`mt-1 ${inputClass}`} value={form.name} onChange={set("name")} required autoComplete="off" /></label>{err("name")}
+          {matchingBusinesses("name")}</div>
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Company number
-          <input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></label>{err("company_number")}</div>
+          <input className={`mt-1 ${inputClass}`} value={form.company_number} onChange={set("company_number")} /></label>{err("company_number")}{matchingBusinesses("company_number")}</div>
         <div><label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">or website
-          <input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} placeholder="example.co.uk" /></label></div>
+          <input className={`mt-1 ${inputClass}`} value={form.website} onChange={set("website")} placeholder="example.co.uk" /></label>{matchingBusinesses("website")}</div>
       </div>
       {state.problem && !Object.keys(state.problem.errors || {}).length && <p role="alert" className="mt-2 text-[13px] font-medium text-rose-600">{state.problem.message}</p>}
       {state.missed && (
@@ -202,7 +237,12 @@ export function ReportBox({ slug, via }) {
     catch (err) { setState({ problem: directoryError(err, "That couldn't be sent. Please try again.") }); }
   }
   if (state.done) return <Notice tone="emerald">{state.done}</Notice>;
-  if (!open) return <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => setOpen(true)}>Report incorrect information</Btn>;
+  if (!open) return (
+    <span className="flex flex-wrap gap-x-4 gap-y-1">
+      <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => { setForm((f) => ({ ...f, kind: "correction" })); setOpen(true); }}>Report incorrect information</Btn>
+      <Btn kind="link" className="text-[13px] !text-slate-500" onClick={() => { setForm((f) => ({ ...f, kind: "unlist" })); setOpen(true); }}>Request unlisting</Btn>
+    </span>
+  );
   return (
     <form onSubmit={send} className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700" aria-label="Report this profile">
       <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">What would you like to do?
@@ -307,6 +347,9 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
           {" "}These come from public sources and stay on record; what you write below is what the public sees.
         </Notice>
       )}
+      <p className="text-[12px] text-slate-500">
+        Business name and industry are managed in your workspace profile. <Btn kind="link" disabled={disabled} onClick={() => navigate("/account")}>Edit workspace profile</Btn>
+      </p>
       <div>
         <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
           <label htmlFor="mp-field-description" className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Public description
@@ -364,7 +407,7 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
       </div>
       <div>
         <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Offerings to show publicly</p>
-        <p className="text-[12px] text-slate-500">These are your Catalogue items. Ticking one shows it on your profile; nothing is copied.</p>
+        <p className="text-[12px] text-slate-500">These are your Catalogue items. Choose which ones to show here; edit their names, descriptions and prices in your Catalogue.</p>
         {!offered && need("offering", "Needed to publish: tick at least one offering, or list a service above.")}
         {profile.offerings.length === 0 ? (
           <p className="mt-1 text-[13px] text-slate-500">Your Catalogue is empty. <Btn kind="link" onClick={() => navigate("/catalogue")}>Add a product or service</Btn>, or list your services above.</p>
@@ -381,6 +424,7 @@ export function ProfileSettings({ profile, claimId, onSaved, saveLabel = "Save p
             ))}
           </ul>
         )}
+        <Btn kind="link" disabled={disabled} onClick={() => navigate("/catalogue")}>Edit Catalogue items</Btn>
       </div>
       {state.problem && <Notice tone="rose" role="alert">{state.problem.message}</Notice>}
       <div className={`flex flex-wrap items-center gap-3 ${footerLeft ? "flex-row-reverse justify-between border-t border-slate-100 pt-4 dark:border-slate-800" : ""}`}>

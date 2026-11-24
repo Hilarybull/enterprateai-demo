@@ -43,11 +43,16 @@ TRANSITION_DAYS = 30            # launch items stay this long after the first pa
 GROWTH_MIN_PAID_INVOICES = 5
 GROWTH_MIN_PCT = 20.0           # revenue up by at least this much, quarter on quarter
 
-STAGES = ("idea", "pre_launch", "operating", "growth")      # multi_entity comes later (s17)
-STAGE_ALIASES = {"startup": "pre_launch"}
-STAGE_LABEL = {"idea": "Idea", "pre_launch": "Pre-launch", "operating": "Operating", "growth": "Growth"}
+# The stages, their labels and how onboarding's answer maps to them live in one place: stages.py (QA R10).
+from app.modules.agent.stages import (CHOICE_VERSION, DECLARED_LABEL, DECLARED_STAGE, LEGACY_CHOICE, PATHWAY_OF, STAGE_LABEL,  # noqa: E402
+                                      STAGES, further)
+STAGE_ALIASES: dict[str, str] = {}      # none now; a dashboard choice saved before v2 is read through LEGACY_CHOICE
+# A stage tile with nothing running is an offer, in the owner's words (never "I'm …" with no task behind it).
+SUGGESTED = {"stage_validate": "Score my idea", "stage_plan": "Draft my business plan", "stage_market": "Size my market",
+             "stage_blockers": "Check what my launch still needs", "stage_funding": "Draft my funding pack",
+             "stage_register": "Prepare my registration checklist", "stage_pricing": "Show me a 5% and a 10% price change",
+             "stage_capacity": "Check my capacity", "stage_offer": "Review what sells", "stage_expand": "Model a 20% expansion for me"}
 PATHWAYS = ("startup", "small_business")
-PATHWAY_OF = {"idea": "startup", "pre_launch": "startup", "operating": "small_business", "growth": "small_business"}
 
 GOALS = {
     "launch": "Launch the business",
@@ -88,7 +93,7 @@ class WidgetDefinition:
 
 _ALL = STAGES
 _PRE = ("idea", "pre_launch")
-_TRADING = ("operating", "growth")
+_TRADING = ("startup", "operating", "growth")
 
 
 def _paths(stages: tuple[str, ...]) -> tuple[str, ...]:
@@ -96,6 +101,8 @@ def _paths(stages: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _w(widget_id: str, widget_type: str, title: str, stages: tuple[str, ...], **kw) -> WidgetDefinition:
+    if "operating" in stages and "startup" not in stages:      # a startup (early revenue) has what an operating business has
+        stages = tuple(s for s in STAGES if s in stages or s == "startup")
     return WidgetDefinition(widget_id, 1, widget_type, title, _paths(stages), stages, **kw)
 
 
@@ -241,6 +248,7 @@ STAGE_LAYOUT: dict[str, dict[str, Any]] = {
         "agent_placeholder": "Ask EnterprateAI to help with quotes, payments, risks or scenarios…",
         "kpi_empty": "Record your first invoice or expense to see revenue, cash and costs here.",
     },
+    "startup": None,      # filled in below from "operating"
     "growth": {
         "headline": "revenue_growth",
         "action_cards": ("essentials", "scenarios", "marketplace", "business_plan"),
@@ -265,6 +273,10 @@ STAGE_LAYOUT: dict[str, dict[str, Any]] = {
         "kpi_empty": "Record your first invoice or expense to see growth, margin and cash here.",
     },
 }
+# A startup (early revenue) is laid out as an operating business, said for where it is.
+STAGE_LAYOUT["startup"] = {**STAGE_LAYOUT["operating"],
+                      "agent_placeholder": "Ask EnterprateAI to help with your first quotes, invoices and customers…",
+                      "kpi_empty": "Record your first invoice or expense to see revenue, cash and costs here."}
 
 
 def _check_configuration() -> None:
@@ -345,15 +357,34 @@ def detect_stage(data: dict, now: datetime) -> tuple[str, list[str]]:
     return "idea", ["No invoices or payments yet", "Idea not yet validated"]
 
 
+def _report_state(widget_id: str, data: dict) -> dict:
+    """Whether the stage's report has a result behind it yet (QA P2-6). An idea validation that has never
+    run has no report: the page shows the empty state, never "Updated today" over a result that isn't there."""
+    if widget_id == "idea_validation_report" and not (data.get("validation") or data.get("idea_validation")):
+        return {"has_result": False, "empty_text": "Not run yet. Once your idea is scored, its scores, risks and what to test next appear here."}
+    return {"has_result": True}
+
+
 def stage_of(data: dict, now: datetime) -> dict:
     """The stage the dashboard is composed for. A stage the business chose ("Not right? Change
     it") wins over the one read from its records; choosing it changes no business record."""
     detected, signals = detect_stage(data, now)
     chosen = data.get("dashboard_stage") if isinstance(data.get("dashboard_stage"), dict) else None
-    stage = STAGE_ALIASES.get(str((chosen or {}).get("stage") or ""), str((chosen or {}).get("stage") or ""))
+    stage = str((chosen or {}).get("stage") or "")
+    if chosen and int(chosen.get("v") or 1) < CHOICE_VERSION:
+        stage = LEGACY_CHOICE.get(stage, stage)
     if stage in STAGES:
         return {"stage": stage, "source": "manual", "detected": detected, "signals": signals,
                 "set_by": chosen.get("set_by"), "set_at": chosen.get("set_at")}
+    # The stage given at sign-up ("Early revenue") is used until the records show the business is further on:
+    # a new account has no invoices yet, which says nothing about where the business really is.
+    given = str(((data.get("workspace_profile") or {}).get("operating_stage")) or "")
+    declared = DECLARED_STAGE.get(given)
+    if declared and further(declared, detected):
+        return {"stage": declared, "source": "declared", "detected": detected,
+                "signals": [f"You said: {DECLARED_LABEL.get(given, STAGE_LABEL[declared])}", *signals], "set_by": None, "set_at": None}
+    if declared and declared != detected and given != "idea":
+        signals = [*signals, f"Your records show more than the stage you gave ({DECLARED_LABEL.get(given, given)})"]
     return {"stage": detected, "source": "records", "detected": detected, "signals": signals, "set_by": None, "set_at": None}
 
 
@@ -510,11 +541,13 @@ def financial_summary(data: dict, policy: dict, now: datetime) -> dict:
     cash = bz.cash_position(data, today)
     overdue = bz.overdue_invoices(data, today)
     invoices = _invoices(data)
-    receivable = sum(bz.invoice_outstanding(i) for i in invoices if bz.status_of(i) not in ("", "draft") and not bz.invoice_hold(i))
+    receivable_t = bz.total_of(data, [i for i in invoices if bz.status_of(i) not in ("", "draft") and not bz.invoice_hold(i)], lambda i: bz.invoice_outstanding(i))
+    receivable = receivable_t["value"]
     return {
         "currency": bz.currency_of(data), "cash": cash["cash"], "monthly_burn": cash["monthly_burn"],
         "runway_months": cash["runway_months"], "receivables": bz.money(receivable),
-        "overdue_count": len(overdue), "overdue_total": bz.money(sum(bz.invoice_outstanding(i) for i in overdue)),
+        "overdue_count": len(overdue), "overdue_total": bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))["value"],
+        "converted": bool(receivable_t["converted"] or bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))["converted"]), "fx_date": (data.get("fx_rates") or {}).get("date"),
         "has_records": bool(invoices or _financials(data).get("expenses")),
     }
 
@@ -603,8 +636,7 @@ def kpi_values(data: dict, policy: dict, now: datetime, readiness: dict) -> dict
         "funding_needed": money_from(("funding_needed", "funding_required", "capital_required", "funding_gap"), "Add funding needs to your plan"),
         "launch_readiness": have(f"{readiness['percent']}%", f"{readiness['done']} of {readiness['total']} in place",
                                  "emerald" if readiness["percent"] >= 80 else "amber" if readiness["percent"] >= 40 else "rose"),
-        "runway": have(f"{cash['runway_months']:g} months", tone="rose" if cash["runway_months"] < 3 else "emerald")
-        if cash["runway_months"] is not None else need("Record cash received and monthly costs"),
+        "runway": _runway_kpi(data, today, have, need),
         "planned_costs": money_from(("planned_costs", "monthly_costs", "monthly_fixed_costs", "fixed_costs", "operating_costs"), "Add planned costs to your plan"),
         "funding_secured": money_from(("funding_secured", "funding_raised", "starting_cash", "opening_cash"), "Add funding or starting cash to your plan"),
         "revenue_growth": have(f"{growth['pct']:+g}%", "last 90 days vs the 90 before", "emerald" if growth["pct"] >= 0 else "rose")
@@ -620,6 +652,18 @@ def kpi_values(data: dict, policy: dict, now: datetime, readiness: dict) -> dict
         out[key] = {"value": None, "state": "available" if has_records else "insufficient_data",
                     "hint": None if has_records else "Needs an invoice or expense", "tone": None}
     return out
+
+
+def _runway_kpi(data: dict, today, have, need) -> dict:
+    """Months of cash from the shared figures; from less than two months of spending it is said to be an estimate (R-9)."""
+    from app.modules.agent import figures
+    f = figures.of(data, today)
+    m = f["runway_months"]
+    if m is None:
+        return need("Record cash received and monthly costs")
+    if f["costs_estimate"]:
+        return have(f"About {m:g} months", f"An estimate: based on {figures.estimate_basis(f)}", "amber")
+    return have(f"{m:g} months", tone="rose" if m < 3 else "emerald")
 
 
 def headline_of(stage: str, layout: dict, kpis: dict[str, dict], risks: list[dict], readiness: dict) -> dict:
@@ -740,6 +784,37 @@ def _card(widget_id: str, cls: int, tone: str, text: str, *, state: str = "avail
     }
 
 
+# Explorer (the free plan) sees that there is an insight and what it is about, never the insight itself: no figures, no
+# names, no evidence, no action that would show it. The full card is on a paid plan (the owner's rule, 13 Oct 2026).
+_VAGUE = {
+    "risk": "A risk in your business needs attention.",
+    "scenario": "There's a scenario worth testing for your business.",
+    "next_step": "I've found a next step for your business.",
+    "cash": "There's something to know about your cash position.",
+    "blocker": "Something is holding back your launch.",
+    "funding_gaps": "There are gaps a funder would ask about.",
+    "idea_weakness": "There's a weak point in your idea to look at.",
+    "opportunities": "There's an opportunity for your business.",
+    "contract_action": "A contract needs your attention.",
+    "marketplace_similar": "There's something on the Marketplace for you.",
+}
+FREE_PLAN_KEEPS = {"approval"}      # what is waiting for the owner's own approval is theirs to see on any plan
+UPGRADE = {"label": "Upgrade to see the full insight", "to": "/pricing", "upgrade": True}
+
+
+def vague_for_free(cards: list[dict]) -> list[dict]:
+    out = []
+    for c in cards or []:
+        key = c.get("key") or c.get("widget_id")
+        if key in FREE_PLAN_KEEPS:
+            out.append(c)
+            continue
+        out.append({**c, "text": f"{_VAGUE.get(key, 'There is an insight here for your business.')} Upgrade to see it in full.",
+                    "detail": None, "note": None, "items": [], "agent_action": None, "cta": UPGRADE, "more": {"to": "/pricing"},
+                    "why": {"summary": "", "evidence": [], "source": "", "missing": [], "as_of": None}, "locked": True})
+    return out
+
+
 _CHECK_WORD = {"ready": "Ready", "conditionally_ready": "Conditionally ready", "not_ready": "Not ready", "insufficient_evidence": "Not enough evidence yet"}
 _CHECK_TONE = {"ready": "emerald", "conditionally_ready": "amber", "not_ready": "rose", "insufficient_evidence": "amber"}
 
@@ -818,15 +893,28 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
         return {"to": f"/agent/runs/{run['id']}"}
 
     # good news: green · the Agent is working: indigo · needs the owner: amber · a problem: red · idle: grey
-    LOOK = {"good": ("emerald", "check"), "working": ("indigo", "clock"), "needs_you": ("amber", "chat"), "problem": ("rose", "alert"), "idle": ("slate", "info")}
+    LOOK = {"suggested": ("indigo", "bulb"), "good": ("emerald", "check"), "working": ("indigo", "clock"), "needs_you": ("amber", "chat"), "problem": ("rose", "alert"), "idle": ("slate", "info")}
 
     def look(x: dict, mood: str) -> None:
         x["mood"], (x["tone"], x["icon"]) = mood, LOOK[mood]
 
-    def off(what: str) -> str:
-        """Never hide the tile: say why nothing is happening."""
-        return (f"{what} is switched off in Agent settings." if agent_config.plan_allows(plan, "idea_validation")
-                else f"{what} is part of Agent tasks, which your plan doesn't include.")
+    def running(run: dict | None) -> bool:
+        """A task that is really under way right now (not waiting on the owner)."""
+        return bool(run and run.get("status") in ("queued", "running") and not run.get("pending_question"))
+
+    def offer(x: dict, working: str) -> None:
+        """Nothing is running: said as what the owner can ask for, never as work in progress (QA P1-5)."""
+        x["text"] = SUGGESTED.get(x["key"], working)
+        look(x, "suggested")
+
+    def off(what: str, key: str | None = None) -> str:
+        """Never hide the tile: say why nothing is happening, for this task (QA E3/E8: it once said "switched off"
+        for a task the plan didn't include, while the setting was on)."""
+        if key and not agent_config.plan_allows(plan, key):
+            return f"{what} isn't included in your plan."
+        if not agent_config.plan_allows(plan, "idea_validation"):
+            return f"{what} is part of Agent tasks, which your plan doesn't include."
+        return f"{what} is switched off in Agent settings."
 
     def status(x: dict, workflow: str, working: str, what: str, short: bool = True) -> None:
         """One tile for one capability: its question, its result, that it is on its way, or why it isn't."""
@@ -845,11 +933,13 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
         elif done and done.get("status") == "failed":
             x["text"], x["action"] = str(done.get("error") or working), outcome(done)
             look(x, "problem")
-        elif can(workflow):
-            x["text"] = working
+        elif running(done):
+            x["text"], x["action"] = working, outcome(done)
             look(x, "working")
+        elif can(workflow):
+            offer(x, working)
         else:
-            x["text"] = off(what)
+            x["text"] = off(what, workflow)
             look(x, "idle")
 
     out: list[dict] = []
@@ -863,11 +953,16 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
             elif not case:
                 x["text"], x["action"] = "I need a funding case before the funding pack can be drafted.", {"to": "/funding"}
                 look(x, "needs_you")
-            elif can("funding_pack_draft"):
-                x["text"], x["action"] = "I'm drafting your funding pack.", {"to": f"/funding/{case['case_id']}?tab=documents"}
+            elif running(done):
+                x["text"], x["action"] = "I'm drafting your funding pack.", outcome(done)
                 look(x, "working")
+            elif can("funding_pack_draft"):
+                offer(x, "")
+                x["action"] = {"to": f"/funding/{case['case_id']}?tab=documents"}
             else:
-                x["text"], x["action"] = off("Funding pack drafting"), {"to": f"/funding/{case['case_id']}?tab=documents"}
+                x["text"], x["action"] = (("The funding pack is included on the Decision Engine plan and above.", {"to": "/pricing"})
+                                          if not agent_config.plan_allows(plan, "funding_pack_draft")
+                                          else (off("Funding pack drafting"), {"to": f"/funding/{case['case_id']}?tab=documents"}))
                 look(x, "idle")
         elif x["key"] == "stage_register":
             done = latest("registration_checklist")
@@ -877,9 +972,12 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
             elif done and done.get("status") == "succeeded":
                 x["text"], x["action"] = "Registration checklist ready.", outcome(done)
                 look(x, "good")
-            elif can("registration_checklist"):
-                x["text"], x["action"] = "I'm preparing your registration checklist.", {"to": "/registration"}
+            elif running(done):
+                x["text"], x["action"] = "I'm preparing your registration checklist.", outcome(done)
                 look(x, "working")
+            elif can("registration_checklist"):
+                offer(x, "")
+                x["action"] = {"to": "/registration"}
             else:
                 x["text"] = off("The registration checklist")
                 look(x, "idle")
@@ -909,8 +1007,13 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
                 look(x, "needs_you" if n else "good")
             elif launch and launch.get("initiative_id") and launch.get("classification") != "ready" and can("launch_evidence_gaps"):
                 # A launch is on record: the Agent runs its check (the first one too) and lists what is missing.
-                x["text"], x["action"] = "I'm checking your launch evidence for gaps.", {"to": f"/launch/{launch['initiative_id']}"}
-                look(x, "working")
+                x["action"] = {"to": f"/launch/{launch['initiative_id']}"}
+                if running(done):
+                    x["text"] = "I'm checking your launch evidence for gaps."
+                    look(x, "working")
+                else:
+                    x["text"] = "Check my launch evidence for gaps"
+                    look(x, "suggested")
             elif launch and launch.get("classification") == "ready":
                 look(x, "good")                                           # ready: good news, never a warning sign
                 x["action"] = {"to": f"/launch/{launch['initiative_id']}"}      # the launch plan itself, as "Open launch plan" does
@@ -925,7 +1028,12 @@ def agent_outcomes(tiles: list[dict], runs: list[dict], policy: dict, plan: str 
                     x["text"], x["question"] = q["question"], {"run_id": scoring["id"], "question": q["question"], "fields": q["fields"]}
                     look(x, "needs_you")
                 else:
-                    look(x, "needs_you" if x["text"].startswith("I need") else "working")
+                    if x["text"].startswith("I need"):
+                        look(x, "needs_you")
+                    elif x["text"].startswith("I'm"):
+                        offer(x, x["text"])
+                    else:
+                        look(x, "suggested")      # a message of its own (the idea isn't scored yet): kept, as an offer
         out.append(x)
     return out
 
@@ -1046,7 +1154,7 @@ def registration_status(data: dict) -> dict:
             "subject": name or "Your business"}
 
 
-def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: str | None, cur: str) -> tuple[str, dict | None]:
+def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: str | None, cur: str, data: dict | None = None) -> tuple[str, dict | None]:
     """What the Agent has done about the overdue invoices, in one sentence, and where the owner is
     needed (an approval, or a question only they can answer). Never a task for the owner to start."""
     from app.modules.agent import autostart
@@ -1056,11 +1164,14 @@ def followup_status(overdue: list[dict], runs: list[dict], policy: dict, plan: s
     ready = [r for r in mine if r.get("status") == "awaiting_approval"]
     stuck = [r for r in mine if r.get("reason_code") == "invalid_customer_destination"
              or (r.get("status") == "running" and any(f.get("key") == "customer_email" for f in (r.get("pending_question") or {}).get("fields") or []))]
-    total = fmt_money(bz.money(sum(bz.invoice_outstanding(i) for i in overdue)), cur)
+    # Drafts in Needs Approval with no address yet (the owner's QA, 15 Oct): approvals, said as needing an email.
+    flagged = [r for r in ready if (r.get("state") or {}).get("email_needed")]
+    total = bz.fmt_total(bz.total_of(data or {"settings": {"currency": cur}}, overdue, lambda i: bz.invoice_outstanding(i)), cur)
     head = f"{len(overdue)} overdue ({total})."
     said, cta = [], None
     if ready:
-        said.append(f"I've prepared {len(ready)} reminder{'s' if len(ready) != 1 else ''} for your approval")
+        said.append(f"I've prepared {len(ready)} reminder{'s' if len(ready) != 1 else ''} for your approval"
+                    + (f"; {len(flagged)} need{'s' if len(flagged) == 1 else ''} an email address for {(flagged[0]['state']['email_needed'].get('customer') or 'the customer')}" if flagged else ""))
         cta = {"label": "Review in Needs Approval", "to": "/agent?tab=needs_approval"}
     if stuck:
         by_id = {str(i.get("id")): i for i in overdue}
@@ -1095,7 +1206,8 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
     conc = bz.concentration(data, alert_pct)
     cash = bz.cash_position(data, today)
     overdue = bz.overdue_invoices(data, today)
-    overdue_total = bz.money(sum(bz.invoice_outstanding(i) for i in overdue))
+    overdue_t = bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))
+    overdue_total = overdue_t["value"]
     labels = invoice_labels(data) if overdue else {}
     fin = _financials(data)
     has_invoices = bool(fin.get("invoices"))
@@ -1186,41 +1298,54 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
                     evidence=evidence, source="Paid and delivered invoices", as_of=as_of))
 
     if "cash" in families:
-        cash_evidence = [_ev("Cash received less costs paid", fmt_money(cash["cash"], cur)),
-                         _ev("Average monthly costs (last 3 months)", fmt_money(cash["monthly_burn"], cur))]
+        # The same figures and the same estimate rule as the risk check (R-9, the owner's brief, 24 Oct)
+        from app.modules.agent import figures
+        f = figures.of(data, today)
+        told = lambda k: f["sources"].get(k, "").startswith(("what you told me", "your usual monthly costs"))      # noqa: E731
+        cash_evidence = [_ev("Cash in the bank, as you told me" if told("cash") else "Cash received less costs paid", fmt_money(f["cash"] or 0, cur)),
+                         _ev("Usual monthly costs, as you told me" if told("costs_monthly") else "Average monthly costs (last 3 months)", fmt_money(f["costs_monthly"] or 0, cur))]
         cash_cta = {"label": "View cash forecast", "to": "/operations?tab=Reports"}
-        if not has_invoices and not has_expenses:
+        if f["cash"] is None:
             cards.append(_card(
                 "cash", 5, "emerald", "No income or costs are recorded yet, so there is no cash position to show.",
                 state="insufficient_data", cta={"label": "Record income or costs", "to": "/operations"},
                 why="Cash position is what you've been paid, less what you've paid out. Neither is recorded yet.",
                 source="Invoices and expenses in Business Operations", missing=["A paid invoice", "A paid expense"]))
-        elif cash["cash"] < 0:
+        elif f["cash"] < 0:
             cards.append(_card(
-                "cash", 1, "rose", f"Your cash position is negative at {fmt_money(cash['cash'], cur)}. Review costs and collect what you're owed.",
+                "cash", 1, "rose", f"Your cash position is negative at {fmt_money(f['cash'], cur)}. Review costs and collect what you're owed.",
                 severity="high", cta=cash_cta, why="More has been paid out than received.",
                 evidence=cash_evidence, source="Paid invoices and paid expenses", as_of=as_of))
-        elif cash["runway_months"] is not None:
-            tight = cash["runway_months"] < 3
+        elif f["runway_months"] is not None and f["costs_estimate"]:
+            m = f["runway_months"]
+            cards.append(_card(
+                "cash", 1 if m < 3 else 5, "amber",      # its usual place on the dashboard: an estimate is not more urgent
+                f"Your cash position is {fmt_money(f['cash'], cur)}. About {m:g} months of runway, but it's only an estimate: "
+                f"it's based on {figures.estimate_basis(f)}. Add your regular monthly costs to see it properly.",
+                severity="high" if m < 3 else "low", cta={"label": "Add regular monthly costs", "to": "/check/risks"},
+                why="Spending from less than two months of records can miss regular costs like rent, wages or subscriptions.",
+                evidence=[*cash_evidence, _ev("Runway (estimate)", f"About {m:g} months")], source="Paid invoices and paid expenses", as_of=as_of))
+        elif f["runway_months"] is not None:
+            tight = f["runway_months"] < 3
             cards.append(_card(
                 "cash", 1 if tight else 5, "rose" if tight else "emerald",
-                f"Your cash position is {'tight' if tight else 'healthy'} with {cash['runway_months']:g} months of runway at current burn rate.",
+                f"Your cash position is {'tight' if tight else 'healthy'} with {f['runway_months']:g} months of runway at current burn rate.",
                 severity="high" if tight else "low", cta=cash_cta, why="Runway is your cash divided by your average monthly costs.",
-                evidence=[*cash_evidence, _ev("Runway", f"{cash['runway_months']:g} months")],
+                evidence=[*cash_evidence, _ev("Runway", f"{f['runway_months']:g} months")],
                 source="Paid invoices and paid expenses", as_of=as_of))
         else:
             cards.append(_card(
-                "cash", 5, "emerald", f"Your cash position is {fmt_money(cash['cash'], cur)}. Record expenses to see your runway.",
-                state="insufficient_data", cta={"label": "Record an expense", "to": "/operations?tab=Transactions"},
+                "cash", 5, "emerald", f"Your cash position is {fmt_money(f['cash'], cur)}. Record expenses to see your runway.",
+                state="insufficient_data", cta={"label": "Record an expense", "to": "/operations?tab=Transactions&sub=Expenses&new=expense"},
                 why="Runway needs your monthly costs, and no paid expense has been recorded in the last three months.",
                 evidence=cash_evidence, source="Paid invoices and paid expenses", missing=["A paid expense in the last 3 months"], as_of=as_of))
 
     if "next_step" in families:
         if overdue:      # unpaid invoices past their due date matter at every stage
-            status_text, status_cta = followup_status(overdue, runs or [], policy, plan, cur)
+            status_text, status_cta = followup_status(overdue, runs or [], policy, plan, cur, data)
             cards.append(_card(
                 "next_step", 2, "brand", status_text,
-                severity="medium", detail=f"{len(overdue)} overdue · {fmt_money(overdue_total, cur)}",
+                severity="medium", detail=f"{len(overdue)} overdue · {bz.fmt_total(overdue_t, cur)}",
                 cta=status_cta,      # only where the owner is needed: an approval, or an answer
                 why="Invoices are past their due date and still unpaid.",
                 evidence=[_ev(invoice_label(i, labels),
@@ -1240,18 +1365,29 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
                 why="Your customer concentration is above your threshold.",
                 evidence=[_ev("Top customer share", f"{conc['top1_share_pct']:g}%")], source="Paid and delivered invoices", as_of=as_of))
         elif stage == "idea":
-            todo = next((i for i in idea_steps(data) if not i["done"]), None)
+            # QA P2-7: the idea is scored first; a step whose work is switched off in Agent settings is not
+            # offered; and none of this is time-sensitive (class 4, "Next step"), so it never outranks what is.
+            from app.modules.agent import autostart as _auto
+            from app.modules.agent import config as _cfg
+            switched_on = lambda key: _auto.item_on(policy, key) and _cfg.plan_allows(plan, key)      # noqa: E731
+            needs = {"market": "market_size", "plan": "business_plan_draft", "register": "registration_checklist"}
+            scored = (data.get("decision") or {}).get("status") == "accepted" or bool(data.get("validation"))
+            steps = [i for i in idea_steps(data) if i["key"] not in needs or switched_on(needs[i["key"]])]
+            # Scoring the idea is the weakness card's call to action (G-4), above this one: not repeated here.
+            todo = next((i for i in steps if not i["done"]), None)
             if todo:
-                # What comes next, as the Agent's status. Only what the owner alone can supply is asked for.
-                doing = {"market": ("Next: your market size. I'm working it out.", "See the market size"),
-                         "plan": ("Next: your business plan. I'm drafting it.", "Open Business Plans"),
+                # What comes next, said as it is: nothing is claimed to be under way that isn't.
+                doing = {"market": ("Next: your market size.", "See the market size"),
+                         "plan": ("Next: your business plan.", "Open Business Plans"),
                          "offer": ("I need a product or service with a price before I can go further.", "Add one"),
-                         "register": ("Next: registering the business. I'm preparing the checklist.", "Open Registration")}[todo["key"]]
+                         "register": ("Next: registering the business.", "Open Registration")}[todo["key"]]
+                said = doing[0] if scored or todo["key"] == "offer" else "After your idea's score. " + doing[0]
                 cards.append(_card(
-                    "next_step", 2, "brand", doing[0],
+                    "next_step", 4, "brand", said,
                     severity="medium", cta={"label": doing[1], "to": todo["to"]},
-                    why="The first thing still to do for this idea, after validating it.",
-                    evidence=[_ev(i["label"], "Done" if i["done"] else "To do") for i in idea_steps(data)], source="Your idea's checklist",
+                    why="The first thing still to do for this idea that is switched on in Agent settings.",
+                    evidence=[_ev("A scored idea", "Done" if scored else "To do")] + [_ev(i["label"], "Done" if i["done"] else "To do") for i in steps],
+                    source="Your idea's checklist",
                     missing=[todo["label"]]))
             else:
                 cards.append(_card(
@@ -1263,7 +1399,7 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
             progress = f"{readiness['done']} of {readiness['total']} launch items in place"
             if todo:
                 cards.append(_card(
-                    "next_step", 2, "brand", f"{progress}. I need from you: {todo['label'][0].lower() + todo['label'][1:]}.",
+                    "next_step", 4, "brand", f"{progress}. I need from you: {todo['label'][0].lower() + todo['label'][1:]}.",
                     severity="medium", detail=progress, cta={"label": "Add it", "to": todo["to"]},
                     why="The first item on your launch checklist that isn't done yet.",
                     evidence=[_ev(i["label"], "Done" if i["done"] else "Missing") for i in readiness["items"]], source="Your launch checklist"))
@@ -1290,7 +1426,8 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
         if stage == "idea":
             cards.append(_card(
                 "scenario", 3, "indigo", "Price moves an early plan more than anything else. I'll test yours as soon as a product has a price and a first sale is on record.",
-                cta=run_in("tmpl_price_increase"), why="Price is the assumption that moves an early plan the most, and nothing has been sold yet.", source="Scenario engine"))
+                cta=run_in("tmpl_price_increase"), why="Price is the assumption that moves an early plan the most, and nothing has been sold yet.", source="Scenario engine",
+                state="insufficient_data", missing=["A product with a price", "A first sale"]))      # QA E9: nothing behind it yet, so nothing to unlock
         elif stage == "pre_launch":
             cards.append(_card(
                 "scenario", 3, "indigo", runway_after_cost_rise(((checks or {}).get("launch") or {}).get("figures") or {}, now),
@@ -1316,7 +1453,8 @@ def compose_insights(data: dict, policy: dict, now: datetime, *, stage: str, pre
                 (f"A 10% cost rise would take your monthly net from {fmt_money(up['monthly_net_before'], cur)} to {fmt_money(up['monthly_net_after'], cur)}."
                  if up.get("monthly_burn_before") else "No costs are recorded yet, so a cost rise has nothing to work on. I'll model it once an expense is on record."),
                 cta=run,
-                why="A standard stress test; nothing in your records points to a more specific one.", source="Scenario engine"))
+                why="A standard stress test; nothing in your records points to a more specific one.", source="Scenario engine",
+                **({} if up.get("monthly_burn_before") else {"state": "insufficient_data", "missing": ["An expense on record"]})))
 
     if "contract_action" in families:
         waiting = contracts_needing_action(data, now)
@@ -1448,7 +1586,7 @@ def clean_stage(stage: str | None) -> str | None:
     """A stage chosen by the user, or None to go back to the one read from the records."""
     if stage in (None, "", "auto"):
         return None
-    stage = STAGE_ALIASES.get(str(stage).strip().lower(), str(stage).strip().lower())
+    stage = str(stage).strip().lower()
     if stage not in STAGES:
         raise ValueError("Choose one of: " + ", ".join(STAGES) + ", or auto.")
     return stage
@@ -1457,7 +1595,7 @@ def clean_stage(stage: str | None) -> str | None:
 # ══ The composed dashboard ════════════════════════════════════════════════════
 
 def _preview_stage(preview_stage: str | None, preview_pathway: str | None) -> str | None:
-    stage = STAGE_ALIASES.get(str(preview_stage or "").lower(), str(preview_stage or "").lower())
+    stage = str(preview_stage or "").lower()
     if stage in STAGES:
         return stage
     return {"startup": "pre_launch", "small_business": "operating"}.get(str(preview_pathway or "").lower())
@@ -1487,7 +1625,7 @@ def stage_routes(checks: dict, readiness: dict) -> dict:
         out["planned_costs"] = f"{base}?tab=setup&section=cash"
     elif checks["features"]["launch"]:
         out["blockers"] = ({"text": "I need your launch date and scope before I can check your readiness.", "to": "/launch"} if validated
-                           else {"text": "Your idea hasn't been scored yet: I'm scoring it before you launch.", "to": "/validation"})
+                           else {"text": "Your idea hasn't been scored yet. I can score it before you launch.", "to": "/validation"})
         out["planned_costs"] = "/launch"
     if funding:
         out["funding_pack"] = f"/funding/{funding['case_id']}?tab=documents"
@@ -1523,7 +1661,7 @@ async def build_dashboard(orch, user_id: str, business_id: str, email: str | Non
     authoritative services. Access (business scope and role) is checked by the Agent summary
     before anything is read."""
     from app.modules.agent import summary as summary_mod
-    summary = await summary_mod.build_summary(orch, user_id, business_id, email, with_context=True)
+    summary = await summary_mod.build_summary(orch, user_id, business_id, email, with_context=True, refresh_rates=True)
     ctx = summary.pop("_ctx")
     data, policy, now, approvals = ctx["data"], ctx["policy"], ctx["now"], ctx["pending"]
     ent = summary["entitlement"]
@@ -1545,6 +1683,9 @@ async def build_dashboard(orch, user_id: str, business_id: str, email: str | Non
     cards = compose_insights(data, policy, now, stage=stage, prefs=prefs, approvals=approvals,
                              can_send=bool(ent.get("can_approve")), transition=transition, readiness=readiness, checks=checks,
                              plan=ent.get("plan"), runs=ctx.get("runs") or [])
+    if ent.get("plan") == "explorer":
+        cards = vague_for_free(cards)
+        summary["insights"] = vague_for_free(summary.get("insights") or [])
     values = kpi_values(data, policy, now, readiness)
     launch_check = checks.get("launch") if (checks.get("launch") or {}).get("classification") else None
     if launch_check:
@@ -1661,7 +1802,8 @@ async def build_dashboard(orch, user_id: str, business_id: str, email: str | Non
         "max_priority_cards": MAX_PRIORITY_CARDS,
         "agent": summary,
         "needs_approval": summary.get("needs_approval") or [],
-        "report": {"key": report.widget_id, "widget_id": report.widget_id, "title": report.title, **report.config},
+        "report": {"key": report.widget_id, "widget_id": report.widget_id, "title": report.title, **report.config,
+                   **_report_state(report.widget_id, data)},
         "freshness": {
             "generated_at": now.isoformat(), "data_as_of": latest.isoformat() if latest else None,
             "stale_after_days": STALE_AFTER_DAYS, "stale": is_stale(latest, now),

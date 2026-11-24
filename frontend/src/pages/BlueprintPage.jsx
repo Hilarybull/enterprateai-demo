@@ -1,3 +1,9 @@
+import { currencySign } from "../lib/format";
+import { cameFrom } from "../lib/cameFrom";
+import { toast as appToast } from "../lib/toast";
+import { getSubject } from "../lib/readiness";
+import { refusalMessage } from "../lib/entitlement";
+import { STREAMED_DOCS, streamBlueprint } from "../lib/blueprintStream";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import DocumentEditor, { markdownToHtml } from "../components/DocumentEditor";
@@ -444,6 +450,8 @@ export default function BlueprintPage() {
   function canBlueprintDoc(docId) {
     const featureKey = DOC_FEATURE_KEY[docId];
     if (!featureKey) return true;
+    // Proposals and sales letters are on Starter and above (the pricing PDF, 19 Oct 2026). The business plan is on every plan,
+    // paid for in credits (the owner, 31 Oct): a free owner's plan opens here, never behind "Upgrade"
     if ((docId === "client_proposal" || docId === "sales_letter") && isFreeOrTrial && !hasBlueprintGrant) return false;
     if (isPlatformFeatureRestricted("blueprint", featureKey, platformRestrictions)) return false;
     return !isMemberMode || hasFeatureAccess("blueprint", featureKey, memberPermissionType, memberPermissions);
@@ -490,7 +498,9 @@ export default function BlueprintPage() {
   const [inputsTab, setInputsTab] = useState("inputs");
   const [companyName, setCompanyName] = useState("");
   const [industry, setIndustry] = useState("");
-  const [pricingModel, setPricingModel] = useState("Subscription");
+  const [pricingModel, setPricingModel] = useState("");      // QA R7-5: never a silent "Subscription"
+  const [streamed, setStreamed] = useState([]);      // QA R7-5: sections written so far, shown as they arrive
+  const [retryable, setRetryable] = useState(false);      // the last attempt stopped and can be tried again (nothing was charged)
   const [workspaceId, setWorkspaceId] = useState("");
   const [tone, setTone] = useState("professional");
 
@@ -597,10 +607,19 @@ export default function BlueprintPage() {
   const [creditModal, setCreditModal] = useState(null);
   function getBlueprintCreditCost(docType, sections) {
     const isSection = Array.isArray(sections) && sections.length === 1;
-    if (docType === "business_plan") return isSection ? 3 : 40;
-    if (docType === "client_proposal") return isSection ? 2 : 25;
-    if (docType === "sales_letter") return isSection ? 1 : 10;
+    // Credit allocation v2 (shown only if the server's price can't be checked): plan 40, section rewrite 5, proposal 10, letter 4.
+    if (docType === "business_plan") return isSection ? 5 : 40;
+    if (docType === "client_proposal") return isSection ? 2 : 10;
+    if (docType === "sales_letter") return isSection ? 1 : 4;
     return 40;
+  }
+  // QA PF1/PF2: the price list's code for what is generated (the server's _blueprint_feature_code): the confirmation
+  // asks the server for the plan and the price, so what is shown is what is charged.
+  function getBlueprintFeatureCode(docType, sections) {
+    const isSection = Array.isArray(sections) && sections.length === 1;
+    if (docType === "client_proposal") return isSection ? "proposal_section" : "proposal_full";
+    if (docType === "sales_letter") return isSection ? "sales_letter_section" : "sales_letter_full";
+    return isSection ? "business_plan_section" : "business_plan_full";
   }
   function getBlueprintFeatureName(docType, sections) {
     const isSection = Array.isArray(sections) && sections.length === 1;
@@ -707,11 +726,114 @@ export default function BlueprintPage() {
     return () => mq.removeListener(update);
   }, []);
 
+  // The Agent's draft, opened from its link (?document_id=…&review=…): that document itself, with Accept, Edit and Reject.
+  const reviewId = bpSearchParams.get("review");
+  // The bar's Edit, or Edit on the dashboard's approvals (?edit=1): the draft opens in the editor
+  const [draftEditing, setDraftEditing] = useState(() => bpSearchParams.get("edit") === "1");
+  const openedDraft = useRef("");
+  useEffect(() => {
+    const id = bpSearchParams.get("document_id");
+    if (!id || openedDraft.current === id || !savedDocs.length) return;
+    const doc = savedDocs.find((d) => String(d.id) === String(id));
+    if (doc) { openedDraft.current = id; openSavedDocument(doc); }
+  }, [bpSearchParams, savedDocs]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // The inputs the Agent wrote this draft from, in the form (the owner's QA, 23 Oct: the form showed the profile's car wash
+  // on a drone cleaning plan), so a change and Regenerate start from them
+  const draftInputsFor = useRef("");
+  useEffect(() => {
+    if (!reviewId || !workspaceIdStored || draftInputsFor.current === reviewId) return;
+    draftInputsFor.current = reviewId;
+    apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}`, "GET").then((out) => {
+      const i = out?.draft?.inputs || {};
+      if (i.company_name) setCompanyName(i.company_name);
+      if (i.industry) setIndustry(i.industry);
+      if (i.problem) setProblem(i.problem);
+      if (i.solution) { setSolution(i.solution); setValueProp(i.value_prop || i.solution); }
+      if (i.target_market) setTargetMarket(i.target_market);
+      if (Array.isArray(i.services) && i.services.length) setSelectedServices(i.services);
+    }).catch(() => {});
+  }, [reviewId, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Opened from a launch plan (?launch=<id>): the form is about that launch's product, its customer, problem and place,
+  // never the business's own offering (the owner, 23 Oct: "business plan for launch readiness uses the product")
+  const launchFor = useRef("");
+  useEffect(() => {
+    const launchId = bpSearchParams.get("launch");
+    if (!launchId || !workspaceIdStored || launchFor.current === launchId) return;
+    launchFor.current = launchId;
+    getSubject(workspaceIdStored, "launch", launchId).then((out) => {
+      const d = out?.data || {};
+      const pick = (...paths) => paths.map((p) => p.split(".").reduce((x, k) => (x == null ? x : x[k]), d)).find((v) => typeof v === "string" && v.trim());
+      const product = pick("offer.launch_scope") || String(d.name || out?.title || "").split(",")[0].trim();
+      if (product) { setCompanyName(product); setSolution(product); setValueProp(product); setSelectedServices([product]); }
+      const customer = pick("customers.target_segment", "audience", "market.audience");
+      if (customer) setTargetMarket(customer);
+      const problem = pick("customers.problem", "problem");
+      if (problem) setProblem(problem);
+      startNewDoc("business_plan");      // straight to the plan's form, filled in (25 Oct)
+    }).catch(() => {});
+  }, [bpSearchParams, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Opened from a funding case (?funding=<id>): the plan is written from that case, its customer, what sets it apart and
+  // the funding ask with what it pays for (the owner, 25 Oct: "just like the launch readiness business plan")
+  const fundingFor = useRef("");
+  useEffect(() => {
+    const caseId = bpSearchParams.get("funding");
+    if (!caseId || !workspaceIdStored || fundingFor.current === caseId) return;
+    fundingFor.current = caseId;
+    getSubject(workspaceIdStored, "funding", caseId).then((out) => {
+      const d = out?.data || {};
+      const pick = (...paths) => paths.map((p) => p.split(".").reduce((x, k) => (x == null ? x : x[k]), d)).find((v) => typeof v === "string" && v.trim());
+      const customer = pick("market.target_segment");
+      if (customer) setTargetMarket(customer);
+      const apart = pick("market.differentiation");
+      if (apart) setValueProp(apart);
+      const purpose = pick("purpose");
+      const cur = d.currency || "";
+      const amount = Number(d.target_amount) || 0;
+      const lines = (Array.isArray(d.use_of_funds) ? d.use_of_funds : []).filter((a) => a && Number(a.amount))
+        .map((a) => `${a.purpose || a.category}: ${cur} ${Number(a.amount).toLocaleString("en-GB")}`);
+      const notes = [
+        amount ? `Funding sought: ${cur} ${amount.toLocaleString("en-GB")}${d.route_preference && d.route_preference !== "unsure" ? ` (${d.route_preference})` : ""}${purpose ? ` for ${purpose}` : ""}.` : "",
+        lines.length ? `Use of funds: ${lines.join("; ")}.` : "",
+        pick("traction.summary") ? `Traction: ${pick("traction.summary")}` : "",
+        pick("market.acquisition_approach") ? `How it wins customers: ${pick("market.acquisition_approach")}` : "",
+      ].filter(Boolean).join("\n");
+      if (notes) setExtraNotes(notes);
+      startNewDoc("business_plan");
+    }).catch(() => {});
+  }, [bpSearchParams, workspaceIdStored]);      // eslint-disable-line react-hooks/exhaustive-deps
+  async function decideDraft(decision) {
+    if (!reviewId || !workspaceIdStored) return;
+    // Said the moment it is pressed, then its result in place (the owner, 25 Oct: no toast while it was processing)
+    const t = appToast({ kind: "pending", title: decision === "accept" ? "Accepting your business plan…" : "Rejecting the draft…" });
+    try {
+      await apiRequest(`/businesses/${workspaceIdStored}/agent-drafts/${reviewId}/decide`, "POST", { decision });
+      appToast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "This is now your business plan." : "The draft has been deleted." });
+    } catch {
+      appToast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(decision) }] });
+      return;      // the bar stays, to try again
+    }
+    const next = new URLSearchParams(bpSearchParams);
+    next.delete("review");
+    if (decision === "reject") {      // deleted (the owner, 26 Oct): back to the list, never a page for a plan that is gone
+      next.delete("document_id");
+      refreshSavedDocs();
+    }
+    setBpSearchParams(next, { replace: true });
+  }
+
   async function refreshSavedDocs() {
     try {
-      const res = await apiRequest("/blueprint/documents?limit=100", "GET");
+      const [res, plans] = await Promise.all([apiRequest("/blueprint/documents?limit=100", "GET"),
+        workspaceIdStored ? apiRequest(`/businesses/${workspaceIdStored}/business-plans`, "GET").catch(() => null) : Promise.resolve(null)]);
       const allowedTypes = new Set(DOCUMENTS.map((doc) => doc.id));
-      const docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
+      let docs = (Array.isArray(res) ? res : []).filter((doc) => allowedTypes.has(doc?.type));
+      // Business plans as the Agent counts them (the owner, 27 Oct: 8 here, 10 in Agent Centre, 3 in the chat): this business's
+      // plans, one row a plan with its older copies as versions, "Needs review" while the Agent's draft waits
+      if (plans?.items) {
+        docs = [...docs.filter((d) => d.type !== "business_plan"), ...plans.items.map((pl) => ({
+          id: pl.versions?.[0]?.id || pl.id, type: "business_plan", title: pl.title, company_name: pl.subject, updated_at: pl.updated_at,
+          status: pl.needs_review ? "review" : "draft", versions: pl.versions || [], to: pl.to }))];
+      }
       setSavedDocs(docs);
       writeBlueprintCache(authEmail, docs);
       return docs;
@@ -822,7 +944,7 @@ export default function BlueprintPage() {
     }
 
     const pm = String(offer.pricing_model || "").toLowerCase();
-    if (pm && (pricingModel === "Subscription" || !pricingModel)) {
+    if (pm && !pricingModel) {
       if (pm === "hourly") setPricingModel("Hourly");
       else if (pm === "retainer") setPricingModel("Retainer");
       else if (pm === "fixed_job") setPricingModel("One-time");
@@ -889,6 +1011,7 @@ export default function BlueprintPage() {
     setCreditModal({
       featureName: getBlueprintFeatureName("business_plan", null),
       creditCost: getBlueprintCreditCost("business_plan", null),
+      featureCode: getBlueprintFeatureCode("business_plan", null),
       onConfirm: () => { setCreditModal(null); generateSelected(); },
     });
   }, [companyName, workspaceProfile]); // eslint-disable-line
@@ -959,7 +1082,7 @@ export default function BlueprintPage() {
           if (!dirtyFields.problem && !problem && ivProb.problem_type) setProblem(ivProb.problem_type);
           if (!dirtyFields.solution && !solution && ivOffer.service_type) setSolution(ivOffer.service_type);
           const pm = String(ivOffer.pricing_model || "").toLowerCase();
-          if (pm && pricingModel === "Subscription") {
+          if (pm && !pricingModel) {
             if (pm === "hourly") setPricingModel("Hourly");
             else if (pm === "retainer") setPricingModel("Retainer");
             else if (pm === "fixed_job") setPricingModel("One-time");
@@ -975,7 +1098,7 @@ export default function BlueprintPage() {
             setSelectedServices(wpServices.map((s) => String(s?.service_name || "").trim()).filter(Boolean));
           }
         }
-        if (workspaceProfile.primary_revenue_model && pricingModel === "Subscription") {
+        if (workspaceProfile.primary_revenue_model && !pricingModel) {
           const rm = String(workspaceProfile.primary_revenue_model).toLowerCase();
           if (rm.includes("hourly")) setPricingModel("Hourly");
           else if (rm.includes("retainer")) setPricingModel("Retainer");
@@ -1105,6 +1228,7 @@ export default function BlueprintPage() {
   }
 
   async function openSavedDocument(docItem) {
+    if (String(docItem?.id || "").startsWith("draft:") && docItem.to) { window.location.assign(docItem.to); return; }      // a draft not saved yet: its review
     setFromValidation(false);
     setError(null);
     const cachedContent = docItem?.type ? docByType[docItem.type]?.document_markdown : null;
@@ -1238,6 +1362,7 @@ export default function BlueprintPage() {
 
   function closeModal() {
     setIsModalOpen(false);
+    setDraftEditing(false);
     setIsLoading(false);
     setError(null);
     setFromValidation(false);
@@ -1448,10 +1573,11 @@ export default function BlueprintPage() {
   // ── Blueprint chart helpers ──────────────────────────────────────────────
   function _bpFmt(v) {
     if (v == null || isNaN(v)) return "";
-    if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
-    if (v >= 1e6) return `£${(v / 1e6).toFixed(1)}M`;
-    if (v >= 1e3) return `£${(v / 1e3).toFixed(0)}K`;
-    return `£${Math.round(v).toLocaleString()}`;
+    const sign = currencySign(String(useWorkspaceStore.getState().currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || useWorkspaceStore.getState().currency || "GBP");
+    if (v >= 1e9) return `${sign}${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `${sign}${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `${sign}${(v / 1e3).toFixed(0)}K`;
+    return `${sign}${Math.round(v).toLocaleString()}`;
   }
 
   function _bpParseCurrency(s) {
@@ -1987,6 +2113,17 @@ export default function BlueprintPage() {
       }
     }
 
+    // QA R7-5: a proposal is never written on a guessed pricing model or industry: asked for, before anything is charged.
+    if (selectedDoc === "client_proposal") {
+      const ind = String(resolveWithWorkspace(industry, workspaceProfile?.primary_industry, dirtyFields.industry) || "").trim().toLowerCase();
+      const missing = [!pricingModel && "how you charge (the pricing model)", ["", "other", "others", "not specified", "n/a", "none", "unknown", "general"].includes(ind) && "your industry"].filter(Boolean);
+      if (missing.length) {
+        setError(`Before I write the proposal, tell me ${missing.join(" and ")}. Nothing has been generated or charged.`);
+        setShowInputs(true);
+        return;
+      }
+    }
+
 	    // Sections behavior:
 	    // - For narrative docs (business plan / proposal): allow section-scoped generation.
 	    // - For sales letters: always generate the full letter (section drafts are handled separately).
@@ -2053,7 +2190,10 @@ export default function BlueprintPage() {
         word_count: selectedDoc === "sales_letter" ? Number(wordCount) || null : null,
         proposal_length: selectedDoc === "client_proposal" ? proposalLength : null,
       };
-      const res = await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
+      setStreamed([]);
+      const res = STREAMED_DOCS.includes(selectedDoc)
+        ? await streamBlueprint(generateBody, { onSection: (heading, text) => setStreamed((had) => [...had, { heading, text }]) })
+        : await apiRequestWithRetry("/blueprint/generate", "POST", generateBody, { timeoutMs: 900000 });
       let resolvedDocumentId = res?.document_id || null;
       if (!resolvedDocumentId) {
         const latestDocs = await refreshSavedDocs();
@@ -2161,37 +2301,14 @@ export default function BlueprintPage() {
       const rawMsg = e instanceof Error ? e.message : String(e || "");
       const msg = rawMsg.toLowerCase();
       const isNetwork = msg.includes("network") || msg.includes("failed to fetch") || msg.includes("load");
-      const is403 = rawMsg.startsWith("HTTP 403:");
       let friendlyError = rawMsg || "Blueprint generation failed";
       if (isNetwork) {
         friendlyError = "Connection error. Check your internet and try again. Your inputs are saved.";
-      } else if (is403) {
-        friendlyError = rawMsg.replace(/^HTTP 403:\s*/i, "");
       } else {
-        // Parse structured API errors and show a human-readable message
-        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
-        if (httpMatch) {
-          const statusCode = Number(httpMatch[1]);
-          try {
-            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
-            const errCode = detail?.error || detail;
-            if (errCode === "FEATURE_NOT_ENTITLED") {
-              friendlyError = statusCode === 402
-                ? "Your account does not have access to this feature yet. Contact support if you believe this is a mistake."
-                : "You are not entitled to use this feature on your current plan.";
-            } else if (errCode === "INSUFFICIENT_CREDITS") {
-              friendlyError = "You do not have enough credits to generate this document. Top up your credits and try again.";
-            } else if (errCode === "FEATURE_DISABLED") {
-              friendlyError = "This feature is currently unavailable. Please try again later.";
-            } else if (typeof errCode === "string") {
-              friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-            }
-          } catch {
-            if (statusCode === 402) friendlyError = "Access denied. Your account may not have the required plan for this feature.";
-            else if (statusCode === 429) friendlyError = "Too many requests. Please wait a moment and try again.";
-            else if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
-          }
-        }
+        // QA PF1: a refusal says why in words (the plan that includes it, or the credits needed). Never a code.
+        // A stream that stopped (a time-out, a section that failed) says so in its own words, with a way to try again.
+        friendlyError = e?.retry ? e.message : refusalMessage(e, rawMsg.match(/^HTTP 5\d\d/) ? "Something went wrong on our end. Please try again shortly. Nothing was charged." : "Blueprint generation failed. Nothing was charged.");
+        setRetryable(Boolean(e?.retry));
       }
       setError(friendlyError);
       setShowInputs(true);
@@ -2307,19 +2424,7 @@ export default function BlueprintPage() {
       if (isNetwork) {
         friendlyError = "Connection error. Check your internet and try again.";
       } else {
-        const httpMatch = rawMsg.match(/^HTTP (\d+):\s*(.*)/s);
-        if (httpMatch) {
-          const statusCode = Number(httpMatch[1]);
-          try {
-            const detail = JSON.parse(httpMatch[2])?.detail || JSON.parse(httpMatch[2]);
-            const errCode = detail?.error || detail;
-            if (errCode === "FEATURE_NOT_ENTITLED") friendlyError = "Your account does not have access to this feature.";
-            else if (errCode === "INSUFFICIENT_CREDITS") friendlyError = "Not enough credits. Top up and try again.";
-            else if (typeof errCode === "string") friendlyError = errCode.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-          } catch {
-            if (statusCode >= 500) friendlyError = "Something went wrong on our end. Please try again shortly.";
-          }
-        }
+        friendlyError = refusalMessage(e, "Section generation failed. Please try again. Nothing was charged.");
       }
       setError(friendlyError);
       setShowInputs(true);
@@ -2653,7 +2758,8 @@ export default function BlueprintPage() {
     setError(null);
     try {
       try {
-        await apiRequest(`/blueprint/documents/${docId}`, "DELETE");
+        // The workspace too, so the Agent's draft for it leaves Needs Approval (23 Oct)
+        await apiRequest(`/blueprint/documents/${docId}${workspaceIdStored ? `?workspace_id=${encodeURIComponent(workspaceIdStored)}` : ""}`, "DELETE");
       } catch (e) {
         // 404 means document is already gone — treat as success
         if (!String(e?.message || "").includes("404") && !String(e?.message || "").includes("not found")) {
@@ -2816,6 +2922,23 @@ export default function BlueprintPage() {
 
   return (
     <div>
+      {/* Only on the open draft (the owner's QA, 23 Oct: the bar stayed on the plans list after the draft was closed) */}
+      {reviewId && isModalOpen && (
+        <div className="fixed inset-x-0 top-0 z-[80] flex flex-wrap items-center justify-center gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-[13px] text-indigo-900 shadow-sm" data-draft-review>
+          {/* The way back to the conversation it came from, always on the draft (the owner, 1 Nov) */}
+          <button type="button" onClick={() => { const back = cameFrom(); navigate(back?.to || "/agent"); }}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 shadow-sm hover:bg-indigo-100 sm:absolute sm:left-4" data-back-to-agent>
+            <span aria-hidden="true">←</span> {cameFrom()?.name ? `Back to ${cameFrom().name}` : "Back to the Agent"}
+          </button>
+          <span className="font-semibold">Draft from the Agent · Needs your review</span>
+          <button type="button" onClick={() => decideDraft("accept")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700">Accept</button>
+          {/* Edit opens the draft in the editor (the owner's QA, 23 Oct: "clicked on Edit and nothing happened"); Accept or
+              Reject stay in the bar for when the edits are saved */}
+          <button type="button" onClick={() => setDraftEditing(true)} aria-pressed={draftEditing}
+            className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100" data-draft-edit>{draftEditing ? "Editing" : "Edit"}</button>
+          <button type="button" onClick={() => decideDraft("reject")} className="rounded-lg border border-indigo-200 bg-white px-3 py-1 text-[12.5px] font-semibold text-indigo-800 hover:bg-indigo-100">Reject</button>
+        </div>
+      )}
       <PageHeader
         title="Business Blueprints"
         description="Create strategic business documents with AI-assisted intelligence."
@@ -3127,7 +3250,7 @@ export default function BlueprintPage() {
                   const planCost = Number(aMap.monthly_costs) || 0;
                   const planMargin = Number(aMap.gross_margin_pct) || 0;
                   const actualMargin = actualRev != null && actualRev > 0 ? ((actualRev - (actualCost || 0)) / actualRev) * 100 : null;
-                  const fmtCur = v => v != null ? `£${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
+                  const fmtCur = v => v != null ? `${currencySign(String(useWorkspaceStore.getState().currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || useWorkspaceStore.getState().currency || "GBP")}${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 0 })}` : null;
                   const fmtPct = v => v != null ? `${Number(v).toFixed(1)}%` : null;
                   const customerTarget = Number(aMap.active_customers_target) || 0;
                   const revGap = planRev > 0 && actualRev != null ? planRev - actualRev : null;
@@ -3291,11 +3414,21 @@ export default function BlueprintPage() {
                                 className="text-sm font-semibold text-slate-900 hover:text-indigo-600 text-left">
                                 {String(d.title || "Untitled Plan").replace(" — ", ": ")}
                               </button>
+                              {/* Older copies of the same plan, as its versions (the owner, 27 Oct: never listed as separate plans) */}
+                              {(d.versions || []).length > 1 && (
+                                <details className="mt-0.5 text-xs text-slate-500" data-plan-versions>
+                                  <summary className="cursor-pointer select-none">{d.versions.length} versions</summary>
+                                  <ul className="mt-1 space-y-0.5">{d.versions.map((v, i) => (
+                                    <li key={v.id}><button type="button" onClick={() => openSavedDocument({ ...d, id: v.id, versions: [] })} className="hover:text-indigo-600">
+                                      {i === 0 ? "Latest" : `Version ${d.versions.length - i}`}, {fmtDate(v.updated_at).split(",")[0]}</button></li>
+                                  ))}</ul>
+                                </details>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${txtCls}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
-                                {s.charAt(0).toUpperCase() + s.slice(1)}
+                                {s === "review" ? "Needs review" : s.charAt(0).toUpperCase() + s.slice(1)}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-500">{fmtDate(d.updated_at).split(",")[0]}</td>
@@ -3870,7 +4003,7 @@ export default function BlueprintPage() {
                 >
                   {showInputs ? "Hide inputs" : "Edit inputs"}
                 </Button>
-                <Button disabled={isLoading} onClick={() => { if (triggerDemoGate?.("blueprint")) return; const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
+                <Button disabled={isLoading} onClick={() => { if (triggerDemoGate?.("blueprint")) return; const secs = sectionsByDoc[selectedDoc]; setCreditModal({ featureName: getBlueprintFeatureName(selectedDoc, secs), creditCost: getBlueprintCreditCost(selectedDoc, secs), featureCode: getBlueprintFeatureCode(selectedDoc, secs), onConfirm: () => { setCreditModal(null); generateSelected(); } }); }}>
                   {isLoading ? <Spinner size={16} /> : null}
                   {isLoading ? "Generating..." : hasGenerated ? "Regenerate" : "Generate"}
                 </Button>
@@ -3894,8 +4027,12 @@ export default function BlueprintPage() {
             </div>
 
             {error ? (
-              <div className="mx-5 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
+              <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700" data-generate-error>
+                <span>{error}</span>
+                {retryable && !isLoading && (
+                  <button type="button" data-generate-retry onClick={() => { setRetryable(false); generateSelected(); }}
+                    className="rounded-lg bg-rose-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-rose-700">Try again</button>
+                )}
               </div>
             ) : null}
 
@@ -4071,7 +4208,8 @@ export default function BlueprintPage() {
                         onSave={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant ? undefined : saveEdits}
                         hideShare={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
                         readOnly={isFreeOrTrial && selectedDoc === "business_plan" && !hasBlueprintGrant}
-                        defaultMode="preview"
+                        key={draftEditing ? "editing" : "preview"}
+                        defaultMode={draftEditing ? "edit" : "preview"}
                         compactPreview
                         shareMenuItems={[
                           {
@@ -4118,6 +4256,20 @@ export default function BlueprintPage() {
                           ? "This can take a little longer while we assemble sections from your inputs and save drafts as we go."
                           : DID_YOU_KNOW_FACTS[didYouKnowIndex]}
                       </div>
+                      {STREAMED_DOCS.includes(selectedDoc) && (
+                        // QA R7-5: each section as soon as it is written, never a blank wait.
+                        <div className="mt-3 max-h-64 overflow-y-auto text-left" data-streamed-sections aria-live="polite">
+                          <p className="text-[12px] font-semibold text-slate-600" data-streamed-count>
+                            {streamed.length ? `${streamed.length} of ${(sectionsByDoc[selectedDoc] || []).filter((x) => x !== "cover_page").length || generationSectionsForDoc(selectedDoc).length} sections ready` : "Writing the first sections…"}
+                          </p>
+                          {streamed.map((sct) => (
+                            <details key={sct.heading} className="mt-1 rounded-lg border border-slate-100 px-2 py-1">
+                              <summary className="cursor-pointer text-[12.5px] font-semibold text-slate-800">{sct.heading}</summary>
+                              <p className="mt-1 whitespace-pre-line text-[12px] text-slate-600">{sct.text.slice(0, 600)}{sct.text.length > 600 ? "…" : ""}</p>
+                            </details>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -4234,7 +4386,8 @@ export default function BlueprintPage() {
 
                       <div>
                         <div className="ea-label">Pricing model</div>
-                        <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input">
+                        <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value)} className="ea-input" aria-invalid={selectedDoc === "client_proposal" && !pricingModel}>
+                          <option value="">Choose how you charge…</option>
                           <option>Subscription</option>
                           <option>One-time</option>
                           <option>Usage-based</option>
@@ -4750,6 +4903,7 @@ export default function BlueprintPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />

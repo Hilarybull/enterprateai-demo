@@ -18,7 +18,8 @@ def fmt_money(amount: Any, currency: str = "GBP") -> str:
     except (TypeError, ValueError):
         value = 0.0
     sym = _SYMBOLS.get(str(currency or "GBP").upper())
-    return f"{sym}{value:,.2f}" if sym else f"{value:,.2f} {str(currency).upper()}"
+    sign = "-" if value < 0 else ""      # "-£67.33", never "£-67.33"
+    return f"{sign}{sym}{abs(value):,.2f}" if sym else f"{value:,.2f} {str(currency).upper()}"
 
 
 # ── Shared look for every document the Agent sends ────────────────────────────
@@ -62,7 +63,7 @@ _CTA_SLOT = "<!--view-online-->"      # where a "view online" button goes, for a
 
 def _button(label: str, href: str, aside: str = "") -> str:
     extra = f'<td style="padding-left:14px;font-family:{_FONT};font-size:13px;color:{_MUTED};">{escape(aside)}</td>' if aside else ""
-    return (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;"><tr>'
+    return (f'<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:24px auto 8px;"><tr>'
             f'<td style="border-radius:10px;background:{_BRAND};">'
             f'<a href="{escape(href)}" style="display:inline-block;padding:12px 22px;font-family:{_FONT};font-size:15px;'
             f'font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">{escape(label)}</a></td>{extra}</tr></table>')
@@ -346,7 +347,7 @@ def contract_email(p: dict) -> dict[str, str]:
         + (f"Following your acceptance of quotation {p['quote_reference']}, here is the contract {p['reference']} for your review.\n\n"
            if p.get("quote_reference") else f"Here is the contract {p['reference']} for your review.\n\n")
         +
-        f"Scope: {p['description']}\nValue: {fmt_money(p['total'], cur)}\n"
+        f"Scope: {p['description']}\nValue: {p.get('price_text') or fmt_money(p['total'], cur)}\n"
         + (f"Term: {p['term']}\n" if p.get("term") else "") + (f"Start date: {p['start_date']}\n" if p.get("start_date") else "")
         + (f"Payment terms: {p['payment_terms']}\n" if p.get("payment_terms") else "")
         + f"\nPlease reply to confirm your agreement.\n\nKind regards,\n{p['company']}\n"
@@ -356,7 +357,7 @@ def contract_email(p: dict) -> dict[str, str]:
         intro=((f"Hi {escape(p['customer_name'])}, following your acceptance of quotation "
                 f"<strong>{escape(p['quote_reference'])}</strong>, here is the contract for your review.") if p.get("quote_reference")
                else f"Hi {escape(p['customer_name'])}, here is the contract for your review."),
-        blocks=[_summary([("Reference", p["reference"]), ("Scope", p["description"]), ("Value", fmt_money(p["total"], cur)),
+        blocks=[_summary([("Reference", p["reference"]), ("Scope", p["description"]), ("Value", p.get("price_text") or fmt_money(p["total"], cur)),
                           ("Term", p.get("term") or ""), ("Start date", fmt_date(p["start_date"]) if p.get("start_date") else ""),
                           ("Payment terms", p.get("payment_terms") or "")], emphasis="Value")],
         note="Please reply to this email to confirm your agreement.",
@@ -369,7 +370,7 @@ def invoice_email(p: dict) -> dict[str, str]:
     subject = f"Invoice {p['reference']} from {p['company']}"
     text = (
         f"Hi {p['customer_name']},\n\nPlease find invoice {p['reference']}.\n\n"
-        f"{_items_text(p['items'], cur)}\n\nTotal due: {fmt_money(p['total'], cur)}\nDue date: {p['due_date']}\n"
+        f"{_items_text(p['items'], cur)}\n\nTotal due: {fmt_money(p['total'], cur)}\nDue date: {fmt_date(p['due_date'])}\n"
         + (f"Payment terms: {p['payment_terms']}\n" if p.get("payment_terms") else "")
         + f"\nKind regards,\n{p['company']}\n"
     )
@@ -416,7 +417,7 @@ def reminder_email(p: dict) -> dict[str, str]:
         + (f"{p['message']}\n\n" if p.get("message") else "")
         + f"Invoice: {p['reference']}\nOutstanding: {fmt_money(p['outstanding'], cur)}\n"
         + (f"Amount requested now: {fmt_money(p['amount_requested'], cur)}\n" if p.get("amount_requested") else "")
-        + f"Due date: {p['due_date']}{is_due}\n\n"
+        + f"Due date: {fmt_date(p['due_date'])}{is_due}\n\n"
         "If you have already paid, please ignore this message and accept our thanks.\n\n"
         f"Kind regards,\n{p['company']}\n"
     )
@@ -462,13 +463,13 @@ def document_email(kind: str, p: dict) -> dict[str, str]:
     ref, name, company = p["reference"], p["customer_name"], p["company"]
     if kind == "proposal":
         subject = f"Proposal {ref} from {company}"
-        facts = [("Reference", ref), ("Price", fmt_money(p["total"], cur)), ("Timeline", p.get("timeline") or ""),
+        facts = [("Reference", ref), ("Price", p.get("price_text") or fmt_money(p["total"], cur)), ("Timeline", p.get("timeline") or ""),
                  ("Valid until", fmt_date(p["valid_until"]) if p.get("valid_until") else "")]
         text = (f"Hi {name},\n\nThank you for the opportunity. Here is our proposal {ref}.\n\n"
                 + (f"What you need\n{p['problem']}\n\n" if p.get("problem") else "")
                 + (f"What we propose\n{p['solution']}\n\n" if p.get("solution") else "")
-                + f"Price: {fmt_money(p['total'], cur)}\n" + (f"Timeline: {p['timeline']}\n" if p.get("timeline") else "")
-                + (f"Valid until: {p['valid_until']}\n" if p.get("valid_until") else "") + (f"\n{p['notes']}\n" if p.get("notes") else "")
+                + f"Price: {p.get('price_text') or fmt_money(p['total'], cur)}\n" + (f"Timeline: {p['timeline']}\n" if p.get("timeline") else "")
+                + (f"Valid until: {fmt_date(p['valid_until'])}\n" if p.get("valid_until") else "") + (f"\n{p['notes']}\n" if p.get("notes") else "")
                 + f"\nReply to this email to go ahead or to ask anything.\n\nKind regards,\n{company}\n")
         blocks = [*(_section("What you need", p["problem"]) if p.get("problem") else []), *(_section("What we propose", p["solution"]) if p.get("solution") else []),
                   _summary([f for f in facts if f[1]], emphasis="Price"), *(_section("Notes", p["notes"]) if p.get("notes") else [])]

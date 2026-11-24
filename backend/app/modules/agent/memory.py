@@ -167,7 +167,7 @@ def sources(data: dict, runs: list[dict], policy: dict, now: datetime) -> dict[s
         "SAVED FACTS (confirmed by the owner, about this business only)": [f["text"] for f in facts(data)],
         "INBOUND REQUESTS FOR QUOTATION (buyers asking THIS business for a quote, through the Marketplace; also called RFQs)": inbound_requests(data),
         "QUOTATIONS THIS BUSINESS SENT TO ITS CUSTOMERS (outgoing documents, NOT requests)": [{
-            "reference": q.get("reference") or q.get("quotation_id"), "customer": q.get("customer_name"), "total": bz.invoice_total(q), "currency": cur,
+            "reference": q.get("reference") or q.get("quotation_id"), "customer": q.get("customer_name"), "total": bz.invoice_total(q), "currency": bz.doc_currency(q, cur),
             "status": bz.status_of(q), "sent": _day(q.get("sent_at")) or None, "answers_a_marketplace_request": bool(q.get("rfq_id")),
         } for q in bz.quotes_of(data)[:15]],
         "REQUESTS THIS BUSINESS SENT TO SUPPLIERS (outgoing)": [{
@@ -175,7 +175,7 @@ def sources(data: dict, runs: list[dict], policy: dict, now: datetime) -> dict[s
         } for r in (fin.get("sent_rfqs") or [])[:10] if isinstance(r, dict)],
         "INVOICES": [{
             "reference": i.get("reference"), "customer": i.get("customer_name"), "total": bz.invoice_total(i), "outstanding": bz.invoice_outstanding(i),
-            "currency": cur, "status": bz.status_of(i), "due": _day(i.get("due_date")) or None,
+            "currency": bz.doc_currency(i, cur), "status": bz.status_of(i), "due": _day(i.get("due_date")) or None,
         } for i in (fin.get("invoices") or [])[:20] if isinstance(i, dict)],
         "CATALOGUE (what this business sells, and its customers)": {
             "products_and_services": [{"name": p.get("name"), "price": float(p.get("base_price") or 0) or None} for p in (cat.get("products") or [])[:40] if isinstance(p, dict)],

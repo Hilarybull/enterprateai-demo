@@ -1,21 +1,54 @@
 import { useAuthStore } from "../store/auth";
 import { firstNameOf, getGreeting } from "../lib/greeting";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useInRouterContext, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
-import Button from "./Button";
-import { apiRequestCached } from "../api/client";
 import { useWorkspaceStore } from "../store/workspace";
-import { agentErrorMessage, clearConversation, getConversation, replyText, saveAgentFact, submitAgentRequest } from "../lib/agent";
-import { useTaskFlow } from "./agent/TaskFlow";
+import { cameFrom, forgetCameFrom, noteCameFrom } from "../lib/cameFrom";
+import { DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
+import { apiRequest } from "../api/client";
+import ReadinessProgress from "./agent/ReadinessProgress";
+import ThinkingProgress from "./agent/ThinkingProgress";
+import ReadinessTasks from "./agent/ReadinessTasks";
+import FundingOptions from "./agent/FundingOptions";
+import { pendingAgentReply, resumeAgentReply } from "../lib/agent";
+import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
+import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
+import { checkLines, linesFromText } from "./agent/AgentBits";
+import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValueCard";
+import { resultHome } from "../lib/resultHome";
+import ChatDownload from "./agent/ChatDownload";
+import { replyMarkup } from "../lib/replyMarkup";
 
-const STARTER_PROMPTS = [
-  "What does my business do?",
-  "What is my business registration status?",
-  "Summarise my current services",
-  "What do my latest simulations suggest?",
-  "Who is my target market?",
-  "What should I improve next?",
-];
+// The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
+const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
+// A draft handed to the chat for review ({runId, title, message}): kept in this tab until the chat shows it
+export const CHAT_REVIEW = "ea:chat:review";
+export function reviewInChat(detail) {
+  try { sessionStorage.setItem(CHAT_REVIEW, JSON.stringify(detail)); } catch { /* the chat opens without it */ }
+  try { window.dispatchEvent(new CustomEvent(CHAT_REVIEW)); } catch { /* read when the chat opens */ }
+}
+// "What should I do next?": answered here, from the cases and checks on record (no model, no credits)
+// The segments research asked for in words, as its button asks for it
+export const SEGMENTS = /\b(?:find|explore|research|look for|show me)\b.{0,20}\b(?:new )?customer segments?\b/i;
+const NEXT = /\b(?:what (?:should|do|can) i do next|what'?s next|where (?:does|do) (?:my )?(?:work|things) stand)\b/i;
+// A pending task question does not make every next message an answer to that field.
+// Social turns and questions go through the regular conversation router.
+const TASK_ASIDE = /^(?:hi|hello|hey|hiya|howdy|good\s+(?:morning|afternoon|evening)|how\s+are\s+you(?:\s+doing)?(?:\s+(?:today|first))?|how'?s\s+it\s+going|you\s+good|thanks|thank\s+you|cheers|nice\s+to\s+meet\s+you)[!.?,\s]*$|^\s*(?:what|why|how|which|when|where|who|is|are|can|could|would|should|do|does|did|tell me|explain)\b/i;
+const NUMBER = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const clock = (at) => { try { return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+
+// A finished task's draft waiting for review ("?review=<draft>" on its link): read and decided in the chat, never only a link
+// to the task's page (the owner, 28 Oct: "it should show me the business plan here... view it full page on the blueprints")
+function draftCards(links, title) {
+  const out = [];
+  for (const l of links || []) {
+    let id = null;
+    try { id = new URLSearchParams(String(l.to || "").split("?")[1] || "").get("review"); } catch { id = null; }
+    if (id) out.push({ type: "preview", item: { draft_id: id, to: l.to, title: title || l.label, open: true } });
+  }
+  return out;
+}
 
 /** One reply from the Agent as a chat message: the result, links to what it made, and what needs the owner. */
 function toMessage(routed, businessId) {
@@ -25,6 +58,8 @@ function toMessage(routed, businessId) {
     const many = (routed.runs || []).length > 1;
     message.link = many ? "/agent" : `/agent/runs/${run.id}`;
     if (!many) message.links = (run.outcome?.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
+    const cards = many ? [] : draftCards(message.links, run.outcome?.plan?.title || run.title);
+    if (cards.length) { message.cards = cards; message.link = null; message.links = []; }
   } else if (routed.kind === "remember") {
     message.remember = routed.can_save ? { fact: routed.fact, businessId } : null;      // nothing is remembered until the owner says so
   } else if (routed.kind === "needs_input") {
@@ -34,7 +69,12 @@ function toMessage(routed, businessId) {
     message.link = "/pricing";
   } else if (routed.kind === "answer") {
     message.links = (routed.actions || []).filter((a) => a.to).map((a) => ({ label: a.label, to: a.to }));
-    message.prompts = (routed.actions || []).filter((a) => a.capability && !a.to).map((a) => ({ label: a.label, prompt: a.label }));
+    message.prompts = (routed.actions || []).filter((a) => (a.capability || a.kind === "explain") && !a.to).map((a) => ({ label: a.label, prompt: a.prompt || a.label }));
+    message.answersQuestion = Boolean(routed.actions?.length && routed.actions.every(a => a.answers_question));
+    // Funding and launch conversations return structured result/next-step cards alongside the reply.
+    // Keep those cards in the chat; dropping them here left the user with only the model's prose.
+    if (Array.isArray(routed.cards) && routed.cards.length) message.cards = routed.cards;
+    if (routed.quick && (message.prompts || []).length) message.quick = true;      // the Agent's own suggestions for this reply
   } else if (routed.kind === "unavailable") {
     message.links = (routed.offers || []).filter((o) => o.to).map((o) => ({ label: o.label, to: o.to }));
     message.prompts = (routed.offers || []).filter((o) => o.kind === "explain").map((o) => ({ label: o.label, prompt: o.prompt }));
@@ -43,27 +83,183 @@ function toMessage(routed, businessId) {
   return message;
 }
 
-export default function BusinessAssistant() {
+/** A module page's own thread (a funding case or launch plan, the idea): never the panel's to restore or write over. */
+// A page's own thread: a case's, the idea's (and its earlier ones, "idea-check-<time>"), a check's ("check-customers"): never
+// the Agent's main chat (QA, 30 Oct: the Idea Validation thread showed in the Agent Centre)
+export const isModuleThread = (id) => /^(?:case-|idea-check(?:-|$)|check-)/.test(String(id || ""));
+
+export const hasOwnChat = (pathname, search = "") => /^\/(funding|launch)\/[^/]+\/?$/.test(pathname) || /^\/check\/idea\/?$/.test(pathname)
+  || (/^\/launch\/?$/.test(pathname) && new URLSearchParams(search).get("tab") === "assistant");
+
+/** The floating button, on every page but the Agent Centre and the pages with their own Assistant: it opens the Agent
+ *  Centre, the one general chat (the owner, 27 Oct). A message handed over from anywhere ("ea:chat", "?chat=") goes there. */
+export function AgentLauncher() {
+  const navigate = useNavigate();
+  const { pathname, search } = useLocation();
+  const here = /^\/agent\/?$/.test(pathname);
+  useEffect(() => {
+    const onChat = (e) => {
+      if (here || !e?.detail?.text) return;
+      e.detail.handled = true;
+      navigate(`/agent?chat=${encodeURIComponent(String(e.detail.text).slice(0, 500))}`);
+    };
+    window.addEventListener("ea:chat", onChat);
+    return () => window.removeEventListener("ea:chat", onChat);
+  }, [here, navigate]);
+  useEffect(() => {
+    const p = new URLSearchParams(search);
+    if (!here && p.get("chat") && p.get("tab") !== "assistant") navigate(`/agent?chat=${encodeURIComponent(p.get("chat"))}`, { replace: true });
+  }, [here, search, navigate]);
+  // On a phone it steps aside while the page is scrolled down, so it never sits on a card's button (the owner's QA, 27 Oct),
+  // and is back on the way up, at the top and at the bottom (where the page keeps room for it)
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    const area = document.querySelector('[data-tour="content-area"]');
+    const target = area && area.scrollHeight > area.clientHeight ? area : window;
+    let last = 0;
+    const at = () => (target === window ? window.scrollY : area.scrollTop);
+    const end = () => (target === window ? document.documentElement.scrollHeight - innerHeight : area.scrollHeight - area.clientHeight);
+    const onScroll = () => {
+      if (window.innerWidth >= 1024) { setAway(false); return; }
+      const y = at();
+      setAway(y > last + 4 && y > 40 && y < end() - 40 ? true : y < last - 4 || y <= 40 || y >= end() - 40 ? false : (v) => v);
+      last = y;
+    };
+    target.addEventListener("scroll", onScroll, { passive: true });
+    return () => target.removeEventListener("scroll", onScroll);
+  }, [pathname]);
+  if (here || hasOwnChat(pathname, search)) return null;
+  return createPortal(
+    <button type="button" aria-label="Ask about your business" onClick={() => navigate("/agent")} data-agent-launcher aria-hidden={away || undefined} tabIndex={away ? -1 : undefined}
+      className={`group fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-4 z-30 flex items-center overflow-hidden rounded-full bg-brand-600 p-3 text-sm font-semibold text-white shadow-lg transition-[colors,transform,opacity] duration-300 hover:bg-brand-700 sm:bottom-6 sm:right-6 ${away ? "pointer-events-none translate-y-24 opacity-0" : ""}`}>
+      <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+      <span className="max-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 [@media(hover:hover)_and_(pointer:fine)]:group-hover:ml-2 [@media(hover:hover)_and_(pointer:fine)]:group-hover:max-w-[200px]">Ask about your business</span>
+    </button>, document.body);
+}
+
+const Spark = () => <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 text-brand-600" fill="currentColor"><path d="M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9z" /></svg>;
+
+/** The Agent Centre's chat, the one general conversation (the owner, 27 Oct): its greeting says what is waiting, as cards;
+ *  a funding, launch or idea message goes on in that page's own thread. `actions`: extra buttons in its header. */
+export default function BusinessAssistant({ actions = null, ctx = null, work = [], waiting: given, onWaitingChanged = null }) {
   // One name everywhere: the business name the sidebar and the Marketplace show.
   const workspaceName = useWorkspaceStore((state) => state.workspaceCompanyName || state.workspaceName);
-  const [answerCost, setAnswerCost] = useState(null);      // credits per conversational answer, from the price list
-  useEffect(() => {
-    let alive = true;
-    apiRequestCached("/credits/features")
-      .then((res) => {
-        const row = (res?.features || []).find((f) => f.feature_code === "chat_message");
-        if (alive && row && row.enabled !== false) setAnswerCost(Number(row.credit_cost) || 0);
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
   const person = firstNameOf(useAuthStore((st) => st.name));      // the person, by first name, as everywhere the Agent speaks to them
-  const intro = `${getGreeting({ subject: person })}. Ask me anything about ${workspaceName || "your business"}. I'll answer from your workspace, documents, catalogue, financials, validations, registrations, and simulations.`;
-  const [open, setOpen] = useState(false);
+  // Said as someone who does the work, never a help desk (the owner, 27 Oct: "this sounds chatbotic than agentic")
+  const intro = `${getGreeting({ subject: person })}. What do you need done? I can get your funding case ready, draft quotes and invoices, write your business plan, or work out what to do next for ${workspaceName || "your business"}.`;
+  // A side panel that stays open from page to page (the owner, 27 Oct: "the agent panel should be here to continue
+  // conversations, carry out tasks", "maybe the side"): on a wide screen the page makes room for it
+  // Closed on every load (the owner's test, 27 Oct: on a phone it covered the screen each time): opened by the button or a
+  // message sent to it, and it stays open from page to page while the app is open
+  const navigate = useInRouterContext() ? useNavigate() : (to) => window.location.assign(to);      // eslint-disable-line react-hooks/rules-of-hooks
+  const go = (to) => { noteCameFrom(chatId, to); navigate(to); };
+  useEffect(() => { try { localStorage.removeItem("ea_panel_open"); } catch { /* nothing kept */ } }, []);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
   // The conversation so far in this business is picked up again (it is shared with the Agent box).
-  const [messages, setMessages] = useState(() => [{ role: "assistant", content: intro }, ...getConversation(useWorkspaceStore.getState().workspaceId)]);
+  // The last conversation, brought back on every load (the owner's QA, 27 Oct); the others are in History
+  const [messages, setMessages] = useState(() => [{ role: "assistant", content: intro }]);
+  const [handedOver, setHandedOver] = useState(false);      // this conversation began with a request handed to it
+  const [chatId, setChatId] = useState(newChatId);
+  useEffect(() => {
+    const leave = (event) => {
+      if (!event.detail?.to) return;
+      event.detail.handled = true;
+      noteCameFrom(chatId, event.detail.to);
+      navigate(event.detail.to);
+    };
+    window.addEventListener("ea:chat-navigate", leave);
+    return () => window.removeEventListener("ea:chat-navigate", leave);
+  }, [chatId, navigate]);
+  const openedAt = useRef(new Date().toISOString());      // when the opening was said
+  const bizId = useWorkspaceStore((st) => st.workspaceId);
+  const act = useMemo(() => chatActions(bizId), [bizId]);
+  const [editing, setEditing] = useState(null);      // the draft the next message changes ("Edit", typed in the chat)
+  const fileRef = useRef(null);
+  useEffect(() => {
+    const upload = () => { if (!loading && bizId) fileRef.current?.click(); };
+    window.addEventListener("ea:chat-upload", upload);
+    return () => window.removeEventListener("ea:chat-upload", upload);
+  }, [loading, bizId]);
+  const push = (...said) => setMessages((prev) => [...prev, ...said]);
+  const mine = (content) => ({ role: "user", content, at: new Date().toISOString() });
+  const startEdit = (item) => {
+    setEditing(item);
+    push({ role: "assistant", at: new Date().toISOString(), content: `What would you like to change in ${item.title}? Tell me in your own words and I'll show you the updated draft before anything is sent.` });
+  };
+  const runScenario = async (kind, label) => { push(mine(label)); setLoading(true); try { push(await act.scenario(kind, { onWaiting: () => push(SLOW()) })); } finally { setLoading(false); } };
+  const attachFile = async (file) => {
+    if (!file) return;
+    sent.current = true;
+    push(mine(`Attached ${file.name}`));
+    setLoading(true);
+    try { push(await act.attach(file)); } finally { setLoading(false); }
+  };
+  // A task or document opened from the Tasks panel beside the chat: shown here, as Review shows it (the owner, 27 Oct)
+  useEffect(() => {
+    const open = async (e) => {
+      const item = e.detail || {};
+      sent.current = true;      // never replaced by the last conversation arriving after it
+      push(mine(`Show me ${item.title}`));
+      setLoading(true);
+      try { push({ role: "assistant", at: new Date().toISOString(), content: "Here it is.", cards: [{ type: "preview", item, preview: await act.preview(item) }] }); }
+      catch (err) { push({ role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(err, "I couldn't open it just now.") }); }
+      finally { setLoading(false); }
+    };
+    window.addEventListener("ea:chat-review", open);
+    return () => window.removeEventListener("ea:chat-review", open);
+  }, [act]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const [history, setHistory] = useState(null);      // the list, while it is open
+  const sent = useRef(false);      // a message was sent here: the last conversation is never brought back over it
+  const [restored, setRestored] = useState(false);      // the last conversation was brought back on load
+  const [restoredFor, setRestoredFor] = useState(null);
+  const gone = useRef(false);      // the Agent Centre was left: a reply still coming is saved, not shown
+  useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);
+  useEffect(() => {
+    if (!bizId) return undefined;
+    let live = true;
+    const backTo = cameFrom()?.chat;      // back from a page its link opened: that same conversation (the owner, 29 Oct)
+    if (backTo) forgetCameFrom();
+    listChats(bizId).then(async (r) => {
+      // The panel's own conversations only: a funding case's, a launch plan's or the idea's thread belongs to its page
+      const own = (r?.items || []).filter((c) => !isModuleThread(c.id));
+      const back = backTo && own.find((c) => c.id === backTo);
+      const last = back || own[0];
+      // The last conversation, whenever it was (the owner's QA, 27 Oct: "the chat is lost after a page reload"); "+" starts a new one,
+      // and it stays new on the next visit until something is said in it (the owner, 28 Oct: "except I click new session")
+      let fresh = null;
+      try { fresh = localStorage.getItem(`ea_chat_fresh:${bizId}`); } catch { fresh = null; }
+      if (!live || sent.current || !last || (!back && fresh && String(last.at || "") < fresh)) return;
+      const chat = await getChat(bizId, last.id);
+      if (live && !sent.current && chat?.messages?.length) { setChatId(chat.id); continueConversation(bizId, chat.messages); setRestored(chat.messages.length); setMessages([{ role: "assistant", content: intro }, ...chat.messages]); }
+    }).catch(() => {}).finally(() => { if (live) setRestoredFor(bizId); });
+    return () => { live = false; };
+  }, [bizId]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const [own, setWaiting] = useState(null);
+  const loadOwn = () => (bizId ? getAgentSummary(bizId).then((s) => setWaiting({ count: s?.needs_approval_count || 0, items: s?.needs_approval || [] }), () => setWaiting({ count: 0, items: [] })) : null);
+  useEffect(() => { if (given === undefined) loadOwn(); }, [bizId, given === undefined]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = given === undefined ? own : given;
+  const loadWaiting = () => (given === undefined ? loadOwn() : onWaitingChanged?.());
+  // Each reply can change a case: the page's cards read again, never the case as it was when the page opened (30 Oct)
+  const replies = messages.filter((m) => m.role === "assistant").length;
+  useEffect(() => { if (given !== undefined && replies > 1) onWaitingChanged?.(); }, [replies]);      // eslint-disable-line react-hooks/exhaustive-deps
+  // Kept as it goes: every exchange is saved, so it can be opened again from History
+  useEffect(() => {
+    const said = messages.slice(1).filter((m) => m.content);
+    if (!bizId || isModuleThread(chatId) || !said.some((m) => m.role === "user")) return undefined;
+    const t = setTimeout(() => { saveChat(bizId, chatId, said).catch(() => {}); }, 500);
+    return () => clearTimeout(t);
+  }, [messages, chatId, bizId]);
+  // The latest message in view whenever the panel opens or the conversation moves on
+  // Again once the greeting and its cards are drawn, and as they finish drawing (the owner, 28 Oct: not scrolled to the latest)
+  const drawnAll = waiting !== null && (given === undefined || ctx !== null);
+  useEffect(() => {
+    if (messages.length <= 1) return undefined;
+    const down = () => listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight });
+    requestAnimationFrame(down);
+    const later = [setTimeout(down, 250), setTimeout(down, 900)];
+    return () => later.forEach(clearTimeout);
+  }, [messages.length, chatId, drawnAll]);
   const listRef = useRef(null);
   // A task started from the chat stays in the chat: its questions open in a dialog over the page,
   // and what happens next is said here as a message. Its own page opens only from "See details".
@@ -72,40 +268,365 @@ export default function BusinessAssistant() {
     say: (reply) => {
       setWorking(Boolean(reply?.working));
       if (!reply || reply.working) return;
-      setMessages((prev) => [...prev, { role: "assistant", content: [reply.text, reply.next].filter(Boolean).join(" "),
-        link: reply.runId ? `/agent/runs/${reply.runId}` : null, links: (reply.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to })) }]);
+      const links = (reply.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
+      // The finished document as one card here: Review, Edit, Approve (and send) (the owner, 29 Oct)
+      const cards = reply.review ? [{ type: "preview", item: { ...reply.review, open: true } }] : draftCards(links, reply.title);
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: [reply.text, reply.next].filter(Boolean).join(" "),
+        ...(cards.length ? { cards, link: null, links: [] } : { link: reply.runId ? `/agent/runs/${reply.runId}` : null, links }) }]);
     },
     onChanged: () => window.dispatchEvent(new CustomEvent("ea:credits:refresh")),
-    onDetails: (runId) => { window.location.assign(`/agent/runs/${runId}`); },
+    onDetails: (runId, to) => { window.location.assign(to || `/agent/runs/${runId}`); },
+    inline: true,      // its questions in the conversation, never a popup over it (the owner, 29 Oct)
+    onQuestion: (q) => startTaskQuestions(q),
   });
 
+  // A task's questions as ordinary messages with quick replies, answered from the box below, one at a time; what the
+  // records already give is filled in and never asked (the owner, 29 Oct: "no separate box with its own Send button")
+  const taskAsk = useRef(null);
+  const LATER = /^(skip|later|add it later|i(?:'ll| will| can) (?:add|provide|send|enter|give)(?: it| the email| the address)? later(?: for now)?|i'?ll add it later|not now|none|no|nope|n\/a|na|don'?t know|dont have it|i don'?t have it|no email|leave it|leave it blank)\.?$/i;
+  const known = (f) => {
+    if (f.confirm) return false;
+    if (f.type === "checkbox") return true;      // its default stands
+    if (f.type === "line_items") return !checkLines(f, f.default || []).error && (f.default || []).length > 0;
+    return !questionIsEmpty(f, f.default);
+  };
+  // Optional extras (a discount, a note on the document) aren't asked one by one in the chat: they're there to change on
+  // the draft with Edit (the owner, 11 Nov). Said in the request, they're filled in anyway.
+  const extra = (f) => !f.required && !f.said && !f.asked && (f.type === "discount" || f.type === "textarea");
+  function startTaskQuestions({ question, answer, discard, run = null }) {
+    const fields = question.fields || [];
+    // Items the owner already named ("Service is SAP S4HANA Material Management") are kept, waiting only for their price (the owner, 11 Nov)
+    const said = (f) => (f.suggested || []).filter((r) => r.product_id || String(r.name || "").trim())
+      .map((r) => ({ product_id: r.product_id || null, name: r.product_id ? "" : String(r.name).trim(), quantity: Number(r.quantity) || 1, unit_price: r.unit_price ?? "", other: !r.product_id, label: r.name }));
+    const values = Object.fromEntries(fields.map((f) => [f.key, f.type === "line_items" ? (known(f) ? f.default : said(f)) : questionDefault(f)]));
+    taskAsk.current = { fields, values, answer, discard, at: 0, lead: question.question || "", filled: new Set(), runId: run?.id || null };
+    setWorking(false);      // waiting for the owner now, never "Working on it…" (the owner, 29 Oct)
+    askTaskNext(true);
+  }
+  const chipsFor = (f, values) => {
+    const ask = (label, prompt = label) => ({ label: String(label).slice(0, 40), prompt });
+    if (f.type === "customer") return [...(f.options || []).slice(0, 8).map((o) => ask(o.label)), ask(f.new_label?.replace(/^\+\s*/, "+ ") || "+ New customer")];
+    if (f.type === "choice") return (f.options || []).slice(0, 8).map((o) => ask(o.label));
+    if (f.type === "checkbox") return [ask("Yes"), ask("No")];
+    if (f.type === "date") return [ask("In 7 days"), ask("In 14 days"), ask("In 30 days")];
+    if (f.type === "line_items") {
+      const have = (values[f.key] || []).length;
+      return [...(f.catalogue || []).slice(0, 6).map((c) => ask(c.name, `1 x ${c.name}`)), ...(have ? [ask("That's all")] : [])];
+    }
+    return f.required ? [] : [ask("Skip")];
+  };
+  const taskSummary = (a, f, value) => questionSummary({ ...f, currency: a.currency || f.currency }, value);
+  function askTaskNext(first = false) {
+    const a = taskAsk.current;
+    if (!a) return;
+    // Skipped: what does not apply, what the records already give, and what an earlier answer here already said ("carl" as
+    // the customer is the new customer's name too)
+    while (a.at < a.fields.length && (!shows(a.fields[a.at], a.values) || a.filled.has(a.fields[a.at].key)
+      || (known(a.fields[a.at]) && !a.fields[a.at].asked) || extra(a.fields[a.at]))) a.at += 1;
+    if (a.at >= a.fields.length) return finishTask();
+    const f = a.fields[a.at];
+    const unpriced = f.type === "line_items" ? (a.values[f.key] || []).find((r) => !(Number(r.unit_price) > 0)) : null;
+    if (unpriced) {
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), prompts: [],
+        content: `What's the price for ${unpriced.label || unpriced.name}${Number(unpriced.quantity) > 1 ? ` (each, ${unpriced.quantity} of them)` : ""}? Type the amount, for example 1500.` }]);
+      return;
+    }
+    // The task's own question ("What should this invoice include?") stands in only for the field it is about. Asking for
+    // something else first (the new customer's email), its question is asked, never hidden behind it (the owner, 11 Nov).
+    const fits = (f.type === "line_items" && /\binclude\b/i.test(a.lead)) || ((f.type === "customer" || f.key === "customer_name") && /\bwho\b/i.test(a.lead));
+    const lead = !first || !a.lead || a.lead === askFor(f) ? "" : fits ? a.lead : a.lead.replace(/[^.!?]*\?\s*$/, "").trim();
+    const head = lead ? `${lead} ` : "";
+    const ask = fits && head.trim().endsWith("?") && !f.confirm ? "" : f.confirm ? `Is this right? ${f.label}: ${taskSummary(a, f, a.values[f.key]) || a.values[f.key]}`
+      : `${askFor(f)}${!f.required && f.hint ? ` ${f.hint}` : ""}`;
+    const hint = f.type === "line_items" ? " Pick from your catalogue, or type them: 3 x item at 150." : "";
+    setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: `${head}${ask}${hint}`.trim(),
+      prompts: f.confirm ? [{ label: "Yes", prompt: "Yes" }, { label: "Change it", prompt: "Change it" }] : chipsFor(f, a.values) }]);
+  }
+  async function finishTask() {
+    const a = taskAsk.current;
+    taskAsk.current = null;
+    if (!a) return;
+    const given = Object.fromEntries(a.fields.filter((f) => shows(f, a.values) && !questionIsEmpty(f, a.values[f.key])).map((f) => [f.key, questionNormalize(f, a.values[f.key])]));
+    if (a.currency && given.items && !given.currency) given.currency = a.currency;      // "$200": the quotation in dollars
+    setLoading(true);
+    try { await a.answer(given); } finally { setLoading(false); }
+  }
+  function answerTask(text) {
+    const a = taskAsk.current;
+    const f = a.fields[a.at];
+    const t = String(text).trim();
+    const low = t.toLowerCase();
+    const say = (content, prompts = []) => setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content, prompts }]);
+    setMessages((prev) => [...prev, mine(t)]);
+    const before = new Set(a.filled);      // answered earlier: kept as given
+    // the currency written with an amount ("@$200", "200 USD") goes with the items (the owner, 1 Nov: "I remember giving the currency in $")
+    const money = /(?:^|[\s@(])([$£€₦])\s?\d|\d\s*(usd|gbp|eur|ngn|dollars?|pounds?|euros?|naira)\b|\b(usd|gbp|eur|ngn)\s?\d/i.exec(t);
+    if (money) {
+      const w = String(money[1] || money[2] || money[3]).toLowerCase();
+      a.currency = { $: "USD", "£": "GBP", "€": "EUR", "₦": "NGN", usd: "USD", dollar: "USD", dollars: "USD", gbp: "GBP", pound: "GBP", pounds: "GBP",
+        eur: "EUR", euro: "EUR", euros: "EUR", ngn: "NGN", naira: "NGN" }[w] || a.currency;
+    }
+    if (/^(discard|cancel|stop)( it| this| the request)?$/i.test(t)) { taskAsk.current = null; a.discard?.(); say("Discarded. Nothing was created or sent."); return; }
+    // name and items from one answer: "Food quotation @$500 for Luke" is Luke; "mark, 2 fishes @ $300 each" is Mark (31 Oct)
+    const named = (() => {
+      const m = /^(.*?\d.*?)\s+for\s+([A-Za-z][\w'.-]*(?:\s+[A-Za-z][\w'.-]*){0,2})\s*\.?$/i.exec(t);
+      if (m) return { name: m[2].trim(), rest: m[1].trim() };
+      // "food for Joe @$200": Joe, and food at 200 (the owner, 1 Nov)
+      const mid = /\s+for\s+([A-Za-z][\w'.-]*(?:\s+(?!at\b)[A-Za-z][\w'.-]*){0,2})(?=\s*(?:[@,;]|\bat\b|[£$€₦]?\d))/i.exec(t);
+      if (mid) return { name: mid[1].trim(), rest: `${t.slice(0, mid.index)} ${t.slice(mid.index + mid[0].length)}`.replace(/\s+/g, " ").trim() };
+      const [first, ...more] = t.split(/\s*[,;]\s*/);
+      return { name: (first || t).trim(), rest: more.join(", ").trim() };
+    })();
+    const isName = f.type === "customer" || /name|customer/i.test(f.key);
+    let value;
+    if (f.confirm) {
+      if (/^(yes|yep|right|correct|ok)/i.test(t)) value = a.values[f.key];
+      else { a.fields[a.at] = { ...f, confirm: false, asked: true }; askTaskNext(); return; }
+    } else if (f.type === "customer" || f.type === "choice") {
+      const opts = f.options || [];
+      const hit = opts.find((o) => String(o.label).toLowerCase() === low) || opts.find((o) => String(o.label).toLowerCase().startsWith(low) || low.includes(String(o.label).toLowerCase()));
+      if (hit) value = hit.value;
+      else if (f.type === "customer") {
+        value = "new";
+        // a name typed: the new customer's; "mark, 2 fishes @ $300 each" is Mark, and the rest is read below (the owner, 31 Oct)
+        const name = /\d/.test(t) ? named.name : t;
+        if (!/^\+?\s*new (customer|supplier)$/i.test(t) && !a.values.customer_name) {
+          a.values.customer_name = name;
+          a.filled.add("customer_name");
+        }
+      } else { say(`Pick one: ${opts.map((o) => o.label).join(", ")}.`, chipsFor(f, a.values)); return; }
+    } else if (f.type === "checkbox") value = /^(yes|y|ok|sure|save)/i.test(t);
+    else if (f.type === "date") {
+      const m = /in (\d+) days?/i.exec(t);
+      const d = m ? new Date(Date.now() + Number(m[1]) * 86400000) : new Date(t.replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, "$3-$2-$1"));
+      if (Number.isNaN(d.getTime())) { say("Which date? For example 30/11/2026, or pick one.", chipsFor(f, a.values)); return; }
+      value = d.toISOString().slice(0, 10);
+    } else if (f.type === "line_items") {
+      if (/^that'?s all$|^done$|^no(thing)? (more|else)$/i.test(t)) {
+        const checked = checkLines(f, a.values[f.key] || []);
+        if (checked.error) { say(checked.error, chipsFor(f, a.values)); return; }
+        a.at += 1; askTaskNext(); return;
+      }
+      const waiting = (a.values[f.key] || []).find((r) => !(Number(r.unit_price) > 0));
+      const amount = /^\s*(?:[£$€₦]\s*)?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:each|ea|per\s+\w+)?\s*$/i.exec(t);
+      if (waiting && amount) {
+        waiting.unit_price = Number(amount[1].replace(/,/g, "")) * (amount[2] ? 1000 : 1);
+        if ((a.values[f.key] || []).some((r) => !(Number(r.unit_price) > 0))) { askTaskNext(); return; }
+        say(`Added: ${taskSummary(a, f, a.values[f.key])}. Anything else?`, chipsFor(f, a.values));
+        return;
+      }
+      const rows = linesFromText(t, f.catalogue || []);
+      if (!rows.length) { say(waiting ? `What's the price for ${waiting.label || waiting.name}? Type the amount, for example 1500.` : "I couldn't read an item there. Try: 3 x office deep clean at 150.", waiting ? [] : chipsFor(f, a.values)); return; }
+      // Lines typed in full replace the one still waiting for its price
+      a.values[f.key] = [...(a.values[f.key] || []).filter((r) => (r.product_id || r.name) && Number(r.unit_price) > 0), ...rows];
+      say(`Added: ${taskSummary(a, f, rows)}. Anything else?`, chipsFor(f, a.values));
+      return;
+    } else if (!f.required && LATER.test(t)) value = "";      // "later", "not now", "no email": left empty, never kept as the answer (the owner, 11 Nov)
+    else if (f.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t)) {
+      say(`That doesn't look like an email address. Type it, for example name@company.com${f.required ? "" : ", or say later"}.`, chipsFor(f, a.values)); return;
+    } else value = isName && /\d/.test(t) ? named.name : t;      // "mark, 2 fishes…": Mark; "food @ $500 for Luke": Luke
+    if (f.required && questionIsEmpty(f, value)) { say(`${f.label} is needed. ${askFor(f)}`, chipsFor(f, a.values)); return; }
+    a.values[f.key] = value;
+    a.filled.add(f.key);
+    // Items said in the same answer are kept too, never asked for again (the owner, 31 Oct: "I already gave him")
+    for (const g of a.fields) {
+      if (g.type !== "line_items" || a.filled.has(g.key) || (a.values[g.key] || []).length) continue;
+      const rest = isName && /\d/.test(t) ? named.rest : t;
+      const rows = /\d/.test(rest) ? linesFromText(rest, g.catalogue || []) : [];
+      if (rows.length) { a.values[g.key] = rows; a.filled.add(g.key); }
+    }
+    // The whole answer read by Claude: what it reads wins over the quick reading above, for this question and every other one
+    // the answer covers, never asked again (the owner, 1 Nov: "we are using Claude"); only earlier answers stay as given
+    if (a.runId && t.split(/\s+/).length > 2) {
+      a.at += 1;
+      const at = a.at;
+      setLoading(true);
+      apiRequest(`/workflow-runs/${a.runId}/read`, "POST", { text: t }).then((r) => {
+        Object.entries(r?.values || {}).forEach(([k, v]) => {
+          const g = a.fields.find((x) => x.key === k);
+          if (!g || before.has(k) || questionIsEmpty(g, v)) return;
+          a.values[k] = v;
+          a.filled.add(k);
+        });
+      }, () => null).finally(() => { setLoading(false); if (taskAsk.current === a && a.at === at) askTaskNext(); });
+      return;
+    }
+    a.at += 1;
+    askTaskNext();
+  }
+
+  // A task's questions, asked here in the chat one at a time (never a dialog); its answers sent together once all are given
+  const asking = useRef(null);
+  const confirming = useRef(null);      // a priced task waiting for Start
+  const landingTask = useRef(null);      // a task begun on the landing page, its price said, waiting for Start
+  async function answerPrice(text) {
+    const c = confirming.current;
+    confirming.current = null;
+    setMessages((prev) => [...prev, mine(text)]);
+    if (!/^\s*(?:start|yes|yeah|yep|ok(?:ay)?|sure|go ahead|go on|do it|proceed|please do|confirm)\b/i.test(text)) {
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: "No problem, nothing was started or charged." }]);
+      return;
+    }
+    setLoading(true);
+    try {
+      deliver(await submitAgentRequest({ businessId: c.businessId, capability: c.single.capability, params: c.single.params || {}, sourceChannel: "ui_action", background: true, confirmed: true }), c.businessId);
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't start that just now. Nothing was charged; please try again.") }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  const shownField = (f, answers) => !f.show_if || Object.entries(f.show_if).every(([k, v]) => answers[k] === v);
+  function askNext(lead = "") {
+    const a = asking.current;
+    while (a && a.at < a.fields.length && (!shownField(a.fields[a.at], a.answers) || a.fields[a.at].key in a.answers)) a.at += 1;
+    if (!a || a.at >= a.fields.length) return finishAsking();
+    const f = a.fields[a.at];
+    const options = (f.options || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+    setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: [lead, f.label].filter(Boolean).join(" "),
+      prompts: options.map((o) => ({ label: o.label, prompt: o.label })) }]);
+    return undefined;
+  }
+  async function finishAsking() {
+    const a = asking.current;
+    asking.current = null;
+    if (!a) return;
+    setLoading(true);
+    try {
+      deliver(await submitAgentRequest({ businessId: a.businessId, capability: a.single.capability, params: { ...(a.single.params || {}), ...a.answers }, sourceChannel: "ui_action", background: true }), a.businessId);
+    } catch (error) {
+      setMessages((prev) => [...prev, { role: "assistant", failed: true, content: agentErrorMessage(error, "I couldn't confirm the result. Check your tasks before trying again.") }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  function answerAsked(text) {
+    const a = asking.current;
+    const f = a.fields[a.at];
+    const options = (f.options || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+    const t = String(text).trim().toLowerCase();
+    const picked = options.find((o) => String(o.label).toLowerCase() === t || String(o.value).toLowerCase() === t)
+      || options.find((o) => String(o.label).toLowerCase().startsWith(t) || t.includes(String(o.label).toLowerCase().split(/[,:]/)[0]));
+    if (options.length && !picked) {
+      setMessages((prev) => [...prev, mine(text), { role: "assistant", at: new Date().toISOString(), content: `Pick one: ${options.map((o) => o.label).join(", ")}.`,
+        prompts: options.map((o) => ({ label: o.label, prompt: o.label })) }]);
+      return;
+    }
+    setMessages((prev) => [...prev, mine(text)]);
+    a.answers[f.key] = picked ? picked.value : String(text).trim();
+    a.at += 1;
+    askNext();
+  }
+
   /** One reply from the Agent, put where it belongs: a message, a question in a dialog, or a task to watch. */
-  function deliver(routed, businessId) {
+  async function deliver(routed, businessId) {
     const parts = routed.kind === "multi" ? routed.results || [] : [routed];
     const single = parts.length === 1 ? parts[0] : null;
+    // Specialist replies, including legacy handover responses, belong to this thread.
+    // Render their words, result cards and explicit actions without opening another chat.
     const run = single?.kind === "workflow" && !((single.runs || []).length > 1) ? single.run : null;
     if (run && !["succeeded", "cancelled"].includes(run.status)) return flow.follow(run);
-    if (single?.kind === "needs_input") {
-      return flow.ask({ message: single.message, fields: single.fields, onSubmit: async (answers) => {
-        setLoading(true);
+    // A guided chat (funding, launch, customers, risks, an idea): carried on here in the panel, as in the Agent Centre (the
+    // owner, 27 Oct: "all these agentic flows need to be conversational... a conversation panel")
+    if (single?.kind === "check") {
+      const page = { need_funding: "funding", launch: "launch", test_idea: "idea", more_customers: "customers", business_risks: "risks", price_offer: "pricing" }[single.goal_key];
+      if (page) {
         try {
-          deliver(await submitAgentRequest({ businessId, capability: single.capability, params: { ...(single.params || {}), ...answers }, sourceChannel: "ui_action", background: true }), businessId);
+          const result = await submitAgentRequest({ businessId, page, text: single.said || single.message || "Help me with this check",
+            sourceChannel: "text", history: messages.slice(-18).filter(message => message.content) });
+          if (result.kind !== "check") return await deliver(result, businessId);
         } catch (error) {
-          setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
-        } finally {
-          setLoading(false);
+          push({ role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(error, "I couldn’t complete that check just now. Please try again.") });
+          return undefined;
         }
-      } });
+      }
+      push({ role: "assistant", at: new Date().toISOString(), content: "I couldn’t complete that check just now. Please try again; your conversation is still here." });
+      return undefined;
     }
-    return setMessages((prev) => [...prev, ...parts.map((r) => toMessage(r, businessId))]);
+    if (single?.kind === "needs_input") {
+      // Its details asked here, one at a time, as every task's questions are: what is known filled in, never a box (29 Oct)
+      return startTaskQuestions({ question: { fields: single.fields || [], question: single.message }, discard: null,
+        answer: async (answers) => {
+          try {
+            deliver(await submitAgentRequest({ businessId, capability: single.capability, params: { ...(single.params || {}), ...answers }, sourceChannel: "ui_action", background: true }), businessId);
+          } catch (error) {
+            setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
+          }
+        } });
+    }
+    // Its price said, then Start or Not now, here in the chat (the owner, 28 Oct: "go ahead" asked the question again)
+    if (single?.kind === "needs_confirmation" && single.price) {
+      confirming.current = { single, businessId };
+      setMessages((prev) => [...prev, { role: "assistant", at: new Date().toISOString(), content: single.message, confirm: { capability: single.capability, params: single.params || {} },
+        prompts: [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }] }]);      // the price is in the sentence above
+      return undefined;
+    }
+    // Never the same reply twice in a row (the owner, 27 Oct: "but you said I only have 3" got the last message again)
+    return setMessages((prev) => {
+      const before = [...prev].reverse().find((m) => m.role === "assistant")?.content;
+      const said = parts.map((r) => ({ ...toMessage(r, businessId), at: new Date().toISOString() }));
+      // ... only when the owner questioned it; asking again for the same thing gets its answer again (the owner, 28 Oct)
+      const asked = [...prev].reverse().find((m) => m.role === "user")?.content || "";
+      const doubted = /\b(?:but you said|you said|i thought|that'?s (?:not right|wrong)|isn'?t right|why (?:only|did you say)|how come|not true)\b/i.test(asked);
+      if (said.length === 1 && before && doubted && said[0].content === before) said[0] = { ...said[0], content: "I've said that already. Tell me what doesn't look right and I'll check it again.", offers: [], links: [] };
+      // the same reply delivered twice for one message is shown once (the owner, 31 Oct: the price line came twice)
+      const last = prev[prev.length - 1];
+      if (said.length === 1 && last?.role === "assistant" && last.content === said[0].content) return prev;
+      return [...prev, ...said];
+    });
   }
 
   const sendDisabled = !String(input || "").trim() || loading;
-  const title = useMemo(() => workspaceName || "Business assistant", [workspaceName]);
+  const resumedReply = useRef(null);
+  async function pickUpReply(businessId) {
+    setLoading(true);
+    try {
+      const pending = pendingAgentReply(businessId);
+      if (pending?.job_id) {
+        const snapshot = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${encodeURIComponent(pending.job_id)}`);
+        if (gone.current || useWorkspaceStore.getState().workspaceId !== businessId) return;
+        if (snapshot.chat_id) setChatId(snapshot.chat_id);
+        if (snapshot.user_message) setMessages(previous => [...previous].reverse().find(m => m.role === "user")?.content === snapshot.user_message
+          ? previous : [...previous, { role: "user", content: snapshot.user_message }]);
+      }
+      const result = await resumeAgentReply(businessId);
+      if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) await deliver(result, businessId);
+    }
+    catch (error) { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setMessages(prev => [...prev, { role: "assistant", content: error.message, recoverReply: error.code === "AGENT_REPLY_PENDING" }]); }
+    finally { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setLoading(false); }
+  }
+  useEffect(() => {
+    const pending = bizId && pendingAgentReply(bizId);
+    if (!pending || sent.current || resumedReply.current === pending.job_id || new URLSearchParams(window.location.search).has("chat")) return;
+    if (restoredFor !== bizId) { setLoading(true); return; }
+    resumedReply.current = pending.job_id;
+    void pickUpReply(bizId);
+  }, [bizId, restoredFor]); // Resume the saved job, never submit the funding request again.
+  // Named for the conversation, never the business (the owner, 27 Oct: "why is the chat name E2E Car Wash Abuja")
+  const title = useMemo(() => {
+    const first = messages.find((m) => m.role === "user")?.content;
+    return first ? (first.length > 48 ? `${first.slice(0, 46).trimEnd()}…` : first) : "New conversation";
+  }, [messages]);
+  async function openHistory() {
+    if (history) { setHistory(null); return; }
+    try { setHistory(((await listChats(bizId))?.items || []).filter((c) => !isModuleThread(c.id))); } catch { setHistory([]); }
+  }
+  async function openChat(id) {
+    try {
+      const chat = await getChat(bizId, id);
+      continueConversation(bizId, chat.messages);      // the Agent carries on from what was said there
+      setChatId(chat.id);
+      setMessages([{ role: "assistant", content: intro }, ...(chat.messages || [])]);
+    } catch { /* stays on the current one */ }
+    setHistory(null);
+  }
 
   function resetConversation() {
     clearConversation(useWorkspaceStore.getState().workspaceId);      // a new conversation: nothing earlier is sent again
+    try { localStorage.setItem(`ea_chat_fresh:${useWorkspaceStore.getState().workspaceId}`, new Date().toISOString()); } catch { /* new for this visit */ }
+    setChatId(newChatId());      // the one before stays in History
     setMessages([{ role: "assistant", content: intro }]);
+    setHistory(null);
     setInput("");
   }
 
@@ -118,11 +639,181 @@ export default function BusinessAssistant() {
     }
   }
 
-  async function send(prefilledQuestion = "") {
-    const question = String(prefilledQuestion || input || "").trim();
-    if (!question) return;
+  // Opened with a message from anywhere (the owner, 27 Oct: "these should be on the agent chat page, panel"): "?chat=" in the
+  // address (the landing page's funding chat hands over this way) or an "ea:chat" event; the message is sent at once
+  const handed = useRef("");
+  useEffect(() => {
+    // From the address once (a page shown twice in development must not send it twice); from the boxes every time
+    // A message handed over starts its own conversation, shown at once with its reply in it (never an older one)
+    const take = (text, once = false) => {
+      const t = String(text || "").trim();
+      if (!t || (once && handed.current === t)) return;
+      if (once) handed.current = t;
+      sent.current = true;
+      setHandedOver(true);
+      clearConversation(useWorkspaceStore.getState().workspaceId);
+      setChatId(newChatId());
+      setHistory(null);
+      void send(t, { fresh: true });
+    };
+    const params = new URLSearchParams(window.location.search);
+    // A page with its own assistant (a case's or the idea's) answers its own message: never sent twice
+    if (params.get("chat") && params.get("tab") !== "assistant") {
+      take(params.get("chat"), true);
+      params.delete("chat");
+      window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash}`);
+    }
+    const onChat = (e) => { if (e?.detail) e.detail.handled = true; take(e?.detail?.text); };
+    window.addEventListener("ea:chat", onChat);
+    // A draft finished from the landing page is read and decided here, in the chat, never in a pop-up (the owner, 30 Oct:
+    // "we agreed that all these should be on the chat, from the landing page"); kept until this chat is there to show it
+    const review = async () => {
+      let r = null;
+      try { r = JSON.parse(sessionStorage.getItem(CHAT_REVIEW) || "null"); sessionStorage.removeItem(CHAT_REVIEW); } catch { r = null; }
+      if (r?.sessionId) {
+        // Begun on the landing page: started here, in the chat, with what it was told there (the owner, 1 Nov)
+        if (r.message) push({ role: "assistant", at: new Date().toISOString(), content: r.message });
+        setLoading(true);
+        let done = null;
+        try {
+          done = await apiRequest(`/task-sessions/${r.sessionId}/prepare`, "POST", { confirmed: Boolean(r.confirmed) }, { timeoutMs: 120000 });
+        } catch (e) {
+          push({ role: "assistant", at: new Date().toISOString(), content: agentErrorMessage(e, "That couldn't be started just now. Nothing was lost; ask me again and I'll pick it up.") });
+        } finally { setLoading(false); }
+        if (!done) return;
+        if (done.confirm && !r.confirmed) {
+          landingTask.current = r.sessionId;
+          push({ role: "assistant", at: new Date().toISOString(), content: `${done.confirm.message} You're charged only when it's done.`,
+            prompts: [{ label: "Start", prompt: "Start" }, { label: "Not now", prompt: "Not now" }] });
+          return;
+        }
+        if (done.first_value && !done.handoff?.run_id) {      // a free check: its result, here in the chat
+          const check = await fetchFirstValue(r.sessionId).catch(() => null);
+          if (check?.result && !resultHome(check.result)) {
+            rememberFirstValue(r.sessionId);
+            push({ role: "assistant", at: new Date().toISOString(), content: "Here's your result. It's saved under Results too.", cards: [{ type: "first_value", result: check.result }] });
+            return;
+          }
+        }
+        if (!done.handoff?.run_id) {
+          const ready = done.handoff?.free || done.handoff?.subject_id;      // nothing to follow here: it's on its own page
+          push({ role: "assistant", at: new Date().toISOString(), content: done.handoff?.message || done.problem || (ready ? "It's ready. Next step: open it." : "That couldn't be started just now. Nothing was lost."),
+            ...(done.handoff?.upgrade ? { link: "/pricing" } : ready ? { link: done.handoff.to } : {}) });
+          return;
+        }
+        r = { runId: done.handoff.run_id, message: done.handoff.ready_message || "" };
+      }
+      if (!r?.runId) return;
+      // The task carries on here: its questions asked in the chat, then its draft to approve, edit or reject (the owner,
+      // 30 Oct: "once it's handing over, it should be executing on the Agent Centre chat accordingly")
+      if (r.message) push({ role: "assistant", at: new Date().toISOString(), content: r.message });
+      try {
+        const run = await apiRequest(`/workflow-runs/${r.runId}`, "GET");
+        if (run && !["succeeded", "cancelled", "failed"].includes(run.status)) { flow.follow(run); return; }
+      } catch { /* the draft is shown below either way */ }
+      push({ role: "assistant", at: new Date().toISOString(), content: "Here's your draft. Read it, then approve, edit or reject it here.",
+        cards: [{ type: "preview", item: { run_id: r.runId, title: r.title, open: true } }] });
+    };
+    review();
+    window.addEventListener(CHAT_REVIEW, review);
+    return () => { window.removeEventListener("ea:chat", onChat); window.removeEventListener(CHAT_REVIEW, review); };
+  }, []);      // eslint-disable-line react-hooks/exhaustive-deps
 
-    const nextMessages = [...messages, { role: "user", content: question }];
+  async function send(prefilledQuestion = "", { fresh = false, readinessItem = null, readinessList = null } = {}) {
+    let question = String(prefilledQuestion || input || "").trim();
+    if (!question) return;
+    if (readinessList) {
+      if (loading) return;
+      const businessId = useWorkspaceStore.getState().workspaceId;
+      setInput("");
+      push(mine(question));
+      setLoading(true);
+      try {
+        const result = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/readiness-items/${encodeURIComponent(readinessList.topic)}/${encodeURIComponent(readinessList.caseId)}`);
+        if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) {
+          push({ role: "assistant", content: "Here are the remaining items and drafts for your review.", cards: [result] });
+        }
+      } catch (error) {
+        if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) push({ role: "assistant", content: agentErrorMessage(error, "I couldn't load these items. Please try again.") });
+      } finally { if (!gone.current) setLoading(false); }
+      return;
+    }
+    sent.current = true;
+    if (!prefilledQuestion) {
+      // Typed at the last reply's buttons ("yes, go ahead", "open it"): that button, as a click (the owner, 27 Oct)
+      const last = [...messages].reverse().find((m) => m.role === "assistant");
+      const chosen = offerFor(question, [...(last?.prompts || []).map((p) => ({ label: p.label, prompt: p.prompt })), ...(last?.links || []).map((l) => ({ label: l.label, to: l.to }))]);
+      if (chosen?.to) { setInput(""); noteCameFrom(chatId, chosen.to); window.location.assign(chosen.to); return; }
+      if (chosen?.prompt) question = chosen.prompt;
+    }
+
+    if (editing) {
+      // The change, made to the draft and shown again for approval (the owner, 27 Oct: "let the user say what to change in the chat")
+      const item = editing;
+      setEditing(null);
+      setInput("");
+      push(mine(question));
+      setLoading(true);
+      try { push(await act.revise(item, question)); } finally { setLoading(false); }
+      return;
+    }
+    // Asked for: the approvals waiting, or the customer risk with its scenarios, as their cards
+    if (!taskAsk.current && /\b(?:what'?s waiting|needs? (?:my )?approval|pending approvals?|show (?:me )?(?:the )?approvals?)\b/i.test(question)) {
+      setInput("");
+      setMessages((prev) => [...prev, mine(question), { role: "assistant", at: new Date().toISOString(),
+        content: n ? "Here's what's waiting for your approval." : "Nothing is waiting for your approval right now.", cards: n ? [{ type: "approvals" }] : [] }]);
+      return;
+    }
+    if (!taskAsk.current && risk && /\b(?:customer |concentration )?risk\b/i.test(question) && /\b(?:show|see|what|my|the)\b/i.test(question)) {
+      setInput("");
+      setMessages((prev) => [...prev, mine(question), { role: "assistant", at: new Date().toISOString(),
+        content: `${risk.customer} makes up ${risk.share}% of your customer revenue. That's a concentration risk.`, cards: [{ type: "risk" }] }]);
+      return;
+    }
+    // Whatever was priced and waiting gives way to a new request too, never "nothing was started" and the request dropped
+    if (NEW_REQUEST.test(question) && !/^\s*(?:start|yes|go ahead)\b/i.test(question)) { confirming.current = null; landingTask.current = null; asking.current = null; }
+    if (taskAsk.current && !TASK_ASIDE.test(question) && !NEW_REQUEST.test(question)) {      // only a plausible answer goes into a task field
+      setInput("");
+      answerTask(question);
+      return;
+    }
+    // Start or Not now on a price said before a reload: kept on its message (the owner, 1 Nov: "no response")
+    if (!confirming.current && !NEW_REQUEST.test(question) && messages[messages.length - 1]?.confirm) {
+      confirming.current = { single: messages[messages.length - 1].confirm, businessId: useWorkspaceStore.getState().workspaceId };
+    }
+    if (confirming.current) {      // Start or Not now, for the price just said
+      setInput("");
+      answerPrice(question);
+      return;
+    }
+    if (landingTask.current) {      // Start or Not now, for a landing page task's price
+      const id = landingTask.current;
+      landingTask.current = null;
+      setInput("");
+      push({ role: "user", at: new Date().toISOString(), content: question });
+      if (/^\s*(?:start|yes|yeah|yep|ok(?:ay)?|sure|go ahead|go on|do it|proceed|confirm)\b/i.test(question)) {
+        reviewInChat({ sessionId: id, confirmed: true });
+      } else push({ role: "assistant", at: new Date().toISOString(), content: "No problem, nothing was started or charged. It's in your tasks whenever you want it." });
+      return;
+    }
+    if (asking.current) {      // the answer to the question the chat just asked
+      setInput("");
+      answerAsked(question);
+      return;
+    }
+    if (SEGMENTS.test(question)) {      // typed, as its button does: the research offer, never questions (the owner, 28 Oct)
+      setInput("");
+      push(mine(question), { role: "assistant", at: new Date().toISOString(), content: "I can research new customer segments for you.", cards: [{ type: "segments" }] });
+      return;
+    }
+    if (NEXT.test(question)) {
+      const at = new Date().toISOString();
+      setMessages((prev) => [...prev, { role: "user", content: question, at },
+        { role: "assistant", at, content: work.length ? "Here's where your work stands. Pick one and I'll continue." : "Nothing is in progress yet. Tell me the job: funding, a launch, an idea or a quotation.", cards: work.length ? [{ type: "work" }] : [] }]);
+      setInput("");
+      return;
+    }
+    const nextMessages = [...(fresh ? [{ role: "assistant", content: intro }] : messages), { role: "user", content: question, at: new Date().toISOString() }];
     const trimmedMessages = nextMessages.slice(-20);
     setMessages(trimmedMessages);
     setInput("");
@@ -136,175 +827,449 @@ export default function BusinessAssistant() {
       }
       // One Agent: every message goes to the same place. It answers from the records, runs the
       // task, or writes the answer itself. There is no second chat behind this one.
-      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true });
-      deliver(routed, agentBusinessId);
+      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true, chatId,
+        ...(readinessItem ? { params: { readiness_item: readinessItem } } : {}),
+        history: fresh ? [] : messages.slice(-18).filter((m) => (m.role === "user" || m.role === "assistant") && m.content) });
+      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId) {
+        // Left before the reply came (a validation takes a while): saved into the conversation, so it is there on return (the owner, 29 Oct)
+        const parts = (routed?.kind === "multi" ? routed.results || [] : [routed]).filter((r) => r && r.kind !== "workflow");
+        const late = parts.map((r) => ({ ...toMessage(r, agentBusinessId), at: new Date().toISOString() })).filter((m) => m.content);
+        if (late.length && !isModuleThread(chatId)) saveChat(agentBusinessId, chatId, [...trimmedMessages.slice(1).filter((m) => m.content), ...late]).catch(() => {});
+        return;
+      }
+      await deliver(routed, agentBusinessId);
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // tasks and written answers use credits
       requestAnimationFrame(() => {
         listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" });
       });
     } catch (error) {
-      setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
+      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: error.code === "AGENT_REPLY_PENDING" || error.code === "AGENT_REPLY_FAILED" ? error.message : agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again."), recoverReply: error.code === "AGENT_REPLY_PENDING" }]);
     } finally {
-      setLoading(false);
+      if (!gone.current && useWorkspaceStore.getState().workspaceId === agentBusinessId) setLoading(false);
     }
   }
 
+  // The opening, as the mockup has it (the owner, 27 Oct): what was checked and what needs them, the approvals as a card;
+  // then a risk the records show, as a card. Said fresh on each visit, never saved into the conversation.
+  const biz = ctx?.business?.name || workspaceName || "your business";
+  const n = waiting?.count || 0;
+  const risk = ctx?.risk && ctx.risk.share >= 50 ? ctx.risk : null;
+  const ready = messages.some(m => m.role === "user") || (waiting !== null && (given === undefined || ctx !== null));
+  // Said once (the owner, 28 Oct: the greeting and approvals came again at the bottom, with a new time, on every visit): while
+  // nothing it says has changed it keeps the time it was first said, so it stays where it was; a change is a new greeting
+  const sig = `${n}|${risk ? risk.share : ""}`;      // never a customer's name: this goes in the browser
+  const greet = useRef(null);
+  if (ready && greet.current === null) {
+    let seen = null;
+    try { seen = JSON.parse(localStorage.getItem(`ea_greeted:${bizId}`) || "null"); } catch { /* not kept: greeted now */ }
+    const same = restored && seen && seen.sig === sig && seen.at;
+    greet.current = !same;
+    if (same) openedAt.current = seen.at;
+    try { localStorage.setItem(`ea_greeted:${bizId}`, JSON.stringify({ sig, at: openedAt.current })); } catch { /* not kept */ }
+  }
+  // Words only: the approvals and the risk are cards when asked for, never posted with every greeting (the owner, 29 Oct:
+  // "stop showing the pending approval, risk cards on the conversation except when asked or needed")
+  // Arrived with a request (the landing page's funding answers, a page's question): greeted, then that request answered,
+  // never the day's briefing first (the owner, 30 Oct: "10 things need you today… concentration risk" before their funding)
+  const opening = handedOver ? [{ role: "assistant", at: openedAt.current, cards: [], content: `${intro.split(". ")[0]}.`, prompts: [] }]
+    : [{ role: "assistant", at: openedAt.current, cards: [],
+    content: `${intro.split(". ")[0]}. I've checked ${biz}. ${n ? `${n === 1 ? "One thing needs" : `${(NUMBER[n] || String(n)).replace(/^./, (c) => c.toUpperCase())} things need`} you today.` : "Nothing is waiting for you right now. Tell me the job and I'll get on with it."}`
+      + (risk ? ` ${risk.customer} makes up ${risk.share}% of your customer revenue, a concentration risk.` : ""),
+    prompts: [...(n ? [{ label: "Show what's waiting", prompt: "Show what's waiting for my approval" }] : []),
+      ...(risk ? [{ label: "Show the customer risk", prompt: "Show the customer risk" }] : [])] }];
+  // Each shown message knows its place in the conversation (`_i`), whatever comes before it on screen
+  const said = messages.map((m, i) => {
+    if (m.role !== "assistant") return { ...m, _i: i };
+    const clean = replyMarkup(m.content);
+    const prompts = m.quick && clean.text.includes("?") && !m.answersQuestion ? [] : m.prompts?.length ? m.prompts : clean.prompts;
+    return { ...m, content: clean.text, prompts, _i: i };
+  }).slice(1);
+  // The greeting and its cards (approvals, the risk and its Simulate buttons) always, after a conversation brought back
+  // (the owner, 28 Oct: "bring them back, after the conversation in time order")
+  // A conversation brought back, then the greeting, then what is said now: in time order (the owner, 28 Oct: a result posted
+  // above the greeting was out of sight)
+  // Placed by time, never by count (the owner, 28 Oct: the greeting came again after a reply, with an earlier time): each
+  // message keeps the time of the one before it when it has none, and the order is otherwise kept
+  const inOrder = (list) => { let t = ""; return list.map((m, k) => { t = m.at || t; return { m, t, k }; }).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.k - b.k)).map((x) => x.m); };
+  // A conversation carried on is never greeted again (the owner, 1 Nov: "it already greeted me"): the greeting only opens a new one
+  const greetedAlready = restored > 0 && said.slice(0, restored).some((m) => m.role === "assistant");
+  const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
+  const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
+  const card = (c, key, siblings = []) => {
+    if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onReady={(result) => {
+      setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id && Boolean(item.options) === Boolean(c.options) ? result : item) })));
+      loadWaiting();
+    }} />;
+    if (c.type === "check_result" && c.result) return <section key={key} aria-label="Your check result" className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      <h3 className="font-semibold">{c.result.headline || "Your check result"}</h3>
+      {c.result.missing?.length > 0 && <ul className="mt-3 space-y-2">{c.result.missing.map((item, i) => <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"><span>{item}</span><button type="button" disabled={loading} onClick={() => send(`Help me address this item from my ${c.goal || "business"} check: ${item}. Use my saved data and work through it here, one question at a time.`)} className="min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-brand-700">Work on this</button></li>)}</ul>}
+    </section>;
+    if (c.type === "options") return <FundingOptions key={key} item={c} />;
+    if (c.type === "readiness_tasks") return <ReadinessTasks key={key} item={c} businessId={bizId} busy={loading} onSend={send}
+      onUpdated={(result) => { setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "readiness_tasks" && item.case_id === c.case_id ? result : item) }))); loadWaiting(); }} />;
+    if (c.type === "download") return <ChatDownload key={key} item={c} />;
+    if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
+    if (["records", "result", "next"].includes(c.type)) {
+      const current = work.find((item) => item.id && String(item.id) === String(c.case_id));
+      const change = siblings.find(item => item.type === "score_change" && String(item.case_id) === String(c.case_id));
+      const readiness = current && { ...current, score: c.score ?? change?.after ?? current.score };
+      if (c.type === "records") return <section key={key} aria-label="Business records checked" data-readiness-card="records" className="max-w-xl rounded-xl border border-slate-200 bg-white p-3 text-sm">
+        <p className="font-semibold text-slate-800">What I checked in your records</p>
+        <ul className="mt-2 grid gap-1 sm:grid-cols-2">{(ctx?.records || []).map((item) => <li key={item.key} className="flex justify-between gap-3 text-slate-600"><span>{item.label}</span><span className={item.available ? "text-emerald-700" : "text-slate-400"}>{item.detail}</span></li>)}</ul>
+      </section>;
+      if (readiness) return <section key={key} aria-label={c.type === "next" ? "Recommended next step" : "Readiness result"} data-readiness-card={c.type} className="max-w-xl rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-sm">
+        <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
+          <p className="mt-1 text-slate-700">{readiness.detail}</p></div>
+          <button type="button" disabled={loading} onClick={() => send(`List every remaining item for ${readiness.title} here and help me work through them one at a time.`, { readinessList: { topic: readiness.kind === "launch" ? "launch" : "funding", caseId: c.case_id } })} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">See next steps</button></div>
+      </section>;
+      return null;
+    }
+    if (c.type === "first_value") return <div key={key} className="max-w-2xl" data-chat-first-value><FirstValueCard result={c.result} /></div>;
+    if (c.type === "score_change") return <div key={key} data-readiness-card="score-change" className="w-fit rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800">Readiness score: {c.before}/100 → {c.after}/100</div>;
+    if (c.type === "risk" && risk) return <RiskCard key={key} risk={risk} onScenario={runScenario} onSegments={() => push(mine("Find new customer segments"), { role: "assistant", at: new Date().toISOString(), content: "I can research new customer segments for you.", cards: [{ type: "segments" }] })} />;
+    if (c.type === "scenario") return <ScenarioCard key={key} card={c} />;
+    if (c.type === "preview") return <PreviewCard key={key} businessId={bizId} item={c.item} preview={c.preview} go={go} onEdit={startEdit} onDone={(m) => { sayDone(m); loadWaiting(); }}
+      onConvert={(name) => send(`Convert the accepted quotation ${name || ""} to an invoice`.replace(/\s+/g, " ").trim())} />;
+    if (c.type === "segments") return <SegmentsCard key={key} businessId={bizId} onDone={(m) => push({ role: "assistant", at: new Date().toISOString(), content: m })} onChanges={() => { setInput("For the customer segments, please change "); }} />;
+    if (c.type === "work" && work.length) return <WorkCard key={key} work={work} go={go} />;
+    return null;
+  };
+  const last = [...shown].reverse().find((m) => m.role === "assistant");
+  // A reply's buttons only while it is the last thing said and nothing is under way (the owner, 28 Oct: Start and Not now still
+  // showing beside "Working on it…"); otherwise the starters
+  const answered = shown.length > 0 && shown[shown.length - 1] !== last;
+  // ... and no starters while a task is under way: they come back with its result (the owner, 28 Oct)
+  const chips = loading || working ? []
+    : last?.failed && !answered ? []
+    : (last?.prompts || []).length && !answered ? last.prompts
+      : shown.some(m => m.role === "user") ? [] : STARTER_PROMPTS.map((q) => ({ label: q, prompt: q }));
   return (
-    <>
-      {open ? (
-        <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] z-40 flex h-[min(720px,calc(100vh-6rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 sm:inset-x-auto sm:bottom-20 sm:right-4 sm:w-[420px] lg:bottom-4 lg:w-[440px]">
-          <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-brand-50 via-white to-accent-50 px-4 py-3 dark:border-slate-800 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-sm">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={resetConversation}
-                className="rounded-xl p-2 text-slate-500 hover:bg-white dark:hover:bg-slate-900"
-                aria-label="New conversation"
-                title="New conversation"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 12a9 9 0 1 0 3-6.7" />
-                  <path d="M3 4v5h5" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-xl p-2 text-slate-500 hover:bg-white dark:hover:bg-slate-900"
-                aria-label="Close assistant"
-                title="Close assistant"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="m18 6-12 12" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </div>
+    <section aria-label="Agent chat" data-agent-chat className="flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      {/* Earlier conversations and a fresh one, at the top right of the chat (the owner, 27 Oct: out of the suggestions row) */}
+      <div className="flex shrink-0 items-center justify-end gap-1 border-b border-slate-100 px-3 py-1.5 dark:border-slate-800" data-chat-header>
+        {actions}
+        <button type="button" onClick={openHistory} aria-pressed={Boolean(history)} data-chat-history-button aria-label="History" title="Earlier conversations"
+          className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 dark:hover:bg-slate-800">
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2" /></svg>
+        </button>
+        <button type="button" onClick={resetConversation} aria-label="New conversation" title="New conversation" className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 dark:hover:bg-slate-800">
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
+      {history && (
+        <div className="min-h-0 flex-1 overflow-auto px-6 py-5" data-chat-history onKeyDown={(e) => { if (e.key === "Escape") setHistory(null); }}>
+          {/* A way back, said (the owner, 28 Oct: "how do i exit the history now?"); the clock button and Escape close it too */}
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Your conversations</p>
+            <button type="button" autoFocus onClick={() => setHistory(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800" data-history-back>
+              ← Back to the conversation
+            </button>
           </div>
-
-          {messages.length <= 1 ? (
-            <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Try asking</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => void send(prompt)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-                  >
-                    {prompt}
+          {history.length === 0 ? <p className="mt-2 text-sm text-slate-500">No earlier conversations yet.</p> : (
+            <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-800">
+              {history.map((c) => (
+                <li key={c.id}>
+                  <button type="button" onClick={() => openChat(c.id)} data-chat-item={c.id}
+                    className={`w-full px-1 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${c.id === chatId ? "font-semibold" : ""}`}>
+                    <span className="block truncate text-sm text-slate-800 dark:text-slate-100">{c.title}</span>
+                    <span className="block text-[11.5px] text-slate-500">{new Date(c.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
                   </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div ref={listRef} className="flex-1 space-y-3 overflow-auto px-4 py-4">
-            {messages.map((message, index) => (
-              <div
-                key={`${message.role}-${index}`}
-                className={
-                  "max-w-[88%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 shadow-sm " +
-                  (message.role === "user"
-                    ? "ml-auto bg-brand-600 text-white"
-                    : "border border-slate-200 bg-slate-50 text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100")
-                }
-              >
-                {message.content}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      <div ref={listRef} data-conversation-panel className={`min-h-0 flex-1 space-y-4 overflow-auto px-4 py-5 sm:px-6 ${history ? "hidden" : ""}`}>
+        {!ready && !loading && (
+          <div className="space-y-3" aria-busy="true" aria-label="Checking your business" data-chat-skeleton>
+            <div className="flex items-start gap-3"><span className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-slate-100 dark:bg-slate-800" />
+              <span className="block h-14 w-full max-w-md animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" /></div>
+            <div className="sm:pl-[3.25rem]"><span className="block h-56 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" /></div>
+          </div>
+        )}
+        {shown.map((message, index) => (message.role === "user" ? (
+          <div key={`u-${index}`} className="flex flex-col items-end">
+            <p className={`${bubble} max-w-[80%] bg-blue-50 text-slate-900 dark:bg-brand-950/50 dark:text-slate-50`}>{message.content}</p>
+            {message.at && <span className="mt-1 text-[12px] text-slate-500">{clock(message.at)}</span>}
+          </div>
+        ) : (
+          <div key={`a-${index}`} className="flex flex-col gap-3">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
+              <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
+                {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}><Rich text={message.content} /></p>}
+                {message.content ? <ReplyTools text={message.content} at={message.at} /> : message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
+                {message.recoverReply && <button type="button" disabled={loading} onClick={() => pickUpReply(bizId)} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-700 disabled:opacity-50">Check reply</button>}
+                {message.check && <button type="button" onClick={() => send(message.check.said || "Help me continue this check")} className="mt-2 min-h-11 rounded-lg border border-brand-200 px-3 py-2 text-sm font-semibold text-brand-700">Continue this check here</button>}
                 {message.link && (
-                  <a href={message.link} className="mt-1.5 block font-semibold underline">
-                    {message.link === "/pricing" ? "See plans" : message.link === "/agent" ? "Open Agent Centre" : "See details"}
+                  <a href={message.link} onClick={() => noteCameFrom(chatId, message.link)} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
+                    {message.link === "/pricing" ? "See plans" : message.link === "/agent" ? "See your tasks" : "See details"}
                   </a>
                 )}
                 {message.remember && (
-                  <div className="mt-2 flex flex-wrap gap-2 whitespace-normal">
-                    <button type="button" onClick={() => rememberFact(index, message.remember)}
-                      className="rounded-lg bg-brand-600 px-2.5 py-1 text-[13px] font-semibold text-white hover:bg-brand-700">Save</button>
-                    <button type="button" onClick={() => setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, remember: null, content: "Not saved." } : m)))}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">Don't save</button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => rememberFact(message._i, message.remember)} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700">Save</button>
+                    <button type="button" onClick={() => setMessages((prev) => prev.map((m, i) => (i === message._i ? { ...m, remember: null, content: "Not saved." } : m)))}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">Don't save</button>
                   </div>
                 )}
-                {(message.links?.length > 0 || message.prompts?.length > 0) && (
-                  <div className="mt-2 flex flex-wrap gap-2 whitespace-normal">
-                    {(message.prompts || []).map((p) => (
-                      <button key={p.label} type="button" disabled={loading} onClick={() => send(p.prompt)}
-                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                        {p.label}
-                      </button>
-                    ))}
-                    {(message.links || []).map((l) => (
-                      <a key={l.to} href={l.to} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[13px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                        {l.label}
-                      </a>
-                    ))}
-                  </div>
+                {(message.links || []).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">{message.links.map((l) => <a key={l.to} href={l.to} onClick={(event) => {
+                    const match = /^\/(funding|launch)\/[^/?]+/.exec(l.to || "");
+                    if (match && !/^View workspace/i.test(l.label || "")) {
+                      event.preventDefault();
+                      void send(`List every remaining item on my ${match[1]} case here, including drafts waiting for review. Help me attend to them one at a time in this conversation.`);
+                    } else noteCameFrom(chatId, l.to);
+                  }} className="rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">{l.label}</a>)}</div>
                 )}
               </div>
-            ))}
-            {loading || working ? (
-              <div className="max-w-[88%] rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                {working && !loading ? "Working on it…" : "Thinking..."}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border-t border-slate-200 p-4 dark:border-slate-800">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void send();
-                  }
-                }}
-                placeholder="Ask about customers, revenue, simulations, registration, blueprints, or services..."
-                className="min-h-[72px] flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-brand-200 focus:ring dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              />
-              <Button onClick={() => void send()} disabled={sendDisabled}>
-                Send
-              </Button>
             </div>
-            {answerCost > 0 && (
-              <p className="mt-2 text-[12px] text-slate-500 dark:text-slate-400">
-                A written answer uses {answerCost} AI Credit{answerCost === 1 ? "" : "s"}. Answers read straight from your records are free; Agent tasks are charged as they run.
-              </p>
-            )}
+            {cardsToShow(shown, index).length > 0 && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j, shown[index].cards || [])}</div>)}</div>}
           </div>
+        )))}
+        {loading || working ? (
+          <div className="flex min-w-0 items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
+            <div className="min-w-0 flex-1 pt-1"><ThinkingProgress label={working && !loading ? "Working on it…" : "Thinking…"} /></div></div>
+        ) : null}
+        {flow.element}
+      </div>
+      <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-2.5 dark:border-slate-800 sm:px-5">
+        {!history && !loading && chips.length > 0 && <div className="flex items-center gap-2 pb-2.5">
+            <div role="group" aria-label="Suggested actions" className="flex min-w-0 flex-1 flex-wrap gap-2" data-chat-chips data-quick-actions={last?.quick || undefined}>
+              {doesItFirst(chips).map((p) => <button key={p.label} type="button" onClick={() => void send(p.prompt)}
+                data-does-it={DOES_IT.test(p.label) || undefined}
+                className="max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[13px] leading-snug text-slate-700 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">{p.label}</button>)}
+            </div>
+        </div>}
+        <form className="flex items-center gap-2 rounded-2xl border border-slate-200 py-2 pl-4 pr-2 dark:border-slate-700" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+          <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void attachFile(f); }} data-chat-file />
+          <button type="button" aria-label="Attach a document" onClick={() => fileRef.current?.click()} className="p-1 text-slate-500 hover:text-slate-800">
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.5l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.3-8.3" /></svg>
+          </button>
+          <label className="sr-only" htmlFor="agent-chat-input">Message</label>
+          <input id="agent-chat-input" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
+          <button type="submit" aria-label="Send" disabled={sendDisabled} className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300">
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z" /></svg>
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+/** A reply's words, with what the Agent put in **bold** shown bold; everything else as written (never read as HTML). */
+export function Rich({ text }) {
+  const parts = String(text || "").split(/\*\*(.+?)\*\*/g);
+  return <>{parts.map((part, i) => (i % 2 ? <strong key={i} className="font-semibold text-slate-900 dark:text-white">{part}</strong> : part))}</>;
+}
+const plain = (text) => String(text || "").replace(/\*\*(.+?)\*\*/g, "$1");
+
+/** Under a reply: copy it, hear it read aloud, and when it was said (the owner, 12 Nov: "some nice response like this"). */
+function ReplyTools({ text, at }) {
+  const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
+  async function copy() {
+    try { await navigator.clipboard.writeText(plain(text)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the browser said no */ }
+  }
+  function listen() {
+    if (!canSpeak) return;
+    if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
+    const u = new SpeechSynthesisUtterance(plain(text));
+    u.lang = "en-GB";
+    u.onend = () => setSpeaking(false);
+    window.speechSynthesis.speak(u);
+    setSpeaking(true);
+  }
+  const icon = "rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800";
+  return (
+    <div className="mt-1 flex items-center gap-1" data-reply-tools>
+      <button type="button" onClick={copy} aria-label={copied ? "Copied" : "Copy reply"} title={copied ? "Copied" : "Copy"} className={icon}>
+        {copied ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12l5 5L20 7" /></svg>
+          : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>}
+      </button>
+      {canSpeak && <button type="button" onClick={listen} aria-label={speaking ? "Stop reading" : "Read aloud"} aria-pressed={speaking} title={speaking ? "Stop" : "Read aloud"} className={icon}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13" /></svg>
+      </button>}
+      {at && <span className="ml-1 text-[12px] text-slate-500">{clock(at)}</span>}
+    </div>
+  );
+}
+
+const BOX = "rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900";
+const initials = (t) => String(t || "?").replace(/[^A-Za-z ]/g, " ").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+const TINT = ["bg-blue-50 text-blue-700", "bg-emerald-50 text-emerald-700", "bg-violet-50 text-violet-700", "bg-amber-50 text-amber-700", "bg-rose-50 text-rose-700"];
+
+/** What is waiting for the owner, as the mockup's "Pending approvals" (the owner, 27 Oct): Review, Approve, Edit, Postpone.
+ *  Approve sends an approval, or accepts a draft; Postpone only takes it out of this card (it stays in Needs Approval). */
+function WaitingCard({ businessId, items, count, onDone, go, act, onEdit, say }) {
+  const [opened, setOpened] = useState({});      // the preview shown under an item: key → preview
+  const [asking, setAsking] = useState(null);      // the item asking "Remind me when?"
+  const [allShown, setAllShown] = useState(false);
+  const [state, setState] = useState({});
+  const [hidden, setHidden] = useState(new Set());
+  const [menu, setMenu] = useState(null);      // the item whose ⋯ menu is open (a phone)
+  const [problem, setProblem] = useState("");
+  const keyOf = (a) => a.approval_id || a.draft_id || a.run_id || a.title;
+  const draftId = (a) => a.draft_id || (() => { try { return new URLSearchParams(String(a.to || "").split("?")[1] || "").get("review"); } catch { return null; } })();
+  const approve = async (a) => {
+    setProblem("");
+    setState((x) => ({ ...x, [keyOf(a)]: "working" }));
+    try {
+      if (a.approval_id) await approveAction(a.run_id, a.approval_id);
+      else await apiRequest(`/businesses/${businessId}/agent-drafts/${draftId(a)}/decide`, "POST", { decision: "accept" });
+      setState((x) => ({ ...x, [keyOf(a)]: "done" }));
+      setHidden((h) => new Set([...h, keyOf(a)]));      // out of the card at once; the count follows
+      sayDone(`${a.title} approved`);
+      onDone?.();
+    } catch (e) {
+      setState((x) => ({ ...x, [keyOf(a)]: null }));
+      setProblem(agentErrorMessage(e, "That couldn't be done just now. Nothing was sent or changed."));
+    }
+  };
+  const review = async (a) => {
+    const k = keyOf(a);
+    if (opened[k]) { setOpened((o) => ({ ...o, [k]: undefined })); return; }
+    setOpened((o) => ({ ...o, [k]: "loading" }));
+    try { const p = await act.preview({ ...a, draft_id: draftId(a) }); setOpened((o) => ({ ...o, [k]: p })); }
+    catch { setOpened((o) => ({ ...o, [k]: { found: false } })); }
+  };
+  const later = async (a, when) => {
+    setAsking(null);
+    try {
+      const k = keyOf(a);
+      const got = await act.postpone(k, when);
+      setHidden((h) => new Set([...h, k]));
+      // Once, naming the item, with Undo (the owner, 27 Oct: it was said twice in the chat, without saying which)
+      sayDone(`${a.title} postponed to ${got.day}`, async () => {
+        await act.postpone(k, "undo");
+        setHidden((h) => { const n = new Set(h); n.delete(k); return n; });
+        onDone?.();
+      });
+      onDone?.();
+    } catch (e) { setProblem(agentErrorMessage(e, "That couldn't be postponed just now.")); }
+  };
+  const list = items.filter((a) => !hidden.has(keyOf(a)));
+  const Btn = ({ children, onClick, primary, disabled }) => (
+    <button type="button" disabled={disabled} onClick={onClick}
+      className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13.5px] font-medium disabled:opacity-60 max-sm:w-full max-sm:px-2 ${primary ? "bg-blue-600 text-white hover:bg-blue-700" : "border border-slate-200 text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200"}`}>{children}</button>
+  );
+  return (
+    <div className={`${BOX} p-4 sm:p-5`} data-card="approvals">
+      <div className="flex items-start justify-between gap-3">
+        <span className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg>
+          </span>
+          <span><span className="block text-[17px] font-bold text-slate-900 dark:text-slate-50">Pending approvals</span>
+            <span className="text-[13.5px] text-slate-500">Drafts I've prepared. Nothing counts until you approve it.</span></span>
+        </span>
+        <button type="button" onClick={() => go("/agent?tab=needs_approval")} className="shrink-0 text-[13.5px] font-medium text-blue-600 hover:underline">{count} waiting</button>
+      </div>
+      <ul className="mt-3 space-y-3">{list.slice(0, allShown ? undefined : 4).map((a, k) => (
+        <li key={keyOf(a)} className="rounded-xl border border-slate-200 p-3.5 dark:border-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-3">
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[13.5px] font-semibold ${TINT[k % TINT.length]}`}>{initials(a.title?.split(":")[0])}</span>
+              <span className="min-w-0"><span className="block text-[15px] font-semibold text-slate-900 dark:text-slate-50">{a.title}</span>
+                <span className="block text-[13.5px] text-slate-500">{a.subtitle}</span>
+                {/* On a phone the badge sits under the name, so the name keeps the row */}
+                <span className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-[12px] font-medium sm:hidden ${state[keyOf(a)] === "done" ? "bg-emerald-50 text-emerald-700" : a.approval_id ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
+                  {state[keyOf(a)] === "done" ? (a.approval_id ? "Sent" : "Accepted") : a.approval_id ? "Ready to send" : "Draft"}</span></span>
+            </span>
+            <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[12px] font-medium max-sm:hidden ${state[keyOf(a)] === "done" ? "bg-emerald-50 text-emerald-700" : a.approval_id ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
+              {state[keyOf(a)] === "done" ? (a.approval_id ? "Sent" : "Accepted") : a.approval_id ? "Ready to send" : "Draft"}</span>
+          </div>
+          {state[keyOf(a)] !== "done" && (
+            <div className="relative mt-3 grid grid-cols-[repeat(3,minmax(0,1fr))_auto] gap-2 sm:flex sm:flex-wrap">
+              {/* On a phone three equal buttons and ⋯, all inside the card (the owner, 28 Oct: ⋯ went past its edge) */}
+              <Btn onClick={() => review(a)}>{opened[keyOf(a)] ? "Hide" : "Review"}</Btn>
+              <Btn primary disabled={state[keyOf(a)] === "working"} onClick={() => approve(a)}>{state[keyOf(a)] === "working" ? "Working…" : "Approve"}</Btn>
+              <Btn onClick={() => onEdit?.({ ...a, draft_id: draftId(a) })}>Edit</Btn>
+              <span className="max-sm:hidden"><Btn onClick={() => setAsking(keyOf(a))}>Postpone</Btn></span>
+              <button type="button" aria-label="More" aria-haspopup="menu" aria-expanded={menu === keyOf(a)} onClick={() => setMenu(menu === keyOf(a) ? null : keyOf(a))}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13.5px] font-medium text-slate-700 sm:hidden dark:border-slate-700 dark:text-slate-200">⋯</button>
+              {menu === keyOf(a) && (
+                <div role="menu" className="absolute right-0 top-10 z-20 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-lg sm:hidden dark:border-slate-700 dark:bg-slate-900">
+                  <button type="button" role="menuitem" onClick={() => { setMenu(null); setAsking(keyOf(a)); }}
+                    className="block w-full px-3 py-2 text-left text-[13.5px] text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">Postpone</button>
+                </div>
+              )}
+            </div>
+          )}
+            {asking === keyOf(a) && <PostponeChoice onPick={(when) => later(a, when)} onClose={() => setAsking(null)} />}
+            {opened[keyOf(a)] === "loading" && <p className="mt-3 text-[13px] text-slate-500">Opening it…</p>}
+            {opened[keyOf(a)] && opened[keyOf(a)] !== "loading" && (
+              <div className="mt-3"><PreviewCard businessId={businessId} item={{ ...a, draft_id: draftId(a) }} preview={opened[keyOf(a)]} go={go} onEdit={onEdit}
+                onDone={(m) => { setState((x) => ({ ...x, [keyOf(a)]: "done" })); setHidden((h) => new Set([...h, keyOf(a)])); sayDone(m); onDone?.(); }} /></div>
+            )}
+        </li>
+      ))}</ul>
+      {/* the rest shown here, in the card, never another page (the owner, 27 Oct) */}
+      {list.length > 4 && <button type="button" onClick={() => setAllShown((v) => !v)} className="mt-3 text-[13.5px] font-medium text-blue-600 hover:underline">{allShown ? "Show fewer" : `See all ${list.length}`}</button>}
+      {problem && <p role="alert" className="mt-3 text-[13.5px] font-semibold text-rose-600">{problem}</p>}
+      <p className="mt-3 rounded-lg bg-blue-50 px-3.5 py-2 text-[13px] text-blue-800 dark:bg-brand-950/40 dark:text-blue-200">ⓘ Nothing is sent, saved or shared without your approval.</p>
+    </div>
+  );
+}
+
+/** Reliance on one customer, from the paid invoices (the mockup's "Customer concentration risk"). */
+function RiskCard({ risk, onScenario, onSegments }) {
+  const others = Math.max(0, Math.round((100 - risk.share) * 10) / 10);
+  const Bar = ({ label, n, tone }) => (
+    <li className="grid grid-cols-[auto_minmax(2.5rem,1fr)_3rem] items-center gap-3 text-[13.5px] text-slate-700 dark:text-slate-200">
+      <span className="min-w-[6.5rem] leading-snug">{label}</span>
+      <span className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.max(n, 1)}%` }} /></span>
+      <span className="text-right tabular-nums">{n}%</span>
+    </li>
+  );
+  return (
+    <div className={`${BOX} p-4 sm:p-5`} data-card="risk">
+      <div className="flex items-start justify-between gap-3">
+        <span className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M12 3l10 18H2zM12 10v5M12 18h.01" /></svg>
+          </span>
+          <span><span className="block text-[17px] font-bold text-slate-900 dark:text-slate-50">Customer concentration risk</span>
+            <span className="text-[13.5px] text-slate-500">One customer drives your revenue and cash flow.</span></span>
+        </span>
+        <span className={`shrink-0 rounded-md px-2 py-0.5 text-[12px] font-semibold ${risk.level === "High" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}>{risk.level}</span>
+      </div>
+      <div className="mt-3 grid gap-3 rounded-xl border border-slate-200 p-3.5 dark:border-slate-700 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] sm:items-center">
+        <div><p className="text-[13px] text-slate-500">Main customer</p><p className="text-[15px] font-semibold text-slate-900 dark:text-slate-50">{risk.customer}</p>
+          <p className="text-[30px] font-bold leading-tight text-rose-600">{risk.share}%<span className="ml-1.5 text-[13.5px] font-normal text-slate-600">of revenue</span></p></div>
+        <ul className="space-y-3"><Bar label={risk.customer} n={risk.share} tone="bg-red-600" /><Bar label="Other customers" n={others} tone="bg-blue-500" /></ul>
+      </div>
+      {/* One row at every width, each button on one line; scrolling sideways only if it can't fit (the owner, 28 Oct) */}
+      <div className="no-scrollbar mt-3 flex flex-nowrap gap-2 overflow-x-auto max-sm:pr-6 max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-1.5rem),transparent)]">
+        {["Simulate order reduction", "Simulate payment delay", "Find new customer segments"].map((t) => (
+          <button key={t} type="button" onClick={() => (t.startsWith("Find") ? onSegments() : onScenario(t.includes("delay") ? "payment_delay" : "order_reduction", t))}
+            className="shrink-0 whitespace-nowrap rounded-lg border border-blue-200 px-2.5 py-1.5 text-[12.5px] font-medium text-blue-700 hover:bg-blue-50 xl:px-3 xl:text-[13px]">{t}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const WORK_TONE = { funding: "bg-blue-50 text-blue-700", idea: "bg-amber-50 text-amber-700", launch: "bg-violet-50 text-violet-700" };
+/** Where the work stands: each case or check with its score and what is next (the mockup's last card). */
+function WorkCard({ work, go }) {
+  return (
+    <div className={`${BOX} divide-y divide-slate-100 px-4 dark:divide-slate-800 sm:px-5`} data-card="work">
+      {work.map((w, i) => (
+        <div key={w.key} className="flex items-center justify-between gap-3 py-3.5">
+          <span className="flex min-w-0 items-center gap-4">
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[15px] font-semibold ${WORK_TONE[w.kind] || WORK_TONE.funding}`}>{w.score ?? "?"}</span>
+            <span className="min-w-0"><span className="block text-[15px] font-semibold text-slate-900 dark:text-slate-50">{w.title}</span>
+              <span className="block text-[13.5px] text-slate-500">{w.detail}</span></span>
+          </span>
+          <button type="button" onClick={() => go(w.to)}
+            className={`shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-[13.5px] font-medium ${i === 0 ? "bg-blue-600 text-white hover:bg-blue-700" : "border border-blue-600 text-blue-700 hover:bg-blue-50"}`}>{i === 0 ? "Continue" : "Open"} →</button>
         </div>
-      ) : null}
-
-      {flow.element}
-
-      {/* Rendered on <body> so no ancestor transform or overflow can ever break position: fixed.
-          Always the viewport's bottom-right corner: 16px on mobile, 24px from 640px. */}
-      {createPortal(
-      <button
-        type="button"
-        aria-label="Ask about your business"
-        onClick={() => setOpen(true)}
-        className="group fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] right-4 z-30 flex items-center overflow-hidden rounded-full bg-brand-600 p-3 text-sm font-semibold text-white shadow-lg transition-colors duration-300 hover:bg-brand-700 sm:bottom-6 sm:right-6"
-      >
-        <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        {/* The label only opens for a real pointer. On touch screens "hover" sticks after a tap, which
-            left the button stretched across the page, over whatever sat beside it. */}
-        <span className="max-w-0 overflow-hidden whitespace-nowrap transition-all duration-300 [@media(hover:hover)_and_(pointer:fine)]:group-hover:ml-2 [@media(hover:hover)_and_(pointer:fine)]:group-hover:max-w-[200px]">Ask about your business</span>
-      </button>,
-      document.body)}
-    </>
+      ))}
+    </div>
   );
 }

@@ -83,7 +83,7 @@ function CircularScore({ score, size = 120, strokeWidth = 10, tone = "success" }
   );
 }
 
-export default function ResultsPage() {
+export default function ResultsPage({ embedded = false }) {
   const navigate = useNavigate();
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const setWorkspaceName = useWorkspaceStore((s) => s.setWorkspaceName);
@@ -155,9 +155,12 @@ export default function ResultsPage() {
         // V4 active history entry takes priority over legacy idea_validation_result
         const vHistory = Array.isArray(ws?.data?.validation_history) ? ws.data.validation_history : [];
         const activeVId = ws?.data?.active_validation_id || null;
-        const activeVEntry = activeVId ? vHistory.find((h) => h?.id === activeVId) : vHistory[0];
+        // the active one when it has a result, else the newest that has (31 Oct: an active id left on an old entry showed "No results yet")
+        const isV4 = (h) => h?.result?.engine_version === "4.0";
+        const activeVEntry = [activeVId && vHistory.find((h) => h?.id === activeVId), ...vHistory].find(isV4) || (activeVId ? vHistory.find((h) => h?.id === activeVId) : vHistory[0]);
         if (activeVEntry?.result?.engine_version === "4.0") {
           setValidation(activeVEntry.result);
+          if (activeVEntry.id) useWorkspaceStore.getState().setValidationEntryId(activeVEntry.id);      // Modify opens this one's form (31 Oct)
         } else if (ws?.data?.idea_validation_result) {
           setValidation(ws.data.idea_validation_result);
         }
@@ -425,6 +428,10 @@ export default function ResultsPage() {
       await apiRequest(`/validation/${workspaceId}`, "PATCH", {
         data: patchPayload.data
       });
+      // The Agent's draft decided here too: out of Needs Approval, and deleted on reject (the owner, 26 Oct)
+      const agentDraft = !isServiceIdeaView && (Array.isArray(ws?.data?.agent_drafts) ? ws.data.agent_drafts : [])
+        .find((d) => d?.kind === "idea_validation" && d?.status === "pending" && d?.ref === ws?.data?.active_validation_id);
+      if (agentDraft) await apiRequest(`/businesses/${workspaceId}/agent-drafts/${agentDraft.id}/decide`, "POST", { decision: status === "accepted" ? "accept" : "reject" });
       setDecision(status);
       if (!isServiceIdeaView) setDecisionStatusStore(status);
       if (isServiceIdeaView) setServiceDecisionStatusStore(status);
@@ -575,11 +582,11 @@ export default function ResultsPage() {
 
     return (
       <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
-        <button type="button" onClick={() => navigate("/validation")}
+        {!embedded && <button type="button" onClick={() => navigate("/validation")}
           className="group flex items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600">
           <svg className="h-4 w-4 transition-transform group-hover:-translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7l-7-7 7-7" /></svg>
           Back to Validation
-        </button>
+        </button>}
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
         {decisionNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{decisionNotice}</div>}
@@ -1413,7 +1420,7 @@ export default function ResultsPage() {
       <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
 
         {/* ── Back link ── */}
-        <button
+        {!embedded && <button
           type="button"
           onClick={() => navigate("/validation")}
           className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
@@ -1422,7 +1429,7 @@ export default function ResultsPage() {
             <path d="M19 12H5m7 7l-7-7 7-7" />
           </svg>
           Back to Validation
-        </button>
+        </button>}
 
         {/* ── Title + badges ── */}
         <div>
@@ -1436,6 +1443,14 @@ export default function ResultsPage() {
           <p className="mt-1 text-sm text-slate-500">Product / service viability report and analysis.</p>
         </div>
 
+        {validation?.insufficient && (
+          // Not scored, said as that (the owner's QA, 21 Oct: an unscored run showed as 0, "Risky")
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-not-scored>
+            <p className="font-semibold">Not scored yet.</p>
+            <p className="mt-0.5">Still needed: {(validation.gaps || []).join(", ") || "a few figures"}. Fill them in and run it again for a score.</p>
+            <a href="/validation" className="mt-2 inline-flex rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">Fill in the missing figures</a>
+          </div>
+        )}
         {/* ── Disclaimer ── */}
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <span className="font-semibold">AI output disclaimer: </span>
@@ -1717,6 +1732,7 @@ export default function ResultsPage() {
                   onClick={() => setCreditModal({
                     featureName: "Market Data Refresh",
                     creditCost: 4,
+                    featureCode: "market_data_refresh",
                     onConfirm: () => { setCreditModal(null); runSvcMr(); },
                   })}
                   className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-700 transition-colors"
@@ -1738,6 +1754,7 @@ export default function ResultsPage() {
                   onClick={() => setCreditModal({
                     featureName: "Market Data Refresh",
                     creditCost: 4,
+                    featureCode: "market_data_refresh",
                     onConfirm: () => { setCreditModal(null); runSvcMr(); },
                   })}
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 transition-colors"
@@ -1914,7 +1931,10 @@ export default function ResultsPage() {
   const revenue = typeof m.revenue_monthly === "number" ? m.revenue_monthly : null;
   const costs = typeof m.costs_monthly === "number" ? m.costs_monthly : null;
   const margin = typeof m.margin === "number" ? m.margin : null;
-  const be = typeof m.break_even_months === "number" ? m.break_even_months : null;
+  // Simulation audit F9: break-even shown as a margin of safety (and break-even units), never as "months".
+  const be = typeof m.margin_of_safety_pct === "number" ? m.margin_of_safety_pct : null;
+  const beUnits = typeof m.break_even_units === "number" ? m.break_even_units : null;
+  const beLabel = be == null ? "" : be >= 0 ? `${formatNumber(be)}%` : `${formatNumber(be)}% (below break-even)`;
   const runway = typeof m.runway_months === "number" ? m.runway_months : null;
   const net = typeof m.net_monthly === "number" ? m.net_monthly : null;
   const capacity = typeof m.capacity === "object" && m.capacity ? m.capacity : null;
@@ -1970,7 +1990,7 @@ export default function ResultsPage() {
     const isStrong = score >= 75;
     const lowMargin = margin != null && margin < 0.3;
     const highBurn = burn != null && burn > 0;
-    const longBreakEven = be != null && be > 12;
+    const longBreakEven = be != null && be < 10;      // thin or negative margin of safety
     const capacityStrained = utilization != null && utilization > 0.8;
 
     if (highBurn || isRisky) recs.push({ id: "tmpl_revenue_drop", label: "Revenue Drop", desc: "Stress-test your model if early sales fall short.", icon: "📉" });
@@ -2002,6 +2022,13 @@ export default function ResultsPage() {
 
   const orderedDimensions = useMemo(() => {
     if (!dimensionScores) return [];
+    // Simulation audit F5: dimensions with no data (null) are "not assessed": listed in words, never drawn as 0
+    const scored = Object.fromEntries(Object.entries(dimensionScores).filter(([, v]) => v != null));
+    return orderOfDimensions(scored);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimensionScores, isV4, isComprehensive]);
+
+  function orderOfDimensions(dimensionScores) {
     if (isV4) {
       const present = new Set(Object.keys(dimensionScores));
       return V4_DIM_ORDER.filter((k) => present.has(k) && (isComprehensive || !V4_BASIC_HIDDEN.has(k)));
@@ -2011,8 +2038,13 @@ export default function ResultsPage() {
     const base = preferred.filter((k) => present.has(k));
     const rest = Object.keys(dimensionScores || {}).filter((k) => !base.includes(k));
     return [...base, ...rest].slice(0, Math.max(6, base.length));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dimensionScores, isV4, isComprehensive]);
+  }
+  const notAssessedNote = (() => {
+    const na = validation?.not_assessed && typeof validation.not_assessed === "object" ? Object.keys(validation.not_assessed) : [];
+    if (!na.length && !validation?.confidence) return "";
+    const conf = validation?.confidence ? `Confidence: ${validation.confidence}${validation?.data_coverage_pct != null ? ` (${Math.round(validation.data_coverage_pct)}% of the score rests on data you gave)` : ""}.` : "";
+    return `${na.length ? `Not assessed (no data, left out of the score): ${na.map((k) => dimLabel(k)).join(", ")}. ` : ""}${conf}`.trim();
+  })();
 
   const validationExplanation = (() => {
     const raw = String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim();
@@ -2055,7 +2087,7 @@ export default function ResultsPage() {
     <div className="w-full max-w-full space-y-4 overflow-x-hidden px-2 sm:px-4">
 
       {/* ── Back link ── */}
-      <button
+      {!embedded && <button
         type="button"
         onClick={() => navigate("/validation")}
         className="group flex w-fit items-center gap-1.5 text-sm font-semibold text-slate-400 transition-colors hover:text-brand-600"
@@ -2064,7 +2096,7 @@ export default function ResultsPage() {
           <path d="M19 12H5m7 7l-7-7 7-7" />
         </svg>
         Back to Validation
-      </button>
+      </button>}
 
       {/* ── Title + badges ── */}
       <div>
@@ -2085,6 +2117,14 @@ export default function ResultsPage() {
         <p className="mt-1 text-sm text-slate-500">Validation report and recommended next steps.</p>
       </div>
 
+      {validation?.insufficient && (
+        // Not scored, said as that (the owner's QA, 21 Oct: an unscored run showed as 0, "Risky")
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-not-scored>
+          <p className="font-semibold">Not scored yet.</p>
+          <p className="mt-0.5">Still needed: {(validation.gaps || []).join(", ") || "a few figures"}. Fill them in and run it again for a score.</p>
+          <a href="/validation" className="mt-2 inline-flex rounded-lg bg-brand-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-brand-700">Fill in the missing figures</a>
+        </div>
+        )}
       {/* ── Disclaimer ── */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         <span className="font-semibold">AI output disclaimer: </span>
@@ -2305,15 +2345,17 @@ export default function ResultsPage() {
               subtitle={dimensionScores?.problem_severity !== undefined ? "Performance across core validation dimensions." : "Unit economics and feasibility from your structured inputs."}
               className="bg-white"
             >
+              {notAssessedNote ? <div className="mb-3 text-xs text-slate-500" data-not-assessed>{notAssessedNote}</div> : null}
               {dimensionScores?.problem_severity !== undefined ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {orderedDimensions.map((key) => (
                     <StatTile
                       key={key}
                       label={dimLabel(key)}
-                      value={`${Math.round(dimensionScores[key] || 0)}/100`}
-                      info={dimHelp(key)}
-                      tone={(dimensionScores[key] || 0) >= 80 ? "success" : (dimensionScores[key] || 0) >= 50 ? "warn" : "danger"}
+                      // Simulation audit F5 (17 Nov 2026): a dimension with no data is "Not assessed", never shown as 0/100
+                      value={dimensionScores[key] == null ? "Not assessed" : `${Math.round(dimensionScores[key])}/100`}
+                      info={dimensionScores[key] == null ? (validation?.not_assessed?.[key] || "No data was given for this, so it is left out of the score.") : dimHelp(key)}
+                      tone={dimensionScores[key] == null ? "default" : dimensionScores[key] >= 80 ? "success" : dimensionScores[key] >= 50 ? "warn" : "danger"}
                       className="bg-white shadow-sm ring-1 ring-slate-100 hover:ring-brand-200 transition-all"
                     />
                   ))}
@@ -2334,9 +2376,9 @@ export default function ResultsPage() {
                     <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
                     {be !== null && (
                       <StatTile
-                        label="Break-even"
-                        value={`${formatNumber(be)} months`}
-                        info="How long it takes to cover fixed costs given your current plan."
+                        label="Margin of safety"
+                        value={beLabel}
+                        info={`How far planned sales can fall before costs are no longer covered.${beUnits != null ? ` Break-even is ${formatNumber(beUnits)} sales a month.` : ""}`}
                       />
                     )}
                     <StatTile
@@ -2592,8 +2634,8 @@ export default function ResultsPage() {
                         <>
                           {be !== null && (
                             <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                              <div className="text-slate-600">Break-even</div>
-                              <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                              <div className="text-slate-600">Margin of safety</div>
+                              <div className="font-semibold text-slate-900">{beLabel}</div>
                             </div>
                           )}
                           <div className="flex items-center justify-between">
@@ -2668,14 +2710,16 @@ export default function ResultsPage() {
                   <div className={`absolute -inset-3 rounded-full blur-xl opacity-15 transition-all duration-700 group-hover:opacity-30 ${
                     risk.tone === "danger" ? "bg-rose-500" : risk.tone === "warn" ? "bg-amber-500" : "bg-emerald-500"
                   }`} />
-                  <CircularScore score={score} tone={risk.tone} size={148} strokeWidth={12} />
+                  {validation?.insufficient
+                    ? <div className="flex h-[148px] w-[148px] items-center justify-center rounded-full border-[12px] border-slate-100 text-[15px] font-bold text-slate-500" data-score-none>Not scored</div>
+                    : <CircularScore score={score} tone={risk.tone} size={148} strokeWidth={12} />}
                 </div>
                 <div className="mt-5">
                   <div className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-1.5">Overall Verdict</div>
                   <div className={`text-2xl font-black tracking-tight leading-none ${
                     risk.tone === "danger" ? "text-rose-600" :
                     risk.tone === "warn"   ? "text-amber-600" : "text-emerald-600"
-                  }`}>{classification}</div>
+                  }`}>{validation?.insufficient ? "Not scored yet" : classification}</div>
                   <p className="mt-2 text-xs font-semibold text-slate-500 max-w-[200px] mx-auto leading-relaxed">
                     {validation?.market_research?.viability_score?.summary || risk.subtitle}
                   </p>
@@ -2916,8 +2960,8 @@ export default function ResultsPage() {
                     <>
                       {be !== null && (
                         <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                          <div className="text-slate-600">Break-even</div>
-                          <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                          <div className="text-slate-600">Margin of safety</div>
+                          <div className="font-semibold text-slate-900">{beLabel}</div>
                         </div>
                       )}
                       <div className="flex items-center justify-between">
@@ -3449,6 +3493,7 @@ export default function ResultsPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />

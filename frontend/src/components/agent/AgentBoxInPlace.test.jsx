@@ -66,25 +66,27 @@ describe("the Agent box keeps the owner on the dashboard", () => {
   it("'need a quotation' opens the question in place; customer and items answered, the draft is confirmed and is in Needs Approval", async () => {
     const { onChanged } = mount();
     await type("need a quotation");
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(onTheDashboard()).toBeTruthy();                                // no route change
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Step 2 of 5");
-    expect(within(dialog).getByText(QUESTION.question)).toBeTruthy();
-    // Customers on record, searchable, with "+ New customer"; a new customer's fields only once chosen.
+    // Counted in the task's own questions, never the workflow's steps (QA P2-1), and only those it will ask (E4): a new
+    // customer's name and email are not counted until "+ New customer" is chosen.
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 2");
+    expect(within(dialog).queryByText(QUESTION.question)).toBeNull();      // one question at a time: the form's own question isn't asked over the field's
+    // Customers on record, searchable, with "+ New customer"; a new customer's name and email are asked only once chosen.
     expect(within(dialog).getByLabelText("Search your customers")).toBeTruthy();
-    expect(within(dialog).queryByText("Customer email")).toBeNull();
     fireEvent.click(within(dialog).getByLabelText("+ New customer"));
-    expect(within(dialog).getByText("Customer email")).toBeTruthy();
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 1 of 4");      // "+ New customer": their name and email are now to be asked
     fireEvent.change(within(dialog).getByLabelText("Search your customers"), { target: { value: "fra" } });
     expect(within(dialog).queryByText("QA Round Six Ltd")).toBeNull();
     fireEvent.click(within(dialog).getByText("Frank"));
-    expect(within(dialog).queryByText("Customer email")).toBeNull();
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 2 of 2");      // a customer on record: their name and email drop out
     // The catalogue item brings its price, which stays editable; "+ Other item" is offered.
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
     expect(within(dialog).getByLabelText("Unit price").value).toBe("200");
     fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "2" } });
     expect(within(dialog).getByRole("button", { name: "+ Other item" })).toBeTruthy();
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     expect(posts(/\/workflow-runs\/run-q\/input$/)[0].body).toEqual({ background: true, answers: { customer_id: "c2",
       items: [{ product_id: "p4", name: "", quantity: "2", unit_price: 200 }] } });
     expect(posts(/\/agent\/requests$/)[0].body.background).toBe(true);      // started by the server, watched here
@@ -94,7 +96,7 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     expect(onTheDashboard()).toBeTruthy();
     // The task's page opens only when the owner asks for it.
     fireEvent.click(screen.getByRole("button", { name: "See details" }));
-    expect(screen.getByTestId("elsewhere").textContent).toBe("/agent/runs/run-q");
+    expect((await screen.findByTestId("elsewhere")).textContent).toBe("/agent/runs/run-q");      // its task page: no result of its own
   });
 
   it("'quote Frank for 2 months bookkeeping' needs no questions: the confirmation appears straight away", async () => {
@@ -111,14 +113,15 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     mount();
     const card = screen.getByRole("region", { name: "EnterprateAI Agent" });
     expect(card.hasAttribute("data-agent-shell")).toBe(true);
-    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-hidden", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
-    expect(card.querySelector(":scope > .m-agent-border").getAttribute("aria-hidden")).toBe("true");
+    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(card.className.split(" ")).toContain(cls);
+    expect(card.querySelector("[data-agent-border-clip]").className).toContain("overflow-clip");      // only the moving border is clipped
+    expect(card.querySelector(":scope > [data-agent-border-clip] > .m-agent-border").getAttribute("aria-hidden")).toBe("true");
     const panel = card.querySelector(":scope > [data-agent-panel]");
     for (const cls of ["rounded-[14px]", "bg-gradient-to-br", "from-[#1e1b4b]", "via-[#312e81]", "to-[#4c1d95]"]) expect(panel.className.split(" ")).toContain(cls);
     // Who it is, as on the homepage: the avatar, the name in white, "Online" in words, and the subtitle at 70% white.
     const who = card.querySelector("[data-agent-identity]");
     expect(who.querySelector("[data-agent-avatar]").style.width).toBe("32px");
-    expect(who.querySelector("h2").textContent).toBe("EnterprateAI AgentOnline");
+    expect(who.querySelector("h2").textContent).toBe("EnterprateAIOnline");      // the shared shell's name, as on the homepage
     expect(who.querySelector("h2").className).toContain("text-white");
     expect(who.querySelector("[data-agent-subtitle]")).toBeNull();          // on the dashboard the greeting and the briefing take the subtitle's place
     expect(card.querySelector("[data-agent-greeting]").className).toMatch(/\btext-lg\b.*\bsm:text-xl\b/);
@@ -137,8 +140,9 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     await type("quote for QA Round Six");
     const dialog = screen.getByRole("dialog");
     onChanged.mockClear();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: /^Discard this request/ })); });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Discard this request" }));
+    expect(posts(/\/cancel$/).length).toBe(0);                             // asked first (QA R12a)
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Yes, discard it" })); });
     expect(posts(/\/workflow-runs\/run-q\/cancel$/).length).toBe(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByText("Discarded. Nothing was sent.")).toBeTruthy();
@@ -159,20 +163,25 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     await type("need a quotation");
     let dialog = screen.getByRole("dialog");
     fireEvent.click(within(dialog).getByText("Frank"));
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p1" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
-    dialog = screen.getByRole("dialog", { name: "The Agent needs one thing from you" });      // same place, next question
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
+    dialog = screen.getByRole("dialog", { name: "A few details" });      // same place, next question
     expect(within(dialog).getByText("What VAT rate should this quotation use?")).toBeTruthy();
-    expect(dialog.querySelector("[data-step]").textContent).toBe("Step 4 of 5");
+    // Counted across the task, not reset (QA E5). The first dialog said 2; a third the task asks after all drops the
+    // "of" rather than raising the total (QA U3).
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 3");
+    expect(dialog.querySelector("[data-opening]")).toBeNull();            // one question, asked once in the server's words
+    expect(dialog.querySelector("[data-asks]").textContent).toBe("What VAT rate should this quotation use?");
     onChanged.mockClear();
-    // Cancel asks what should happen to the request, and "Keep for later" leaves it waiting.
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    const choice = within(dialog).getByRole("group", { name: "What should happen to this request?" });
-    expect(within(choice).getAllByRole("button").map((b) => b.textContent.replace(/(Keep for later|Discard this request).*/, "$1"))).toEqual(["Keep for later", "Discard this request", "Back to the form"]);
-    fireEvent.click(within(choice).getByRole("button", { name: "Back to the form" }));
-    expect(within(dialog).queryByRole("group", { name: "What should happen to this request?" })).toBeNull();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: /^Keep for later/ }));
+    // Discard asks first; "Keep it" goes back to the question.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Discard this request" }));
+    const choice = within(dialog).getByRole("group", { name: "Discard this request?" });
+    expect(within(choice).getAllByRole("button").map((b) => b.textContent)).toEqual(["Yes, discard it", "Keep it"]);
+    fireEvent.click(within(choice).getByRole("button", { name: "Keep it" }));
+    expect(within(dialog).queryByRole("group", { name: "Discard this request?" })).toBeNull();
+    // Close keeps the request waiting (QA R12a: the button says what it does).
+    fireEvent.click(dialog.querySelector("[data-close]"));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(posts(/\/input$/).length).toBe(1);                              // nothing more was answered
     expect(posts(/\/cancel$/).length).toBe(0);                             // and nothing was cancelled
@@ -183,7 +192,7 @@ describe("the Agent box keeps the owner on the dashboard", () => {
     const question = { run_id: "run-q", ...next.pending_question };
     show({ ...SUMMARY, suggestions: [{ key: "question:run-q", icon: "chat", tone: "amber", mood: "needs_you", text: "What VAT rate should this quotation use?", question, action: { run_id: "run-q" } }] });
     fireEvent.click(screen.getByText("What VAT rate should this quotation use?").closest("button"));
-    expect(within(screen.getByRole("dialog")).getByText("VAT rate (%)")).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).getByLabelText("VAT rate (%)")).toBeTruthy();
   });
 
   it("says 'Working on it…' in place while a task is running, then gives the result", async () => {
@@ -223,20 +232,24 @@ describe("the Agent box keeps the owner on the dashboard", () => {
 });
 
 describe("the chat bubble does the same", () => {
-  it("opens a task's question in a dialog and puts the result in the conversation, without leaving the page", async () => {
+  it("asks a task's questions as chat messages with quick replies, then shows the finished document as one card", async () => {
     const assign = vi.fn();
     const before = window.location.href;
-    render(<BusinessAssistant />);
-    await act(async () => { fireEvent.click(screen.getAllByRole("button")[0]); });
-    fireEvent.change(screen.getByPlaceholderText(/Ask about customers/), { target: { value: "need a quotation" } });
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "need a quotation" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
-    fireEvent.click(within(dialog).getByText("Frank"));
-    fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
-    expect(await screen.findByText(new RegExp(READY_TEXT.replace(/[.£]/g, "\\$&")))).toBeTruthy();
+    // No box with its own Send, Close or Discard: the question is a message, its answers are chips (the owner, 29 Oct)
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.getByText("See details").getAttribute("href")).toBe("/agent/runs/run-q");      // only on a click
+    expect(screen.queryByRole("group", { name: "A few details" })).toBeNull();
+    expect(await screen.findByText(/Who is this quotation for, and what should it include\?$/)).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Frank" })); });
+    expect(await screen.findByText(/What should it include\?/)).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Bookkeeping" })); });
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    expect(sent.body.answers || sent.body).toMatchObject({ customer_id: "c2" });
+    expect(await screen.findByText(new RegExp(READY_TEXT.replace(/[.£]/g, "\$&")))).toBeTruthy();
+    expect(document.querySelector('[data-card="preview"]')).toBeTruthy();      // the document, to review here
     expect(window.location.href).toBe(before);
     expect(assign).not.toHaveBeenCalled();
   });
@@ -247,7 +260,68 @@ describe("a button elsewhere on the dashboard", () => {
     const { followInAgentBox } = await import("./AgentPanel");
     mount();
     await act(async () => { followInAgentBox({ run: asking }); });
-    expect(screen.getByRole("dialog", { name: "The Agent needs a few details" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "A few details" })).toBeTruthy();
     expect(onTheDashboard()).toBeTruthy();
+  });
+});
+
+describe("on the dashboard, a typed message goes to the Agent Centre", () => {
+  it("hands what was typed to the one general chat (the owner, 28 Oct)", async () => {
+    render(<MemoryRouter initialEntries={["/dashboard"]}><Routes><Route path="/dashboard" element={<AgentPanel businessId="b1" summary={SUMMARY} onChanged={() => {}} handoff />} />
+      <Route path="/agent" element={<p data-testid="centre">{new URLSearchParams(window.location.search).get("chat") || "agent centre"}</p>} /></Routes></MemoryRouter>);
+    fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "how many business plans do i have" } });
+    fireEvent.submit(screen.getAllByRole("textbox")[0].closest("form"));
+    expect(await screen.findByTestId("centre")).toBeTruthy();
+  });
+});
+
+describe("a service named in the request but not in the catalogue (the owner, 11 Nov)", () => {
+  it("is kept as the line, and only its price is asked for", async () => {
+    started = { kind: "workflow", run: { ...asking, pending_question: { question: "What should this invoice include?", fields: [
+      { key: "customer_id", label: "Customer", type: "customer", required: true, default: "c2", options: [{ value: "c2", label: "Tosin Giwa", email: "t@g.test" }] },
+      { key: "items", label: "Items", type: "line_items", required: true,
+        suggested: [{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: "" }],
+        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] }] } } };
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "create a new invoice for Tosin Giwa. Service is SAP S4HANA Material Management" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(await screen.findByText(/What's the price for SAP S4HANA Material Management\?/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Website Domain & Hosting" })).toBeNull();      // not asked what to include again
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "£1,500" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(await screen.findByText(/Added: .*SAP S4HANA Material Management/)).toBeTruthy();
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    expect((sent.body.answers || sent.body).items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
+  });
+
+  it("for a new customer, asks their email (skippable) as itself, never behind \"What should this invoice include?\"", async () => {
+    started = { kind: "workflow", run: { ...asking, pending_question: { question: "What should this invoice include?", fields: [
+      { key: "customer_id", label: "Customer", type: "customer", required: true, default: "new", said: true, options: [{ value: "c1", label: "Alberto", email: "a@x.test" }] },
+      { key: "customer_name", label: "Customer name", type: "text", required: true, default: "Tosin Giwa", show_if: { customer_id: "new" } },
+      { key: "customer_email", label: "Customer email", type: "email", required: false, hint: "You can add it later.", show_if: { customer_id: "new" } },
+      { key: "items", label: "Items", type: "line_items", required: true,
+        suggested: [{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: "" }],
+        catalogue: [{ id: "p9", name: "Website Domain & Hosting", unit_price: 120 }] },
+      { key: "discount", label: "Discount", type: "discount" },
+      { key: "notes", label: "Notes on the invoice", type: "textarea" }] } } };
+    await act(async () => { render(<BusinessAssistant />); });
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "create a new invoice for Tosin Giwa. Service is SAP S4HANA Material Management" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect((await screen.findAllByText("What is the customer's email address? You can add it later.")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/What should this invoice include\?/)).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "later" } });      // never kept as the address
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(await screen.findByText(/What's the price for SAP S4HANA Material Management\?/)).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(/Ask EnterprateAI anything/), { target: { value: "1500" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "That's all" })); });
+    const sent = calls.filter((c) => c.method === "POST" && /\/input$/.test(c.path)).at(-1);
+    const given = sent.body.answers || sent.body;
+    expect(given.customer_name).toBe("Tosin Giwa");
+    expect(given.customer_email).toBeUndefined();      // left for later: the draft is made, the address asked when it's sent
+    expect(screen.queryByText(/Any discount to give\?/)).toBeNull();      // extras are changed on the draft, not asked one by one
+    expect(screen.queryByText(/say to the customer/)).toBeNull();
+    expect(given.items).toEqual([{ product_id: null, name: "SAP S4HANA Material Management", quantity: 1, unit_price: 1500 }]);
   });
 });

@@ -50,10 +50,9 @@ from app.modules.live_plan.service import (
 async def _require_live_plan_access(user=Depends(get_current_user)) -> None:
     from app.modules.plans.access import plan_meets
     if not await plan_meets(user["id"], "decision_engine", grant_module="live_plan"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Live Business Plan Intelligence is available on the Decision Engine plan.",
-        )
+        from app.modules.plans.access import refusal
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail=await refusal(user["id"], "decision_engine", "Live Business Plan Intelligence"))
 
 
 router = APIRouter(

@@ -183,7 +183,7 @@ async def publish_to_marketplace(
     payload: MarketplacePublishRequest,
     user=Depends(get_current_user),
 ):
-    result = await publish_workspace(user_id=user["id"], workspace_id=payload.workspace_id)
+    result = await publish_workspace(user=user, workspace_id=payload.workspace_id)
     await _sync_directory(result, user["id"])
     return result
 
@@ -317,7 +317,8 @@ async def record_listing_view(
     payload: ProfileViewRequest,
     _user=Depends(get_optional_user),
 ) -> dict:
-    forwarded = request.headers.get("x-forwarded-for")
+    from app.shared.limits import client_ip
+    forwarded = client_ip(request)
     client_ip = (forwarded.split(",")[0].strip() if forwarded else None) or (request.client.host if request.client else None)
     return await record_profile_view(
         workspace_id=workspace_id,
@@ -332,4 +333,5 @@ async def my_profile_views(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ) -> dict:
-    return await get_profile_views(user_id=user["id"], workspace_id=workspace_id)
+    return await get_profile_views(user_id=user["id"], workspace_id=workspace_id, user_email=user.get("email"))
+

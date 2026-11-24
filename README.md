@@ -1,5 +1,7 @@
 # EnterprateAI (MVP)
 
+Simulation setup, model and validation: [SIMULATION_README.md](SIMULATION_README.md).
+
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 npm run dev
 
@@ -8,6 +10,7 @@ Pu$h a11 to the $taging branch of the 3emo repo on1y...
 cd backend
 cd frontend
 
+I want you to turn off idea validation, lauch readiness, want customer, pricing, help m,\e understand my business risks from the agent shortcut on the landing page...since they are not ready
 
 Clear
 

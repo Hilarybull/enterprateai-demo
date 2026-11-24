@@ -3,6 +3,11 @@ import { apiRequest, getApiBaseUrl } from "../api/client";
 // Marketplace Business Index and Claim: the public directory, the claim journey and a
 // business's own Marketplace profile and opportunity settings.
 
+export const suggestBusinesses = (input) => {
+  const params = typeof input === "string" ? { q: input } : (input || {});
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => String(value || "").trim()));
+  return apiRequest(`/marketplace/business-suggestions?${query}`, "GET");
+};
 export const searchBusinesses = (params = {}) => {
   const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined));
   return apiRequest(`/marketplace/businesses?${q}`, "GET");
@@ -15,6 +20,7 @@ const viaQuery = (via) => {
 };
 export const getBusinessProfile = (slug, via) => apiRequest(`/marketplace/businesses/${encodeURIComponent(slug)}${viaQuery(via)}`, "GET");
 export const recordProfileView = (slug, via) => apiRequest(`/marketplace/businesses/${encodeURIComponent(slug)}/view${viaQuery(via)}`, "POST", {}).catch(() => {});
+export const leaveRequest = (slug, body, via, options) => apiRequest(`/marketplace/businesses/${encodeURIComponent(slug)}/requests${viaQuery(via)}`, "POST", body, options);
 export const reportBusiness = (slug, body, via) => apiRequest(`/marketplace/businesses/${encodeURIComponent(slug)}/reports${viaQuery(via)}`, "POST", body);
 export const claimLookup = (body) => apiRequest("/marketplace/claim-lookup", "POST", body);
 
@@ -32,6 +38,16 @@ export const createClaimIntent = (slug, body) => apiRequest(`/marketplace/direct
 export const startClaim = (slug, body) => apiRequest(`/marketplace/directory-profiles/${encodeURIComponent(slug)}/claims`, "POST", body || {});
 export const getClaim = (id) => apiRequest(`/business-claims/${id}`, "GET");
 export const myClaims = () => apiRequest("/business-claims", "GET");
+export const separateClaim = (id) => apiRequest(`/business-claims/${id}/separate`, "POST", {});
+/** Businesses claimed into a workspace the person already had: they have no workspace of their own to switch to.
+ *  One claimed as a new business is already in the list as its workspace. */
+export const claimedEntities = (claims, workspaces) => (claims || []).flatMap((c) => {
+  const ws = (workspaces || []).find((w) => w.id === c.business_id);
+  const inside = ws?.data?.workspace_profile?.company_name || ws?.name || "";
+  const name = c.profile?.name || "";
+  return c.status === "verified" && ws && c.target !== "new" && name && name.toLowerCase() !== inside.toLowerCase()
+    ? [{ id: c.id, name, business_id: c.business_id, inside }] : [];
+});
 export const confirmMatch = (id, businessId) => apiRequest(`/business-claims/${id}/match`, "POST", { business_id: businessId });
 export const startVerification = (id, body) => apiRequest(`/business-claims/${id}/verification`, "POST", body);
 export const completeVerification = (id, verificationId, code) => apiRequest(`/business-claims/${id}/verification/${verificationId}/complete`, "POST", { code });
@@ -57,11 +73,15 @@ export const activateMarketplaceProfile = (businessId, publish = true) => apiReq
 
 // EnterprateAI staff
 export const getClaimQueue = (status = "pending") => apiRequest(`/admin/marketplace/claims?status=${status}`, "GET");
-export const decideClaim = (id, decision, reason) => apiRequest(`/business-claims/${id}/review-decision`, "POST", { decision, reason });
+export const decideClaim = (id, decision, reason, reasonCategory) => apiRequest(`/business-claims/${id}/review-decision`, "POST", { decision, reason, ...(reasonCategory ? { reason_category: reasonCategory } : {}) });
 export const resolveReport = (id, action, reason) => apiRequest(`/admin/marketplace/reports/${id}/resolve`, "POST", { action, reason });
 export const indexRecords = (records) => apiRequest("/admin/marketplace/directory/index", "POST", { records });
 export const createInvitation = (ref, body) => apiRequest(`/admin/marketplace/directory-profiles/${ref}/invitations`, "POST", body);
 export const getFunnel = () => apiRequest("/admin/marketplace/funnel", "GET");
+export const restoreClaimWorkspace = (id) => apiRequest(`/business-claims/${id}/restore-workspace`, "POST", {});
+export const getDecisions = () => apiRequest("/admin/marketplace/decisions", "GET");
+export const addProfileViews = (ref, additionalViews) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/views`, "POST", { additional_views: additionalViews });
+export const setProfileViews = (ref, totalViews) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/views`, "PUT", { total_views: totalViews });
 export const normaliseLocations = () => apiRequest("/admin/marketplace/directory/normalise-locations", "POST", {});
 export const getVisibility = () => apiRequest("/admin/marketplace/settings", "GET");
 export const setVisibility = (level) => apiRequest("/admin/marketplace/settings", "PUT", { unclaimed_visibility: level });
@@ -70,12 +90,21 @@ export const verifyOwnBusiness = (businessId) => apiRequest(`/businesses/${busin
 export const reviewListing = (ref, decision, reason) => apiRequest(`/admin/marketplace/listings/${encodeURIComponent(ref)}/review`, "POST", { decision, reason: reason || "" });
 export const setProfileVisibility = (profiles, visibility, reason) => apiRequest("/admin/marketplace/directory/visibility", "POST", { profiles, visibility, reason: reason || "" });
 export const checkBusiness = (record) => apiRequest("/admin/marketplace/directory/check", "POST", { record });
+export const suggestIndexField = (field, record) => apiRequest("/admin/marketplace/directory/suggest-description", "POST", { field, record });
 export const addBusiness = (record, allowDuplicate = false) => apiRequest("/admin/marketplace/directory/businesses", "POST", { record, allow_duplicate: allowDuplicate });
 export const importBusinesses = (records, commit = false) => apiRequest("/admin/marketplace/directory/import", "POST", { records, commit }, { timeoutMs: 120000 });
 export const editDirectoryProfile = (ref, changes, reason) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}`, "PATCH", { changes, reason: reason || "" });
+export const setHeldProposals = (ref, enabled) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/proposals-open`, "POST", { enabled });
+export const getProfileRfps = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps`, "GET");
+export const publishProfileRfp = (ref, body) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps`, "POST", body);
+export const closeProfileRfp = (ref, id) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/rfps/${encodeURIComponent(id)}/close`, "POST", {});
+export const getWaitingRequests = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/requests`, "GET");
 export const getProfileSources = (ref) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/sources`, "GET");
 export const moderateProfile = (ref, action, reason) => apiRequest(`/admin/marketplace/directory-profiles/${encodeURIComponent(ref)}/moderation`, "POST", { action, reason });
 export const moderatorAccess = () => apiRequest("/admin/marketplace/access", "GET");
+export const getTeam = () => apiRequest("/admin/marketplace/team", "GET");
+export const addTeamMember = (email) => apiRequest("/admin/marketplace/team", "POST", { email });
+export const removeTeamMember = (email) => apiRequest(`/admin/marketplace/team/${encodeURIComponent(email)}`, "DELETE");
 export async function downloadClaimEvidence(verificationId, index, name) {
   const token = localStorage.getItem("ea_token");
   const res = await fetch(`${getApiBaseUrl()}/admin/marketplace/verifications/${verificationId}/files/${index}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });

@@ -8,18 +8,20 @@ import Spinner from "../components/Spinner";
 import NumberInput, { parseNumber } from "../components/NumberInput";
 import { SimulationIllustration } from "../components/Illustrations";
 import { apiRequest } from "../api/client";
-import { useWorkspaceStore } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 import { formatCurrency, formatNumber, invoiceNumbers, shortDate } from "../lib/format";
 import InfoTip from "../components/InfoTip";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
+import { withSharedFigures } from "../lib/sharedFigures";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import { hasFeatureAccess, isPlatformFeatureRestricted, isPlatformModuleGranted } from "../lib/permissions";
-import { planAllowsScenario } from "../lib/plans";
+import { normalisePlanKey, planAllowsScenario, planRank } from "../lib/plans";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
 import CreditConfirmModal from "../components/CreditConfirmModal";
+import { refusalMessage, refusalOf } from "../lib/entitlement";
 
 const FieldLabel = ({ children, info }) => (
   <div className="ea-label flex items-center gap-2">
@@ -92,6 +94,188 @@ function biBandLabel(band) {
   return band.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** High impact: half the monthly revenue or more gone, or the change takes cash below zero where doing nothing would not
+ * (simulation audit F7, 16 Nov 2026: judged on the projection, no longer on a 15-point fall in the stability score). */
+export function highImpact(run) {
+  const before = Number(run?.baseline_metrics?.monthly_revenue) || 0;
+  const after = Number(run?.scenario_metrics?.monthly_revenue) || 0;
+  return (before > 0 && after <= before * 0.5) || Boolean(run?.scenario_metrics?.verdict?.cash_shortfall_introduced);
+}
+
+// ── Simulation audit, Phase 1 (17 Nov 2026): business settings for projections ─────────────────────────────────────
+// Tax, VAT, loans and inflation are facts about the business, applied to both sides of every comparison. They are kept
+// on this device per business (a convenience) and sent with each run, where they are stored with the run's snapshot.
+export const PROJECTION_SETTINGS = [
+  ["profit_tax_rate_pct", "Tax on profit (%)", "Your tax rate on profit. Left blank, tax is not included."],
+  ["tax_payment_month", "Tax paid in month", "The projection month the tax set aside is paid. Blank: still owed at the end."],
+  ["sales_tax_rate_pct", "VAT / sales tax (%)", "Only if you are registered. Your figures are taken as excluding VAT."],
+  ["sales_tax_period_months", "VAT period (months)", "How often you pay VAT over. Usually 3."],
+  ["sales_tax_on_costs_pct", "Costs with reclaimable VAT (%)", "The share of your costs that carry VAT you can reclaim."],
+  ["existing_loan_balance", "Loan balance", "What you still owe on existing loans."],
+  ["existing_loan_annual_rate_pct", "Loan interest (% a year)", "The interest rate on that loan."],
+  ["existing_loan_monthly_repayment", "Loan repayment a month", "What you repay each month, interest included."],
+  ["cost_inflation_pct", "Cost inflation (% a year)", "How fast your costs rise each year. Blank: none applied."],
+  // Simulation audit, Phase 5 (model 1.4): the further factors of a standard forecast
+  ["tax_country", "Country (payroll and tax rules)", "Used for employer National Insurance, pension and payroll costs. Blank: your business profile's country."],
+  ["profit_tax_regime", "Corporation tax rules", "UK bands: 19% up to £50,000, 25% above £250,000, with marginal relief between. Otherwise the flat rate above."],
+  ["tax_losses_brought_forward", "Tax losses brought forward", "Earlier losses that reduce the profit taxed."],
+  ["payroll_staff_count", "Staff on payroll", "People you pay through payroll now."],
+  ["payroll_gross_monthly_per_person", "Gross pay per person a month", "Average monthly gross pay. Employer NI and pension are added by your country's rules."],
+  ["payroll_in_recorded_expenses", "Salaries already in my expenses?", "If you record salaries as expenses, they are not added again."],
+  ["employer_pension_pct", "Employer pension (%)", "Blank: your country's minimum (UK 3% of qualifying earnings, Nigeria 10%)."],
+  ["owner_drawings_monthly", "Owner drawings a month", "Money the owners take out each month. Cash out, not a cost."],
+  ["bad_debt_pct", "Sales never collected (%)", "The share of sales customers never pay. Counted as a cost."],
+  ["funding_amount", "Funding expected: amount", "Investment, owner capital or a grant you expect to receive."],
+  ["funding_type", "Funding expected: type", "Equity and owner capital are cash in; a grant is also income."],
+  ["funding_month", "Funding expected: month", "The projection month it arrives."],
+  ["equipment_amount", "Equipment planned: cost", "Equipment or other assets you plan to buy."],
+  ["equipment_month", "Equipment planned: month", "The projection month you pay for it."],
+  ["equipment_life_months", "Equipment planned: life (months)", "Its cost is spread over this many months as depreciation. Blank: 36."],
+  ["dividend_amount", "Dividend planned: amount", "Cash paid to shareholders. Not a cost."],
+  ["dividend_month", "Dividend planned: month", "The projection month it is paid."],
+];
+
+/** Phase 6: the business settings in groups, for their own card on the Simulation dashboard. */
+export const SETTING_GROUPS = [
+  ["Tax and VAT", ["profit_tax_rate_pct", "tax_payment_month", "profit_tax_regime", "tax_losses_brought_forward", "sales_tax_rate_pct", "sales_tax_period_months", "sales_tax_on_costs_pct"]],
+  ["Loans", ["existing_loan_balance", "existing_loan_annual_rate_pct", "existing_loan_monthly_repayment"]],
+  ["Payroll", ["tax_country", "payroll_staff_count", "payroll_gross_monthly_per_person", "payroll_in_recorded_expenses", "employer_pension_pct"]],
+  ["Owners and funding", ["owner_drawings_monthly", "funding_amount", "funding_type", "funding_month", "dividend_amount", "dividend_month"]],
+  ["Equipment and other", ["equipment_amount", "equipment_month", "equipment_life_months", "bad_debt_pct", "cost_inflation_pct"]],
+];
+
+/** A short signature of the figures a projection used, so a confirmation can tell when they have changed since. */
+export function figuresSignature(inputs) {
+  return JSON.stringify((inputs || []).filter((i) => i.label !== "not set" && i.label !== "none recorded").map((i) => [i.input, i.value]));
+}
+
+/** Settings chosen from a list rather than typed. */
+export const SETTING_CHOICES = {
+  tax_country: [["", "From my business profile"], ["GB", "United Kingdom"], ["NG", "Nigeria"], ["US", "United States"]],
+  profit_tax_regime: [["", "Flat rate (above)"], ["uk_corporation_tax", "UK corporation tax bands"]],
+  payroll_in_recorded_expenses: [["", "Work it out from my expenses"], ["true", "Yes, they are in my expenses"], ["false", "No, add them"]],
+  funding_type: [["equity", "Equity investment"], ["owner_capital", "Owner capital"], ["grant", "Grant"]],
+};
+
+// One planned item each, sent to the server as lists (the server takes several)
+const SETTING_ROWS = new Set(["funding_amount", "funding_type", "funding_month", "equipment_amount", "equipment_month",
+  "equipment_life_months", "dividend_amount", "dividend_month"]);
+
+/** The settings that have a value, ready to merge into the state sent to the server. */
+export function projectionSettingsForState(settings) {
+  const out = {};
+  const num = (key) => {
+    const raw = settings?.[key];
+    if (raw === "" || raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  for (const [key] of PROJECTION_SETTINGS) {
+    if (SETTING_ROWS.has(key)) continue;
+    const raw = settings?.[key];
+    if (raw === "" || raw == null) continue;
+    if (key === "tax_country" || key === "profit_tax_regime") { out[key] = String(raw); continue; }
+    if (key === "payroll_in_recorded_expenses") { out[key] = raw === true || raw === "true"; continue; }
+    const n = Number(raw);
+    if (Number.isFinite(n)) out[key] = n;
+  }
+  if (num("funding_amount") > 0) {
+    out.funding_events = [{ type: settings?.funding_type || "equity", amount: num("funding_amount"), month: num("funding_month") || 1 }];
+  }
+  if (num("equipment_amount") > 0) {
+    out.capital_purchases = [{ amount: num("equipment_amount"), month: num("equipment_month") || 1, life_months: num("equipment_life_months") || 36 }];
+  }
+  if (num("dividend_amount") > 0) {
+    out.dividends = [{ amount: num("dividend_amount"), month: num("dividend_month") || 1 }];
+  }
+  return out;
+}
+
+// ── Simulation audit, Phase 2 (17 Nov 2026): how sure the result is ─────────────────────────────────────────────────
+/** "Confidence: medium" with the first reason, from a run's uncertainty block. */
+export function confidenceText(uncertainty) {
+  const c = uncertainty?.confidence;
+  if (!c?.level) return "";
+  const level = c.level.charAt(0).toUpperCase() + c.level.slice(1);
+  return `${level} confidence${c.reasons?.length ? `: ${c.reasons.join("; ")}` : ""}.`;
+}
+
+/** The low / base / high closing cash for one side ("scenario" or "baseline"), or null. */
+export function rangeOf(uncertainty, side = "scenario") {
+  const cases = uncertainty?.ranges?.cases;
+  if (!cases?.base?.[side]) return null;
+  return { low: cases.low?.[side]?.net_cash, base: cases.base[side].net_cash, high: cases.high?.[side]?.net_cash };
+}
+
+const KPI_LABELS = [
+  ["gross_margin_pct", "Gross margin", "pct"],
+  ["operating_margin_pct", "Operating margin", "pct"],
+  ["net_margin_pct_over_period", "Net margin (period)", "pct"],
+  ["average_monthly_cash_flow", "Cash flow a month", "money"],
+  ["runway_months", "Runway", "months"],
+  ["days_sales_outstanding", "Days to get paid", "days"],
+  ["break_even_revenue_monthly", "Break-even revenue a month", "money"],
+  ["margin_of_safety_pct", "Margin of safety", "pct"],
+  ["interest_cover", "Interest cover", "times"],
+  ["net_cash", "Net cash at the end", "money"],
+];
+
+// ── Simulation audit, Phase 3 (17 Nov 2026): accuracy against what actually happened ─────────────────────────────
+/** One or two sentences on forecast accuracy, from POST /v1/scenario-intelligence/accuracy. */
+export function accuracyText(report) {
+  if (!report) return [];
+  const out = [];
+  const t = report.tracked?.overall;
+  if (t?.wape_pct != null) {
+    out.push(`Earlier forecasts were off by ${t.wape_pct}% on average over ${t.months} completed month${t.months === 1 ? "" : "s"} (${t.bias_pct > 0 ? "too high" : t.bias_pct < 0 ? "too low" : "no lean"}: ${t.bias_pct > 0 ? "+" : ""}${t.bias_pct}%).`);
+  } else if (report.tracked?.note) {
+    out.push(report.tracked.note);
+  }
+  const b = report.backtest;
+  if (b?.wape_pct != null) {
+    out.push(`Tested on your own history, the method is off by ${b.wape_pct}% against ${b.naive_wape_pct}% for "next month = last month": ${b.skill}.`);
+  } else if (b?.note) {
+    out.push(b.note);
+  }
+  return out;
+}
+
+/** "All checks passed" or which one did not, from a projection summary's checks. */
+export function projectionChecksText(summary) {
+  const checks = summary?.checks;
+  if (!checks) return "";
+  const names = { cash_reconciles: "cash", receivables_reconcile: "money owed to you", balance_sheet_balances: "balance sheet" };
+  const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => names[k] || k);
+  return failed.length
+    ? `Check failed: ${failed.join(", ")}. Please report this run.`
+    : "Checks passed: cash, money owed to you and the balance sheet reconcile in every month.";
+}
+
+/** The run's verdict in words: the scenario against the same business doing nothing, over the same months. */
+export function verdictLabel(run) {
+  const outcome = run?.scenario_metrics?.verdict?.outcome;
+  if (run?.state_result === "improved") return "Better than doing nothing";
+  if (run?.state_result === "worse") return highImpact(run) ? "High impact: worse than doing nothing" : "Worse than doing nothing";
+  if (outcome === "mixed") return "Mixed: a trade-off to weigh";
+  return "No material change";
+}
+
+/** Projection month 1 is the first full month after the run (audit F13); the opening cash is the cash on the day. */
+export function projectionMonthLabel(baseDate, monthIndex) {
+  if (!monthIndex) return "—";
+  const d = baseDate ? new Date(baseDate) : new Date();
+  if (Number.isNaN(d.getTime())) return "—";
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  d.setMonth(d.getMonth() + Number(monthIndex));
+  return d.toLocaleString(undefined, { month: "short", year: "numeric" });
+}
+
+/** A projection row as the table shows it: the server's figures, unchanged (audit F13). */
+export function timelineRowForDisplay(row) {
+  return { ...row, receivables: row.accruals, _cumGross: row.cumulative_profit, _cash: row.cash_balance };
+}
+
 export default function SimulationPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
@@ -99,7 +283,11 @@ export default function SimulationPage() {
   const serviceDecisionStatus = useWorkspaceStore((s) => s.serviceDecisionStatus);
   const validation = useWorkspaceStore((s) => s.validation);
   const inputs = useWorkspaceStore((s) => s.inputs);
-  const currency = useWorkspaceStore((s) => s.currency);
+  const storeCurrency = useWorkspaceStore((s) => s.currency);
+  // The workspace's own currency once read, as the dashboard and Business Operations show it (the owner, 30 Oct: a Naira
+  // business's simulation shown in £, its first month the £ invoice alone)
+  const [ownCurrency, setOwnCurrency] = useState(null);
+  const currency = ownCurrency || storeCurrency;
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
   const email = useAuthStore((s) => s.email);
   const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
@@ -113,7 +301,8 @@ export default function SimulationPage() {
 
   // Admin-granted simulation access bypasses the subscription gate entirely.
   const hasSimulationGrant = isPlatformModuleGranted("simulation", platformGrants);
-  const simulationEnabled = planStatus === "grandfathered" || planStatus === "active" || hasSimulationGrant;
+  const explorerPlan = normalisePlanKey(planKey) === "explorer";
+  const simulationEnabled = explorerPlan || planStatus === "grandfathered" || planStatus === "active" || hasSimulationGrant;
 
   function canSimFeature(featureKey) {
     if (isPlatformFeatureRestricted("simulation", featureKey, platformRestrictions)) return false;
@@ -128,6 +317,9 @@ export default function SimulationPage() {
 
   const [catalogueData, setCatalogueData] = useState({ products: [], customers: [], vendors: [] });
   const [financialsData, setFinancialsData] = useState({ invoices: [], expenses: [], contracts: [] });
+  // Simulation audit, Phase 4: the first projection waits for the business's records, so it is never made from an empty
+  // history (it used to show "Low confidence" and a wrong range for a moment, then correct itself).
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [fxRates, setFxRates] = useState({});
   const [acceptedValidation, setAcceptedValidation] = useState(null);
 
@@ -154,9 +346,18 @@ export default function SimulationPage() {
     [acceptedModuleValidation, catalogueData, financialsData, inputs, fxRates, currency]
   );
 
-  const stateSnapshot = financialInsights.stateSnapshot;
-
-  const largestClient = financialInsights.largestClient;
+  // The same figures as the risk check and the dashboard (R-4); the customer a "lose them" what-if was opened for
+  const [shared, setShared] = useState(null);
+  useEffect(() => {
+    if (!workspaceId) return undefined;
+    let live = true;
+    apiRequest(`/businesses/${workspaceId}/figures`, "GET").then((f) => { if (live) setShared(f || null); }).catch(() => { /* Simulation's own figures */ });
+    return () => { live = false; };
+  }, [workspaceId]);
+  const wantedCustomer = useMemo(() => { try { return new URLSearchParams(window.location.search || "").get("customer") || ""; } catch { return ""; } }, []);
+  const { stateSnapshot, largestClient } = useMemo(() => withSharedFigures(financialInsights, shared, wantedCustomer), [financialInsights, shared, wantedCustomer]);
+  // QA PF4: "Loss of Largest Client" is offered only when there is a client on record to lose.
+  const offeredScenario = (id) => Boolean(largestClient) || !CLIENT_SCENARIOS.includes(id);
   const activeProducts = useMemo(
     () => (Array.isArray(catalogueData?.products) ? catalogueData.products.filter((item) => !item?.archived) : []),
     [catalogueData]
@@ -183,7 +384,16 @@ export default function SimulationPage() {
   const [pendingPrefill, setPendingPrefill] = useState(null);
   const [riskSignals, setRiskSignals] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
+  const [recsLocked, setRecsLocked] = useState(false);      // AI recommendations are on Starter and above: said in the panel, never as an error
   const [history, setHistory] = useState([]);
+  // Phase 6: model-update notices, side-by-side comparison, reproducing a run, combined changes, confirmed figures
+  const [modelInfo, setModelInfo] = useState(null);
+  const [compareIds, setCompareIds] = useState([]);
+  const [compareResult, setCompareResult] = useState(null);
+  const [reproduced, setReproduced] = useState({});
+  const [combo, setCombo] = useState([]);
+  const [confirmed, setConfirmed] = useState(null);
+  const [accuracy, setAccuracy] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -192,6 +402,8 @@ export default function SimulationPage() {
   const [autoProjectionLoading, setAutoProjectionLoading] = useState(false);
   const [scenarioRunningId, setScenarioRunningId] = useState(null);
   const [error, setError] = useState(null);
+  // QA PF4: nothing on record to project: what is missing, and the owner's own figures offered as an estimate.
+  const [insufficient, setInsufficient] = useState(null);      // { message, missing, estimate, retry }
   const [prefillDone, setPrefillDone] = useState(false);
 
   const [manualTemplateId, setManualTemplateId] = useState(() => {
@@ -201,6 +413,53 @@ export default function SimulationPage() {
   const [manualName, setManualName] = useState("");
   const [manualParams, setManualParams] = useState({});
   const [manualTimelineMonths, setManualTimelineMonths] = useState("6");
+  const settingsKey = `ea:simulation:settings:${businessId || "none"}`;
+  const [projectionSettings, setProjectionSettings] = useState({});
+  useEffect(() => {
+    try { setProjectionSettings(JSON.parse(window.localStorage.getItem(settingsKey) || "{}") || {}); } catch { setProjectionSettings({}); }
+  }, [settingsKey]);
+  useEffect(() => {
+    apiRequest("/v1/scenario-intelligence/model", "GET").then(setModelInfo).catch(() => setModelInfo(null));
+  }, []);
+  const confirmKey = `ea:simulation:confirmed:${workspaceId || "none"}`;
+  useEffect(() => {
+    try { setConfirmed(JSON.parse(window.localStorage.getItem(confirmKey) || "null")); } catch { setConfirmed(null); }
+  }, [confirmKey]);
+  function confirmFigures(inputs) {
+    const value = { at: new Date().toISOString(), sig: figuresSignature(inputs) };
+    try { window.localStorage.setItem(confirmKey, JSON.stringify(value)); } catch { /* kept for this visit only */ }
+    setConfirmed(value);
+  }
+  async function compareRuns() {
+    try { setCompareResult(await apiRequest("/v1/scenario-intelligence/compare", "POST", { run_ids: compareIds })); }
+    catch (e) { setCompareResult({ error: refusalMessage(e, "Those runs could not be compared.") }); }
+  }
+  async function reproduceRun(id) {
+    try { const r = await apiRequest(`/v1/scenario-intelligence/scenario-runs/${id}/reproduce`, "POST", {}); setReproduced((p) => ({ ...p, [id]: r })); }
+    catch (e) { setReproduced((p) => ({ ...p, [id]: { explanation: refusalMessage(e, "It could not be checked just now.") } })); }
+  }
+
+  function updateProjectionSetting(key, value) {
+    setProjectionSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      try { window.localStorage.setItem(settingsKey, JSON.stringify(next)); } catch { /* kept for this visit only */ }
+      return next;
+    });
+  }
+  // How accurate the projections have been (Phase 3). Free; refreshed when the run history changes.
+  useEffect(() => {
+    if (!workspaceId || !stateSnapshot) return undefined;
+    let live = true;
+    apiRequest("/v1/scenario-intelligence/accuracy", "POST", {
+      tenant_id: tenantId, business_id: businessId, state_version: stateVersion, state: stateSnapshot,
+    }).then((res) => { if (live) setAccuracy(res || null); }).catch(() => { if (live) setAccuracy(null); });
+    return () => { live = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, businessId, history.length, JSON.stringify(stateSnapshot?.revenue_by_month || {})]);
+
+  // What every run and projection is sent: the page's figures plus the business settings above
+  const runState = useMemo(() => (stateSnapshot ? { ...stateSnapshot, ...projectionSettingsForState(projectionSettings) } : stateSnapshot),
+    [stateSnapshot, projectionSettings]);
 
   const [activeRun, setActiveRun] = useState(null);
   const [activeRunKind, setActiveRunKind] = useState(null); // "scenario" | "projection"
@@ -302,9 +561,11 @@ export default function SimulationPage() {
         setFinancialsData(fin);
         setRegistrationStatus(ws?.data?.registration_status || { status: "not_started" });
         setAcceptedValidation(getAcceptedWorkspaceValidation(ws?.data));
-        // Fetch FX rates for any foreign-currency records
-        if (currency) {
-          const wsIso = (currency.match(/\(([A-Z]{3})\)\s*$/) || currency.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || currency.toUpperCase();
+        const own = workspaceCurrencyOf(ws?.data) || currency;
+        setOwnCurrency(workspaceCurrencyOf(ws?.data) || null);
+        // Fetch FX rates for any foreign-currency records, into the workspace's own currency
+        if (own) {
+          const wsIso = (own.match(/\(([A-Z]{3})\)\s*$/) || own.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || own.toUpperCase();
           const allRecs = [...(fin.invoices || []), ...(fin.expenses || [])];
           const foreign = [...new Set(allRecs.map(r => { const c = String(r.currency || r.source_currency || "").trim(); const iso = (c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || c.toUpperCase(); return iso; }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
           if (foreign.length) {
@@ -314,6 +575,8 @@ export default function SimulationPage() {
         }
       } catch {
         // ignore
+      } finally {
+        if (alive) setWorkspaceLoaded(true);      // loaded or failed: the projection can go ahead either way
       }
     }
     loadWorkspaceData();
@@ -356,6 +619,13 @@ export default function SimulationPage() {
     setLoading(true);
     setError(null);
     try {
+      // Explorer keeps its free baseline without requesting paid recommendations.
+      if (planRank(normalisePlanKey(planKey)) < planRank("starter_insight") && !hasSimulationGrant) {
+        setRiskSignals(financialInsights.riskItems);
+        setRecommendations([]);
+        setRecsLocked(true);
+        return;
+      }
       const riskRes = await apiRequest("/v1/scenario-intelligence/risk-detection/run", "POST", {
         tenant_id: tenantId,
         business_id: businessId,
@@ -364,20 +634,36 @@ export default function SimulationPage() {
       });
       const risks = riskRes?.risk_signals?.length ? riskRes.risk_signals : financialInsights.riskItems;
       setRiskSignals(risks);
-      const recRes = await apiRequest("/v1/scenario-intelligence/recommendations/generate", "POST", {
-        tenant_id: tenantId,
-        business_id: businessId,
-        state_version: stateVersion,
-        risk_signal_ids: risks
-          .map((r) => (typeof r?.risk_signal_id === "string" ? r.risk_signal_id.trim() : ""))
-          .filter(Boolean),
-        state: stateSnapshot
-      });
+      let recRes;
+      try {
+        recRes = await apiRequest("/v1/scenario-intelligence/recommendations/generate", "POST", {
+          tenant_id: tenantId,
+          business_id: businessId,
+          state_version: stateVersion,
+          risk_signal_ids: risks
+            .map((r) => (typeof r?.risk_signal_id === "string" ? r.risk_signal_id.trim() : ""))
+            .filter(Boolean),
+          state: stateSnapshot
+        });
+      } catch (e) {
+        if (e?.status !== 403) throw e;
+        setRecsLocked(true);      // not on this plan: the panel says so; nothing went wrong
+        setRecommendations([]);
+        return;
+      }
+      setRecsLocked(false);
       setRecommendations(recRes?.recommended_scenarios?.length ? recRes.recommended_scenarios : financialInsights.recommendations);
     } catch (e) {
+      if (e?.status === 403) {
+        setRiskSignals(financialInsights.riskItems);
+        setRecommendations([]);
+        setRecsLocked(true);
+        return;
+      }
       setRiskSignals(financialInsights.riskItems);
       setRecommendations(financialInsights.recommendations);
-      setError(e instanceof Error ? e.message : "Failed to load recommendations.");
+      const message = e instanceof Error ? e.message : "Failed to load recommendations.";
+      setError(message.replace(/^HTTP \d+:\s*/, "") || "Recommendations couldn't be loaded. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -400,11 +686,14 @@ export default function SimulationPage() {
         scenario_name: asNonEmptyString(nameOverride || template?.title, "Scenario run"),
         parameters: {
           timeline_months: 6,
-          ...(params || {})
+          ...(confirmed?.at ? { figures_confirmed_at: confirmed.at } : {}),
+          // blank inputs are left out, so the server's documented rule applies (e.g. on-costs from the country's rules)
+          ...Object.fromEntries(Object.entries(params || {}).filter(([, v]) => v !== null && v !== ""))
         },
-        state: stateSnapshot
+        state: runState
       };
       const runRes = await apiRequest("/v1/scenario-intelligence/scenario-runs", "POST", payload);
+      setInsufficient(null);
       const runId = runRes?.scenario_run_id;
       if (runId) {
         const [resultRes, timelineRes] = await Promise.all([
@@ -416,7 +705,12 @@ export default function SimulationPage() {
         setTimeline(timelineRes?.timeline || []);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scenario run failed.");
+      const why = refusalOf(e);
+      if (why?.error === "INSUFFICIENT_DATA") {
+        setInsufficient({ ...why, retry: () => runScenario(templateId, mode, { ...(params || {}), use_estimate: true }, nameOverride) });
+      } else {
+        setError(refusalMessage(e, "Scenario run failed. Nothing was charged."));
+      }
     } finally {
       setActionLoading(false);
       setScenarioRunningId(null);
@@ -424,7 +718,7 @@ export default function SimulationPage() {
     }
   }
 
-  async function runDoNothing(monthsOverride, setAsActive = false, silent = false) {
+  async function runDoNothing(monthsOverride, setAsActive = false, silent = false, useEstimate = false) {
     if (!canRun) return;
     if (silent) {
       setAutoProjectionLoading(true);
@@ -437,9 +731,11 @@ export default function SimulationPage() {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
-        timeline_months: parseNumber(monthsOverride ?? manualTimelineMonths, 6),
-        state: stateSnapshot
+        timeline_months: Math.min(24, parseNumber(monthsOverride ?? manualTimelineMonths, 6)),
+        state: runState,
+        parameters: useEstimate ? { use_estimate: true } : {}
       });
+      setInsufficient(null);
       const projectionPayload = {
         scenario_run_id: res?.projection_id,
         scenario_name: "Baseline Continuity Projection",
@@ -448,7 +744,11 @@ export default function SimulationPage() {
         scenario_metrics: {},
         deltas: {},
         state_result: "neutral",
-        timeline_summary: {}
+        timeline_summary: {},
+        // The cash the projection starts from (your recorded payments in and out, or what you told the Agent)
+        baseline_snapshot: { starting_cash: Number(res?.starting_cash ?? stateSnapshot?.starting_cash ?? 0) },
+        // Closing cash, checks and the assumptions behind the projection (simulation audit, Phase 0)
+        projection_summary: res?.summary || null,
       };
       setProjectionRun(projectionPayload);
       setProjectionTimeline(res?.forecast || []);
@@ -458,7 +758,12 @@ export default function SimulationPage() {
         setTimeline(res?.forecast || []);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Projection failed.");
+      const why = refusalOf(e);
+      if (why?.error === "INSUFFICIENT_DATA") {
+        setInsufficient({ ...why, retry: () => runDoNothing(monthsOverride, setAsActive, false, true) });
+      } else if (!silent) {
+        setError(refusalMessage(e, "Projection failed. Nothing was charged."));
+      }
     } finally {
       if (silent) {
         setAutoProjectionLoading(false);
@@ -491,21 +796,21 @@ export default function SimulationPage() {
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
-    if (loading) return;
+    if (loading || !workspaceLoaded) return;
     // Always re-run when the snapshot hash changes — data has genuinely changed
     if (snapshotHash === lastSnapshotHashRef.current) return;
     lastSnapshotHashRef.current = snapshotHash;
     runDoNothing(6, false, true);
     setAutoProjectionDone(true);
-  }, [tab, canRun, loading, snapshotHash]);
+  }, [tab, canRun, loading, workspaceLoaded, snapshotHash]);
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
-    if (loading) return;
+    if (loading || !workspaceLoaded) return;
     if (snapshotHash === lastBiSnapshotHashRef.current) return;
     lastBiSnapshotHashRef.current = snapshotHash;
     loadIntelligence();
-  }, [tab, canRun, loading, snapshotHash]);
+  }, [tab, canRun, loading, workspaceLoaded, snapshotHash]);
 
   useEffect(() => {
     if (!canRun || tab !== "adaptive") return;
@@ -779,6 +1084,28 @@ export default function SimulationPage() {
         </div>
       ) : null}
 
+      {insufficient ? (
+        <div role="status" data-insufficient className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Not enough on record to simulate yet</p>
+          <p className="mt-1">{insufficient.message}</p>
+          {insufficient.estimate ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" data-use-estimate disabled={actionLoading} onClick={() => insufficient.retry?.()}
+                className="rounded-xl bg-brand-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+                Use my figures as an estimate ({insufficient.estimate.basis})</button>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">Estimate</span>
+            </div>
+          ) : (
+            <a href="/check/pricing" className="mt-2 inline-block text-[13px] font-semibold text-brand-700 underline-offset-2 hover:underline">Answer the pricing check</a>
+          )}
+        </div>
+      ) : null}
+      {activeRun?.parameters?.basis === "estimate" && (
+        <p data-estimate-basis className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
+          <span className="mr-2 rounded bg-white px-1.5 text-[11px] font-bold uppercase text-amber-800">Estimate</span>
+          This run is based on your own figures ({activeRun.parameters.estimate_basis}), not your records.
+        </p>
+      )}
       {error ? (
         <div className="mt-4">
           <InlineAlert kind="error" message={error} />
@@ -806,7 +1133,7 @@ export default function SimulationPage() {
               }
               subtitle="Engine-level health scores and structural classification."
             >
-              {biIntelligence?.master ? (() => {
+              {biIntelligence?.master?.bi_score != null ? (() => {      /* audit Phase 0: never draw a not-assessed engine as 0 */
                 const master = biIntelligence.master;
                 const biScore = master.bi_score ?? 0;
                 const summary = master.engine_summary ?? {};
@@ -895,7 +1222,7 @@ export default function SimulationPage() {
             </SectionCard>
           )}
 
-          {canSimFeature("scenario_intelligence") && (
+          {workspaceId && (canSimFeature("scenario_intelligence") || canSimFeature("run_simulation")) && (
             <div data-tour="simulation-baseline">
             <SectionCard
               title={
@@ -916,10 +1243,6 @@ export default function SimulationPage() {
                 onDecision={saveDecision}
                 hideDecision
                 maxTimelineRows={6}
-                revenueByMonth={stateSnapshot?.revenue_by_month}
-                costOfSalesByMonth={stateSnapshot?.cost_of_sales_by_month}
-                receivablesByMonth={stateSnapshot?.receivables_by_month}
-                expensesByMonth={stateSnapshot?.expenses_by_month}
                 stateSnapshot={stateSnapshot}
               />
             </SectionCard>
@@ -967,7 +1290,7 @@ export default function SimulationPage() {
               >
                 <div className="space-y-3">
                   {recommendations.length ? (
-                    recommendations.map((rec, i) => {
+                    recommendations.filter((rec) => offeredScenario(rec.scenario_template_id)).map((rec, i) => {
                       const recAllowed = planAllowsScenario(planKey, rec.scenario_template_id, planStatus) || hasSimulationGrant;
                       return (
                         <div key={rec.scenario_template_id || i} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -995,6 +1318,11 @@ export default function SimulationPage() {
                         </div>
                       );
                     })
+                  ) : recsLocked ? (
+                    <div className="text-sm text-slate-600">
+                      Recommended scenarios come with the Starter plan. Your Baseline Continuity projection stays free.
+                      <button type="button" className="mt-2 block text-xs font-semibold text-brand-700 underline" onClick={handleUpgradeClick}>See plans</button>
+                    </div>
                   ) : (
                     <div className="text-sm text-slate-600">No recommendations yet.</div>
                   )}
@@ -1013,13 +1341,31 @@ export default function SimulationPage() {
             >
               <div className="space-y-2">
                 {history.length ? (
-                  history.slice(0, 2).map((h, i) => (
+                  history.slice(0, 6).map((h, i) => (
                     <div
                       key={h.scenario_run_id || i}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3"
+                      data-history-run={h.scenario_run_id}
                     >
                       <div>
-                        <div className="text-sm font-semibold text-slate-900">{h.scenario_name}</div>
+                        <label className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                          {h.scenario_type !== "do_nothing_projection" ? (
+                            <input type="checkbox" aria-label={`Compare ${h.scenario_name}`} checked={compareIds.includes(h.scenario_run_id)}
+                              onChange={(e) => setCompareIds((ids) => e.target.checked ? [...ids, h.scenario_run_id].slice(-6) : ids.filter((x) => x !== h.scenario_run_id))} />
+                          ) : null}
+                          {h.scenario_name}
+                        </label>
+                        {h.model_version && modelInfo?.version && h.model_version !== modelInfo.version ? (
+                          <div className="mt-1 text-xs text-amber-700" data-model-notice>
+                            Made with an earlier model ({h.model_version}).{" "}
+                            <button type="button" className="underline" onClick={() => reproduceRun(h.scenario_run_id)}>See what has changed</button>
+                          </div>
+                        ) : h.scenario_run_id ? (
+                          <button type="button" className="mt-1 text-xs text-slate-500 underline" onClick={() => reproduceRun(h.scenario_run_id)}>Check it reproduces</button>
+                        ) : null}
+                        {reproduced[h.scenario_run_id] ? (
+                          <div className="mt-1 text-xs text-slate-600" data-reproduced>{reproduced[h.scenario_run_id].explanation}</div>
+                        ) : null}
                       </div>
                       <div className="text-xs text-slate-500">
                         {h.executed_at ? new Date(h.executed_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : ""}
@@ -1033,13 +1379,104 @@ export default function SimulationPage() {
                   <div className="text-sm text-slate-600">No scenario history yet.</div>
                 )}
               </div>
+              {accuracyText(accuracy).length ? (
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600" data-accuracy>
+                  <div className="font-semibold text-slate-700">How accurate have forecasts been?</div>
+                  {accuracyText(accuracy).map((line) => <div key={line}>{line}</div>)}
+                </div>
+              ) : null}
+              {compareResult?.runs ? (
+                <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200" data-compare>
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr><th className="px-2 py-1 text-left">Scenario</th><th className="px-2 py-1 text-left">Verdict</th><th className="px-2 py-1 text-right">Profit change</th><th className="px-2 py-1 text-right">Net cash change (low · base · high)</th><th className="px-2 py-1 text-left">Robust</th><th className="px-2 py-1 text-left">Confidence</th></tr>
+                    </thead>
+                    <tbody>
+                      {compareResult.runs.map((r) => (
+                        <tr key={r.scenario_run_id} className="border-t border-slate-100">
+                          <td className="px-2 py-1">{r.scenario_name}{r.current_model ? "" : " (earlier model)"}</td>
+                          <td className="px-2 py-1">{String(r.outcome || "").replace(/_/g, " ")}</td>
+                          <td className="px-2 py-1 text-right">{formatCurrency(r.profit_change ?? 0, currency)}</td>
+                          <td className="px-2 py-1 text-right">{[r.net_cash_change_low, r.net_cash_change, r.net_cash_change_high].map((v) => v == null ? "—" : formatCurrency(v, currency)).join(" · ")}</td>
+                          <td className="px-2 py-1">{r.robust == null ? "—" : r.robust ? "Yes" : "Depends"}</td>
+                          <td className="px-2 py-1">{r.confidence || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="px-2 py-1 text-slate-500">{compareResult.note}</div>
+                </div>
+              ) : compareResult?.error ? <div className="mt-3 text-xs text-rose-600">{compareResult.error}</div> : null}
               <div className="mt-3 flex justify-end gap-2">
+                <Button variant="ghost" disabled={compareIds.length < 2} onClick={compareRuns} data-compare-button>
+                  Compare selected ({compareIds.length})
+                </Button>
                 <Button variant="ghost" disabled={actionLoading || !canRun} onClick={clearHistory}>
                   Clear history
                 </Button>
               </div>
             </SectionCard>
           </div>
+
+          <SectionCard
+            title={<div className="flex items-center gap-2"><span>Business settings and the figures used</span><InfoTip text="Used in every projection and scenario. Most come from your records automatically; set the rest here once." /></div>}
+            subtitle={`${Object.keys(projectionSettingsForState(projectionSettings)).length} setting(s) set. They apply to every run, with and without the change.`}
+          >
+            <div data-business-settings>
+              {(() => {
+                const inputs = projectionRun?.projection_summary?.uncertainty?.inputs || [];
+                const used = inputs.filter((i) => i.label !== "not set" && i.label !== "none recorded");
+                const changed = confirmed?.sig && used.length && confirmed.sig !== figuresSignature(inputs);
+                return used.length ? (
+                  <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs" data-figures-used>
+                    <div className="font-semibold text-slate-700">Figures used, and where they came from</div>
+                    <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                      {used.map((i) => (
+                        <div key={i.input}><span className="text-slate-500">{i.input}: </span>{typeof i.value === "number" ? i.value.toLocaleString() : String(i.value)} <span className="text-slate-400">({i.label}{i.source ? `: ${i.source}` : ""})</span></div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Button variant="ghost" onClick={() => confirmFigures(inputs)} data-confirm-figures>These figures look right</Button>
+                      <span className="text-slate-500" data-confirmed-status>
+                        {confirmed?.at ? (changed ? "Your figures have changed since you last confirmed them." : `Confirmed by you on ${new Date(confirmed.at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}.`) : "Not confirmed yet. If a figure is wrong, correct it where it is recorded (Financials, Master records, profile) or below."}
+                      </span>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+              <p className="mb-3 text-sm text-slate-500">Your recorded figures are used automatically. Add these optional details only where they apply; an empty field means it has not been set.</p>
+              <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {SETTING_GROUPS.map(([group, keys]) => (
+                  <details key={group} className="rounded-xl border border-slate-200 bg-white px-3 py-2" data-settings-group={group}>
+                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                      {group}{keys.filter((k) => projectionSettings[k] !== "" && projectionSettings[k] != null).length ? ` · ${keys.filter((k) => projectionSettings[k] !== "" && projectionSettings[k] != null).length} set` : ""}
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {group === "Payroll" && (projectionRun?.projection_summary?.uncertainty?.inputs || []).some(i => i.input === "Salaries" && i.label === "recorded") ? <p className="rounded-lg bg-indigo-50 p-3 text-xs leading-5 text-indigo-800">Staff payments are already included in your recorded expenses. They will not be added again.</p> : null}
+                      {keys.map((key) => {
+                        const def = PROJECTION_SETTINGS.find(([k]) => k === key) || [key, key, ""];
+                        const used = (projectionRun?.projection_summary?.uncertainty?.inputs || []).find(i => i.input === def[1] && !["not set", "none recorded"].includes(i.label));
+                        const value = projectionSettings[key] ?? used?.value ?? "";
+                        return (
+                          <div key={key}>
+                            <FieldLabel info={def[2]}>{def[1]}</FieldLabel>
+                            {SETTING_CHOICES[key] ? (
+                              <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={String(value)}
+                                onChange={(e) => updateProjectionSetting(key, e.target.value)} aria-label={def[1]}>
+                                {SETTING_CHOICES[key].map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+                              </select>
+                            ) : (
+                              <NumberInput aria-label={def[1]} value={String(value)} onChange={(v) => updateProjectionSetting(key, v)} placeholder="Not set (optional)" />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </div>
+          </SectionCard>
 
 
         </div>
@@ -1056,7 +1493,7 @@ export default function SimulationPage() {
                   <select className="ea-input" value={manualTemplateId} onChange={(e) => setManualTemplateId(e.target.value)}>
                     <option value="do_nothing_projection">Baseline Continuity Projection</option>
                     {templates
-                      .filter((t) => t.mode !== "adaptive")
+                      .filter((t) => t.mode !== "adaptive" && offeredScenario(t.scenario_template_id) && t.scenario_template_id !== "tmpl_combined")
                       .map((t) => {
                         const allowed = planAllowsScenario(planKey, t.scenario_template_id, planStatus) || hasSimulationGrant;
                         return (
@@ -1077,8 +1514,12 @@ export default function SimulationPage() {
                   />
                 </div>
                 <div>
-                  <FieldLabel info="How many months to project.">Timeline months</FieldLabel>
+                  <FieldLabel info="How many months to project: 3 to 24.">Timeline months</FieldLabel>
                   <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600" data-projection-settings>
+                  Business settings ({Object.keys(projectionSettingsForState(projectionSettings)).length} set) apply to every run.{" "}
+                  <button type="button" className="font-semibold text-brand-700 underline" onClick={() => setTab("adaptive")}>Edit them on the simulation dashboard</button>
                 </div>
 
                 {manualTemplateId === "do_nothing_projection" ? (
@@ -1088,11 +1529,18 @@ export default function SimulationPage() {
                     {manualTemplate.required_inputs.map((key) => (
                       <div key={key}>
                         <FieldLabel info={fieldHelp(key)}>{prettyLabel(key, manualTemplate?.scenario_type)}</FieldLabel>
-                        <NumberInput
-                          value={String(manualParams[key] ?? "")}
-                          onChange={(v) => setManualParams((p) => ({ ...p, [key]: parseNumber(v, 0) }))}
-                          placeholder="0"
-                        />
+                        {SETTING_CHOICES[key] ? (
+                          <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={String(manualParams[key] ?? "equity")}
+                            onChange={(e) => setManualParams((p) => ({ ...p, [key]: e.target.value }))} aria-label={prettyLabel(key, manualTemplate?.scenario_type)}>
+                            {SETTING_CHOICES[key].map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+                          </select>
+                        ) : (
+                          <NumberInput
+                            value={String(manualParams[key] ?? "")}
+                            onChange={(v) => setManualParams((p) => ({ ...p, [key]: v === "" ? null : parseNumber(v, 0) }))}
+                            placeholder={key === "employer_oncost_pct" ? "Country rules" : "0"}
+                          />
+                        )}
                         {key === "client_loss_pct" && largestClient ? (
                           <div className="mt-1 text-xs text-slate-500">
                             Largest client: {largestClient.name}
@@ -1168,7 +1616,8 @@ export default function SimulationPage() {
                       };
                       setCreditModal({
                         featureName: "Scenario Simulation",
-                        creditCost: 10,
+                        // QA PF2: a deterministic run is free (Credit System v2 §6): the server says so, so nothing is asked.
+                        featureCode: "scenario_simulation",
                         onConfirm: () => { setCreditModal(null); runScenario(manualTemplateId, "manual", scenarioParams, manualName); }
                       });
                     }}
@@ -1177,6 +1626,32 @@ export default function SimulationPage() {
                     {manualTemplateId === "do_nothing_projection" ? "Run projection" : "Run manual scenario"}
                   </Button>
                 </div>
+                {manualTemplateId !== "do_nothing_projection" && (planAllowsScenario(planKey, "tmpl_combined", planStatus) || hasSimulationGrant) ? (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600" data-combine>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-700">Combine changes{combo.length ? ` (${combo.length})` : ""}</span>
+                      <button type="button" className="font-semibold text-brand-700 underline" disabled={combo.length >= 5}
+                        onClick={() => setCombo((c) => [...c, { scenario_type: manualTemplate?.scenario_type, title: manualName || manualTemplate?.title,
+                          params: Object.fromEntries(Object.entries(manualParams).filter(([, v]) => v !== null && v !== "" && !Array.isArray(v))) }].slice(0, 5))}>
+                        Add this change
+                      </button>
+                    </div>
+                    {combo.length ? (
+                      <>
+                        <ol className="mt-1 list-decimal pl-5">
+                          {combo.map((c, i) => (
+                            <li key={i}>{c.title} <button type="button" className="text-slate-400 underline" onClick={() => setCombo((all) => all.filter((_x, j) => j !== i))}>remove</button></li>
+                          ))}
+                        </ol>
+                        <Button className="mt-2" disabled={combo.length < 2 || actionLoading}
+                          onClick={() => runScenario("tmpl_combined", "manual", { steps: combo.map(({ scenario_type, params }) => ({ scenario_type, params })), timeline_months: parseNumber(manualTimelineMonths, 6) },
+                            `Combined: ${combo.map((c) => c.title).join(" + ")}`)} data-run-combination>
+                          Run these changes together
+                        </Button>
+                      </>
+                    ) : <div className="mt-1 text-slate-500">Set up a change and add it; add another, then run them together.</div>}
+                  </div>
+                ) : null}
                 <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
                   {scenarioOutputNote(manualTemplateId, largestClient)}
                 </div>
@@ -1242,10 +1717,6 @@ export default function SimulationPage() {
               maxTimelineRows={6}
               showRisks={canSimFeature("risk_detection")}
               showRecommendations={canSimFeature("recommendations")}
-              revenueByMonth={stateSnapshot?.revenue_by_month}
-              costOfSalesByMonth={stateSnapshot?.cost_of_sales_by_month}
-              receivablesByMonth={stateSnapshot?.receivables_by_month}
-              expensesByMonth={stateSnapshot?.expenses_by_month}
               stateSnapshot={stateSnapshot}
               hideTimelineAndMeaning
               reportOutput={activeRun ? assembleOutput({
@@ -1267,77 +1738,13 @@ export default function SimulationPage() {
         {activeRun && timeline?.length ? (
           <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
             <div className="px-4 pt-4 pb-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
+              <div className="text-base font-semibold text-slate-900">Your month-by-month outlook</div><p className="mt-1 text-sm text-slate-500">Follow your sales, costs and available cash over time.</p>
             </div>
             <div className="overflow-x-auto border-t border-slate-100">
               {(() => {
-                const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? stateSnapshot?.starting_cash ?? 0);
-                const revenueByMonth = stateSnapshot?.revenue_by_month || {};
-                const costOfSalesByMonth = stateSnapshot?.cost_of_sales_by_month || {};
-                const receivablesByMonth = stateSnapshot?.receivables_by_month || {};
-                const expensesByMonth = stateSnapshot?.expenses_by_month || {};
+                // Simulation audit F13: the server's projection, unchanged; month 1 is the month after the run.
                 const runBase = activeRun?.executed_at || activeRun?.created_at;
-                const runBaseDate = runBase ? new Date(runBase) : new Date();
-                const nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-                // Current month: 0 if no data this month (don't bleed prior months in)
-                const currentActualRev = revenueByMonth[nowKey] ?? 0;
-                const currentActualCoS = costOfSalesByMonth[nowKey] ?? 0;
-                const currentActualRec = receivablesByMonth[nowKey] ?? 0;
-                const currentActualExp = expensesByMonth[nowKey] ?? 0;
-                // Seed cumulative with actual gross profit from all months before the timeline starts
-                const historicalCumGross = Object.keys(revenueByMonth)
-                  .filter((k) => k < nowKey)
-                  .reduce((sum, k) => sum + Number(((revenueByMonth[k] ?? 0) - (costOfSalesByMonth[k] ?? 0)).toFixed(2)), 0);
-                // Last known monthly GP from actual data — used to project cumulative when current month has no data
-                const sortedPastKeys = Object.keys(revenueByMonth).filter((k) => k < nowKey).sort();
-                const lastPastKey = sortedPastKeys[sortedPastKeys.length - 1];
-                const lastActualGP = lastPastKey
-                  ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0)).toFixed(2))
-                  : 0;
-                const lastActualCashFlow = lastPastKey
-                  ? Number(((revenueByMonth[lastPastKey] ?? 0) - (costOfSalesByMonth[lastPastKey] ?? 0) - (expensesByMonth[lastPastKey] ?? 0)).toFixed(2))
-                  : 0;
-                const currentMonthHasData = currentActualRev > 0 || costOfSalesByMonth[nowKey] != null;
-                let cumGross = Number(historicalCumGross.toFixed(2)); let cumCash = openingCash;
-                const enriched = timeline.map((row) => {
-                  const rd = new Date(runBaseDate); rd.setDate(1); rd.setHours(0,0,0,0); rd.setMonth(rd.getMonth() + (Number(row.month_index) - 1));
-                  const monthKey = `${rd.getFullYear()}-${String(rd.getMonth() + 1).padStart(2, "0")}`;
-                  const isPast = monthKey < nowKey;
-                  const isCurrent = monthKey === nowKey;
-                  let rev, cos, rec, exp;
-                  if (isCurrent) {
-                    rev = revenueByMonth[monthKey] ?? 0;
-                    cos = costOfSalesByMonth[monthKey] ?? 0;
-                    rec = receivablesByMonth[monthKey] ?? 0;
-                    exp = expensesByMonth[monthKey] ?? 0;
-                  } else if (isPast) {
-                    const actualRev = revenueByMonth[monthKey];
-                    rev = actualRev != null ? actualRev : Number(row.revenue || 0);
-                    const actualCoS = costOfSalesByMonth[monthKey];
-                    cos = actualCoS != null ? actualCoS : Number(row.cost_of_sales || 0);
-                    const actualRec = receivablesByMonth[monthKey];
-                    rec = actualRec != null ? actualRec : Number(row.receivables || 0);
-                    const actualExp = expensesByMonth[monthKey];
-                    exp = actualExp != null ? actualExp : Number(row.expenses || 0);
-                  } else {
-                    // Future: use scenario/projection values from the timeline row
-                    rev = row.revenue != null ? Number(row.revenue) : currentActualRev;
-                    cos = row.cost_of_sales != null ? Number(row.cost_of_sales) : currentActualCoS;
-                    rec = row.receivables != null ? Number(row.receivables) : currentActualRec;
-                    exp = row.expenses != null ? Number(row.expenses) : currentActualExp;
-                  }
-                  const grossProfit = Number((rev - cos).toFixed(2));
-                  const isFuture = !isCurrent && !isPast;
-                  const hasRowData = row.revenue != null || row.cost_of_sales != null;
-                  const useCarryForward = isFuture && !currentMonthHasData && !hasRowData;
-                  const gpForCum = useCarryForward ? lastActualGP : grossProfit;
-                  const cashForCum = useCarryForward ? lastActualCashFlow : (rev - rec - cos - exp);
-                  cumGross = Number((cumGross + gpForCum).toFixed(2));
-                  cumCash = Number((cumCash + cashForCum).toFixed(2));
-                  const totalCosts = Number((cos + exp).toFixed(2));
-                  const grossMarginPct = rev > 0 ? Number(((grossProfit / rev) * 100).toFixed(1)) : 0;
-                  return { ...row, revenue: rev, cost_of_sales: cos, receivables: rec, accruals: rec, expenses: exp, costs: totalCosts, gross_profit: grossProfit, gross_margin_pct: grossMarginPct, _cumGross: cumGross, _cash: cumCash };
-                });
+                const enriched = timeline.map(timelineRowForDisplay);
                 return (
                   <table className="min-w-full text-xs">
                     <thead className="bg-slate-50 text-slate-500">
@@ -1349,10 +1756,7 @@ export default function SimulationPage() {
                     </thead>
                     <tbody>
                       {enriched.map((row) => {
-                        const baseDate = activeRun?.executed_at || activeRun?.created_at ? new Date(activeRun.executed_at || activeRun.created_at) : new Date();
-                        const d = new Date(baseDate); d.setDate(1); d.setHours(0,0,0,0); d.setMonth(d.getMonth() + (Number(row.month_index) - 1));
-                        const label = d.toLocaleString(undefined, { month: "short", year: "numeric" });
-                        const stateLabel = String(row.state_label || "").toLowerCase();
+                        const label = projectionMonthLabel(runBase, row.month_index);                        const stateLabel = String(row.state_label || "").toLowerCase();
                         return (
                           <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
                             <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{label}</td>
@@ -1367,8 +1771,8 @@ export default function SimulationPage() {
                             <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
                             <td className="px-3 py-2 text-left whitespace-nowrap">
                               {row.state_label ? (
-                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
-                                  {row.state_label}
+                                <span title={statusOf(row.state_label)[1]} data-status={stateLabel} className={`cursor-help rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${stateLabel.includes("stable") ? "bg-emerald-50 text-emerald-700" : stateLabel.includes("risk") || stateLabel.includes("stress") || stateLabel.includes("critical") ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>
+                                  {statusOf(row.state_label)[0]}
                                 </span>
                               ) : "—"}
                             </td>
@@ -1416,6 +1820,7 @@ export default function SimulationPage() {
         <CreditConfirmModal
           featureName={creditModal.featureName}
           creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
           onConfirm={creditModal.onConfirm}
           onCancel={() => setCreditModal(null)}
         />
@@ -1434,6 +1839,26 @@ export default function SimulationPage() {
 }
 
 // Confirm dialog is shown from the SimulationPage scope (where confirmDialog state exists)
+
+// QA PF4: scenarios about a client on record; the months the projection itself marks at risk; a ratio in words when
+// it can't be a number ("Not available": nothing to compare with; "No cash to cover it": money owed, no cash).
+export const CLIENT_SCENARIOS = ["tmpl_client_loss"];
+// Each month's status in plain words, with what it means (the owner, 25 Oct: never AT_RISK or STRESS)
+export const STATUS_WORDS = {
+  stable: ["Stable", "Cash covers six months of costs or more, and the month makes money."],
+  tight: ["Tight", "Cash covers three to six months of costs, or the month loses money."],
+  stress: ["Under stress", "Cash covers less than three months of costs, or money owed to you is building up."],
+  at_risk: ["At risk", "Cash covers less than one month of costs."],
+  critical: ["Overdrawn", "Cash is below zero."],
+};
+export const statusOf = (label) => STATUS_WORDS[String(label || "").toLowerCase().trim().replace(/\s+/g, "_")] || [String(label || ""), ""];
+
+export const atRisk = (timeline) => (timeline || []).filter((t) => ["at_risk", "stress", "critical"].includes(t?.state_label)).map((t) => t.month_index);
+export function ratioText(value, state) {
+  if (typeof value === "number") return value.toFixed(2);
+  if (state === "unbounded") return "No cash to cover it";
+  return "Not available";
+}
 
 // Receivables that can still be collected: not paid, and not disputed, voided, cancelled or credited.
 const NOT_COLLECTABLE = new Set(["paid", "disputed", "void", "voided", "cancelled", "canceled", "credited", "written_off", "draft"]);
@@ -1457,12 +1882,31 @@ function buildDefaultParams(template, stateSnapshot, largestClient) {
     revenue_uplift_pct: 10,
     cost_uplift_pct: 5,
     client_loss_pct: stateSnapshot?.top_client_share_pct ?? 30,
+    // Phase 1 inputs (simulation audit): standard figures the owner can change; the run says which were left as standard
+    price_sensitivity: 1,
+    employer_oncost_pct: null,      // Phase 5: blank uses the country's employer costs (factors.py), else 15%
+    recruitment_cost_per_hire: 0,
+    start_month: 1,
+    revenue_per_hire_monthly: 0,
+    launch_cost: 0,
+    loan_amount: 10000,
+    loan_annual_rate_pct: 8,
+    loan_term_months: 24,
+    loan_start_month: 1,
+    funding_amount: 50000,
+    funding_month: 1,
+    funding_type: "equity",
+    equipment_cost: 10000,
+    purchase_month: 1,
+    useful_life_months: 36,
+    extra_revenue_monthly: 0,
+    cost_saving_monthly: 0,
     selected_product_ids: [],
     selected_pending_ids: [],
   };
   const params = {};
   (template.required_inputs || []).forEach((key) => {
-    params[key] = defaults[key] ?? 0;
+    params[key] = key in defaults ? defaults[key] : 0;
   });
   if (template.scenario_type === "client_loss") {
     params.client_loss_pct = largestClient?.share ?? stateSnapshot?.top_client_share_pct ?? 30;
@@ -1484,6 +1928,24 @@ function prettyLabel(key, scenarioType) {
     contractor_monthly_cost: "Monthly contractor cost",
     delay_months: "Delay (months)",
     effective_month: "Effective from month",
+    price_sensitivity: "Customer price sensitivity",
+    employer_oncost_pct: "Employer on-costs (%)",
+    recruitment_cost_per_hire: "Recruitment cost per hire",
+    start_month: "Starts in month",
+    revenue_per_hire_monthly: "Revenue per hire a month (optional)",
+    launch_cost: "One-off launch cost",
+    loan_amount: "Loan amount",
+    loan_annual_rate_pct: "Interest rate (% a year)",
+    loan_term_months: "Repaid over (months)",
+    loan_start_month: "Received in month",
+    funding_amount: "Amount",
+    funding_month: "Received in month",
+    funding_type: "Type of funding",
+    equipment_cost: "Equipment cost",
+    purchase_month: "Bought in month",
+    useful_life_months: "Useful life (months)",
+    extra_revenue_monthly: "Extra sales a month (optional)",
+    cost_saving_monthly: "Running costs saved a month (optional)",
   };
   return overrides[key] || String(key || "")
     .replaceAll("_", " ")
@@ -1494,6 +1956,8 @@ function scenarioOutputNote(templateId, largestClient) {
   switch (templateId) {
     case "do_nothing_projection":
       return "This shows what your business may look like over time if you keep going without making any major change.";
+    case "tmpl_take_loan":
+      return "This shows whether borrowing helps: the money arrives, then repayments and interest follow. It is judged on cash after the debt, so a loan only looks better if it keeps you from running short.";
     case "tmpl_client_loss":
       return `This shows what may happen if your biggest client${largestClient?.name ? ` (${largestClient.name})` : ""} stops buying from you, with revenue and cost of sales stepping down over the first months of the run.`;
     case "tmpl_price_increase":
@@ -1540,7 +2004,12 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_hire_staff":
       return [
         `New employees: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
-        `Monthly payroll added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee.`,
+        `Monthly pay added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee, plus ${Number(manualParams?.employer_oncost_pct ?? 15)}% employer on-costs.`,
+      ];
+    case "tmpl_take_loan":
+      return [
+        `Loan: ${Number(manualParams?.loan_amount ?? 0).toFixed(2)} at ${Number(manualParams?.loan_annual_rate_pct ?? 0)}% a year over ${Number(manualParams?.loan_term_months ?? 0)} months.`,
+        "Interest is a cost; repayments reduce cash. The verdict compares cash after the debt still owed.",
       ];
     case "tmpl_contractor_addition":
       return [
@@ -1686,11 +2155,11 @@ function buildScenarioExecutionBreakdown(
     const selectedRevenue = Number(params?.selected_product_revenue_monthly ?? 0);
     const selectedCount = Array.isArray(params?.selected_product_ids) ? params.selected_product_ids.length : 0;
     return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost base stays unchanged unless shown otherwise.`,
+      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Customers respond to the new price: sales volume moves the other way, by the price sensitivity shown in the assumptions, and cost of sales follows the volume.`,
       `Price increase applied: ${formatPercentValue(changePct)} from month ${effectiveMonth}.`,
       `Selected products/services: ${selectedCount || "all"}${selectedRevenue > 0 ? `, covering ${formatCurrency(selectedRevenue, currency)} of monthly revenue` : ""}.`,
       `Month 1 revenue in the table is ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)} based on when the increase begins.`,
-      "Gross profit changes because revenue moves while costs stay on the current baseline unless the scenario changes them."
+      "Gross profit changes because the price and the volume sold both change; operating expenses stay on the current baseline."
     ];
   }
 
@@ -1721,9 +2190,11 @@ function buildScenarioExecutionBreakdown(
     const employeeCost = Number(params?.employee_monthly_cost ?? 0);
     return [
       `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
-      `New staff added: ${employeeCount} x ${formatCurrency(employeeCost, currency)} = ${formatCurrency(employeeCount * employeeCost, currency)} per month.`,
-      `Month 1 expenses in the table are ${formatCurrency(firstRow?.expenses ?? baselineExpenses + (employeeCount * employeeCost), currency)}.`,
-      "Revenue is left on the current baseline, so the output shows whether today’s sales can absorb the extra payroll."
+      `New staff added: ${employeeCount} x ${formatCurrency(employeeCost, currency)} pay, plus ${Number(params?.employer_oncost_pct ?? 15)}% employer on-costs = ${formatCurrency(employeeCount * employeeCost * (1 + Number(params?.employer_oncost_pct ?? 15) / 100), currency)} per month.`,
+      `Month 1 expenses in the table are ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)} (recruitment costs fall in the start month).`,
+      Number(params?.revenue_per_hire_monthly ?? 0) > 0
+        ? `Each hire adds up to ${formatCurrency(Number(params.revenue_per_hire_monthly), currency)} of sales a month, reached over 3 months, with cost of sales at your current ratio.`
+        : "No extra sales from the hire are included, so the output shows whether today’s sales can absorb the extra payroll."
     ];
   }
 
@@ -1756,7 +2227,7 @@ function buildScenarioExecutionBreakdown(
     const saving = employeeCount * employeeCost;
     return [
       `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
-      `Planned hire cancelled: ${employeeCount} x ${formatCurrency(employeeCost, currency)} = ${formatCurrency(saving, currency)} per month.`,
+      `Planned hire cancelled: ${employeeCount} x ${formatCurrency(employeeCost, currency)} pay plus ${Number(params?.employer_oncost_pct ?? 15)}% on-costs = ${formatCurrency(saving * (1 + Number(params?.employer_oncost_pct ?? 15) / 100), currency)} per month.`,
       `Month 1 expenses with saving: ${formatCurrency(firstRow?.expenses ?? Math.max(0, baselineExpenses - saving), currency)}.`,
       "Revenue stays on the current baseline — this run shows the direct effect of removing the payroll commitment."
     ];
@@ -1769,7 +2240,7 @@ function buildScenarioExecutionBreakdown(
       `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
       `Revenue uplift applied: ${formatPercentValue(revenueUplift)}. Cost uplift applied: ${formatPercentValue(costUplift)}.`,
       `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
-      "This scenario ramps both the upside and the added delivery cost over the first months of the run."
+      `The new sales carry cost of sales at your current ratio; the cost uplift applies to operating expenses${Number(params?.launch_cost ?? 0) > 0 ? `; the launch costs ${formatCurrency(Number(params.launch_cost), currency)} in month 1` : ""}. Both ramp up over the first 3 months.`
     ];
   }
 
@@ -1782,12 +2253,30 @@ function fieldHelp(key) {
     revenue_drop_pct: "Percent drop in revenue.",
     cost_increase_pct: "Percent increase in monthly costs.",
     cost_reduction_pct: "Percent reduction in fixed/overhead costs.",
-    employee_count: "Number of planned hires to cancel or defer.",
-    employee_monthly_cost: "Monthly cost of each cancelled hire.",
+    employee_count: "Number of people.",
+    employee_monthly_cost: "Monthly pay per person, before employer on-costs.",
     contractor_monthly_cost: "Monthly cost per contractor.",
     delay_months: "Months of delayed payments.",
-    revenue_uplift_pct: "Percent revenue uplift for new service.",
-    cost_uplift_pct: "Percent cost uplift for new service.",
+    revenue_uplift_pct: "Extra revenue from the new service, as a percent of today's revenue, reached over 3 months.",
+    cost_uplift_pct: "Extra overheads for the new service, as a percent of operating expenses. Its cost of sales follows its sales.",
+    price_sensitivity: "How much sales fall for each 1% price rise. 1 = sales fall 1% (the standard moderate figure); 0 = customers don't react; 2 = they react strongly.",
+    employer_oncost_pct: "Employer tax, pension and benefits on top of pay. Blank: worked out from your country's rules (UK National Insurance and pension, Nigeria pension, NSITF and ITF, US FICA and FUTA), else 15%.",
+    recruitment_cost_per_hire: "One-off cost of hiring each person (adverts, agency fees), in the start month.",
+    start_month: "The projection month the new hire starts.",
+    revenue_per_hire_monthly: "Sales each hire brings in a month at full output, reached over 3 months. Leave 0 to show the cost only.",
+    launch_cost: "Money spent up front to launch, in month 1.",
+    loan_amount: "How much you borrow.",
+    loan_annual_rate_pct: "The loan's interest rate a year.",
+    loan_term_months: "Months to repay it, in equal instalments from the month after you receive it.",
+    loan_start_month: "The projection month the money arrives.",
+    funding_amount: "How much you expect to receive.",
+    funding_month: "The projection month it arrives.",
+    funding_type: "Equity investment and owner capital are cash in, not income or a loan. A grant is cash in and income.",
+    equipment_cost: "What the equipment costs, paid in the month you buy it.",
+    purchase_month: "The projection month you pay for it.",
+    useful_life_months: "How long it will be used. Its cost is spread over this many months as depreciation.",
+    extra_revenue_monthly: "Extra sales a month the equipment makes possible, from the month it is bought.",
+    cost_saving_monthly: "Running costs it saves each month, from the month it is bought.",
     client_loss_pct: "Percent of monthly revenue lost if the largest client leaves.",
     selected_product_ids: "Select the products or services to include in the price increase.",
     selected_pending_ids: "Select the pending receivables to focus the delay simulation on.",
@@ -1895,7 +2384,25 @@ function buildScenarioMeaning(activeRun, timeline, currency) {
   return `${scenarioRule} Compared to your current state, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
 }
 
-function ScenarioOutput({
+function CashOutlookChart({ rows, currency, monthLabel }) {
+  if (rows.length < 2) return null;
+  const values = rows.map(row => Number(row._cash));
+  if (values.some(value => !Number.isFinite(value))) return null;
+  const low = Math.min(...values), high = Math.max(...values);
+  const y = value => 140 - ((value - low) / Math.max(high - low, 1)) * 120;
+  const points = values.map((value, index) => `${12 + index * 576 / (values.length - 1)},${y(value)}`).join(" ");
+  return <div className="mt-4 rounded-xl border border-indigo-100 bg-white p-4" data-cash-outlook>
+    <div className="flex flex-wrap justify-between gap-2 text-sm"><span className="font-medium text-slate-800">How your cash could change</span><span className="text-slate-500">{formatCurrency(low, currency)} – {formatCurrency(high, currency)}</span></div>
+    <svg viewBox="0 0 600 160" className="mt-3 h-36 w-full" preserveAspectRatio="none" role="img" aria-label={`Projected cash from ${formatCurrency(values[0], currency)} to ${formatCurrency(values[values.length - 1], currency)}`}>
+      <path d="M12 20H588 M12 80H588 M12 140H588" stroke="#e2e8f0" strokeDasharray="4 4" fill="none" />
+      {low < 0 && high > 0 ? <path d={`M12 ${y(0)}H588`} stroke="#e11d48" strokeDasharray="5 5" /> : null}
+      <polyline points={points} fill="none" stroke={low < 0 ? "#e11d48" : "#6366f1"} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+    <div className="flex justify-between gap-3 text-xs text-slate-500"><span>{monthLabel(rows[0].month_index)}<br /><strong className="text-slate-700">{formatCurrency(values[0], currency)}</strong></span><span className="text-right">{monthLabel(rows[rows.length - 1].month_index)}<br /><strong className="text-slate-700">{formatCurrency(values[values.length - 1], currency)}</strong></span></div>
+  </div>;
+}
+
+export function ScenarioOutput({
   activeRun,
   timeline,
   currency,
@@ -1908,11 +2415,6 @@ function ScenarioOutput({
   showRecommendations = true,
   hideTimelineAndMeaning = false,
   reportOutput = null,
-  revenueByMonth = {},
-  costOfSalesByMonth = {},
-  receivablesByMonth = {},
-  expensesByMonth = {},
-  stateSnapshot = null,
 }) {
   if (!activeRun) {
     return (
@@ -1934,85 +2436,32 @@ function ScenarioOutput({
 
   const rawTimelineRows = maxTimelineRows ? timeline.slice(0, maxTimelineRows) : timeline;
   const isTrimmed = maxTimelineRows && timeline.length > maxTimelineRows;
-  const openingCash = Number(activeRun?.baseline_snapshot?.starting_cash ?? 0);
-  const _nowKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-  const _rbm = revenueByMonth || {};
-  const _csbm = costOfSalesByMonth || {};
-  const _recbm = (stateSnapshot?.receivables_by_month) || {};
-  const _expbm = (stateSnapshot?.expenses_by_month) || {};
-  const _curActualRev = _rbm[_nowKey] ?? 0;
-  const _curActualCoS = _csbm[_nowKey] ?? 0;
-  const _curActualRec = _recbm[_nowKey] ?? 0;
-  const _curActualExp = _expbm[_nowKey] ?? 0;
-  const _curMonthHasData = _curActualRev > 0 || _csbm[_nowKey] != null;
-  const _sortedPastKeys = Object.keys(_rbm).filter((k) => k < _nowKey).sort();
-  const _lastPastKey = _sortedPastKeys[_sortedPastKeys.length - 1];
-  const _lastActualGP = _lastPastKey
-    ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0)).toFixed(2))
-    : 0;
-  const _lastActualCashFlow = _lastPastKey
-    ? Number(((_rbm[_lastPastKey] ?? 0) - (_csbm[_lastPastKey] ?? 0) - (_expbm[_lastPastKey] ?? 0)).toFixed(2))
-    : 0;
-  const _runBase = activeRun?.executed_at || activeRun?.created_at;
-  const _historicalCumGross = Object.keys(_rbm)
-    .filter((k) => k < _nowKey)
-    .reduce((sum, k) => sum + Number(((_rbm[k] ?? 0) - (_csbm[k] ?? 0)).toFixed(2)), 0);
-  let _cumGross = Number(_historicalCumGross.toFixed(2)); let _cumCash = openingCash;
-  const timelineRows = rawTimelineRows.map((row) => {
-    const _rd = _runBase ? new Date(_runBase) : new Date();
-    _rd.setDate(1); _rd.setHours(0,0,0,0); _rd.setMonth(_rd.getMonth() + (Number(row.month_index) - 1));
-    const _mKey = `${_rd.getFullYear()}-${String(_rd.getMonth() + 1).padStart(2, "0")}`;
-    const _isPast = _mKey < _nowKey;
-    const _isCur = _mKey === _nowKey;
-    let _rev, _cos, _rec, _exp;
-    if (_isCur) {
-      _rev = _rbm[_mKey] ?? 0;
-      _cos = _csbm[_mKey] ?? 0;
-      _rec = _recbm[_mKey] ?? 0;
-      _exp = _expbm[_mKey] ?? 0;
-    } else if (_isPast) {
-      const _ar = _rbm[_mKey];
-      _rev = _ar != null ? _ar : Number(row.revenue || 0);
-      const _acs = _csbm[_mKey];
-      _cos = _acs != null ? _acs : Number(row.cost_of_sales || 0);
-      const _arec = _recbm[_mKey];
-      _rec = _arec != null ? _arec : Number(row.receivables || 0);
-      const _aexp = _expbm[_mKey];
-      _exp = _aexp != null ? _aexp : Number(row.expenses || 0);
-    } else {
-      // Future: keep revenue/CoS/expenses at current actual (even if 0)
-      _rev = _curActualRev;
-      _cos = _curActualCoS;
-      _rec = _curActualRec;
-      _exp = _curActualExp;
-    }
-    const _gp = Number((_rev - _cos).toFixed(2));
-    // For cumulative: when current month has no data, carry forward last known monthly GP
-    const _isFuture = !_isCur && !_isPast;
-    const _useCarry = _isFuture && !_curMonthHasData;
-    const _gpForCum = _useCarry ? _lastActualGP : _gp;
-    const _cashForCum = _useCarry ? _lastActualCashFlow : (_rev - _rec - _cos - _exp);
-    _cumGross = Number((_cumGross + _gpForCum).toFixed(2));
-    _cumCash = Number((_cumCash + _cashForCum).toFixed(2));
-    const _totalCosts = Number((_cos + _exp).toFixed(2));
-    const _grossMarginPct = _rev > 0 ? Number(((_gp / _rev) * 100).toFixed(1)) : 0;
-    return { ...row, revenue: _rev, cost_of_sales: _cos, receivables: _rec, accruals: _rec, expenses: _exp, costs: _totalCosts, gross_profit: _gp, gross_margin_pct: _grossMarginPct, _cumGross, _cash: _cumCash };
-  });
+  // Simulation audit F13 (16 Nov 2026): the table shows the server's projection exactly as calculated. It used to rebuild
+  // cash and cumulative profit here from different inputs (this month's recorded actuals, a receivables figure the server
+  // never sent), so the cash shown and the Status beside it came from two different calculations.
+  const timelineRows = rawTimelineRows.map(timelineRowForDisplay);
+  const verdict = activeRun?.scenario_metrics?.verdict || null;
+  const assumptions = activeRun?.scenario_metrics?.projection?.assumptions || activeRun?.projection_summary?.assumptions || [];
+  const projectionSummary = activeRun?.scenario_metrics?.projection || activeRun?.projection_summary || null;
+  const weekly = projectionSummary?.thirteen_week || null;
+  const uncertainty = activeRun?.scenario_metrics?.uncertainty || projectionSummary?.uncertainty || null;
+  const side = isProjection(activeRun) ? "baseline" : "scenario";
+  const range = rangeOf(uncertainty, side);
+  function kpiValue(v, kind) {
+    if (v == null) return kind === "months" ? "Not limited" : "—";
+    if (kind === "pct") return `${Number(v).toFixed(1)}%`;
+    if (kind === "money") return formatCurrency(v, currency);
+    if (kind === "months") return `${Number(v).toFixed(1)} months`;
+    if (kind === "days") return `${Number(v).toFixed(0)} days`;
+    return `${Number(v).toFixed(1)}x`;
+  }
 
-  const baseDate = useMemo(() => {
-    const raw = activeRun?.executed_at || activeRun?.created_at || activeRun?.updated_at;
-    const parsed = raw ? new Date(raw) : new Date();
-    if (Number.isNaN(parsed.getTime())) return new Date();
-    return parsed;
-  }, [activeRun]);
+  const runDate = activeRun.executed_at || activeRun.created_at || activeRun.updated_at;
+  const parsedDate = runDate ? new Date(runDate) : new Date();
+  const baseDate = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 
   function formatMonthLabel(monthIndex) {
-    if (!monthIndex) return "—";
-    const d = new Date(baseDate);
-    d.setDate(1);
-    d.setHours(0, 0, 0, 0);
-    d.setMonth(d.getMonth() + (Number(monthIndex) - 1));
-    return d.toLocaleString(undefined, { month: "short", year: "numeric" });
+    return projectionMonthLabel(baseDate, monthIndex);
   }
 
   function formatMonthDetail(monthIndex) {
@@ -2020,7 +2469,7 @@ function ScenarioOutput({
     const d = new Date(baseDate);
     d.setDate(1);
     d.setHours(0, 0, 0, 0);
-    d.setMonth(d.getMonth() + (Number(monthIndex) - 1));
+    d.setMonth(d.getMonth() + Number(monthIndex));      // month 1 = the month after the run
     return d.toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -2106,7 +2555,7 @@ function ScenarioOutput({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-4 text-sm leading-relaxed">
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         <span className="font-semibold">AI output disclaimer: </span>
         Simulation results are modelled projections based on your inputs, not guarantees of future performance. Actual results may differ significantly. <a href="/legal/disclaimer" className="underline hover:text-amber-900">Learn more</a>.
@@ -2121,18 +2570,153 @@ function ScenarioOutput({
         />
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scenario</div>
-        <div className="mt-1 text-lg font-semibold text-slate-900">{activeRun.scenario_name}</div>
-        {activeRun.state_result ? (
-          <div className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${activeRun.state_result === "improved" ? "bg-emerald-100 text-emerald-700" :
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-4 sm:p-6" data-results-overview>
+        <div className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Your results at a glance</div>
+        <div className="mt-1 text-xl font-semibold text-slate-900">{activeRun.scenario_name}</div>
+        <p className="mt-2 text-sm text-slate-600">{isProjection(activeRun) ? "Where your business could be heading if things continue as they are." : "See how this change could affect your business."}</p>
+        {timelineRows.length ? (
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {[
+              ["Cash at the end", formatCurrency(timelineRows[timelineRows.length - 1]._cash, currency), "Money available after payments"],
+              ["Profit over the period", formatCurrency(timelineRows[timelineRows.length - 1]._cumGross, currency), "Running profit after costs"],
+              ["Months needing attention", String(atRisk(timeline).length), "Months marked at risk"],
+            ].map(([label, value, hint]) => <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-white p-4"><div className="text-sm text-slate-600">{label}</div><div className="mt-2 break-words text-2xl font-semibold tracking-tight text-slate-900">{value}</div><div className="mt-1 text-xs text-slate-500">{hint}</div></div>)}
+          </div>
+        ) : null}
+        {!hideTimelineAndMeaning ? <CashOutlookChart rows={timelineRows} currency={currency} monthLabel={formatMonthLabel} /> : null}
+        {!hideTimelineAndMeaning ? <div className="mt-4 rounded-xl bg-white/80 p-4 text-sm leading-6 text-slate-700"><div className="mb-1 font-semibold text-slate-900">What this means for you</div><p>{scenarioMeaning.split(". ")[0]}.</p><details className="mt-2"><summary className="cursor-pointer font-medium text-indigo-700">Read the full explanation</summary><p className="mt-2">{scenarioMeaning}</p></details></div> : null}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="text-base font-semibold text-slate-900">How much can you rely on this?</div>
+        {activeRun.state_result && !isProjection(activeRun) ? (
+          <div data-verdict={verdict?.outcome || activeRun.state_result} className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${activeRun.state_result === "improved" ? "bg-emerald-100 text-emerald-700" :
             activeRun.state_result === "worse" ? "bg-rose-100 text-rose-700" :
               "bg-slate-100 text-slate-600"
             }`}>
-            {activeRun.state_result === "improved" ? "Improves stability" :
-              activeRun.state_result === "worse" ? "Reduces stability" :
-                "Neutral impact"}
+            {verdictLabel(activeRun)}
           </div>
+        ) : null}
+        {verdict ? (
+          <details className="mt-3 text-sm leading-6 text-slate-600" data-verdict-basis><summary className="cursor-pointer py-2 font-medium text-slate-800">Why this result?</summary>
+            {verdict.reason}{" "}
+            Cash at the end of month {verdict.months}: {formatCurrency(verdict.scenario_closing_cash, currency)} against{" "}
+            {formatCurrency(verdict.baseline_closing_cash, currency)} if nothing changes. Profit over the period:{" "}
+            {formatCurrency(verdict.scenario_cumulative_profit, currency)} against {formatCurrency(verdict.baseline_cumulative_profit, currency)}.
+            {" "}Changes under {formatCurrency(verdict.materiality_threshold, currency)} (1% of revenue over the period) are treated as no material change.
+            {verdict.net_cash_change != null && Math.abs(Number(verdict.net_cash_change) - Number(verdict.closing_cash_change)) >= 0.01 ? (
+              <> {" "}After loans, tax and VAT still owed, cash is {Number(verdict.net_cash_change) >= 0 ? "higher" : "lower"} by {formatCurrency(Math.abs(Number(verdict.net_cash_change)), currency)}; that is what the verdict compares.</>
+            ) : null}
+          </details>
+        ) : null}
+        {projectionSummary?.checks ? (
+          <div className="mt-1 text-xs text-slate-500" data-projection-checks>{projectionChecksText(projectionSummary)}</div>
+        ) : null}
+        {projectionSummary?.data_quality ? (
+          <details className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-4 text-sm text-slate-600" data-data-quality>
+            <summary className="cursor-pointer font-semibold text-slate-800">Check your records · {projectionSummary.data_quality.issues?.length || 0} {projectionSummary.data_quality.issues?.length === 1 ? "thing" : "things"} to know</summary>
+            <p className="mt-2">Data check: {projectionSummary.data_quality.summary}</p>
+            {(projectionSummary.data_quality.issues || []).map((i) => (
+              <div key={i.code} className="mt-3 rounded-lg bg-white p-3 leading-6">
+                <span className={`mr-1 rounded px-1 font-semibold ${i.severity === "serious" ? "bg-rose-100 text-rose-700" : i.severity === "warning" ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-600"}`}>{i.severity === "serious" ? "Needs attention" : i.severity === "warning" ? "Worth checking" : "Good to know"}</span>
+                {i.what} {i.why} <span className="text-slate-500">To fix: {i.fix}</span>
+              </div>
+            ))}
+          </details>
+        ) : null}
+        {assumptions.length ? (
+          <details className="mt-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-600" data-assumptions>
+            <summary className="cursor-pointer font-semibold text-slate-500">Assumptions used ({assumptions.length})</summary>
+            <ul className="mt-3 list-disc space-y-3 pl-5 leading-6">
+              {assumptions.map((a) => <li key={a}>{a}</li>)}
+            </ul>
+          </details>
+        ) : null}
+        {uncertainty ? (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600" data-uncertainty>
+            <div className="font-semibold text-slate-700">How sure is this?</div>
+            <div className="mt-1" data-confidence={uncertainty.confidence?.level}>{confidenceText(uncertainty)}</div>
+            {range ? (
+              <div className="mt-4" data-range>
+                <div className="font-medium text-slate-800">Possible cash at the end</div>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {[["Lower estimate", range.low], ["Central estimate", range.base], ["Higher estimate", range.high]].map(([label, value]) => <div key={label} className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">{label}</div><div className="break-words text-lg font-semibold text-slate-900">{formatCurrency(value, currency)}</div></div>)}
+                </div>
+                <p className="mt-2 text-xs leading-5">{uncertainty.ranges?.note}</p>
+              </div>
+            ) : null}
+            {uncertainty.ranges?.robustness ? (
+              <div className={`mt-1 ${uncertainty.ranges.robust ? "" : "font-semibold text-amber-700"}`} data-robustness>{uncertainty.ranges.robustness}</div>
+            ) : null}
+            {uncertainty.sensitivity?.length ? (
+              <div className="mt-1" data-sensitivity>
+                What moves the result most:{" "}
+                {uncertainty.sensitivity.slice(0, 3).map((d) => `${d.driver} (${formatCurrency(d.swing, currency)} swing)`).join(", ")}.
+              </div>
+            ) : null}
+            {uncertainty.inputs?.length ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer font-semibold text-slate-500">Where each figure came from ({uncertainty.inputs.length})</summary>
+                <div className="mt-2 max-w-full overflow-x-auto"><table className="min-w-full text-left">
+                  <tbody>
+                    {uncertainty.inputs.map((i) => (
+                      <tr key={i.input} className="border-t border-slate-100">
+                        <td className="py-1 pr-3">{i.input}</td>
+                        <td className="py-1 pr-3">{i.value == null || i.value === "" ? "—" : typeof i.value === "number" ? Number(i.value).toLocaleString() : String(i.value)}</td>
+                        <td className="py-1 pr-3 font-semibold" data-input-label={i.label}>{i.label}</td>
+                        <td className="py-1 text-slate-500">{i.source || ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              </details>
+            ) : null}
+            {uncertainty.kpis?.[side] ? (
+              <details className="mt-2" data-kpis>
+                <summary className="cursor-pointer font-semibold text-slate-500">Key measures at the end of the period</summary>
+                <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                  {KPI_LABELS.map(([key, label, kind]) => (
+                    <div key={key} title={uncertainty.kpis[side].definitions?.[key] || ""}>
+                      {label}: <span className="font-semibold text-slate-800">{kpiValue(uncertainty.kpis[side][key], kind)}</span>
+                      {side === "scenario" && uncertainty.kpis.baseline ? (
+                        <span className="text-slate-400"> (now {kpiValue(uncertainty.kpis.baseline[key], kind)})</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        ) : null}
+        {weekly?.weeks?.length ? (
+          <details className="mt-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-600" data-thirteen-week>
+            <summary className="cursor-pointer font-semibold text-slate-500">
+              Next 13 weeks of cash · lowest {formatCurrency(weekly.lowest_cash, currency)} in week {weekly.lowest_week}
+            </summary>
+            <div className="mt-1 text-slate-500">{weekly.note}</div>
+            <div className="mt-2 overflow-x-auto">
+              <table className="min-w-full text-left">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="py-1 pr-3 font-semibold">Week from</th>
+                    <th className="py-1 pr-3 font-semibold">Money in</th>
+                    <th className="py-1 pr-3 font-semibold">Money out</th>
+                    <th className="py-1 font-semibold">Cash at end</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weekly.weeks.map((w) => (
+                    <tr key={w.week} className="border-t border-slate-100">
+                      <td className="py-1 pr-3">{shortDate(w.start)}</td>
+                      <td className="py-1 pr-3">{formatCurrency(w.cash_in, currency)}</td>
+                      <td className="py-1 pr-3">{formatCurrency(w.cash_out, currency)}</td>
+                      <td className={`py-1 ${w.closing_cash < 0 ? "font-semibold text-rose-700" : ""}`}>{formatCurrency(w.closing_cash, currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
         ) : null}
       </div>
 
@@ -2155,6 +2739,11 @@ function ScenarioOutput({
                       {r?.severity ? <div className="mt-1 text-xs text-slate-500">Severity: {r.severity}</div> : null}
                     </div>
                   ))
+                ) : atRisk(timeline).length ? (
+                  <div className="text-sm text-amber-800" data-at-risk-months>
+                    {atRisk(timeline).length === 1 ? "1 month" : `${atRisk(timeline).length} months`} of this projection {atRisk(timeline).length === 1 ? "is" : "are"} at risk:
+                    {" "}month {atRisk(timeline).join(", ")}. Look at the cash line for those months.
+                  </div>
                 ) : (
                   <div className="text-sm text-slate-600">No risks detected for this scenario.</div>
                 )}
@@ -2205,19 +2794,19 @@ function ScenarioOutput({
       {Object.keys(base).length ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricCard
-            title="Baseline"
+            title="Current trend"
             metrics={base}
             currency={currency}
             info="Your current metrics without any change."
           />
           <MetricCard
-            title="Scenario"
+            title="With your change"
             metrics={scenario}
             currency={currency}
             info="Projected metrics after applying the scenario."
           />
           <MetricCard
-            title="Delta"
+            title="Difference"
             metrics={deltas}
             currency={currency}
             isDelta
@@ -2229,7 +2818,7 @@ function ScenarioOutput({
       {timeline?.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Risk Ratios (Final Month)</div>
+            <div><div className="text-base font-semibold text-slate-900">Is your profit turning into cash?</div><p className="mt-1 text-sm text-slate-500">A closer look at the final month.</p></div>
             <InfoTip text="Measures the gap between paper profit and actual cash. Receivable Exposure > 1 or Cash Conversion < 0.3 indicates high risk." />
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -2238,31 +2827,34 @@ function ScenarioOutput({
               return (
                 <>
                   <div className="rounded-xl bg-slate-50 p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash Conversion</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Cash compared with profit</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className={`text-lg font-bold ${(last?.cash_conversion_ratio ?? 1) < 0.3 ? "text-rose-600" : "text-slate-900"}`}>
-                        {(last?.cash_conversion_ratio ?? 0).toFixed(2)}
+                      <span className={`text-lg font-bold ${typeof last?.cash_conversion_ratio === "number" && last.cash_conversion_ratio < 0.3 ? "text-rose-600" : "text-slate-900"}`} data-ratio="cash_conversion">
+                        {ratioText(last?.cash_conversion_ratio, last?.cash_conversion_state)}
                       </span>
                       <span className="text-xs text-slate-500">Ratio</span>
                     </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">Below 0.3 can mean profit is not reaching your bank account.</p>
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Receivable Exposure</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Money customers still owe</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className={`text-lg font-bold ${(last?.receivable_exposure_ratio ?? 0) >= 1.0 ? "text-rose-600" : (last?.receivable_exposure_ratio ?? 0) >= 0.5 ? "text-amber-600" : "text-slate-900"}`}>
-                        {(last?.receivable_exposure_ratio ?? 0).toFixed(2)}
+                      <span className={`text-lg font-bold ${last?.receivable_exposure_state === "unbounded" || (last?.receivable_exposure_ratio ?? 0) >= 1.0 ? "text-rose-600" : (last?.receivable_exposure_ratio ?? 0) >= 0.5 ? "text-amber-600" : "text-slate-900"}`} data-ratio="receivable_exposure">
+                        {ratioText(last?.receivable_exposure_ratio, last?.receivable_exposure_state)}
                       </span>
                       <span className="text-xs text-slate-500">Ratio</span>
                     </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">At 1 or above, customers owe more than your available cash.</p>
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Delayed Revenue</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Profit waiting to be paid</div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <span className="text-lg font-bold text-slate-900">
-                        {((last?.delayed_revenue_pct ?? 0) * 100).toFixed(1)}%
+                      <span className="text-lg font-bold text-slate-900" data-ratio="delayed_revenue">
+                        {typeof last?.delayed_revenue_pct === "number" ? `${(last.delayed_revenue_pct * 100).toFixed(1)}%` : ratioText(null, last?.delayed_revenue_state)}
                       </span>
                       <span className="text-xs text-slate-500">of Profit</span>
                     </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">The share of profit still tied up in unpaid sales.</p>
                   </div>
                 </>
               );
@@ -2274,14 +2866,27 @@ function ScenarioOutput({
       {!hideTimelineAndMeaning && timeline?.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
           <div className="px-4 pt-4 pb-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Timeline</div>
+            <div className="text-base font-semibold text-slate-900">Your month-by-month outlook</div><p className="mt-1 text-sm text-slate-500">Follow your sales, costs and available cash over time.</p>
             {isTrimmed ? <div className="mt-1 text-xs text-slate-500">Showing first {maxTimelineRows} months.</div> : null}
+            {projectionSummary?.current_month ? (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700" data-current-month>
+                <div className="font-semibold text-slate-800">This month ({projectionSummary.current_month.label})</div>
+                <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
+                  <div><span className="text-slate-500">Recorded so far: </span>revenue {formatCurrency(projectionSummary.current_month.recorded_so_far.revenue, currency)} · costs {formatCurrency(projectionSummary.current_month.recorded_so_far.costs, currency)}</div>
+                  <div><span className="text-slate-500">Rest of month ({projectionSummary.current_month.rest_of_month.days} days): </span>revenue {formatCurrency(projectionSummary.current_month.rest_of_month.revenue, currency)} · costs {formatCurrency(projectionSummary.current_month.rest_of_month.costs, currency)}</div>
+                  <div><span className="text-slate-500">Month total: </span>revenue {formatCurrency(projectionSummary.current_month.month_total.revenue, currency)} · profit {formatCurrency(projectionSummary.current_month.month_total.profit, currency)}</div>
+                </div>
+                <div className="mt-1"><span className="text-slate-500">Cash: </span>{formatCurrency(projectionSummary.current_month.cash_today, currency)} today → {formatCurrency(projectionSummary.current_month.cash_at_month_end, currency)} at the end of the month</div>
+                <div className="mt-1 text-slate-500">{projectionSummary.current_month.recorded_so_far.source}. {projectionSummary.current_month.explanation}</div>
+              </div>
+            ) : null}
           </div>
-          <div className="overflow-x-auto border-t border-slate-100">
+          <p className="px-4 pb-3 text-xs text-slate-500 sm:hidden">Swipe across the table to see every figure.</p>
+          <div className="max-w-full overflow-x-auto border-t border-slate-100" role="region" aria-label="Detailed monthly forecast" tabIndex={0}>
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
+                  <th scope="col" className="sticky left-0 z-10 bg-slate-50 px-3 py-3 text-left font-semibold whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <span>Month</span>
                       <InfoTip text="The specific month being projected." />
@@ -2332,7 +2937,7 @@ function ScenarioOutput({
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
                       <span>Cum. Profit</span>
-                      <InfoTip text="Running total of gross profit since month 1." />
+                      <InfoTip text="Running total of profit after all costs since month 1. It goes down in a month that loses money." />
                     </div>
                   </th>
                   <th className="px-3 py-2 text-right font-semibold whitespace-nowrap">
@@ -2344,16 +2949,32 @@ function ScenarioOutput({
                   <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <span>Status</span>
-                      <InfoTip text="The financial health of the business in this month." />
+                      <InfoTip text="How many months of costs your cash covers, and whether the month makes money: Stable, Tight, Under stress, At risk or Overdrawn. Hover a status for what it means." />
                     </div>
                   </th>
                 </tr>
               </thead>
               <tbody>
+                {projectionSummary?.current_month ? (
+                  <tr className="border-t border-slate-100 bg-slate-50/70" data-current-month-row
+                    title={`Recorded so far ${formatCurrency(projectionSummary.current_month.recorded_so_far.revenue, currency)} + rest of the month ${formatCurrency(projectionSummary.current_month.rest_of_month.revenue, currency)}`}>
+                    <td className="sticky left-0 z-10 bg-slate-50 px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{projectionSummary.current_month.label} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-1 text-[11px] text-indigo-700">Current month</span><div className="mt-1 text-[11px] font-normal text-slate-500">Recorded so far + rest of month</div></td>
+                    <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.revenue, currency)}</td>
+                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.costs, currency)}</td>
+                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.profit, currency)}</td>
+                    <td className="px-3 py-2 text-right font-semibold whitespace-nowrap text-slate-700">{formatCurrency(projectionSummary.current_month.cash_at_month_end, currency)}</td>
+                    <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">This month</td>
+                  </tr>
+                ) : null}
                 {timelineRows.map((row) => {
                   return (
                     <tr key={row.month_index} className="border-t border-slate-100 hover:bg-slate-50/50">
-                      <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{formatMonthLabel(row.month_index)}</td>
+                      <td className="sticky left-0 z-10 bg-white px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{formatMonthLabel(row.month_index)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.revenue, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(row.accruals, currency)}</td>
                       <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(row.expenses, currency)}</td>
@@ -2365,11 +2986,11 @@ function ScenarioOutput({
                       <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${row._cash > 0 ? "text-emerald-600" : row._cash < 0 ? "text-rose-600" : "text-slate-700"}`}>{formatCurrency(row._cash, currency)}</td>
                       <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">
                         {row.state_label ? (
-                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
-                            String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") ? "bg-rose-50 text-rose-700" :
+                          <span title={statusOf(row.state_label)[1]} data-status={String(row.state_label).toLowerCase()} className={`cursor-help rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${String(row.state_label).toLowerCase().includes("stable") ? "bg-emerald-50 text-emerald-700" :
+                            String(row.state_label).toLowerCase().includes("risk") || String(row.state_label).toLowerCase().includes("stress") || String(row.state_label).toLowerCase().includes("critical") ? "bg-rose-50 text-rose-700" :
                               "bg-slate-100 text-slate-600"
                             }`}>
-                            {row.state_label}
+                            {statusOf(row.state_label)[0]}
                           </span>
                         ) : "—"}
                       </td>
@@ -2382,14 +3003,42 @@ function ScenarioOutput({
         </div>
       ) : null}
 
-      {!hideTimelineAndMeaning ? (
-        <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-brand-700">What This Means</div>
-          <div className="mt-2 text-sm leading-6 text-slate-700 break-words">
-            {scenarioMeaning}
-          </div>
+      {!hideTimelineAndMeaning && projectionSummary?.how_calculated ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-700" data-how-calculated>
+          <details>
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">How this was calculated</summary>
+            <div className="mt-2 font-semibold text-slate-700">Starting point</div>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {projectionSummary.how_calculated.starting_point.map((line, i) => <li key={i}>{line}</li>)}
+            </ul>
+            <div className="mt-3 font-semibold text-slate-700">Month by month</div>
+            <div className="mt-1 space-y-2">
+              {projectionSummary.how_calculated.months.map((m) => (
+                <div key={m.month_index} className="rounded-lg bg-slate-50 p-2">
+                  <div className="font-semibold">{m.label || `Month ${m.month_index}`}</div>
+                  <div><span className="text-slate-500">Revenue: </span>{m.revenue}</div>
+                  <div><span className="text-slate-500">Costs: </span>{m.costs}</div>
+                  <div><span className="text-slate-500">Cash: </span>{m.cash}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-500">Methods and standards</summary>
+            <div className="mt-2 space-y-2">
+              {projectionSummary.how_calculated.methods.map((m) => (
+                <div key={m.name}>
+                  <div className="font-semibold">{m.name}</div>
+                  <div>{m.what}</div>
+                  <div className="text-slate-500">Standard: {m.standard}</div>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
       ) : null}
+
+
 
       {!hideDecision ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -2417,7 +3066,9 @@ function MetricCard({ title, metrics, currency, isDelta, info }) {
     ["Monthly expenses", metrics.monthly_expenses],
     ["Cost of sales", metrics.monthly_cost_of_sales],
     ["Total costs", metrics.monthly_costs],
-    ["Gross Profit", metrics.net_profit],
+    // The table's definition (the owner, 25 Oct): sales less the direct cost to deliver them; after every cost is Net profit
+    ["Gross Profit", metrics.monthly_revenue != null && metrics.monthly_cost_of_sales != null ? Number((metrics.monthly_revenue - metrics.monthly_cost_of_sales).toFixed(2)) : null],
+    ["Net profit", metrics.net_profit],
   ].filter(([, v]) => v != null);
 
   function renderValue(label, value) {

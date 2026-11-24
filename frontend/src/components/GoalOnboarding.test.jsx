@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import GoalLauncher, { GOALS_EVERY_MS, goalSets } from "./GoalLauncher";
 import { QuestionForm } from "./agent/AgentBits";
 import DraftEditor, { editableApproval } from "./agent/DraftEditor";
-import StartPage from "../pages/StartPage";
+import StartPage, { carriedText } from "../pages/StartPage";
 import LandingPage, { greetingAt } from "../pages/LandingPage";
 import { DocumentList } from "../pages/AgentCentrePage";
 import { useWorkspaceStore } from "../store/workspace";
@@ -18,6 +18,13 @@ import { useAuthStore } from "../store/auth";
 vi.mock("./GoogleSignInButton", () => ({ default: ({ onCredential }) => <button type="button" onClick={() => onCredential("google-credential")}>Continue with Google</button> }));
 
 const PROMPT = "What do you want EnterprateAI to do for your business?";
+it("preserves what a short landing answer referred to during funding handover", () => {
+  const text = carriedText({ goal_key: "need_funding", original_goal: "I need funding", currency: "NGN",
+    inputs: { amount: 1000000, use: "food", route: "loan", timing: "March next year", stage: "Trading", traction: "None yet" } });
+  expect(text).toContain("Traction reported for this funding request: None yet");
+  expect(text.toLowerCase()).toContain("march next year");
+  expect(text).not.toContain("trading, none yet");
+});
 const INVOICE_QUESTIONS = [{ key: "customer", label: "Who is it for?", type: "text", required: true, default: "", proposed: false },
   { key: "item", label: "What is it for?", type: "text", required: true, default: "", proposed: false },
   { key: "amount", label: "How much?", type: "number", required: true, prefix: "£", default: "", proposed: false }];
@@ -43,6 +50,7 @@ beforeEach(() => {
   answer = () => ({});
   localStorage.clear();
   sessionStorage.clear();
+  window.history.replaceState(null, "", "/");      // the task in hand is kept in the address: each test starts from a clean one
   useWorkspaceStore.setState({ workspaceId: null });
   globalThis.fetch = vi.fn(async (url, init = {}) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
@@ -61,7 +69,11 @@ const events = () => posts(/\/goal-events$/).map((c) => c.body);
 const starts = (first) => (path, method) => (method === "POST" && /task-sessions$/.test(path) ? first : undefined);
 const mountLauncher = () => render(<MemoryRouter initialEntries={["/"]}><Routes><Route path="/" element={<GoalLauncher />} /><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
 const card = () => screen.getByRole("region", { name: "Your task" });
+const heroSend = () => document.querySelector("[data-goal-launcher] form button[type='submit']");
 const click = async (el) => { await act(async () => { fireEvent.click(el); }); };
+
+// Each message carries its own id (P1.8: a retry is answered once); the rest of the body is what is checked.
+const withoutId = ({ client_message_id: _id, ...rest }) => rest;
 
 describe("the homepage launcher", () => {
   it("asks what you want done, shows business goals first and quick tasks second, and keeps free text", async () => {
@@ -69,26 +81,26 @@ describe("the homepage launcher", () => {
     expect(screen.getByLabelText(PROMPT).tagName).toBe("INPUT");
     const goalGroup = screen.getByRole("group", { name: "Popular business goals" });
     const goals = within(goalGroup).getAllByRole("button");
-    expect(goals.map((b) => b.textContent)).toEqual(["I need funding", "I need more customers", "Help me price my product/service"]);      // three at a time
-    // All eight are there in sets of three (the last filled from the start); the sets not showing are out of reach.
+    expect(goals.map((b) => b.textContent)).toEqual(["I need funding", "Help me price my product/service", "I want to launch a product/service"]);      // three at a time
+    // All four are there in sets of three (the last filled from the start); the set not showing is out of reach.
     const sets = [...goalGroup.querySelectorAll("[data-goal-set]")];
     expect(sets.map((set) => [...set.querySelectorAll("button")].map((b) => b.textContent))).toEqual([
-      ["I need funding", "I need more customers", "Help me price my product/service"],
-      ["I want to launch a product/service", "Improve my cash flow", "Help me grow my business"],
-      ["Test a business idea", "Help me understand my business risks", "I need funding"]]);
-    expect(sets.map((set) => set.getAttribute("aria-hidden"))).toEqual([null, "true", "true"]);
+      ["I need funding", "Help me price my product/service", "I want to launch a product/service"],
+      ["Test a business idea", "I need funding", "Help me price my product/service"]]);
+    expect(sets.map((set) => set.getAttribute("aria-hidden"))).toEqual([null, "true"]);
     expect([...sets[1].querySelectorAll("button")].every((b) => b.disabled && b.tabIndex === -1)).toBe(true);
     expect(sets.every((set) => set.className.includes("col-start-1") && set.className.includes("row-start-1"))).toBe(true);      // one cell: the card never changes height
-    expect(goalGroup.querySelectorAll("[data-goal-dots] > span").length).toBe(3);
+    expect(goalGroup.querySelectorAll("[data-goal-dots] > span").length).toBe(2);
     const tasks = within(screen.getByRole("group", { name: "Or start a task" })).getAllByRole("button");
-    expect(tasks.map((b) => b.textContent)).toEqual(["Create Invoice", "Create Quotation", "Create Business Plan", "Prepare Proposal"]);
+    expect(tasks.map((b) => b.textContent)).toEqual(["Create Invoice", "Create Quotation", "Create Business Plan"]);
     expect(goals[0].className).toContain("text-sm");                      // goals are the prominent chips
     expect(goals[0].className).toContain("font-semibold");
     expect(tasks[0].className).toContain("text-[12px]");                   // tasks are visibly secondary
     // One white card; on a phone each set of chips is a single row that scrolls sideways, and from 768px they wrap.
     const launcher = container.querySelector("[data-goal-launcher]");
     // The Agent's card: a gradient border around a deep indigo body, so it is the first thing seen.
-    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "overflow-hidden", "text-left", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(launcher.className.split(" ")).toContain(cls);
+    for (const cls of ["m-agent-card", "rounded-2xl", "p-[2px]", "text-left", "shadow-[0_20px_60px_rgba(108,92,231,0.25)]"]) expect(launcher.className.split(" ")).toContain(cls);
+    expect(launcher.querySelector("[data-agent-border-clip]").className).toContain("overflow-clip");      // only the moving border is clipped
     for (const cls of ["mt-6", "md:mt-7", "lg:mt-8"]) expect(document.querySelector("#hero [data-goal-launcher]") ? document.querySelector("#hero [data-goal-launcher]").className.split(" ") : [cls]).toContain(cls);
     expect(launcher.querySelector(".m-agent-border").getAttribute("aria-hidden")).toBe("true");
     expect(launcher.hasAttribute("data-agent-shell")).toBe(true);           // the shared shell, the same one the dashboard's Agent card uses
@@ -96,23 +108,23 @@ describe("the homepage launcher", () => {
     // Who it is: avatar, name, "Online" in words, and what it does.
     const who = launcher.querySelector("[data-agent-identity]");
     expect(who.querySelector("[data-agent-avatar]").style.width).toBe("32px");
-    expect(who.textContent).toBe("EnterprateAI AgentOnlineTell it the job. It does the work and asks only for what it needs.");
+    expect(who.textContent).toBe("EnterprateAIOnline");      // no subtitle under the name (the owner, 12 Nov)
     expect(screen.getByText(PROMPT).className).toContain("text-white");
     const promptField = container.querySelector("[data-prompt-field]");
     for (const cls of ["bg-white", "h-14"]) expect(promptField.className.split(" ")).toContain(cls);      // 56px tall, white on the card
     expect(screen.getByLabelText(PROMPT).className).toContain("text-base");      // 16px
     expect(screen.getByLabelText(PROMPT).getAttribute("placeholder")).toBe("For example: create an invoice for ABC Consulting, or I need more customers");      // no typing with reduced motion
-    // Start is never greyed out: with nothing typed it points at the field instead.
-    const start = screen.getByRole("button", { name: "Start" });
+    // Send is never greyed out: with nothing typed it points at the field instead. (The separate Start button was removed.)
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    const start = within(launcher).getByRole("button", { name: "Send" });
     expect(start.disabled).toBe(false);
     for (const cls of ["bg-brand-600", "text-white"]) expect(start.className.split(" ")).toContain(cls);
-    expect(start.querySelector("svg")).toBeTruthy();
     await click(start);
     expect(document.activeElement).toBe(screen.getByLabelText(PROMPT));
     expect(promptField.className).toContain("m-shake");
     expect(posts(/task-sessions$/).length).toBe(0);
-    // The trust row, inside the card under the chips.
-    expect(launcher.querySelector("[data-trust-row]").textContent).toBe("No sign up to start·Nothing is sent without your approval");
+    // The trust lines were taken out of the card (no "No credit card required" or similar).
+    expect(launcher.querySelector("[data-trust-row]")?.textContent || "").toBe("");
     const rows = [...container.querySelectorAll("[data-chip-row]")];
     expect([...new Set(rows.map((r) => r.closest("[role='group']").getAttribute("aria-label")))]).toEqual(["Popular business goals", "Or start a task"]);      // goals, then tasks
     for (const set of sets) expect(set.className).toContain("flex-wrap");      // three goals wrap at any width; nothing to swipe
@@ -126,23 +138,25 @@ describe("the homepage launcher", () => {
 
   it("the goals change every few seconds, wait while the pointer is on them, and stay on the chosen goal", async () => {
     vi.useFakeTimers();
+    // Motion on (QA P1-3: with reduced motion, and with no matchMedia, the goals never turn).
+    window.matchMedia = (q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} });
     try {
       answer = starts(session({ goal_key: "cash_flow", goal_label: "Improve my cash flow" }));
       mountLauncher();
       const group = screen.getByRole("group", { name: "Popular business goals" });
       const showing = () => within(group).getAllByRole("button").map((b) => b.textContent);
-      expect(showing()[0]).toBe("I need funding");
+      const first = showing();
+      expect(first[0]).toBe("I need funding");
       act(() => { vi.advanceTimersByTime(GOALS_EVERY_MS); });
-      expect(showing()).toEqual(["I want to launch a product/service", "Improve my cash flow", "Help me grow my business"]);
+      const second = showing();
+      expect(second).not.toEqual(first);                                   // moved on
       fireEvent.mouseEnter(group);                                          // reading them: they hold still
       act(() => { vi.advanceTimersByTime(GOALS_EVERY_MS * 3); });
-      expect(showing()[0]).toBe("I want to launch a product/service");
+      expect(showing()).toEqual(second);
       fireEvent.mouseLeave(group);
       act(() => { vi.advanceTimersByTime(GOALS_EVERY_MS); });
-      expect(showing()[0]).toBe("Test a business idea");
-      act(() => { vi.advanceTimersByTime(GOALS_EVERY_MS); });
-      expect(showing()[0]).toBe("I need funding");                          // and round again
-    } finally { vi.useRealTimers(); }
+      expect(showing()).not.toEqual(second);
+    } finally { vi.useRealTimers(); delete window.matchMedia; }
     expect(goalSets([{ key: "a" }, { key: "b" }])).toEqual([[{ key: "a" }, { key: "b" }]]);      // three or fewer: one set, nothing to change
   });
 
@@ -162,8 +176,9 @@ describe("the homepage launcher", () => {
     await click(screen.getByRole("button", { name: "Create Invoice" }));
     await click(screen.getByRole("button", { name: "Change goal" }));
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "I need more customers" } });
-    await click(screen.getByRole("button", { name: "Start" }));
-    expect(posts(/\/task-sessions$/).map((c) => c.body)).toEqual([
+    await click(heroSend());      // the launcher's Send (it replaced the Start button)
+    // The currency hint aside: it follows the machine's region (tested on its own below).
+    expect(posts(/\/task-sessions$/).map(({ body: { currency: _c, client_request_id: _request, ...rest } }) => rest)).toEqual([
       { key: "need_funding", entry_mode: "business_goal" }, { key: "create_invoice", entry_mode: "quick_task" }, { text: "I need more customers", entry_mode: "free_text" }]);
     // The funnel is told which way in was used and which suggestion, never the words that were typed.
     expect(events().filter((e) => e.name === "entry_mode_selected")).toEqual([
@@ -175,7 +190,7 @@ describe("the homepage launcher", () => {
 });
 
 describe("the task card", () => {
-  it("opens beside the launcher, which stays in view: the goal, 'Change goal', one line of promise, a credits badge, the limit and the numbered path", async () => {
+  it("opens beside the launcher, which stays in view: the goal, 'Change goal', one line of promise, no credits label, the limit and the numbered path", async () => {
     answer = starts(funding({ resolution: { ...funding().resolution, credit_badge: "Free" } }));
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
@@ -185,21 +200,21 @@ describe("the task card", () => {
     // The launcher is still there, so another goal is one tap away, and the one in hand is marked.
     expect(screen.getByLabelText(PROMPT)).toBeTruthy();
     expect(screen.getByRole("button", { name: "I need funding" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "I need more customers" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Help me price my product/service" }).getAttribute("aria-pressed")).toBe("false");
     expect(panel.querySelector("[data-says]").textContent).toMatch(/^I can help you become more funding-ready/);
-    expect(panel.querySelector("[data-credit-badge]").textContent).toBe("Free");
-    const limit = within(panel).getByRole("note");
+    expect(panel.querySelector("[data-credit-badge]")).toBeNull();      // no Free or credits label on the task card
+    const limit = panel.querySelector("[data-boundary]");      // one grey line under the header (the owner's brief, 20 Oct)
     expect(limit.textContent).toBe("I can't guarantee funding, or a yes from any investor or lender.");
-    expect(limit.querySelector("svg")).toBeTruthy();                       // a note with an icon, not a line of body text
-    expect([...panel.querySelectorAll("[data-path] ol > li")].map((li) => li.textContent)).toEqual(["1Funding Readiness", "2Funding Pack Draft", "3Business Plan Draft"]);      // numbered, in order
+    expect(limit.className).toContain("text-slate-400");                   // a single grey line, not a yellow bubble in the thread
+    expect(panel.querySelectorAll("[data-path] ol > li").length).toBe(0);      // the conversation, not a list of engine names (First-Value PRD)
     expect(panel.querySelector("[data-checkpoint]")).toBeNull();           // no email asked for before there is something to save
-    // The body scrolls inside the card; the footer (Continue, Start again) stays put.
+    // The body scrolls inside the card; the footer (the one composer and Send) stays put.
     expect(panel.querySelector("[data-task-body]").className).toContain("overflow-y-auto");
     const footer = panel.querySelector("[data-task-footer]");
     expect(footer.className).toContain("shrink-0");
     expect(footer.className).toContain("safe-area-inset-bottom");          // clear of a phone's home bar
-    expect(within(footer).getByRole("button", { name: "Continue" }).className).toContain("bg-[#1F5BFF]");
-    expect(within(footer).getByRole("button", { name: "Start again" }).className).not.toContain("bg-");
+    expect(within(footer).getByRole("button", { name: "Send" }).className).toContain("bg-[#1F5BFF]");
+    expect(footer.querySelector("[data-composer] input")).toBeTruthy();      // one input only, the composer (the owner's brief, 20 Oct)
     const change = within(panel).getByRole("button", { name: "Change goal" });
     expect(change.className).toContain("text-[12px]");                     // a small text link, not a button competing with Continue
     await click(change);
@@ -207,45 +222,47 @@ describe("the task card", () => {
     expect(localStorage.getItem("ea_task_session:anon")).toBeNull();
   });
 
-  it("asks with a £ sign, quick amounts and nothing preselected, then shows what was given and asks for an email to continue", async () => {
+  it("asks with quick £ amounts and nothing preselected, then shows what was given and asks for a name and an email to continue", async () => {
+    // The card is a short conversation now (QA-approved): one question at a time, quick replies send on tap.
     const given = [{ key: "amount", label: "How much funding are you looking for?", value: "£50,000", proposed: false }, { key: "stage", label: "Where is the business now?", value: "Trading", proposed: false }];
     answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding()
       : /\/inputs$/.test(path) ? funding({ state: "awaiting_identity", next: "identity", missing: [], inputs: { amount: 50000, stage: "trading" }, summary: given }) : undefined);
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
-    const amount = within(card()).getByLabelText("How much funding are you looking for?");
-    expect(amount.parentElement.querySelector("[data-currency]").textContent).toBe("£");
-    expect(amount.className).toMatch(/\btext-base\b.*\bmd:text-sm\b/);
-    expect(card().querySelector("[data-fields]").className).toContain("sm:grid-cols-2");
-    expect(within(card()).getAllByRole("radio").every((r) => !r.checked)).toBe(true);
-    await click(within(card()).getByRole("button", { name: "Continue" }));
+    const turn = card().querySelector("[data-question-turn]");
+    const reply = card().querySelector("[data-composer] input");      // the one composer at the bottom
+    expect(turn.querySelector("input")).toBeNull();                         // never a box inside the question bubble
+    expect(reply.value).toBe("");                                          // nothing preselected
+    expect(reply.className).toMatch(/\btext-base\b.*\bmd:text-sm\b/);
+    const quick = [...turn.querySelectorAll("[data-quick-reply]")].map((b) => b.textContent);
+    expect(quick).toEqual(["£10,000", "£25,000", "£50,000"]);              // quick amounts in pounds
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
     expect(within(card()).getByRole("alert").textContent).toBe("How much funding are you looking for? is required.");
-    await click(within(card()).getByRole("button", { name: "£50,000" }));
-    expect(amount.value).toBe("50000");
-    await click(within(card()).getByRole("button", { name: "Continue" }));
-    expect(within(card()).getByRole("alert").textContent).toBe("Where is the business now? is required.");
-    fireEvent.click(within(card()).getByLabelText("Trading"));
-    await click(within(card()).getByRole("button", { name: "Continue" }));
-    expect(posts(/\/task-sessions\/sess-1\/inputs$/)[0].body).toEqual({ answers: { amount: 50000, stage: "trading" } });
+    await click(within(turn).getByRole("button", { name: "£50,000" }));     // a quick reply sends on tap
+    expect(withoutId(posts(/\/task-sessions\/sess-1\/inputs$/)[0].body)).toEqual({ answers: { amount: 50000 }, picked: "£50,000", asked: "amount" });      // the chip's words are the owner's turn in the thread
     expect(card().querySelector("[data-chosen]").textContent).toBe("I need funding");
+    // The recap first (the owner's brief, 20 Oct): what will be used, in one line, then Looks right.
+    expect(card().querySelector("[data-recap-line]").textContent).toBe("£50,000 · Trading");
+    expect(card().querySelector("[data-checkpoint]")).toBeNull();
+    await click(card().querySelector("[data-recap-ok]"));
     expect(within(card()).getByText("What you told me")).toBeTruthy();
     expect([...card().querySelectorAll("[data-said-chip]")].map((c) => c.textContent)).toEqual(["£50,000", "Trading"]);
     const checkpoint = card().querySelector("[data-checkpoint]");
-    expect(checkpoint.textContent).toContain("To continue, verify your email.");
-    expect(checkpoint.querySelector("[data-saved]")).toBeNull();
-    expect(checkpoint.querySelector("[data-retention]").textContent).toBe("Kept for 7 days, and picked up as soon as you're in.");
+    expect(checkpoint.querySelector("[data-retention]").textContent).toBe("Kept for 7 days. The code picks it up.");
     expect(localStorage.getItem("ea_task_session:anon")).toBe("sess-1");
-    const email = within(checkpoint).getByLabelText("Your email address");
-    expect(email.className).toContain("w-full");
-    expect(within(checkpoint).getByText("We'll email you a 6-digit code. No password needed.")).toBeTruthy();
+    // The name first, then the email, each asked in turn.
     const name = within(checkpoint).getByLabelText("Your name");
     expect(name.getAttribute("autocomplete")).toBe("name");
-    expect(name.compareDocumentPosition(email) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await click(within(card()).getByRole("button", { name: "Continue" }));
-    expect(within(card()).getByRole("alert").textContent).toBe("Enter your name.");
+    const send = () => within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" });
+    await click(send());
+    expect(within(card()).getByRole("alert").textContent).toBe("By the way, what's your name?");
     fireEvent.change(name, { target: { value: "Hilary O" } });
-    await click(within(card()).getByRole("button", { name: "Continue" }));
-    expect(within(card()).getByRole("alert").textContent).toBe("Enter your email address to continue.");
+    await click(send());
+    const email = within(card().querySelector("[data-checkpoint]")).getByLabelText("Your email address");
+    expect(email.className).toContain("w-full");
+    expect(within(card()).getByText("I'll email a 6-digit code so I can keep the task moving.")).toBeTruthy();
+    await click(send());
+    expect(within(card()).getByRole("alert").textContent).toBe("Simple - what's your email address?");
     expect(posts(/\/email$/)).toEqual([]);
     expect(screen.queryByTestId("where")).toBeNull();
   });
@@ -255,6 +272,13 @@ describe("the task card", () => {
     const atCheckpoint = (over = {}) => session({ state: "awaiting_identity", next: "identity", missing: [], summary: given, currency: "USD", saving: "Create Invoice for Mark · $300 · USD", verification: null, ...over });
     const codeOut = (masked = "h•••@gmail.com", google = false) => atCheckpoint({ verification: { sent: true, masked, expires_at: "2099-01-01T00:00:00Z", google } });
     const everyUrl = () => [...calls.map((c) => c.path), screen.queryByTestId("where")?.textContent || "", window.location.href].join(" ");
+    // The checkpoint is a short conversation (QA-approved): the name, then the email, each sent with the card's Send.
+    const send = () => within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" });
+    async function toEmail(name) {
+      if (card().querySelector("[data-recap-ok]")) await click(card().querySelector("[data-recap-ok]"));      // the recap, confirmed
+      fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: name } });
+      await click(send());
+    }
 
     it("sends a code, asks for it in the same card, and carries on signed in: no login page, and the address never in a link", async () => {
       let state = atCheckpoint();
@@ -264,23 +288,23 @@ describe("the task card", () => {
         : undefined);
       mountLauncher();
       await click(screen.getByRole("button", { name: "Create Invoice" }));
-      fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "  Hilary  O " } });
+      await toEmail("  Hilary  O ");
       fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "Hilary@Example.test" } });
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       expect(posts(/\/task-sessions\/sess-1\/email$/)[0].body).toEqual({ email: "Hilary@Example.test", name: "Hilary O", marketing_consent: false });
       expect(screen.queryByTestId("where")).toBeNull();
       const checkpoint = card().querySelector("[data-checkpoint]");
-      expect(checkpoint.textContent).toContain("We sent a code to h•••@example.test.");
+      expect(checkpoint.textContent).toContain("I sent a code to h•••@example.test.");
       expect(within(checkpoint).queryByLabelText("Your email address")).toBeNull();
       const code = within(checkpoint).getByLabelText("6-digit code");
       expect(code.getAttribute("inputmode")).toBe("numeric");
       expect(code.getAttribute("autocomplete")).toBe("one-time-code");
       expect(card().querySelector("[data-chosen]").textContent).toBe("Create Invoice");
       expect([...card().querySelectorAll("[data-said-chip]")].map((c) => c.textContent)).toEqual(["Mark", "$300", "USD"]);
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       expect(within(card()).getByRole("alert").textContent).toBe("Enter the 6-digit code from the email.");
       fireEvent.change(code, { target: { value: "000000" } });
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       expect(within(card()).getByRole("alert").textContent).toBe("That code isn't right. Check the email and try again.");
       expect(card().querySelector("[data-chosen]").textContent).toBe("Create Invoice");
       expect(localStorage.getItem("ea_token")).toBeNull();
@@ -288,8 +312,18 @@ describe("the task card", () => {
       expect(posts(/\/email$/)[1].body).toEqual({});
       expect(within(card()).getByRole("status").textContent).toBe("A new code is on its way. The last one no longer works.");
       fireEvent.change(within(card()).getByLabelText("6-digit code"), { target: { value: "482 913" } });
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       expect(posts(/\/verify$/).pop().body.code).toBe("482913");
+      // A new account sets its password here, then carries on to the task.
+      const pw = await within(card()).findByLabelText("New password");
+      expect(screen.queryByTestId("where")).toBeNull();      // still here: not on to the task yet
+      const save = () => within(card()).getByRole("button", { name: "Save and continue" });
+      fireEvent.change(pw, { target: { value: "short" } });
+      await click(save());
+      expect(within(card()).getByRole("alert").textContent).toBe("Use at least 10 characters. A short phrase works well.");
+      fireEvent.change(pw, { target: { value: "correct horse 1" } });
+      await click(save());
+      expect(posts(/\/auth\/me\/set-password$/).pop().body).toEqual({ new_password: "correct horse 1" });
       await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/start/sess-1"));
       expect(localStorage.getItem("ea_token")).toBe("tok-1");
       expect(useAuthStore.getState().token).toBe("tok-1");
@@ -302,16 +336,16 @@ describe("the task card", () => {
       answer = (path, method) => (method === "GET" && /task-sessions\/sess-1$/.test(path) ? codeOut() : /\/email$/.test(path) ? codeOut("o•••@example.test") : undefined);
       mountLauncher();
       const panel = await screen.findByRole("region", { name: "Your task" });
-      expect(panel.querySelector("[data-checkpoint]").textContent).toContain("We sent a code to h•••@gmail.com.");
+      expect(panel.querySelector("[data-checkpoint]").textContent).toContain("I sent a code to h•••@gmail.com.");
       expect(within(panel).getByLabelText("6-digit code")).toBeTruthy();
       expect([...panel.querySelectorAll("[data-said-chip]")].map((c) => c.textContent)).toEqual(["Mark", "$300", "USD"]);
       await click(within(panel).getByRole("button", { name: "Change email" }));
       expect(within(card()).queryByLabelText("6-digit code")).toBeNull();
-      fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Other Person" } });
+      await toEmail("Other Person");
       fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "other@example.test" } });
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       expect(posts(/\/email$/)[0].body).toEqual({ email: "other@example.test", name: "Other Person", marketing_consent: false });
-      expect(card().querySelector("[data-checkpoint]").textContent).toContain("We sent a code to o•••@example.test.");
+      expect(card().querySelector("[data-checkpoint]").textContent).toContain("I sent a code to o•••@example.test.");
     });
 
     it("a Google address is offered Continue with Google first, and it lands on the task too", async () => {
@@ -321,10 +355,10 @@ describe("the task card", () => {
         : /\/auth\/google$/.test(path) ? { access_token: "tok-google" } : /\/auth\/me$/.test(path) ? { email: "hilary@gmail.com" } : undefined);
       mountLauncher();
       await click(screen.getByRole("button", { name: "Create Invoice" }));
-      expect(card().querySelector("[data-google]")).toBeTruthy();
-      fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Hilary O" } });
+      await toEmail("Hilary O");
+      expect(card().querySelector("[data-google]")).toBeTruthy();      // offered beside the email
       fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "hilary@gmail.com" } });
-      await click(within(card()).getByRole("button", { name: "Continue" }));
+      await click(send());
       const first = card().querySelector("[data-google-first]");
       expect(first.compareDocumentPosition(within(card()).getByLabelText("6-digit code")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(first.textContent).toContain("or enter the code we emailed you");
@@ -338,6 +372,7 @@ describe("the task card", () => {
       answer = starts(atCheckpoint());
       mountLauncher();
       await click(screen.getByRole("button", { name: "Create Invoice" }));
+      await toEmail("Hilary O");
       fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "hilary@example.test" } });
       await click(within(card()).getByRole("button", { name: "Sign in with a password" }));
       expect(screen.getByTestId("where").textContent).toBe("/login?next=%2Fstart%2Fsess-1");
@@ -353,7 +388,7 @@ describe("the task card", () => {
     answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? unsure : /\/inputs$/.test(path) ? picked : undefined);
     mountLauncher();
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "help me with money" } });
-    await click(screen.getByRole("button", { name: "Start" }));
+    await click(heroSend());      // the launcher's Send (it replaced the Start button)
     expect(card().querySelector("[data-chosen]").textContent).toBe("help me with money");
     const chips = within(within(card()).getByRole("group", { name: "Which is closest?" })).getAllByRole("button");
     expect(chips.map((b) => b.textContent)).toEqual(["Improve cash flow", "Get funding-ready", "Price my product", "Something else"]);
@@ -361,18 +396,18 @@ describe("the task card", () => {
     expect(card().querySelector("[data-checkpoint]")).toBeNull();
     expect(within(card().querySelector("[data-task-footer]")).queryByRole("button", { name: "Continue" })).toBeNull();
     await click(chips[1]);
-    expect(posts(/\/inputs$/)[0].body).toEqual({ answers: { goal_key: "need_funding" } });
+    expect(withoutId(posts(/\/inputs$/)[0].body)).toEqual({ answers: { goal_key: "need_funding" } });
     expect(card().querySelector("[data-chosen]").textContent).toBe("I need funding");
     expect(within(card()).getByText("You asked: help me with money")).toBeTruthy();
-    await click(within(card()).getByRole("button", { name: "Start again" }));
+    await click(within(card()).getByRole("button", { name: "Change goal" }));
     picked = session({ state: "blocked", next: "none", questions: [], goal_key: null, goal_label: null,
       resolution: { original_goal: "help me with money", resolution_class: "no_match", message: "No problem. Tell me in a few words what you want done, or pick one of the suggestions.", execution_boundary: "", recommended_path: [] } });
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "help me with money" } });
-    await click(screen.getByRole("button", { name: "Start" }));
+    await click(heroSend());      // the launcher's Send (it replaced the Start button)
     await click(within(card()).getByRole("button", { name: "Something else" }));
-    expect(within(card()).getByText(/^No problem\./)).toBeTruthy();
+    expect(within(card()).getByLabelText("Describe what you need")).toBeTruthy();
     expect(card().querySelector("[data-checkpoint]")).toBeNull();
-    await click(within(card()).getAllByRole("button", { name: "Ask for something else" })[0]);
+    await click(within(card()).getByRole("button", { name: "Start again" }));
     expect(screen.queryByRole("region", { name: "Your task" })).toBeNull();
     expect(screen.getByLabelText(PROMPT)).toBeTruthy();
   });
@@ -383,7 +418,7 @@ describe("the task card", () => {
       resolution: { original_goal: "book me a flight", resolution_class: "no_match", message: "EnterprateAI doesn't do that at the moment, so I won't pretend it can.", execution_boundary: "", recommended_path: [] } }));
     mountLauncher();
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "book me a flight" } });
-    await click(screen.getByRole("button", { name: "Start" }));
+    await click(heroSend());      // the launcher's Send (it replaced the Start button)
     expect(within(card()).getByText(/doesn't do that at the moment/)).toBeTruthy();
     expect(card().querySelector("[data-checkpoint]")).toBeNull();           // no sign-up forced for something it can't do
     expect(card().querySelector("[data-clarify]")).toBeNull();
@@ -402,8 +437,9 @@ describe("the hero", () => {
     expect([...grid.children].map((c) => (c.hasAttribute("data-hero-copy") ? "copy" : c.hasAttribute("data-hero-right") ? "right" : "?"))).toEqual(["copy", "right"]);
     const copy = grid.querySelector("[data-hero-copy]");
     expect(copy.className).toContain("lg:text-left");
-    // Left column, in order: eyebrow, headline, supporting line, launcher card, buttons, ticks.
-    const order = [within(copy).getByText("AI-Native Business Decision Intelligence"), within(copy).getByRole("heading", { level: 1 }),
+    // Left column, in order: headline, supporting line, launcher card, buttons, ticks. No eyebrow line above the headline (the owner, 12 Nov).
+    expect(within(copy).queryByText("AI-Native Business Decision Intelligence")).toBeNull();
+    const order = [within(copy).getByRole("heading", { level: 1 }),
       within(copy).getByText("Plan, operate, sell and grow from one intelligent business workspace."), copy.querySelector("[data-goal-launcher]")];
     for (let i = 1; i < order.length; i += 1) expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const h1 = within(copy).getByRole("heading", { level: 1 });
@@ -417,26 +453,24 @@ describe("the hero", () => {
     expect(within(launcher).getByLabelText(PROMPT).className).toContain("text-base");      // 16px at every width
     expect(within(launcher).getByRole("group", { name: "Popular business goals" })).toBeTruthy();
     expect(within(launcher).getByRole("group", { name: "Or start a task" })).toBeTruthy();
-    // No separate link or button under the launcher: "Watch it work" is in the card's bottom row, beside the trust line.
+    // No separate link or button under the launcher, and no "Watch it work" demo button.
     expect(copy.querySelector("[data-hero-buttons]")).toBeNull();
     expect(within(copy).queryByRole("link", { name: "See How It Works" })).toBeNull();
     expect(within(copy).queryByText(/first business insight/)).toBeNull();
     const foot = launcher.querySelector("[data-launcher-foot]");
     expect(foot.className).toMatch(/\bflex-col\b.*\bsm:flex-row\b/);      // stacked on a phone
-    const watch = within(foot).getByRole("button", { name: "Watch a 30 second demo of the Agent" });
-    expect(watch.textContent).toBe("Watch it work · 30s");
-    for (const cls of ["h-9", "w-full", "sm:w-auto", "text-brand-700"]) expect(watch.className.split(" ")).toContain(cls);      // 36px tall; full width on a phone
-    expect(watch.querySelector(".m-pulse-ring svg")).toBeTruthy();
+    expect(within(foot).queryByRole("button", { name: /demo/ })).toBeNull();
     for (const tick of ["No credit card required", "Start in minutes", "Private & secure"]) expect(within(copy).queryByText(tick)).toBeNull();
     // Right column: the mock with its handwriting; below the copy at 80% on a tablet; not on a phone.
     const preview = grid.querySelector("[data-hero-right] [data-hero-preview]");
     for (const cls of ["hidden", "md:flex", "w-4/5", "lg:w-full", "isolate"]) expect(preview.className).toContain(cls);
     expect(preview.className).not.toContain("lg:invisible");
-    expect(preview.querySelector("[data-mock-greeting]").textContent).toMatch(/^Good (morning|afternoon|evening)$/);      // the time of day, and no name
-    expect(preview.textContent).toContain("Here's what your Agent did today.");
+    expect(preview.querySelector("[data-mock-greeting]").textContent).toMatch(/^(Good (morning|afternoon|evening)|Hi|Hello)$/);      // the time of day, and no name
+    expect(preview.textContent).toContain("Here's what happened today.");
     expect(preview.textContent).not.toMatch(/Jordan/);
-    expect([greetingAt(4), greetingAt(5), greetingAt(11), greetingAt(12), greetingAt(16), greetingAt(17), greetingAt(23)]).toEqual(
-      ["Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening"]);
+    // The time of day, and "Hi" from midnight to 5am (the owner, 28 Oct: not "Good evening" at midnight; never "Hello")
+    expect([greetingAt(1), greetingAt(4), greetingAt(5), greetingAt(11), greetingAt(12), greetingAt(16), greetingAt(17), greetingAt(21), greetingAt(22), greetingAt(23)]).toEqual(
+      ["Hi", "Hi", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening", "Good evening"]);
     expect(preview.textContent).toContain("Smarter");
     expect(preview.querySelector("[data-hero-dots]").className).toContain("lg:hidden");      // on a tablet the dot grid travels with the image
     expect(preview.querySelector("[data-hero-dots]").nextElementSibling.className).toContain("lg:rotate-1");
@@ -455,35 +489,35 @@ describe("the hero", () => {
     const preview = hero().querySelector("[data-hero-preview]");
     await click(within(launcher).getByRole("button", { name: "I need funding" }));
     const cards = [...hero().querySelectorAll("[data-task-card]")];
-    expect(cards.map((c) => c.getAttribute("data-placement"))).toEqual(["below", "column"]);
-    const [below, column] = cards;
+    // One card on the page (the owner's QA, 21 Oct): the one for this width; the tablet one is rendered only from 768 to 1023px.
+    expect(cards.map((c) => c.getAttribute("data-placement"))).toEqual(["column"]);
+    const [column] = cards;
     // From 1024px: in the right column, laid over the preview's space, never taller than it, scrolling inside.
     expect(hero().querySelector("[data-hero-right]").contains(column)).toBe(true);
     expect(launcher.contains(column)).toBe(false);
-    for (const cls of ["lg:absolute", "lg:flex", "lg:top-10", "lg:max-h-[calc(100%-2.5rem)]", "lg:rounded-2xl", "lg:shadow-2xl"]) expect(column.className).toContain(cls);
+    // Exactly the preview's box: the same top and the same height, the thread scrolling inside; the two crossfade.
+    for (const cls of ["lg:absolute", "lg:flex", "lg:inset-y-0", "lg:left-6", "lg:right-0", "lg:rounded-2xl", "lg:shadow-2xl", "lg:motion-safe:animate-[ea-fade-in_.2s_ease-out]"]) expect(column.className).toContain(cls);
+    const stage = hero().querySelector("[data-hero-stage]");
+    expect(stage.contains(column) && stage.contains(preview)).toBe(true);
     expect(column.className).not.toMatch(/rotate/);                         // no tilt on the card
-    expect(preview.className).toContain("lg:invisible");                    // the preview keeps its space, so the hero's height does not change
+    expect(preview.className).toContain("lg:opacity-0");                    // the preview keeps its space (faded out), so the hero's height does not change
     expect(hero().querySelector("[data-hero-right]").className).toContain("lg:self-stretch");
     // Under 768px: a full-screen sheet that slides up (unless reduced motion is asked for), with a close button.
     for (const cls of ["max-md:fixed", "max-md:inset-0", "max-md:flex", "max-md:motion-safe:animate-[ea-sheet-up_.22s_ease-out]", "md:hidden"]) expect(column.className).toContain(cls);
-    // 768 to 1023px: directly under the launcher card, full width.
-    for (const cls of ["hidden", "md:flex", "lg:hidden", "scroll-mt-20"]) expect(below.className).toContain(cls);
-    expect(launcher.compareDocumentPosition(below) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The left column is as it was: the same launcher, with its suggestions, and the same buttons.
     expect(copy.querySelector("[data-goal-launcher]")).toBe(launcher);
     expect(within(launcher).getByLabelText(PROMPT)).toBeTruthy();
-    expect(within(launcher).getAllByRole("button", { name: /./ }).length).toBe(9);      // Start, three goals, four tasks, Watch it work
+    expect(within(launcher).getAllByRole("button", { name: /./ }).length).toBe(7);      // Send, three goals, three tasks
     expect(within(launcher).getByRole("button", { name: "I need funding" }).getAttribute("aria-pressed")).toBe("true");
     expect(launcher.querySelector("[data-task-card]")).toBeNull();
     expect(copy.querySelector("[data-hero-buttons]")).toBeNull();      // no separate row of buttons under the launcher
-    // The two cards never share an input id.
-    expect(within(column).getByLabelText("How much funding are you looking for?").id).toBe("goal-field-column-amount");
-    expect(within(below).getByLabelText("How much funding are you looking for?").id).toBe("goal-field-below-amount");
+    // No id twice on the page.
+    const ids = [...document.querySelectorAll("[id]")].map((el) => el.id);
+    expect(new Set(ids).size).toBe(ids.length);
     // Closing the sheet keeps the task: the launcher offers the way back to it.
     const close = within(column).getByRole("button", { name: "Close (your task is kept)" });
     expect(close.className).toMatch(/\bh-11\b.*\bw-11\b/);                  // a 44px target
     expect(close.className).toContain("md:hidden");
-    expect(within(below).queryByRole("button", { name: "Close (your task is kept)" })).toBeNull();
     await click(close);
     expect(column.className).toContain("max-md:hidden");
     expect(localStorage.getItem("ea_task_session:anon")).toBe("sess-1");
@@ -521,142 +555,101 @@ describe("carrying on after sign-in", () => {
   const mount = (path = "/start/sess-1") => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/start/:sessionId" element={<StartPage />} />
     <Route path="/resume/:sessionId" element={<div data-real-app><StartPage framed /></div>} /><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
   const states = (c) => Object.fromEntries([...c.querySelectorAll("[data-progress] [data-step]")].map((li) => [li.getAttribute("data-step"), li.getAttribute("data-state")]));
-describe("carrying on after sign-in", () => {
-  // /start is the app's outline (a new account has no workspace to show); /resume is the same page inside the real app, stood in for here by a marked frame.
-  const mount = (path = "/start/sess-1") => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/start/:sessionId" element={<StartPage />} />
-    <Route path="/resume/:sessionId" element={<div data-real-app><StartPage framed /></div>} /><Route path="*" element={<Where />} /></Routes></MemoryRouter>);
-  const states = (c) => Object.fromEntries([...c.querySelectorAll("[data-progress] [data-step]")].map((li) => [li.getAttribute("data-step"), li.getAttribute("data-state")]));
 
   it("a new account is asked only what the business is called, inside the app's frame with its progress, then lands on the dashboard with the task on it", async () => {
     answer = (path, method) => (/attach-user$/.test(path) ? session({ authenticated: true, state: "resuming", next: "prepare", missing: [] })
-      : /validation/me/.test(path) ? { __status: 404, __body: { detail: "none" } }
-      : //resume$/.test(path) ? session({ authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-9" })
-      : //prepare$/.test(path) ? session({ authenticated: true, state: "awaiting_review", next: "handoff", missing: [], business_id: "biz-9", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } })
+      : /\/validation\/me/.test(path) ? { __status: 404, __body: { detail: "none" } }
+      : /\/resume$/.test(path) ? session({ authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-9" })
+      : /\/prepare$/.test(path) ? session({ authenticated: true, state: "awaiting_review", next: "handoff", missing: [], business_id: "biz-9", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } })
       : method === "GET" ? {} : undefined);
     const { container } = mount();
     expect(container.querySelector("[data-shell-skeleton] aside")).toBeTruthy();
     expect(await screen.findByText("You're in. One thing before I carry on.")).toBeTruthy();
     expect(container.querySelector("[data-goal-kept]").textContent).toBe("Create Invoice");
-    expect([...container.querySelectorAll("[data-progress] [data-step]")].map((li) => li.textContent.replace(/(.*)$/, "").replace(/^d/, "")))
-      .toEqual(["Email confirmed", "Getting your business ready", "Preparing your invoice"]);
-    expect(states(container)).toEqual({ saved: "done", workspace: "active", prepare: "todo" });
-    expect(container.querySelector("[data-step='workspace']").getAttribute("aria-current")).toBe("step");
+    expect([...container.querySelectorAll("[data-progress] [data-step]")].map((li) => li.textContent.replace(/\s*\(.*\)$/, "").replace(/^\d/, "")))
+      .toEqual(["Reading your answers", "Working it out", "Writing your next steps"]);      // three steps about the work (the owner's brief)
+    expect(states(container)).toEqual({ read: "active", check: "todo", write: "todo" });
     fireEvent.change(screen.getByLabelText(/What is your business called?/), { target: { value: "Newcomer Studio" } });
     await click(screen.getByRole("button", { name: "Continue" }));
-    expect(posts(//resume$/)[0].body).toEqual({ business_name: "Newcomer Studio" });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
+    expect(posts(/\/resume$/)[0].body).toEqual({ business_name: "Newcomer Studio" });
+    // Started in the Agent Centre's chat, never on this page while it works (the owner, 1 Nov)
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
+    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).sessionId).toBe("sess-1");
+    expect(posts(/\/prepare$/)).toEqual([]);
     expect(useWorkspaceStore.getState().workspaceId).toBe("biz-9");
     expect(localStorage.getItem("ea_task_session:anon")).toBeNull();
     expect(events()).toEqual([{ name: "dashboard_handoff_completed", session_id: "sess-1" }]);
   });
 
-  it("someone with a workspace carries on inside the real app, and the last step is named for the work being done", async () => {
-    let letPrepare;
-    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" }) : {});
-    const real = globalThis.fetch;
-    globalThis.fetch = vi.fn((url, init) => (/prepare$/.test(String(url)) ? new Promise((resolve) => { letPrepare = () => resolve(new Response(JSON.stringify(
-      funding({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/funding/f1?tab=results", message: "I set up your funding case." } })), { status: 200 })); }) : real(url, init)));
-    const { container } = mount();
-    await waitFor(() => expect(states(container)).toEqual({ saved: "done", workspace: "done", prepare: "active" }));
-    expect(container.querySelector("[data-real-app]")).toBeTruthy();
-    expect(container.querySelector("[data-shell-skeleton]")).toBeNull();
+  it("an idea's chat opens its full validation's results, never the quick viability score (the owner, 26 Oct)", async () => {
+    const idea = (over) => session({ goal_key: "test_idea", goal_label: "Test a business idea", first_value: true, ...over });
+    answer = (path, method) => (/attach-user$/.test(path) ? idea({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? idea({ authenticated: true, state: "awaiting_review", next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-9", run_id: "run-9" } })
+      : /workflow-runs\/run-9$/.test(path) ? { run: { status: "succeeded", outcome: { links: [{ label: "the validation results", to: "/validation?history_id=agent-1&history_type=v4_validation&view=results", primary: true }] } } }
+      : method === "GET" ? {} : undefined);
+    mount();
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/validation?history_id=agent-1&history_type=v4_validation&view=results"));
+    expect(calls.some((c) => /first-value$/.test(c.path))).toBe(false);      // the quick score is never fetched or shown first
+  });
+
+  it.each(["need_funding", "launch"])("a completed %s request opens Agent Centre without preparing a case first", async goal => {
+    const saved = funding({ goal_key: goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1",
+      original_goal: goal === "launch" ? "Launch a product" : "I need funding", inputs: { amount: 50000, stage: "trading" } });
+    answer = path => /attach-user$/.test(path) || /resume$/.test(path) ? saved : {};
+    mount("/start/sess-1?workspace=biz-1");
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(saved))}`));
     expect(useWorkspaceStore.getState().workspaceId).toBe("biz-1");
-    expect(container.querySelector("[data-step='workspace']").textContent).toContain("Business ready");
-    expect(container.querySelector("[data-step='prepare']").textContent).toContain("Checking your funding readiness…");
-    expect(container.querySelector("[data-step='prepare']").textContent).not.toContain("I need funding");
-    expect(screen.getByText("Your dashboard opens as soon as there is something to show you.")).toBeTruthy();
-    await act(async () => { letPrepare(); });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
-  });
-  it("a funding case already on record: asks whether to update it or start a new one, and creates nothing until told", async () => {
-    const choose = { key: "subject_choice", label: "You already have a funding case. Update it or start a new one?", type: "choice", required: true,
-      options: [{ value: "f1", label: "Update QA Seed round (amount £120,000 → £50,000)" }, { value: "new", label: "Start a new case" }] };
-    let chosen = false;
-    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //inputs$/.test(path) ? ((chosen = true), funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" }))
-      : //prepare$/.test(path) ? (chosen ? funding({ authenticated: true, state: "handed_off", next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/funding/f1?tab=results", message: "I updated "QA Seed round"." } })
-        : funding({ authenticated: true, state: "collecting_required_data", next: "choose", missing: [], business_id: "biz-1", choose })) : {});
-    const { container } = mount("/start/sess-1?workspace=biz-1");
-    const group = await screen.findByRole("group", { name: choose.label });
-    expect(posts(//resume$/)[0].body).toEqual({ business_id: "biz-1" });
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Update QA Seed round (amount £120,000 → £50,000)", "Start a new case"]);
-    expect(states(container).prepare).toBe("active");
-    expect(screen.queryByTestId("where")).toBeNull();
-    await click(within(group).getByRole("button", { name: /^Update QA Seed round/ }));
-    expect(posts(//inputs$/)[0].body).toEqual({ answers: { subject_choice: "f1" } });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
+    expect(posts(/\/prepare$/)).toHaveLength(0);
+    expect(posts(/readiness-question$/)).toHaveLength(0);
+    expect(posts(/\/inputs$/)).toHaveLength(0);
   });
 
-  it("a task the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
+  it("leaves the existing funding need unchanged before the agent handles replace or update", async () => {
+    const saved = funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", first_value: true,
+      inputs: { amount: 250000, use: "new equipment", route: "loan" } });
+    answer = path => /attach-user$/.test(path) || /resume$/.test(path) ? saved : {};
+    mount("/start/sess-1?workspace=biz-1");
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(saved))}`));
+    expect(posts(/\/prepare$/)).toHaveLength(0);
+    expect(posts(/\/inputs$/)).toHaveLength(0);
+  });
+
+  // Signed in, a conversation from the landing page carries on in its chat, as a signed-in owner's message does (the owner,
+  // 28 Oct: "after signing, it should continue in the agent center"), with what was said and answered there
+  it("funding carries on in its own conversation, with the answers given on the landing page", async () => {
+    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /readiness-question$/.test(path) ? { kind: "funding", converse: true, to: "/funding/f1?tab=assistant" } : {});
+    mount();
+    // In the Agent Centre, straight after sign-in, before any currency or details question here (the owner, 28 Oct)
+    // Each answer with its question, a choice by its words (the owner, 28 Oct)
+    const words = "I need funding: £50,000. The business is trading.";
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
+    expect(posts(/readiness-question$/)).toHaveLength(0);
+    expect(posts(/\/prepare$/).length).toBe(0);
+  });
+
+  it("a guest's saved request continues in the main chat after sign-in when an existing case is found", async () => {
+    answer = path => /attach-user$/.test(path)
+      ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", inputs: { amount: 50000, stage: "trading" } })
+      : /readiness-question$/.test(path) ? { kind: "funding", to: "/funding/existing?tab=results" } : {};
+    mount();
+    const words = "I need funding: £50,000. The business is trading.";
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
+    expect(posts(/\/prepare$/)).toHaveLength(0);
+  });
+
+  it("a goal the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
     const refusal = { to: "/dashboard", capability: "new_proposal", blocked: true, upgrade: true, message: "Upgrade to use the Agent for this. New Proposal is included from the Starter plan." };
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //prepare$/.test(path) ? session({ authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal }) : {});
+    const goal = { goal_key: "cash_flow", goal_label: "Improve my cash flow" };      // a goal still prepared here; a task goes to the chat
+    answer = (path) => (/attach-user$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/resume$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? session({ ...goal, authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal }) : {});
     mount();
     const said = await screen.findByRole("alert");
     expect(said.textContent).toContain("I couldn't prepare that for you.");
     expect(said.textContent).toContain("Upgrade to use the Agent for this. New Proposal is included from the Starter plan.");
-    expect(said.textContent).toContain("What you told me is saved. Nothing was created or sent, and no AI Credits were used.");
-    expect(screen.queryByTestId("where")).toBeNull();
-    expect(within(said).getByRole("button", { name: "Go to the dashboard" })).toBeTruthy();
-    await click(within(said).getByRole("button", { name: "See plans" }));
-    expect(screen.getByTestId("where").textContent).toBe("/pricing");
-  });
-
-  it("a task that was refused before is tried again when the page is opened again", async () => {
-    const refusal = { to: "/dashboard", blocked: true, upgrade: true, message: "Upgrade to use the Agent for this." };
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal })
-      : //resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //prepare$/.test(path) ? session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } }) : {});
-    mount();
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
-    expect(posts(//prepare$/).length).toBe(1);
-  });
-
-  it("a failure keeps the task and offers another go; an expired task says so", async () => {
-    let fail = true;
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /validation/me/.test(path) ? { id: "biz-1" } : //resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : //prepare$/.test(path) ? (fail ? session({ authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-1", problem: "That couldn't be prepared just now. Nothing was lost; try again." })
-        : session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7" } })) : {});
-    const view = mount();
-    expect((await screen.findByRole("alert")).textContent).toContain("Nothing was lost");
-    fail = false;
-    await click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
-    view.unmount();
-    answer = (path) => (/attach-user$/.test(path) ? { __status: 404, __body: { detail: "expired" } } : {});
-    mount();
-    expect(await screen.findByText("That task has expired.")).toBeTruthy();
-  });
-});
-      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/inputs$/.test(path) ? ((chosen = true), funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" }))
-      : /\/prepare$/.test(path) ? (chosen ? funding({ authenticated: true, state: "handed_off", next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/funding/f1?tab=results", message: "I updated \"QA Seed round\"." } })
-        : funding({ authenticated: true, state: "collecting_required_data", next: "choose", missing: [], business_id: "biz-1", choose })) : {});
-    const { container } = mount("/start/sess-1?workspace=biz-1");
-    const group = await screen.findByRole("group", { name: choose.label });
-    expect(posts(/\/resume$/)[0].body).toEqual({ business_id: "biz-1" });   // the workspace picked on the homepage
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Update QA Seed round (amount £120,000 → £50,000)", "Start a new case"]);
-    expect(states(container).prepare).toBe("active");
-    expect(screen.queryByTestId("where")).toBeNull();                       // nothing happens until they choose
-    await click(within(group).getByRole("button", { name: /^Update QA Seed round/ }));
-    expect(posts(/\/inputs$/)[0].body).toEqual({ answers: { subject_choice: "f1" } });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
-  });
-
-  it("a task the plan does not include is said plainly, with the way to plans: never a bare dashboard", async () => {
-    const refusal = { to: "/dashboard", capability: "new_proposal", blocked: true, upgrade: true, message: "Upgrade to use the Agent for this. New Proposal is included from the Starter plan." };
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/prepare$/.test(path) ? session({ authenticated: true, state: "blocked", next: "handoff", missing: [], business_id: "biz-1", handoff: refusal }) : {});
-    mount();
-    const said = await screen.findByRole("alert");
-    expect(said.textContent).toContain("I couldn't prepare that for you.");
-    expect(said.textContent).toContain("Upgrade to use the Agent for this. New Proposal is included from the Starter plan.");
-    expect(said.textContent).toContain("What you told me is saved. Nothing was created or sent, and no AI Credits were used.");
+    expect(said.textContent).toContain("What you told me is saved. Nothing was created or sent.");
     expect(screen.queryByTestId("where")).toBeNull();                       // not dropped on the dashboard without a word
     expect(within(said).getByRole("button", { name: "Go to the dashboard" })).toBeTruthy();
     await click(within(said).getByRole("button", { name: "See plans" }));
@@ -669,16 +662,17 @@ describe("carrying on after sign-in", () => {
       : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
       : /\/prepare$/.test(path) ? session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7", run_id: "run-7" } }) : {});
     mount();
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/dashboard?task=run-7"));
-    expect(posts(/\/prepare$/).length).toBe(1);
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/agent"));
+    expect(JSON.parse(sessionStorage.getItem("ea:chat:review")).sessionId).toBe("sess-1");      // tried again, in the chat
   });
 
   it("a failure keeps the task and offers another go; an expired task says so", async () => {
     let fail = true;
-    answer = (path) => (/attach-user$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /validation\/me/.test(path) ? { id: "biz-1" } : /\/resume$/.test(path) ? session({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/prepare$/.test(path) ? (fail ? session({ authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-1", problem: "That couldn't be prepared just now. Nothing was lost; try again." })
-        : session({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7" } })) : {});
+    const goal = { goal_key: "cash_flow", goal_label: "Improve my cash flow" };      // a goal still prepared here
+    answer = (path) => (/attach-user$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /validation\/me/.test(path) ? { id: "biz-1" } : /\/resume$/.test(path) ? session({ ...goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
+      : /\/prepare$/.test(path) ? (fail ? session({ ...goal, authenticated: true, state: "ready_to_prepare", next: "prepare", missing: [], business_id: "biz-1", problem: "That couldn't be prepared just now. Nothing was lost; try again." })
+        : session({ ...goal, authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/dashboard?task=run-7" } })) : {});
     const view = mount();
     expect((await screen.findByRole("alert")).textContent).toContain("Nothing was lost");
     fail = false;
@@ -776,7 +770,7 @@ describe("Edit draft for proposals, purchase orders and credit notes", () => {
     const onSave = vi.fn();
     const { container } = render(<DraftEditor approval={approval("send_purchase_order", { reference: "PO-1", customer_name: "Fasthosts", items: [{ description: "Server", qty: 2, unit_price: 80 }],
       subtotal: 160, vat_rate: 0, vat_amount: 0, total: 160, delivery_date: "2026-10-20" })} options={{ document: "purchase_order", catalogue: [], customers: [] }} onCancel={() => {}} onSave={onSave} />);
-    expect(screen.getByLabelText("Deliver by").value).toBe("2026-10-20");
+    expect(screen.getByLabelText("Deliver by").value).toBe("20/10/2026");      // shown the UK way (QA P2-12)
     expect(screen.getByLabelText("Notes to the supplier")).toBeTruthy();
     expect(screen.queryByLabelText("Valid until")).toBeNull();
     expect(screen.getByLabelText("Discount").closest("div").className).toContain("hidden");
@@ -802,81 +796,28 @@ describe("Edit draft for proposals, purchase orders and credit notes", () => {
   });
 });
 
-describe("Watch it work", () => {
-  const openDemo = async () => {
-    render(<MemoryRouter><LandingPage /></MemoryRouter>);
-    await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-  };
-
-  it("plays only when asked, inside the preview's own box on a wide screen, and reports that it was opened", async () => {
-    window.matchMedia = (q) => ({ matches: /min-width: 1024px/.test(q), media: q, addEventListener() {}, removeEventListener() {} });
-    try {
-      render(<MemoryRouter><LandingPage /></MemoryRouter>);
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();          // never by itself
-      await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-      const demo = document.querySelector("[data-agent-demo]");
-      expect(demo.closest("[data-hero-mock]")).toBeTruthy();                   // in the mock's frame: nothing around it moves
-      expect(demo.className).toContain("absolute");
-      expect(demo.nextElementSibling.className).toContain("opacity-0");        // the preview fades out underneath
-      expect(document.querySelector("[data-demo-sheet]")).toBeNull();
-      await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_opened"));
-      expect(demo.querySelector("[data-demo-title]").textContent).toBe("Tell it the job");
-      expect(demo.querySelector("[data-demo-dots]").children.length).toBe(3);
-      expect(demo.querySelector("[aria-live=polite]")).toBeTruthy();
-      // Touching the launcher stops it; so does Esc.
-      fireEvent.pointerDown(screen.getByLabelText(PROMPT));
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();
-      await click(screen.getByRole("button", { name: "Watch a 30 second demo of the Agent" }));
-      fireEvent.keyDown(document, { key: "Escape" });
-      expect(document.querySelector("[data-agent-demo]")).toBeNull();
-    } finally { delete window.matchMedia; }
-  });
-
-  it("on a small screen it opens in a sheet; with reduced motion the scenes are still frames with Back and Next; Try it yourself fills the field", async () => {
-    await openDemo();                                                         // no matchMedia here: a small screen, and reduced motion
-    const sheet = document.querySelector("[data-demo-sheet]");
-    expect(sheet.getAttribute("role")).toBe("dialog");
-    expect(sheet.className).toContain("h-[90vh]");
-    const demo = within(sheet);
-    expect(demo.queryByRole("button", { name: "Pause" })).toBeNull();        // nothing plays
-    expect(demo.getByRole("button", { name: "Back" }).disabled).toBe(true);
-    expect(sheet.querySelector("[data-demo-typed]").textContent).toBe("Invoice for Mark, $300");
-    await click(demo.getByRole("button", { name: "Next" }));
-    expect(sheet.querySelector("[data-demo-title]").textContent).toBe("It does the work");
-    expect([...sheet.querySelectorAll("[data-demo-step]")].map((li) => li.textContent)).toEqual(["Reading your request", "Found Mark in your customers", "Drafting invoice INV-1001"]);
-    await click(demo.getByRole("button", { name: "Next" }));
-    expect(sheet.querySelector("[data-demo-card]").textContent).toContain("Invoice INV-1001");
-    expect(sheet.querySelector("[data-demo-card]").textContent).toContain("$300.00");
-    await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_completed"));      // the last scene was reached
-    await click(demo.getByRole("button", { name: "Try it yourself" }));
-    expect(document.querySelector("[data-demo-sheet]")).toBeNull();
-    expect(screen.getByLabelText(PROMPT).value).toBe("Invoice for Mark, $300");      // ready to send; nothing was sent
-    expect(document.activeElement).toBe(screen.getByLabelText(PROMPT));
-    expect(posts(/task-sessions$/).length).toBe(0);
-    await waitFor(() => expect(events().map((e) => e.name)).toContain("demo_try_it_clicked"));
-  });
-
-  it("the How it works section uses the demo's three scene titles", () => {
-    render(<MemoryRouter><LandingPage /></MemoryRouter>);
-    const section = document.getElementById("how-it-works");
-    expect([...section.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["Tell it the job", "It does the work", "You approve"]);
-    expect(section.textContent).not.toMatch(/[\u2013\u2014]/);
-  });
-});
 
 describe("the checkpoint knows a name already given, and asks before sending marketing", () => {
   const ready = (over = {}) => session({ next: "identity", questions: [], missing: [], first_name: null, ...over });
 
-  it("with the name said in their message it shows Continue as, not a name field; Not you brings the field back", async () => {
+  const send = () => within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" });
+
+  it("with the name said in their message it uses it, not a name field; Change brings the field back", async () => {
     answer = starts(ready({ first_name: "Munah" }));
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
-    expect(within(card()).queryByLabelText("Your name")).toBeNull();
-    expect(card().querySelector("[data-continue-as]").textContent).toBe("Continue as MunahNot you? Change");
+    expect(within(card()).queryByLabelText("Your name")).toBeNull();      // not asked again
+    expect(card().querySelector("[data-continue-as]").textContent).toBe("I'll use Munah.Change");
     fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "munah@example.test" } });
-    await click(within(card()).getByRole("button", { name: "Continue" }));
+    await click(send());
     expect(posts(/\/email$/)[0].body).toEqual({ email: "munah@example.test", marketing_consent: false });      // the name is already with the task
-    await click(within(card()).getByRole("button", { name: "Not you? Change" }));
+  });
+
+  it("Change, from the email step, asks for the name again", async () => {
+    answer = starts(ready({ first_name: "Munah" }));
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    await click(within(card().querySelector("[data-continue-as]")).getByRole("button", { name: "Change" }));
     expect(within(card()).getByLabelText("Your name")).toBeTruthy();
   });
 
@@ -884,18 +825,308 @@ describe("the checkpoint knows a name already given, and asks before sending mar
     answer = starts(ready());
     mountLauncher();
     await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "http://spam.example" } });
+    await click(send());
+    expect(within(card()).getByRole("alert").textContent).toMatch(/letters only/);      // a web address is not a name, said where it was typed
+    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Ada Obi" } });
+    await click(send());
     const box = within(card().querySelector("[data-marketing]")).getByRole("checkbox");
     expect(box.checked).toBe(false);
     expect(card().querySelector("[data-marketing]").textContent).toBe("Send me tips, product updates and the EnterprateAI newsletter. Unsubscribe any time.");
     expect(card().querySelector("[data-privacy]")).toBeNull();
-    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "http://spam.example" } });
     fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "a@example.test" } });
-    await click(within(card()).getByRole("button", { name: "Continue" }));
-    expect(within(card()).getByRole("alert").textContent).toMatch(/letters only/);      // a web address is not a name
-    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Ada Obi" } });
     fireEvent.click(box);
-    await click(within(card()).getByRole("button", { name: "Continue" }));
+    await click(send());
     expect(posts(/\/email$/)[0].body).toEqual({ email: "a@example.test", name: "Ada Obi", marketing_consent: true });
+  });
+
+  it("a name given in an earlier flow is used in the next one, never asked again", async () => {
+    localStorage.setItem("enterprate_visitor_name", "Ada Obi");      // what the first flow kept once its code was sent
+    answer = starts(ready());
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    expect(within(card()).queryByLabelText("Your name")).toBeNull();
+    expect(card().querySelector("[data-continue-as]").textContent).toBe("I'll use Ada Obi.Change");
+    fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "a@example.test" } });
+    await click(send());
+    expect(posts(/\/email$/)[0].body).toEqual({ email: "a@example.test", name: "Ada Obi", marketing_consent: false });      // this session learns it too
+  });
+
+  it("the name typed in a flow is kept for the next one", async () => {
+    answer = starts(ready());
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(within(card()).getByLabelText("Your name"), { target: { value: "Ada Obi" } });
+    await click(send());
+    fireEvent.change(within(card()).getByLabelText("Your email address"), { target: { value: "a@example.test" } });
+    await click(send());
+    expect(localStorage.getItem("enterprate_visitor_name")).toBe("Ada Obi");
+  });
+
+});
+
+
+describe("an answer of \"I'll add it later\"", () => {
+  it("is answered: the email is not asked again further on", async () => {
+    const questions = [
+      { key: "customer", label: "Who is it for?", type: "text", required: true, default: "Investors" },
+      { key: "customer_email", label: "What is their email address?", type: "email", required: true, default: "", unsure: "I'll add it later" },
+      { key: "item", label: "What are you quoting for?", type: "text", required: true, default: "" },
+    ];
+    answer = starts(session({ goal_key: "create_quotation", goal_label: "Create Quotation", questions,
+      inputs: { customer: "Investors", customer_email: "" }, missing: ["item"] }));
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "Create Invoice" }));
+    expect(within(card()).getByText("What are you quoting for?")).toBeTruthy();
+    expect(within(card()).queryByLabelText("What is their email address?")).toBeNull();
   });
 });
 
+describe("a price typed with its currency", () => {
+  it("reads the currency it was written in", async () => {
+    const { currencyIn } = await import("./GoalLauncher");
+    expect(currencyIn("$300")).toBe("USD");
+    expect(currencyIn("300 usd")).toBe("USD");
+    expect(currencyIn("€45 each")).toBe("EUR");
+    expect(currencyIn("about 300")).toBeNull();
+    expect(currencyIn("supportive")).toBeNull();      // a word that only contains a code is not a currency
+  });
+});
+
+describe("coming back to the homepage", () => {
+  it("doesn't bring back a task already carried on after sign-in as an empty card", async () => {
+    localStorage.setItem("ea_task_session:anon", "sess-1");
+    answer = (path, method) => (method === "GET" && /task-sessions\/sess-1$/.test(path)
+      ? session({ goal_key: "need_funding", goal_label: "I need funding", next: "prepare", authenticated: true, state: "ready_to_prepare", questions: [], missing: [] }) : undefined);
+    mountLauncher();
+    await waitFor(() => expect(localStorage.getItem("ea_task_session:anon")).toBeNull());
+    expect(screen.queryByRole("region", { name: "Your task" })).toBeNull();
+  });
+});
+
+describe("P1.8 a reply that doesn't go through", () => {
+  it("keeps the message in the thread, never moves on, and Try again sends the same message id", async () => {
+    let fail = true;
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding()
+      : /\/inputs$/.test(path) ? (fail ? { __status: 503, __body: { detail: { message: "That didn't go through. Try again." } } }
+        : funding({ state: "awaiting_identity", next: "identity", missing: [], inputs: { amount: 50000 } })) : undefined);
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    const turn = card().querySelector("[data-question-turn]");
+    await click(within(turn).getByRole("button", { name: "£50,000" }));
+    const sent = posts(/\/inputs$/);
+    expect(sent.length).toBe(2);      // retried once by itself
+    expect(sent[0].body.client_message_id).toBeTruthy();
+    expect(sent[1].body.client_message_id).toBe(sent[0].body.client_message_id);
+    const failed = card().querySelector("[data-turn-failed]");
+    expect(failed.querySelector("[data-unsent]").textContent).toBe("£50,000");      // the owner's message stays
+    expect(failed.textContent).toContain("That didn't go through.");
+    expect(card().querySelector("[data-question-turn]")).toBeTruthy();      // the question is still the one on screen
+    fail = false;
+    await click(within(failed).getByRole("button", { name: "Try again" }));
+    const again = posts(/\/inputs$/);
+    expect(again.length).toBe(3);
+    expect(again[2].body.client_message_id).toBe(sent[0].body.client_message_id);      // the same message: answered once
+    expect(card().querySelector("[data-turn-failed]")).toBeNull();
+  });
+});
+
+describe("launch readiness from the landing page (QA, 15 Oct)", () => {
+  const choose = { key: "subject_choice", label: "You already have a launch plan. Update it or start a new one?", type: "choice", required: true, default: "new",
+    options: [{ value: "plan-1", label: "Update QA Launch UK SMB plan" }, { value: "new", label: "Start a new launch plan" }] };
+  const launch = (over = {}) => session({ goal_key: "launch", goal_label: "I want to launch a product/service", entry_mode: "business_goal", questions: [],
+    resolution: { original_goal: "I want to launch a product/service", resolution_class: "composite_goal" },
+    missing: [], authenticated: true, business_id: "biz-1", ...over });
+
+  it("a reload picks the task up at its choice, shown as a quick reply with the new plan marked, and carries on once picked", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    window.history.replaceState(null, "", "/?task=sess-1");
+    answer = (path, method) => (method === "GET" && /task-sessions\/sess-1$/.test(path) ? launch({ state: "collecting_required_data", next: "choose", choose })
+      : /\/inputs$/.test(path) ? launch({ state: "ready_to_prepare", next: "prepare" }) : undefined);
+    mountLauncher();
+    const group = await screen.findByRole("group", { name: choose.label });
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["Update QA Launch UK SMB plan", "false"], ["Start a new launch plan", "true"]]);
+    await click(within(group).getByRole("button", { name: "Start a new launch plan" }));
+    expect(withoutId(posts(/\/inputs$/)[0].body)).toEqual({ answers: { subject_choice: "new" }, picked: "Start a new launch plan", asked: "subject_choice" });
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(launch({ state: "ready_to_prepare", next: "prepare" })))}`));
+  });
+
+  it("a signed-in owner is never asked to confirm an email: the first step is done from the start", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    answer = (path) => (/attach-user$/.test(path) ? new Promise(() => {}) : undefined);      // still on its way
+    render(<MemoryRouter initialEntries={["/start/sess-1"]}><Routes><Route path="/start/:sessionId" element={<StartPage />} /></Routes></MemoryRouter>);
+    const step = await waitFor(() => { const el = document.querySelector("[data-progress] [data-step='read']"); expect(el).toBeTruthy(); return el; });
+    expect(step.textContent).toContain("Reading your answers");
+    expect(document.body.textContent).not.toContain("Signed in");      // never a step for something already done (the owner's brief)
+    expect(document.body.textContent).not.toContain("Confirming email");
+  });
+});
+
+describe("a reply the Agent didn't keep (the owner's QA, 17 Oct)", () => {
+  it("stays on the same question when the reply was a question back, never moving on to the next", async () => {
+    const help = "A rough figure is fine. So, how much funding are you looking for?";
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding()
+      : /\/inputs$/.test(path) ? funding({ inputs: {}, turns: [{ role: "user", content: "what do you think" }, { role: "assistant", content: help, next: "amount" }] }) : undefined);
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    const box = card().querySelector("[data-composer] input");
+    fireEvent.change(box, { target: { value: "what do you think" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
+    const turn = card().querySelector("[data-question-turn]");
+    expect(turn.textContent).toContain(help);
+    expect([...turn.querySelectorAll("[data-quick-reply]")].map((b) => b.textContent)).toEqual(["£10,000", "£25,000", "£50,000"]);      // still the amount
+    expect(turn.textContent).not.toContain("Where is the business now?");
+  });
+});
+
+describe("while a typed reply is read (the owner's QA, 17 Oct)", () => {
+  it("shows the reply and 'Reading your reply', and never the next question until the server answers", async () => {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding() : undefined);
+    const plain = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url, init = {}) => {
+      if (/\/inputs$/.test(String(url))) {
+        await held;
+        return new Response(JSON.stringify(funding({ inputs: { amount: 10000 }, turns: [{ role: "user", content: "ten thousand" }, { role: "assistant", content: "Got it: £10,000. Where is the business now?", next: "stage" }] })), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return plain(url, init);
+    });
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(card().querySelector("[data-composer] input"), { target: { value: "ten thousand" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: /Send|Working/ }));
+    const turn = card().querySelector("[data-question-turn]");
+    expect(turn.querySelector("[data-sending]").textContent).toBe("ten thousand");
+    expect(turn.querySelector("[data-reading]").textContent).toBe("Thinking…");
+    expect(turn.querySelectorAll("[data-quick-reply]")).toHaveLength(0);
+    expect(turn.querySelector("[data-question-choice]")).toBeNull();
+    expect(turn.querySelector("[data-question-multi]")).toBeNull();
+    expect(turn.textContent).not.toContain("Where is the business now?");      // never the next question while reading
+    await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)); });
+    expect(card().querySelector("[data-reading]")).toBeNull();
+    expect(card().querySelector("[data-question-turn]").textContent).toContain("Where is the business now?");
+  });
+});
+
+it("keeps a text composer for multi-select questions instead of requiring option clicks", async () => {
+  const questions = [{ key: "channel", label: "How do customers find you?", type: "choice", multi: true, required: true,
+    options: [{value:"social",label:"Social media"},{value:"referrals",label:"Referrals"}] }];
+  answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+    ? funding({questions,missing:["channel"],inputs:{},turns:[{role:"assistant",content:"How do customers find you?",next:"channel"}]})
+    : /\/inputs$/.test(path) ? funding({questions,missing:[],inputs:{channel:"social,referrals"},next:"identity"}) : undefined;
+  mountLauncher();
+  await click(screen.getByRole("button", {name:"I need funding"}));
+  const input = card().querySelector("[data-composer] input");
+  expect(input).toBeTruthy();
+  expect(input.placeholder).toBe("Type your reply");
+  fireEvent.change(input,{target:{value:"social"}});
+  expect(input.value).toBe("social");
+  fireEvent.change(input,{target:{value:"Mostly Instagram and word of mouth"}});
+  await click(within(card().querySelector("[data-task-footer]")).getByRole("button",{name:"Send"}));
+  expect(posts(/\/inputs$/).at(-1).body.message).toBe("Mostly Instagram and word of mouth");
+});
+
+describe("the chat's currency (the owner's brief, 20 Oct)", () => {
+  it("starts in the signed-in workspace's currency, never £ by default", async () => {
+    useWorkspaceStore.setState({ workspaceId: "ws-ng", currency: "NGN" });
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding() : undefined);
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    expect(posts(/\/task-sessions$/)[0].body.currency).toBe("NGN");
+  });
+});
+
+describe("signed in, the homepage's chat runs by the side, on the page (the owner's QA, 23 Oct)", () => {
+  it("an existing case question goes straight to the main conversation with the original request", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    useWorkspaceStore.setState({ workspaceId: "ws1" });
+    answer = path => /readiness-question$/.test(path) ? { kind: "funding", to: "/funding/existing?tab=results" } : {};
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent("I need funding")}`));
+    expect(posts(/task-sessions$/)).toHaveLength(0);
+  });
+  it("starts the chat with the workspace, and never jumps to the dashboard first", async () => {
+    useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+    useWorkspaceStore.setState({ workspaceId: "ws1" });
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    await waitFor(() => expect(posts(/task-sessions$/).length).toBe(1));
+    expect(screen.queryByTestId("where")?.textContent || "").not.toContain("/dashboard");      // stayed on the page
+  });
+});
+
+describe("conversation control", () => {
+  it("retries a saved failed reply without asking the user to type it again", async () => {
+    const failed = funding({ inputs: { amount: 1000000 }, missing: ["use"],
+      questions: [{ key: "use", label: "What do you need the money for?", type: "text", required: true }],
+      turns: [{ role: "user", content: "food" }, { role: "assistant", content: "I'm having trouble connecting right now.", next: "use" }],
+      agent_turn: { reply: "I'm having trouble connecting right now.", next: "use", control: { action: "respond" }, retry: { message: "food", asked: "use" } } });
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path) ? failed : /\/inputs$/.test(path)
+      ? funding({ inputs: { amount: 1000000, use: "food" }, missing: ["stage"] }) : undefined;
+    mountLauncher(); await click(screen.getByRole("button", { name: "I need funding" }));
+    expect(card().querySelector("[data-composer] input").value).toBe("");
+    await click(within(card()).getByRole("button", { name: "Try again" }));
+    expect(posts(/\/inputs$/).at(-1).body.message).toBe("food");
+    expect(posts(/\/inputs$/).at(-1).body.asked).toBe("use");
+    expect(within(card()).queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+  it("keeps an enquiry in the thread without showing the pending choice menu", async () => {
+    const q = { key: "stage", label: "What stage is the business at?", type: "choice", required: true,
+      options: [{ value: "idea", label: "Just an idea" }, { value: "trading", label: "Trading" }] };
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+      ? funding({ questions: [q], missing: ["stage"], inputs: {} })
+      : /\/inputs$/.test(path) ? funding({ questions: [q], missing: ["stage"], inputs: {},
+        turns: [{ role: "user", content: "Can you explain what you do?" }, { role: "assistant", content: "I help you plan and prepare drafts." }],
+        agent_turn: { reply: "I help you plan and prepare drafts.", next: "stage", control: { action: "respond" } } }) : undefined;
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    const input = card().querySelector("[data-composer] input");
+    fireEvent.change(input, { target: { value: "Can you explain what you do?" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
+    expect(within(card()).getByText("I help you plan and prepare drafts.")).toBeTruthy();
+    expect(within(card()).queryByRole("button", { name: "Just an idea" })).toBeNull();
+    expect(card().querySelector("[data-composer] input")).toBeTruthy();
+  });
+
+  it.each([false, true])("keeps a task switch in the landing conversation (signed in: %s)", async (signedIn) => {
+    if (signedIn) {
+      useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+      useWorkspaceStore.setState({ workspaceId: "ws1" });
+    }
+    const oldTurns = [{ role: "user", content: "I need funding" }, { role: "assistant", content: "What stage is the business at?", next: "stage" }];
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+      ? funding({ questions: [{ key: "stage", label: "What stage is the business at?", type: "text", required: true }], missing: ["stage"], inputs: {}, turns: oldTurns })
+      : /\/inputs$/.test(path) ? funding({ goal_key: "create_business_plan", goal_label: "Create Business Plan", inputs: {}, missing: ["description"],
+        questions: [{ key: "description", label: "What does the business do?", type: "text", required: true }],
+        turns: [...oldTurns, { role: "user", content: "I want a business plan instead" }, { role: "assistant", content: "Sure. What does the business do?", next: "description" }],
+        agent_turn: { reply: "Sure. What does the business do?", next: "description", control: { action: "switch", target: "create_business_plan" } } }) : undefined;
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(card().querySelector("[data-composer] input"), { target: { value: "I want a business plan instead" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
+    expect(posts(/task-sessions$/)).toHaveLength(1);
+    expect(posts(/\/inputs$/).at(-1).path).toContain("sess-1/inputs");
+    expect(within(card()).getByText("Sure. What does the business do?")).toBeTruthy();
+    expect(within(card()).getByText("I need funding")).toBeTruthy();
+    expect(card().querySelector("[data-composer] input").value).toBe("");
+  });
+});
+
+describe("the thread keeps every message (the owner's QA, 21 Oct)", () => {
+  it("still shows the opening request and the first question after the first answer", async () => {
+    const after = { missing: ["use", "stage"], inputs: { amount: 5000000 },
+      turns: [{ role: "user", content: "I need funding" }, { role: "assistant", content: "How much funding do you think you need?", next: "amount" },
+        { role: "user", content: "₦5m" }, { role: "assistant", content: "₦5,000,000, noted. What do you need the money for?", next: "use" }],
+      agent_turn: { ack: "₦5,000,000, noted.", reply: "What do you need the money for?", next: "use" } };
+    answer = (path, method) => (method === "POST" && /task-sessions$/.test(path) ? funding({ turns: [{ role: "user", content: "I need funding" }, { role: "assistant", content: "How much funding do you think you need?", next: "amount" }] })
+      : /\/inputs$/.test(path) ? funding(after) : undefined);
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    await click(within(card().querySelector("[data-question-turn]")).getAllByRole("button")[0]);
+    const thread = [...card().querySelectorAll("[data-thread] [data-turn]")].map((t) => t.textContent);
+    expect(thread.slice(0, 3)).toEqual(["I need funding", "How much funding do you think you need?", "₦5m"]);
+  });
+});

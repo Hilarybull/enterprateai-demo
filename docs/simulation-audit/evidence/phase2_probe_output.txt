@@ -1,0 +1,61 @@
+
+=== +10% price, standard customer sensitivity ===
+Verdict (base): improved - Profit and/or cash end materially higher than if nothing changes.
+Swings used: 9%, the typical month-to-month variation over your last 6 complete months | costs: 10% assumed (fewer than 3 complete months on record to measure it)
+  low : scenario net cash   70,960.74   verdict worse              net cash change  -10,413.49
+  base: scenario net cash  122,214.71   verdict improved           net cash change   +4,363.64
+  high: scenario net cash  159,494.52   verdict improved           net cash change  +14,586.33
+Robustness: The verdict depends on the assumptions: low case worse than doing nothing; base case better than doing nothing; high case better than doing nothing.
+Sensitivity (largest first):
+  Customer price sensitivity               swing   25,768.22   low worse              high improved
+  Revenue ±10%                             swing      872.73   low improved           high improved
+  Cost of sales ±10%                       swing      872.73   low improved           high improved
+  Operating expenses ±10%                  swing        0.01   low improved           high improved
+  Customers pay 15 days later / sooner     swing        0.00   low improved           high improved
+Confidence: medium - 6 complete months of sales on record; standard figures used for: Customer price sensitivity
+Inputs and where they came from:
+  Monthly revenue                        20733.33  from your history  average of the last 3 complete months on record
+  Monthly cost of sales                    4000.0  recorded           monthly figure sent with the request (no monthly history)
+  Monthly operating expenses               8000.0  recorded           monthly figure sent with the request (no monthly history)
+  Cash today                              30000.0  recorded           sent with the request
+  Customer payment terms (days)                30  recorded           your customers' terms
+  Money owed to you                           0.0  none recorded      your unpaid invoices and contracts
+  Bills you owe                                 0  none recorded      your unpaid expenses
+  Tax on profit (%)                          None  not set            business settings
+  Tax paid in month                          None  not set            business settings
+  VAT / sales tax (%)                        None  not set            business settings
+  VAT period (months)                        None  not set            business settings
+  Costs with reclaimable VAT (%)             None  not set            business settings
+  Loan balance                               None  not set            business settings
+  Loan interest (% a year)                   None  not set            business settings
+  Loan repayment a month                     None  not set            business settings
+  Cost inflation (% a year)                  None  not set            business settings
+  Price change (%)                             10  entered by you     the scenario
+  Customer price sensitivity                    1  standard figure    the scenario
+KPIs at the end (scenario / now):
+  gross_margin_pct                     82.5 /         80.7
+  operating_margin_pct                 43.9 /         42.1
+  days_sales_outstanding               30.0 /         30.0
+  break_even_revenue_monthly        9701.52 /      9912.35
+  margin_of_safety_pct                 53.2 /         52.2
+  net_cash                        122214.71 /    117851.07
+
+=== Costs up 20% ===
+Verdict (base): worse - Profit and/or cash end materially lower than if nothing changes.
+Swings used: 9%, the typical month-to-month variation over your last 6 complete months | costs: 10% assumed (fewer than 3 complete months on record to measure it)
+  low : scenario net cash   52,774.60   verdict worse              net cash change  -28,599.63
+  base: scenario net cash   90,251.07   verdict worse              net cash change  -27,600.00
+  high: scenario net cash  118,307.82   verdict worse              net cash change  -26,600.37
+Robustness: The verdict is the same in the low, base and high cases.
+Sensitivity (largest first):
+  Operating expenses ±10%                  swing    3,680.00   low worse              high worse
+  Revenue ±10%                             swing    1,840.00   low worse              high worse
+  Cost of sales ±10%                       swing    1,840.00   low worse              high worse
+  Customers pay 15 days later / sooner     swing        0.00   low worse              high worse
+Confidence: medium - 6 complete months of sales on record
+
+=== F5: Idea Validation with only the money figures given ===
+Before (rubric v0.4): capacity 60, cash timing 85 (14 days assumed), sales cycle 85 (30 days assumed), concentration 75 were filled in and counted.
+After (rubric v0.5): score 67, coverage 67.0%, confidence medium
+  not assessed: {'capacity': 'No team capacity was given.', 'cash_timing': 'No payment terms were given.', 'sales_cycle': 'No sales cycle was given.', 'concentration': 'No client concentration data was given.'}
+Idea validation without research (rubric 3.1): score 62, coverage 70.0%, confidence medium; not assessed: ['market_evidence', 'trend_strength'] (were an assumed 40 and 60)

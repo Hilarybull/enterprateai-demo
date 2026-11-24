@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import logging
 from datetime import datetime, timezone
 
@@ -115,23 +117,37 @@ def _blueprint_feature_code(doc_type: str, sections: list[str] | None) -> str:
     return "business_plan_full"
 
 
+# QA R7-5: a proposal is never written on a guessed pricing model ("Subscription") or industry ("other"). Taken from the
+# profile, catalogue or idea; when none says, the owner is asked before anything is generated or charged.
+PLACEHOLDER = {"", "other", "others", "not specified", "n/a", "na", "none", "unknown", "general", "select", "choose"}
+INPUT_QUESTIONS = {"pricing_model": "How do you charge for this: a one-off price, hourly, a retainer, a subscription or by usage?",
+                   "industry": "Which industry is the business in?"}
+
+
+def _missing_inputs(payload: BlueprintGenerateRequest) -> list[dict]:
+    if payload.type != "client_proposal":
+        return []
+    return [{"key": k, "question": q} for k, q in INPUT_QUESTIONS.items()
+            if str(getattr(payload, k, None) or "").strip().lower() in PLACEHOLDER]
+
+
+def _ask_for_missing(payload: BlueprintGenerateRequest) -> None:
+    missing = _missing_inputs(payload)
+    if missing:
+        raise HTTPException(status_code=422, detail={"error": "MISSING_INPUTS", "missing": missing,
+                                                     "message": " ".join(m["question"] for m in missing) + " Nothing was generated or charged."})
+
+
 @router.post("/generate", response_model=BlueprintGenerateResponse)
 async def blueprint_generate(
     payload: BlueprintGenerateRequest,
     user=Depends(get_current_user),
 ) -> BlueprintGenerateResponse:
     user_id: str = user["id"]
+    _ask_for_missing(payload)
 
-    if payload.type == "business_plan":
-        plan_key, plan_status = await get_user_plan_info(user_id)
-        has_blueprint_grant = await _has_platform_grant(user_id, "business_plan")
-        if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
-            existing = await list_documents(user_id=user_id, type="business_plan", limit=2)
-            if len(existing) >= _LIFETIME_BLUEPRINT_LIMIT:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You have used your free lifetime business plan. Upgrade to generate more.",
-                )
+    # The AI Business Plan is on every plan, paid for in its credits (the owner, 31 Oct: "business plan … is free depending on
+    # the credits"); the credit check below refuses it when there aren't enough, and nothing is charged unless it is written.
 
     feature_code = _blueprint_feature_code(payload.type, payload.sections)
     logger.info("blueprint-generate start user=%s type=%s", user_id, payload.type)
@@ -185,9 +201,27 @@ async def blueprint_documents_update(
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def blueprint_documents_delete(
     document_id: str,
+    workspace_id: str | None = Query(default=None, max_length=80),
     user=Depends(get_current_user),
 ) -> Response:
+    doc = await get_document(user_id=user["id"], document_id=document_id)
     await delete_document(user_id=user["id"], document_id=document_id)
+    workspace = (getattr(doc, "workspace_id", None) if doc else None) or workspace_id
+    if workspace and doc:      # only for a document that was this user's
+        # Its Agent draft, if any, leaves Needs Approval with it (the owner's QA, 23 Oct)
+        try:
+            from app.modules.agent import drafts
+            from app.modules.agent.goal_router import get_orchestrator
+
+            def _drop(data: dict) -> dict:
+                drafts.withdraw(data, document_id)
+                return data
+            orch = get_orchestrator()
+            await orch.actor_for(user["id"], str(workspace), user.get("email"))      # only a workspace this user can open
+            await orch.rt.business.mutate(str(workspace), _drop)
+        except Exception:      # noqa: BLE001 - the document is deleted either way
+            import logging
+            logging.getLogger(__name__).info("draft for deleted document %s not withdrawn", document_id, exc_info=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -444,7 +478,8 @@ async def blueprint_quotation_respond(
     from app.modules.marketplace.service import ask_about_quote, respond_to_quote
     if payload.action == "question":
         return await ask_about_quote(token=token, viewer_email=viewer_email, message=payload.message or "")
-    forwarded = str(request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    from app.shared.limits import client_ip
+    forwarded = client_ip(request)
     return await respond_to_quote(
         token=token, viewer_email=viewer_email, action=payload.action,
         signer_name=payload.signer_name, accepted_terms=payload.accepted_terms, reason=payload.reason,
@@ -465,7 +500,8 @@ async def blueprint_documents_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     if doc.type == "business_plan":
-        plan_key, plan_status = await get_user_plan_info(user_id)
+        from app.modules.credits.service import entitled_plan
+        plan_key, plan_status = await entitled_plan(user_id), "active"      # QA PF1: the effective plan
         has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
         if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
             raise HTTPException(
@@ -516,7 +552,8 @@ async def blueprint_export_pdf_from_html(
     if body.document_id:
         doc = await get_document(user_id=user_id, document_id=body.document_id)
         if doc and doc.type == "business_plan":
-            plan_key, plan_status = await get_user_plan_info(user_id)
+            from app.modules.credits.service import entitled_plan
+            plan_key, plan_status = await entitled_plan(user_id), "active"      # QA PF1: the effective plan
             has_blueprint_grant = await _has_platform_grant(user_id, "business_plan_full")
             if (plan_key in _FREE_PLAN_KEYS or plan_status in {"trial", "expired"}) and not has_blueprint_grant:
                 raise HTTPException(
@@ -588,6 +625,7 @@ async def suggest_blueprint_field(
         "proposal_title": f"Suggest a professional business proposal title. Context: {ctx}. Return only the title, no labels.",
         "about_company": f"Write a 2-3 sentence company overview describing what it does, who it serves, and its edge. Context: {ctx}. Return only the text, no labels, no markdown.",
         "tagline": f"Write a punchy one-line business tagline (max 10 words). Context: {ctx}. Return only the tagline, no labels, no markdown.",
+        "service_description": f"Write one brief, factual sentence describing the named service. Use only the business context and service name provided; do not invent prices, results, credentials, locations, or specific features. Context: {ctx}. Return only the sentence, no labels, no markdown.",
         "vision": f"Write a one-sentence company vision statement describing the future the company wants to create. Context: {ctx}. Return only the text, no labels, no markdown.",
         "mission": f"Write a one-sentence company mission statement describing how it achieves its vision. Context: {ctx}. Return only the text, no labels, no markdown.",
         "core_values": f"List 4-5 short company core values as comma-separated words or short phrases. Context: {ctx}. Return only the comma-separated list, no labels, no markdown.",
@@ -606,3 +644,72 @@ async def suggest_blueprint_field(
         return {"value": text}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI suggestion failed: {e}")
+
+
+# ── QA R7-5: the document, section by section, as each is written ────────────────────────────────────────────────
+STREAM_TIMEOUT_SECONDS = 240
+STREAMED_TYPES = ("business_plan", "client_proposal")
+
+
+@router.post("/generate/stream")
+async def blueprint_generate_stream(payload: BlueprintGenerateRequest, user=Depends(get_current_user)):
+    """Server-sent events: `section` (heading, text) the moment each section is written, then `done` with the whole
+    document, or `error` (with whether to retry). The plan and the credits are checked before anything starts; the
+    document is charged once, only when every section was written; a failure or a time-out charges nothing."""
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from app.modules.blueprint.service import SECTION_STREAM
+    from app.modules.credits.service import check_credits
+    user_id: str = user["id"]
+    if payload.type not in STREAMED_TYPES:
+        raise HTTPException(status_code=422, detail={"error": "NOT_STREAMED", "message": "This document is generated in one go."})
+    _ask_for_missing(payload)
+    feature_code = _blueprint_feature_code(payload.type, payload.sections)
+    check = await check_credits(user_id, feature_code)
+    if check.get("refusal"):
+        raise HTTPException(status_code=403, detail=check["refusal"])
+    if not check.get("allowed"):
+        raise HTTPException(status_code=402, detail={"error": "INSUFFICIENT_CREDITS", "available": check.get("available_credits"),
+                                                     "required": check.get("required_credits"), "feature_code": feature_code})
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_section(heading: str, text: str) -> None:
+        await queue.put({"type": "section", "heading": heading.replace("## ", "").strip(), "text": text})
+
+    async def work() -> None:
+        token = SECTION_STREAM.set(on_section)
+        try:
+            async with credit_guard(user_id, feature_code, payload.generation_id):
+                result = await asyncio.wait_for(generate_blueprint(payload, user_id=user_id), timeout=STREAM_TIMEOUT_SECONDS)
+            await queue.put({"type": "done", "result": result.model_dump(mode="json")})
+        except asyncio.TimeoutError:
+            await queue.put({"type": "error", "retry": True, "message": "This is taking too long, so I've stopped. Nothing was charged. Please try again."})
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
+            await queue.put({"type": "error", "retry": e.status_code >= 500, "status": e.status_code, "detail": detail,
+                             "message": detail.get("message") or "The document couldn't be generated. Nothing was charged."})
+        except Exception:      # noqa: BLE001 - said plainly; the hold is released
+            logger.exception("blueprint stream failed user=%s type=%s", user_id, payload.type)
+            await queue.put({"type": "error", "retry": True, "message": "A section couldn't be written. Nothing was charged. Please try again."})
+        finally:
+            SECTION_STREAM.reset(token)
+            await queue.put(None)
+
+    task = asyncio.create_task(work())
+
+    async def events():
+        yield ": started\n\n"
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": still working\n\n"      # keeps the connection open while sections are written
+                    continue
+                if item is None:
+                    break
+                yield f"data: {_json.dumps(item)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()      # the page went away: stop, and the guard releases the hold
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

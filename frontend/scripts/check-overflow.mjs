@@ -2,7 +2,7 @@
 //
 //   npm run build && npm run check:overflow
 //
-// It serves the built app, opens "/" and "/dashboard" in headless Chrome at 1440, 1024, 768 and
+// It serves the built app, opens "/", "/dashboard" and the public pages in headless Chrome at 1440, 1024, 768 and
 // 390 pixels wide, and fails when:
 //   - an element (not absolutely or fixed positioned) ends to the right of its parent, by more than 1px;
 //   - the page can be scrolled sideways (the document is wider than the window);
@@ -117,7 +117,7 @@ function measure() {
 const reporter = `<style>*, *::before, *::after { animation: none !important; transition: none !important; }</style><script>
 window.addEventListener('load', function(){ setTimeout(function(){
   var result; try { result = (${measure.toString()})(); } catch (e) { result = { problems: ['The check itself failed: ' + e.message], kpis: [] }; }
-  var rendered = document.querySelector('#hero, [data-kpi-grid], [data-agent-card]');
+  var rendered = document.querySelector('#hero, [data-kpi-grid], [data-agent-card], [data-public-page] h1');
   if (!rendered) result.problems.push('The page did not render what was expected (no hero, Agent card or KPI grid found). It shows: ' + (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 220) + ' @ ' + location.pathname + ' | errors: ' + (window.__errors || []).slice(0, 3).join(' ; ') + ' | asked: ' + (window.__unknown || []).join(' , ') + ' | root: ' + ((document.getElementById('root') || {}).innerHTML || '').slice(0, 160));
   var holder = document.createElement('pre'); holder.id = 'overflow-result'; holder.textContent = JSON.stringify(result);
   (window.parent !== window ? window.parent.document.body : document.body).appendChild(holder);
@@ -127,7 +127,10 @@ window.addEventListener('load', function(){ setTimeout(function(){
 const html = readFileSync(join(dist, "index.html"), "utf8");
 const made = [];
 const write = (name, text) => { writeFileSync(join(dist, name), text); made.push(join(dist, name)); };
-const PAGES = [["landing", "/"], ["dashboard", "/dashboard"]];
+const PAGES = [["landing", "/"], ["dashboard", "/dashboard"],
+  // QA F: every public page behind the navigation.
+  ["features", "/features"], ["feature", "/features/idea-validation"], ["feature-group", "/features/decision-intelligence"], ["how-it-works", "/how-it-works"],
+  ["use-cases", "/use-cases"], ["testimonials", "/testimonials"], ["not-found", "/no-such-page"]];
 for (const [key, path] of PAGES) {
   write(`_overflow_${key}.html`, html.replace("<head>", `<head>${mock(path)}${reporter}`));
   // Narrow widths are measured in a frame of exactly that width (a headless window can't be made that narrow).

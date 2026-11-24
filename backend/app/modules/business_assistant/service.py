@@ -102,7 +102,36 @@ def _clean_assistant_answer(text: str) -> str:
 
     cleaned = "\n".join(lines).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned
+    # No em or en dashes in what the owner reads (the owner's rule): a range becomes "to", a clause break a comma.
+    cleaned = re.sub(r"(\d)\s*[\u2013\u2014]\s*(\d)", r"\1 to \2", cleaned)
+    cleaned = re.sub(r"\s*[\u2013\u2014]\s*", ", ", cleaned)
+    from app.shared.copy_rules import credits_plain
+    return credits_plain(cleaned)      # credits are never money: "60 credits", never "₦60 credits"
+
+
+NOTHING = "[NOTHING]"      # the model's own mark for an answer that found nothing to answer with: such answers are free
+
+
+class _Free(Exception):
+    """Raised inside the charge so the held credits are released: the answer found nothing, declined, had nothing to do,
+    or the owner asked for an action (which a task does, never the chat)."""
+
+    def __init__(self, text: str = "", action: str | None = None):
+        super().__init__(text)
+        self.action = action
+
+
+# The marker the answer gives when the message asks for something done. Live check: the model writes it with a space
+# ("[ACTION: new_purchase_order]") or after a sentence; it is the marker wherever it is.
+_ACTION = re.compile(r"\[\s*ACTION\s*:\s*([A-Za-z_]+)\s*\]", re.I)
+# A reply that promises to act is never shown as if it did (E2): "I will rename it", "Let me take care of that now".
+_PROMISES = re.compile(r"\b(?:i(?:'ll| will| am going to|'m going to)|let me)\s+(?:now\s+)?(?:rename|send|create|record|add|update|change|delete|remove|"
+                       r"take care|sort|fix|do that|do it|handle|set up|draft|issue|mark)\b", re.I)
+
+
+def _TASK_NAMES() -> list[str]:
+    from app.modules.agent.workflows import WORKFLOWS
+    return sorted(WORKFLOWS)
 
 
 CHAT_FEATURE = {"feature_code": "chat_message", "feature_name": "Business Assistant Chat", "credit_cost": 2, "enabled": True,
@@ -175,6 +204,16 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         readiness_context = await agent_modules.readiness_for(get_orchestrator(), user_id, str(getattr(workspace, "id", None) or payload.workspace_id or ""))
     except Exception:      # noqa: BLE001 - the answer just has less to go on
         readiness_context = {}
+    # B6: what the owner adopted in a readiness review (prices, costs, sales a month) and the reviews' own results: the same
+    # figures every tool uses, given by name so an answer never says "no prices" or "0% coverage" while a review shows them.
+    planned_context: dict = {}
+    try:
+        from app.modules.agent import planned as agent_planned
+        planned_context = {
+            "planned_figures": {k: {"value": v["value"], "source": v["source"], "date": v["at"]} for k, v in agent_planned.figures(workspace_data).items()},
+        }
+    except Exception:      # noqa: BLE001 - the answer just has less to go on
+        planned_context = {}
     registration_context = {
         "registration": workspace_data.get("registration") or {},
         "registration_status": workspace_data.get("registration_status") or {},
@@ -207,29 +246,16 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         simulation_runs = await sb_select(
             "scenario_runs",
             filters=[("business_id", "eq", str(workspace.id))],
-            columns="scenario_run_id,scenario_name,scenario_type,scenario_mode,state_result,baseline_metrics,scenario_metrics,deltas,created_at,completed_at",
+            columns="scenario_run_id,scenario_name,scenario_type,scenario_mode,state_result,parameters,baseline_metrics,scenario_metrics,deltas,created_at,completed_at",
             order="created_at",
             desc=True,
             limit=8,
         )
     except Exception:
         simulation_runs = []
-    simulation_context = []
-    for run in simulation_runs or []:
-        simulation_context.append(
-            {
-                "scenario_run_id": run.get("scenario_run_id"),
-                "scenario_name": run.get("scenario_name"),
-                "scenario_type": run.get("scenario_type"),
-                "scenario_mode": run.get("scenario_mode"),
-                "state_result": run.get("state_result"),
-                "baseline_metrics": run.get("baseline_metrics") or {},
-                "scenario_metrics": run.get("scenario_metrics") or {},
-                "deltas": run.get("deltas") or {},
-                "created_at": run.get("created_at"),
-                "completed_at": run.get("completed_at"),
-            }
-        )
+    # Use the same saved verdict, confidence and range as the Simulation page and report.
+    from app.modules.scenario_intelligence.service import run_digest
+    simulation_context = [run_digest(run) for run in simulation_runs or []]
 
     conversation = []
     for message in payload.messages[-10:]:
@@ -245,16 +271,31 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
     business_name = (workspace_data.get("workspace_profile") or {}).get("company_name") or workspace.name
 
     system = (
-        "You are a business assistant for the user's company, not a product support bot. "
-        "Answer only from the business context supplied. "
+        "You are EnterprateAI, a conversational assistant for a small business owner. Reply to the latest message naturally and directly. "
+        "Handle greetings and casual conversation warmly. You may explain general concepts, answer general knowledge questions, "
+        "brainstorm, compare ideas, and make recommendations without pretending those facts came from the user's business records. "
+        "For claims about the user's own company, use only the labelled business context supplied; if the records do not support an answer, "
+        "say what is missing. You are not a product support bot. "
         "CRITICAL: When answering any question about revenue, costs, profit, or financial performance, "
         "you MUST use the figures in COMPUTED FINANCIAL BASELINE — not raw invoice totals from workspace data "
         "and not figures from old simulation runs. The computed baseline matches exactly what the Simulation "
         "page shows. Old simulation runs may have stale baseline_metrics from a different point in time; "
         "treat them only as scenario outcome history, not as the current financial state. "
         "Be practical, concise, and helpful. "
-        "If the answer is not supported by the available business data, say that clearly and state what is missing. "
+        "If a business-specific answer is not supported by the available business data, say that clearly and state what is missing. "
+        f"Only when the user asks about their own business and the supplied records do not answer it, or there is nothing to do yet, begin your reply with {NOTHING}. Never use that marker merely because a general-knowledge question is outside the business records. "
+        "You cannot do anything yourself: never say you will, are about to, or have done any action (renaming, sending, creating, "
+        "recording, changing anything). If the message asks for something to be done, reply with only [ACTION:<task>] using one "
+        f"of these tasks: {', '.join(_TASK_NAMES())}; or [ACTION:none] if none of them does it. "
         "Do not claim knowledge about EnterprateAI beyond the supplied workspace data. "
+        "Every amount is shown in its own document's currency (the currency field on that invoice, quotation, receipt or "
+        "contract), never in the workspace currency unless that is the document's own: an invoice made in GBP is always in £. "
+        "Never add amounts in different currencies together; give each currency's total on its own. "
+        "When you say how many of something there are, count exactly the ones you list and say that number. "
+        "When your answer finds a gap the owner can close with one of the tasks (an offering on the profile but not in the "
+        "catalogue, a customer with no email, an invoice not sent, a plan with no price), end with one short question that "
+        "proposes that next step in plain words, for example \"Do you want me to add AI Automation Service to your catalogue, "
+        "or create a new service?\". Ask it; never say it has been done. "
         + memory.RULES + " "
         "Return plain text only. Do not use markdown, bold markers, bullet lists, numbered lists, or hyphen-led list formatting."
     )
@@ -266,6 +307,9 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
         + f"OTHER WORKSPACE DATA (profile, settings, plans):\n{_compact_json(memory.without_sourced(workspace_data), limit=12000)}\n\n"
         + (f"LAUNCH READINESS AND FUNDING READINESS (the user's launch plans and funding cases, with their latest check):\n"
            f"{_compact_json(readiness_context, limit=6000)}\n\n" if readiness_context else "")
+        + (f"ADOPTED AND PLANNED FIGURES (accepted by the owner; until there are sales on record these are the business's figures, to be "
+           f"called planned, with their basis and source. Readiness scores come only from LAUNCH READINESS AND FUNDING READINESS):\n"
+           f"{_compact_json(planned_context, limit=4000)}\n\n" if planned_context.get("planned_figures") else "")
         + f"Registration context:\n{_compact_json(registration_context, limit=6000)}\n\n"
         f"Recent simulation runs (scenario outcomes only — do not use baseline_metrics for current state):\n"
         f"{_compact_json(simulation_context, limit=12000)}\n\n"
@@ -277,11 +321,26 @@ async def chat_about_business(*, user_id: str, payload: BusinessAssistantChatReq
     # the model is called, kept only if an answer comes back, released if it fails.
     from app.modules.credits.service import credit_guard
     await _ensure_chat_price()
-    async with credit_guard(user_id, "chat_message"):
-        result = await llm.generate_text(system=system, prompt=prompt, feature="business_assistant.chat")
-        answer = _clean_assistant_answer(result.text or "")
-        if not answer:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Business assistant returned an empty response.")
+    used = 0
+    try:
+        async with credit_guard(user_id, "chat_message"):
+            result = await llm.generate_text(system=system, prompt=prompt, feature="business_assistant.chat")
+            answer = _clean_assistant_answer(result.text or "")
+            if not answer:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Business assistant returned an empty response.")
+            if answer.lstrip().startswith(NOTHING):
+                raise _Free(answer.lstrip()[len(NOTHING):].strip())      # A4: no data, a refusal or nothing to do: free
+            asked = _ACTION.search(answer)
+            if asked or _PROMISES.search(answer):
+                # E2: the owner asked for something done. The chat only describes; the task does it. Free.
+                action = asked.group(1).lower() if asked else None
+                raise _Free("", action=action if action and action != "none" else "none")
+        from app.modules.credits.service import get_feature_config
+        used = int((await get_feature_config("chat_message") or {}).get("credit_cost") or 0)
+    except _Free as free:
+        answer, action = str(free), free.action
+        if action:
+            return BusinessAssistantChatResponse(answer="", provider=result.provider, model=result.model, credits_used=0, action=action)
     from app.shared.privacy import redact_bulk_contacts
     answer, _redacted = redact_bulk_contacts(answer)      # whatever the model produced, no contact lists leave
-    return BusinessAssistantChatResponse(answer=answer, provider=result.provider, model=result.model)
+    return BusinessAssistantChatResponse(answer=answer, provider=result.provider, model=result.model, credits_used=used)

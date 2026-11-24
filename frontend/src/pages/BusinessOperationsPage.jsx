@@ -1,27 +1,25 @@
+import { EXPENSE_TYPES, expenseType, expenseCategory, expenseParty } from "../lib/expenses";
+import UkDateInput from "../components/UkDateInput";
+import { pipelineCounts } from "../lib/pipelineCounts";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { alertDialog } from "../lib/dialog";
-import { formatCurrency, newRecordId, todayLocal } from "../lib/format";
+import { currencySign, formatCurrency, newRecordId, todayLocal } from "../lib/format";
 import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useWorkspaceStore } from "../store/workspace";
+import ProposalEvaluation from "../components/ProposalEvaluation";
+import { useWorkspaceStore, workspaceCurrencyOf } from "../store/workspace";
+import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
 import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
 import PageHeader from "../components/PageHeader";
 import ErrorBoundary, { Guarded } from "../components/ErrorBoundary";
 import Spinner from "../components/Spinner";
 import { SkeletonKpi, SkeletonRegion, SkeletonTable } from "../components/Skeleton";
 import FinancialOverviewCards from "../components/FinancialOverviewCards";
-import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
+import { AGENT_CHANGED_EVENT, agentErrorMessage, ensureBusinessTimezone, recordManualReceipt, setInvoiceState, submitAgentRequest, wakeAgent } from "../lib/agent";
 import { InboxTab, ActivityTab, RequestsTab } from "./ProposalsPage";
 import { useProposalStore } from "../store/proposal";
-
-function fmtMoney(n) {
-  if (n == null || isNaN(n)) return "£0";
-  const abs = Math.abs(n);
-  const pre = n < 0 ? "-£" : "£";
-  return `${pre}${abs.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
 
 function fmtDate(s) {
   if (!s) return "—";
@@ -374,9 +372,11 @@ function Field({ label, children }) {
   );
 }
 
-function TextInput({ value, onChange, placeholder, type = "text" }) {
+function TextInput({ value, onChange, placeholder, type = "text", ...props }) {
+  if (type === "date") return <UkDateInput {...props} value={value || ""} onChange={onChange}      // dd/mm/yyyy (QA R7)
+    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />;
   return (
-    <input type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    <input {...props} type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
   );
 }
@@ -391,7 +391,7 @@ function SelectInput({ value, onChange, options }) {
   );
 }
 
-function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose }) {
+function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose, businessId = null, onSent = null }) {
   const effectiveType = receiptMode ? "receipt" : type;
   const typeLabel = effectiveType === "receipt" ? "Receipt" : effectiveType === "invoice" ? "Invoice" : effectiveType === "quote" ? "Quotation" : effectiveType === "expense" ? "Expense" : "Contract";
   const rawRef = record?.invoice_number || record?.reference || "";
@@ -399,7 +399,7 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
   const party = record?.customer_name || record?.recipient || record?.vendor_name || record?.party_name || "";
   const amt = Number(record?.total_amount || record?.amount || record?.price || 0);
   const cur = record?.currency || "GBP";
-  const fmtAmt = new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).format(amt);
+  const fmtAmt = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(amt);
 
   const customerEmail = (customers || []).find(c =>
     (c.name || c.company_name || "").toLowerCase() === (party || "").toLowerCase()
@@ -447,12 +447,17 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
     if (!emails.length || !emails[0].includes("@")) { setSendErr("Enter at least one valid email address."); return; }
     setSending(true); setSendErr("");
     try {
-      await apiRequest("/integrations/share-invoice", "POST", {
+      const res = await apiRequest("/integrations/share-invoice", "POST", {
         to_email: emails, share_url: shareUrl, ref,
         party, amount_fmt: fmtAmt, workspace_name: workspaceName || "",
         document_type: effectiveType,
       });
       setSent(true);
+      // A receipt sent by hand is issued and marked sent, the same as one the Agent sends (the owner, 13 Nov).
+      if (effectiveType === "receipt" && businessId && record?.id && (record.payments || []).length) {
+        try { await recordManualReceipt(businessId, record.id, emails, res?.message_id); onSent?.(); }
+        catch { setSendErr("The receipt was emailed, but its status couldn't be updated. Refresh the page to check."); }
+      }
     } catch (e) {
       setSendErr(e?.message || "Failed to send. Please try again.");
     } finally { setSending(false); }
@@ -543,19 +548,19 @@ function rfqErrorMessage(e, fallback) {
   return m[2] || fallback;
 }
 
-function RfqRespondModal({ rfq, wsCurrency, onClose, onDone }) {
+function RfqRespondModal({ rfq, workspaceId, wsCurrency, onClose, onDone }) {
   const [prices, setPrices] = useState(() => (rfq.items || []).map(item => ({ ...item, unit_price: "" })));
   const [validityDays, setValidityDays] = useState("30");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  const sym = wsCurrency === "USD" ? "$" : wsCurrency === "EUR" ? "€" : "£";
+  const sym = currencySign(String(wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || wsCurrency || "GBP");
   const subtotal = prices.reduce((s, p) => s + (Number(p.unit_price) || 0) * (Number(p.quantity) || 1), 0);
 
   async function handleRespond() {
     setSubmitting(true); setError(null);
     try {
-      await apiRequest(`/marketplace/rfq/${rfq.id}/approve`, "POST", {
+      await apiRequest(`/marketplace/rfq/${rfq.id}/approve?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {
         validity_days: Number(validityDays) || 30,
         item_prices: prices.map(p => ({
           product_name: p.name,
@@ -703,7 +708,7 @@ function InvoiceStateModal({ invoice, state, refLabel, amountLabel, onSubmit, on
           </label>
           <label className="block text-sm font-semibold text-slate-800">
             Date
-            <input type="date" value={date} max={todayLocal()} onChange={(e) => setDate(e.target.value)} required
+            <UkDateInput value={date} max={todayLocal()} onChange={(v) => setDate(v)} required
               className="mt-1.5 block w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900 outline-none focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100" />
           </label>
           {err && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{err}</p>}
@@ -771,7 +776,7 @@ function RecordPaymentModal({ invoice, onRecord, onClose }) {
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Received</label>
-            <input type="date" value={paidAt} onChange={e => setPaidAt(e.target.value)}
+            <UkDateInput value={paidAt} onChange={(v) => setPaidAt(v)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
           <div className="space-y-1">
@@ -818,7 +823,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
           </div>
           <div className="space-y-1">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Delivery Date</label>
-            <input type="date" value={deliveredAt} onChange={e => setDeliveredAt(e.target.value)}
+            <UkDateInput value={deliveredAt} onChange={(v) => setDeliveredAt(v)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
         </div>
@@ -834,10 +839,14 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
+export function RecordModal({ mode, type, record, customers, employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
+  // A new document starts in the workspace currency (the owner's QA, 21 Oct: naira typed into a form that showed GBP was
+  // saved as GBP). Its own currency, once it has one, is kept for ever.
+  const storeIso = isoOfCurrency(useWorkspaceStore(st => st.currency));
+  const wsIso = isoOfCurrency(givenCurrency) || storeIso || "GBP";
 
   const [form, setForm] = React.useState(() => {
     const rawRef = record?.invoice_number || record?.reference || record?.quote_number || "";
@@ -850,6 +859,11 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       id: record?.id || newRecordId(),
       customer_name: record?.customer_name || record?.recipient || record?.counterparty_name || "",
       vendor_name: record?.vendor_name || record?.party_name || record?.counterparty_name || "",
+      expense_type: expenseType(record),
+      expense_type_other: record?.expense_type_other || (expenseType(record) === "other" ? record?.category || "" : ""),
+      employee_id: record?.employee_id || "",
+      employee_name: record?.employee_name || "",
+      category: record?.category || "",
       party_name: record?.party_name || record?.customer_name || record?.vendor_name || "",
       party_type: record?.party_type || "customer",
       reference: ref || nextRef || "",
@@ -862,7 +876,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       date: record?.date || record?.expense_date || todayLocal(),
       end_date: record?.end_date || "",
       payments: record?.payments || [],
-      currency: record?.currency || record?.source_currency || "",
+      currency: record?.currency || record?.source_currency || wsIso,
       payment_terms: record?.payment_terms || "",
       notes: record?.notes || "",
       vat_rate: record?.vat_rate != null ? String(record.vat_rate) : "0",
@@ -915,12 +929,27 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     setValidationError(null);
     if (type === "invoice" && !form.customer_name?.trim()) { setValidationError("Customer name is required."); return; }
     if (type === "quote" && !form.customer_name?.trim()) { setValidationError("Customer name is required."); return; }
-    if (type === "expense" && !form.vendor_name?.trim() && !form.party_name?.trim()) { setValidationError("Vendor / supplier name is required."); return; }
+    if (type === "expense") {
+      if (form.expense_type === "staff_payments" && !form.employee_id) { setValidationError("Select the employee this payment is for."); return; }
+      if (form.expense_type === "other" && !form.expense_type_other.trim()) { setValidationError("Enter the type of expense."); return; }
+      if (form.expense_type !== "staff_payments" && !form.vendor_name?.trim() && !form.party_name?.trim()) { setValidationError("Vendor / supplier name is required."); return; }
+    }
     if (type === "contract") {
       if (!form.party_name?.trim()) { setValidationError(`${form.party_type === "vendor" ? "Vendor" : "Customer"} name is required.`); return; }
     }
     if (type !== "invoice" && type !== "quote" && !form.amount && type !== "contract") { setValidationError("Amount is required."); return; }
-    const saved = { ...form, updated_at: new Date().toISOString() };
+    const saved = { ...record, ...form, updated_at: new Date().toISOString() };
+    if (type === "expense") {
+      saved.category = expenseCategory(form.expense_type, form.expense_type_other);
+      if (form.expense_type === "staff_payments") {
+        saved.employee_name = employees.find(e => e.id === form.employee_id)?.name || form.employee_name;
+        saved.party_name = saved.employee_name;
+        saved.party_type = "employee";
+        saved.vendor_name = "";
+      } else {
+        saved.employee_id = ""; saved.employee_name = "";
+      }
+    }
     if (type === "invoice" || type === "quote") {
       const items = saved.line_items || [];
       const subtotal = items.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.unit_price) || 0), 0);
@@ -947,10 +976,10 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
 
   async function downloadPDF() {
     const ref = refLabel || "";
-    const party = form.customer_name || form.vendor_name || form.party_name || "—";
+    const party = type === "expense" ? expenseParty(form, employees) : form.customer_name || form.vendor_name || form.party_name || "—";
     const amt = Number(form.amount || 0);
-    const cur = form.currency || "GBP";
-    const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).format(n);
+    const cur = form.currency || wsIso;
+    const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(n);
     const totalPaidAmt = (form.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
     const balanceDue = Math.max(0, amt - totalPaidAmt);
     const issueDate = form.issued_at ? new Date(form.issued_at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "—";
@@ -1008,7 +1037,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     <td style="padding:0 40px 0 20px; vertical-align:top; text-align:right;">
       ${form.due_date ? `<p style="font-size:9px; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin:0 0 6px 0;">Due Date</p>
       <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${new Date(form.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</p>` : `<p style="font-size:9px; color:#94a3b8; text-transform:uppercase; letter-spacing:1px; margin:0 0 6px 0;">Currency</p>
-      <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${form.currency || "GBP"}</p>`}
+      <p style="font-size:13px; font-weight:bold; color:#1e293b; margin:0;">${form.currency || wsIso}</p>`}
     </td>
   </tr>
 </table>
@@ -1200,15 +1229,15 @@ ${form.notes ? `<!-- NOTES -->
                         <tr key={item.id || i} className="border-t border-slate-100">
                           <td className="px-4 py-2.5 text-slate-700">{item.description || "—"}</td>
                           <td className="px-3 py-2.5 text-center text-slate-500">{item.qty || 1}×</td>
-                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || "GBP")}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || "GBP")}</td>
+                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || wsIso)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || wsIso)}</td>
                         </tr>
                       );
                     }) : (
                       <tr className="border-t border-slate-100">
                         <td className="px-4 py-3 text-slate-700">{form.description || "—"}</td>
                         <td colSpan={2}></td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(totalAmt, form.currency || "GBP")}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(totalAmt, form.currency || wsIso)}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1217,20 +1246,20 @@ ${form.notes ? `<!-- NOTES -->
               {/* Totals */}
               <div className="space-y-1.5">
                 {lineItems.length > 0 ? (<>
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || "GBP")}</span></div>
-                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT</span><span>{formatCurrency(liTotalVat, form.currency || "GBP")}</span></div>}
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || wsIso)}</span></div>
+                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT</span><span>{formatCurrency(liTotalVat, form.currency || wsIso)}</span></div>}
                 </>) : (
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(totalAmt, form.currency || "GBP")}</span></div>
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(totalAmt, form.currency || wsIso)}</span></div>
                 )}
                 {totalPaid > 0 && (
                   <div className="flex justify-between text-sm text-emerald-600">
                     <span>Amount Received</span>
-                    <span>{formatCurrency(totalPaid, form.currency || "GBP")}</span>
+                    <span>{formatCurrency(totalPaid, form.currency || wsIso)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3 mt-1">
                   <span className="text-sm font-bold text-indigo-800">Balance Due</span>
-                  <span className="text-base font-bold text-indigo-700">{formatCurrency(remaining, form.currency || "GBP")}</span>
+                  <span className="text-base font-bold text-indigo-700">{formatCurrency(remaining, form.currency || wsIso)}</span>
                 </div>
               </div>
               {/* Notes */}
@@ -1259,7 +1288,7 @@ ${form.notes ? `<!-- NOTES -->
               )}
             </Field>
             <Field label="Currency">
-              <select value={form.currency || "GBP"} onChange={e => set("currency")(e.target.value)}
+              <select value={form.currency || wsIso} onChange={e => set("currency")(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300">
                 {CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}
               </select>
@@ -1304,7 +1333,7 @@ ${form.notes ? `<!-- NOTES -->
                         </div>
                       </div>
                       <div className="flex justify-end text-[11px] text-slate-500">
-                        Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || "GBP")}</span>
+                        Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                       </div>
                     </div>
                   );
@@ -1334,7 +1363,7 @@ ${form.notes ? `<!-- NOTES -->
                             <button key={i} type="button" onClick={() => addLineItem(p)}
                               className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition">
                               <div className="text-sm text-slate-800 dark:text-slate-100 font-medium">{p.name}</div>
-                              {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || "GBP")}</div>}
+                              {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || wsIso)}</div>}
                             </button>
                           ))}
                           {catalogueProducts.filter(p => !catalogueSearch || (p.name || "").toLowerCase().includes(catalogueSearch.toLowerCase())).length === 0 && (
@@ -1350,7 +1379,7 @@ ${form.notes ? `<!-- NOTES -->
               <div className="mt-3 rounded-xl bg-white border border-slate-200 px-4 py-3 space-y-2 dark:border-slate-700 dark:bg-slate-900">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs text-slate-500">Subtotal</span>
-                  <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || "GBP")}</span>
+                  <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || wsIso)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs text-slate-500 shrink-0">VAT %</label>
@@ -1358,11 +1387,11 @@ ${form.notes ? `<!-- NOTES -->
                     <input type="number" value={form.vat_rate} onChange={e => set("vat_rate")(e.target.value)} placeholder="0" min="0" max="100"
                       className="w-20 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm text-slate-900 text-right focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
                     <span className="text-xs text-slate-400">=</span>
-                    <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || "GBP")}</span>
+                    <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || wsIso)}</span>
                   </div>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-slate-800 dark:text-slate-100 border-t border-slate-100 dark:border-slate-800 pt-2">
-                  <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || "GBP")}</span>
+                  <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || wsIso)}</span>
                 </div>
               </div>
             </div>
@@ -1421,7 +1450,7 @@ ${form.notes ? `<!-- NOTES -->
                   </div>
                   <div>
                     <div className="text-[10px] text-slate-400 uppercase tracking-wide mb-0.5">Currency</div>
-                    <div className="text-xs font-semibold text-slate-800">{form.currency || "GBP"}</div>
+                    <div className="text-xs font-semibold text-slate-800">{form.currency || wsIso}</div>
                   </div>
                 </div>
               </div>
@@ -1443,15 +1472,15 @@ ${form.notes ? `<!-- NOTES -->
                         <tr key={item.id || i} className="border-t border-slate-100">
                           <td className="px-4 py-2.5 text-slate-700">{item.description || "—"}</td>
                           <td className="px-3 py-2.5 text-center text-slate-500">{item.qty || 1}×</td>
-                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || "GBP")}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || "GBP")}</td>
+                          <td className="px-3 py-2.5 text-right text-slate-600">{formatCurrency(Number(item.unit_price) || 0, form.currency || wsIso)}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(lineTotal, form.currency || wsIso)}</td>
                         </tr>
                       );
                     }) : (
                       <tr className="border-t border-slate-100">
                         <td className="px-4 py-3 text-slate-700">{form.description || "—"}</td>
                         <td colSpan={2}></td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || "GBP")}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || wsIso)}</td>
                       </tr>
                     )}
                   </tbody>
@@ -1460,12 +1489,12 @@ ${form.notes ? `<!-- NOTES -->
               {/* Totals */}
               <div className="space-y-1.5">
                 {lineItems.length > 0 && <>
-                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || "GBP")}</span></div>
-                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT ({liVatRate}%)</span><span>{formatCurrency(liTotalVat, form.currency || "GBP")}</span></div>}
+                  <div className="flex justify-between text-sm text-slate-500"><span>Subtotal</span><span>{formatCurrency(liSubtotal, form.currency || wsIso)}</span></div>
+                  {liTotalVat > 0 && <div className="flex justify-between text-sm text-slate-500"><span>VAT ({liVatRate}%)</span><span>{formatCurrency(liTotalVat, form.currency || wsIso)}</span></div>}
                 </>}
                 <div className="flex justify-between items-center rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3 mt-1">
                   <span className="text-sm font-bold text-indigo-800">Total</span>
-                  <span className="text-base font-bold text-indigo-700">{formatCurrency(lineItems.length > 0 ? liGrandTotal : Number(form.amount || 0), form.currency || "GBP")}</span>
+                  <span className="text-base font-bold text-indigo-700">{formatCurrency(lineItems.length > 0 ? liGrandTotal : Number(form.amount || 0), form.currency || wsIso)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
@@ -1488,7 +1517,7 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
             {(<>
               <Field label="Currency">
-                <select value={form.currency || "GBP"} onChange={e => set("currency")(e.target.value)}
+                <select value={form.currency || wsIso} onChange={e => set("currency")(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300">
                   {CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}
                 </select>
@@ -1532,7 +1561,7 @@ ${form.notes ? `<!-- NOTES -->
                           </div>
                         </div>
                         <div className="flex justify-end text-[11px] text-slate-500">
-                          Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || "GBP")}</span>
+                          Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                         </div>
                       </div>
                     );
@@ -1562,7 +1591,7 @@ ${form.notes ? `<!-- NOTES -->
                               <button key={i} type="button" onClick={() => addLineItem(p)}
                                 className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition">
                                 <div className="text-sm text-slate-800 dark:text-slate-100 font-medium">{p.name}</div>
-                                {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || "GBP")}</div>}
+                                {p.base_price > 0 && <div className="text-[11px] text-slate-400">{formatCurrency(Number(p.base_price || 0) - Number(p.discount || 0), form.currency || wsIso)}</div>}
                               </button>
                             ))}
                             {catalogueProducts.filter(p => !catalogueSearch || (p.name || "").toLowerCase().includes(catalogueSearch.toLowerCase())).length === 0 && (
@@ -1578,7 +1607,7 @@ ${form.notes ? `<!-- NOTES -->
                 <div className="mt-3 rounded-xl bg-white border border-slate-200 px-4 py-3 space-y-2 dark:border-slate-700 dark:bg-slate-900">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs text-slate-500">Subtotal</span>
-                    <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || "GBP")}</span>
+                    <span className="text-xs font-medium text-slate-700">{formatCurrency(liSubtotal, form.currency || wsIso)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <label className="text-xs text-slate-500 shrink-0">VAT %</label>
@@ -1586,11 +1615,11 @@ ${form.notes ? `<!-- NOTES -->
                       <input type="number" value={form.vat_rate} onChange={e => set("vat_rate")(e.target.value)} placeholder="0" min="0" max="100"
                         className="w-20 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm text-slate-900 text-right focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
                       <span className="text-xs text-slate-400">=</span>
-                      <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || "GBP")}</span>
+                      <span className="text-xs font-medium text-slate-700 w-24 text-right">{formatCurrency(liTotalVat, form.currency || wsIso)}</span>
                     </div>
                   </div>
                   <div className="flex justify-between text-sm font-bold text-slate-800 dark:text-slate-100 border-t border-slate-100 dark:border-slate-800 pt-2">
-                    <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || "GBP")}</span>
+                    <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || wsIso)}</span>
                   </div>
                 </div>
               </div>
@@ -1610,10 +1639,15 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
           </>) : null}
           {type === "expense" && (<>
-            <Field label="Vendor / Supplier">
-              {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> :
-                <TextInput value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
+            <Field label="Expense type">
+              {isView ? <div className="text-sm font-medium text-slate-900">{EXPENSE_TYPES.find(([key]) => key === form.expense_type)?.[1]}{form.expense_type === "other" ? ` · ${form.expense_type_other}` : ""}</div> : <select aria-label="Expense type" className="ea-input" value={form.expense_type} onChange={e => setForm(f => ({ ...f, expense_type: e.target.value, party_name: "", vendor_name: e.target.value === "staff_payments" ? "" : f.vendor_name }))}>{EXPENSE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
             </Field>
+            {form.expense_type === "other" && !isView ? <Field label="What type of expense?"><TextInput aria-label="Other expense type" value={form.expense_type_other} onChange={set("expense_type_other")} placeholder="For example, training or insurance" /></Field> : null}
+            {form.expense_type === "staff_payments" ? <Field label="Employee">
+              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employees.find(emp => emp.id === e.target.value)?.name || "" }))}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
+            </Field> : <Field label="Vendor / Supplier">
+              {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> : <TextInput aria-label="Vendor / Supplier" value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
+            </Field>}
             <Field label="Reference">
               {isView ? <div className="text-sm text-slate-900">{form.reference || "—"}</div> :
                 <TextInput value={form.reference} onChange={set("reference")} placeholder="EXP-001" />}
@@ -1622,8 +1656,8 @@ ${form.notes ? `<!-- NOTES -->
               {isView ? <div className="text-sm text-slate-900">{form.description || "—"}</div> :
                 <TextInput value={form.description} onChange={set("description")} placeholder="What was this expense for?" />}
             </Field>
-            <Field label="Amount (£)">
-              {isView ? <div className="text-lg font-bold text-slate-900">£{Number(form.amount || 0).toLocaleString()}</div> :
+            <Field label={`Amount (${form.currency || wsIso})`}>
+              {isView ? <div className="text-lg font-bold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || wsIso)}</div> :
                 <TextInput type="number" value={form.amount} onChange={set("amount")} placeholder="0.00" />}
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -1733,6 +1767,12 @@ ${form.notes ? `<!-- NOTES -->
 }
 
 // Returns true when a string looks like a raw UUID or UUID fragment — not user-set
+/** "NGN" from "NGN", "ngn" or "Nigerian Naira (NGN)"; "" when there is none. */
+export function isoOfCurrency(c) {
+  const t = String(c || "").trim();
+  return ((t.match(/\(([A-Z]{3})\)\s*$/) || t.match(/^([A-Za-z]{3})$/)) || [])[1]?.toUpperCase() || "";
+}
+
 function isUuidLike(str) {
   return !str || /^[0-9a-f-]{8,36}$/i.test(str.trim());
 }
@@ -1773,7 +1813,12 @@ function buildRefMap(records, prefix) {
 
 export default function BusinessOperationsPage() {
   const workspaceId = useWorkspaceStore(s => s.workspaceId);
-  const wsCurrency = useWorkspaceStore(s => s.currency);
+  // The workspace currency from the workspace itself once it has loaded (settings, else its country's): the app-wide
+  // setting starts at GBP until the layout has loaded, and nothing is converted from that guess (the owner's QA, 21 Oct:
+  // ₦500 shown as "≈ £0.28" on a workspace in naira).
+  const storeCurrency = useWorkspaceStore(s => s.currency);
+  const [docCurrency, setDocCurrency] = useState(null);
+  const wsCurrency = docCurrency || storeCurrency;
   const workspaceName = useWorkspaceStore(s => s.workspaceName);
   const wsDoc = useWorkspaceStore(s => s.wsDoc);
   const { requests: proposalRequests, inbox: proposalInbox, fetchRequests: fetchProposalRequests, fetchInbox: fetchProposalInbox } = useProposalStore();
@@ -1783,17 +1828,26 @@ export default function BusinessOperationsPage() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [activeTab, setActiveTab] = useState("Overview");
   const [salesSub, setSalesSub] = useState("Pipeline");
+  const [evaluationRequest, setEvaluationRequest] = useState(null);
   const [procSub, setProcSub] = useState("Overview");
   // Read ?tab= and ?sub= from notification deep-links
   useEffect(() => {
     const p = new URLSearchParams(location.search);
     const tab = p.get("tab"); const sub = p.get("sub");
     if (tab) setActiveTab(tab);
+    const evaluate = p.get("evaluationRequest");
+    if (tab === "Procurement" && sub === "Evaluations" && evaluate && workspaceId) {
+      setEvaluationRequest({ request: { id: evaluate, title: "this request" }, workspaceId });
+    }
     if (sub) {
       if (tab === "Sales") setSalesSub(sub);
       if (tab === "Procurement") setProcSub(sub);
+      if (tab === "Transactions") setTxnSub(sub);
     }
-  }, [location.search]);
+    if (["quote", "invoice", "expense"].includes(p.get("new"))) setCreateFromLink(p.get("new"));      // "Add an expense" from the risk check: the form, open      // "Create a quotation" from a check: the form, open
+  }, [location.search, workspaceId]);
+  const [createFromLink, setCreateFromLink] = useState(null);
+  const [recordsIn, setRecordsIn] = useState(false);      // the workspace's records have been read at least once
   const [reqCreateTrigger, setReqCreateTrigger] = useState(0);
   const [contractSub, setContractSub] = useState("All Contracts");
   const [txnSub, setTxnSub] = useState("All Transactions");
@@ -1808,6 +1862,7 @@ export default function BusinessOperationsPage() {
   const [rfqRespondTarget, setRfqRespondTarget] = useState(null);
   const [rfqAgent, setRfqAgent] = useState({});      // request id -> where the Agent has got to with it
   const [customers, setCustomers] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [catalogueProducts, setCatalogueProducts] = useState([]);
   const [recordModal, setRecordModal] = useState(null);
 
@@ -1819,19 +1874,42 @@ export default function BusinessOperationsPage() {
   const [deliveryInvoice, setDeliveryInvoice] = useState(null); // invoice to mark as delivered
   const [shareItem, setShareItem] = useState(null); // { record, type }
   const [shareToast, setShareToast] = useState("");
-  const [fxRates, setFxRates] = useState({}); // { "USD": 0.79, ... } — rate TO workspace currency
+  // The rates into the workspace currency, from the one conversion service every page uses (lib/fx): { GBP: 1775.2 },
+  // with the provider's date for each, said with the amount.
+  const fxIso = fxIsoOf(wsCurrency);
+  const { rates: fxRates, dates: fxDates } = useFxRates(foreignOf([...invoices, ...quotes, ...expenses, ...contracts], fxIso), docCurrency ? fxIso : "");
   const [reportRange, setReportRange] = useState("6m");
+  // The currencies the documents are in besides the workspace's (each document keeps its own): converted into the
+  // workspace currency for totals at today's rate, or, with no rate yet, left out and named (the owner's QA, 16 Oct).
+  const fx = useMemo(() => {
+    const isoOf = (c) => (String(c || "").match(/\(([A-Z]{3})\)/)?.[1] || String(c || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+    const ws = isoOf(wsCurrency) || "GBP";
+    if (!docCurrency) return { ws, converted: [], missing: [] };      // nothing said about conversions until the workspace's own currency is known
+    const docs = [...invoices, ...expenses, ...quotes, ...contracts];
+    const other = [...new Set(docs.map((d) => isoOf(d?.currency)).filter((c) => c && c !== ws))];
+    // a currency whose every document carries its own pinned rate is converted, whatever today's lookup says
+    const pinnedAll = (c) => docs.filter((d) => isoOf(d?.currency) === c).every((d) => pinnedRate(d, ws) != null);
+    return { ws, converted: other.filter((c) => fxRates[c] != null || pinnedAll(c)), missing: other.filter((c) => fxRates[c] == null && !pinnedAll(c)) };
+  }, [invoices, expenses, quotes, contracts, fxRates, wsCurrency, docCurrency]);
+  // KPI tiles: totals in the workspace currency (never a hard-coded £), "≈" when other currencies were converted into them.
+  const fmtMoney = (n) => {
+    const v = Number(n || 0);
+    let shown;
+    try { shown = new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: fx.ws, maximumFractionDigits: 0 }).format(v); }
+    catch { shown = formatCurrency(v, fx.ws); }
+    return `${fx.converted.length ? "≈ " : ""}${shown}`;
+  };
   const [showRangeMenu, setShowRangeMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   const reportMonths = useMemo(() => {
     const wsIso = (wsCurrency || "GBP").match(/\(([A-Z]{3})\)/)?.[1]?.toUpperCase() || (wsCurrency || "GBP").toUpperCase();
-    function toWsAmt(amount, cur) {
+    function toWsAmt(amount, cur, doc = null) {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").toUpperCase()).slice(0, 3);
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
-      return rate != null ? num * rate : num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
+      return rate != null ? num * rate : 0;
     }
     const rawAmt = r => Number(r?.total_amount || r?.amount || r?.price || 0);
     const invDate = inv => {
@@ -1847,10 +1925,10 @@ export default function BusinessOperationsPage() {
       const label = d.toLocaleDateString("en-GB", { month: "short", ...(monthCount === 12 ? { year: "2-digit" } : {}) });
       const rev = invoices
         .filter(inv => { const dd = new Date(invDate(inv) || 0); return dd.getFullYear() === y && dd.getMonth() === mo && ["paid","delivered"].includes((inv.status||"").toLowerCase()); })
-        .reduce((s, inv) => s + toWsAmt(rawAmt(inv), inv.currency), 0);
+        .reduce((s, inv) => s + toWsAmt(rawAmt(inv), inv.currency, inv), 0);
       const cost = expenses
         .filter(e => { const dd = new Date(expDate(e) || 0); return dd.getFullYear() === y && dd.getMonth() === mo; })
-        .reduce((s, e) => s + toWsAmt(rawAmt(e), e.currency), 0);
+        .reduce((s, e) => s + toWsAmt(rawAmt(e), e.currency, e), 0);
       return { label, rev, cost };
     });
   }, [invoices, expenses, fxRates, wsCurrency, reportRange]);
@@ -1874,6 +1952,8 @@ export default function BusinessOperationsPage() {
 
   function _applyWsDoc(ws) {
     ensureBusinessTimezone(workspaceId, ws);
+    const own = workspaceCurrencyOf(ws?.data);
+    if (own) setDocCurrency(own);
     const fin = ws?.data?.financials || {};
     const cat = ws?.data?.catalogue || ws?.data || {};
     setInvoices(Array.isArray(fin.invoices) ? fin.invoices : []);
@@ -1883,7 +1963,9 @@ export default function BusinessOperationsPage() {
     setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
     setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+    setEmployees(Array.isArray(cat.employees) ? cat.employees : []);
     setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
+    setRecordsIn(true);
   }
 
   useEffect(() => {
@@ -1954,32 +2036,6 @@ export default function BusinessOperationsPage() {
   }, [workspaceId]); // eslint-disable-line
 
 
-  // Fetch exchange rates for foreign-currency records
-  useEffect(() => {
-    if (!wsCurrency) return;
-    const wsIso = ((wsCurrency.match(/\(([A-Z]{3})\)\s*$/) || wsCurrency.match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase() || wsCurrency.toUpperCase();
-    const allRecs = [...invoices, ...quotes, ...expenses];
-    const foreign = new Set(
-      allRecs.map(r => {
-        const c = String(r.currency || r.source_currency || "").trim();
-        return ((c.match(/\(([A-Z]{3})\)\s*$/) || c.match(/^([A-Z]{3})$/i)) || [])[1]?.toUpperCase() || c.toUpperCase();
-      }).filter(iso => iso && iso !== wsIso && iso.length === 3)
-    );
-    if (!foreign.size) return;
-    let alive = true;
-    Promise.all([...foreign].map(async from => {
-      try {
-        const data = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-        return { from, rate: data?.rate ?? null };
-      } catch { return { from, rate: null }; }
-    })).then(results => {
-      if (!alive) return;
-      const next = {};
-      results.forEach(({ from, rate }) => { if (rate != null) next[from] = rate; });
-      setFxRates(prev => ({ ...prev, ...next }));
-    });
-    return () => { alive = false; };
-  }, [invoices, quotes, expenses, wsCurrency]); // eslint-disable-line
 
   const m = useMemo(() => {
     // Helpers
@@ -1995,14 +2051,14 @@ export default function BusinessOperationsPage() {
       if (!cur) return null;
       return (((String(cur).match(/\(([A-Z]{3})\)\s*$/) || String(cur).match(/^([A-Z]{3})$/i)) || [])[1])?.toUpperCase() || String(cur).toUpperCase();
     }
-    function toWs(amount, cur) {
+    function toWs(amount, cur, doc = null) {
       const num = Number(amount || 0);
       const fromIso = _resolveIso(cur);
       if (!fromIso) return num;
       const wsIso = _wsIso();
       if (fromIso === wsIso) return num;
-      const rate = fxRates[fromIso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[fromIso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;
     }
     function receivedAmt(i) {
       if (i.payments && i.payments.length > 0) return i.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -2027,37 +2083,39 @@ export default function BusinessOperationsPage() {
     // Invoices (filtered by range)
     const paidInvoices = invoices.filter(i => st(i.status) === "paid" && inRange(invAnchor(i)));
     const deliveredInvoices = invoices.filter(i => st(i.status) === "delivered" && inRange(invAnchor(i)));
-    const cashIn = paidInvoices.reduce((s, i) => s + toWs(receivedAmt(i), i.currency), 0);
+    const cashIn = paidInvoices.reduce((s, i) => s + toWs(receivedAmt(i), i.currency, i), 0);
     // Everything still owed on issued invoices (unpaid and part-paid), whatever their date.
-    const receivables = invoices.reduce((s, i) => s + toWs(invoiceOutstanding(i), i.currency), 0);
+    const receivables = invoices.reduce((s, i) => s + toWs(invoiceOutstanding(i), i.currency, i), 0);
     const overdueInvoices = invoices.filter(isOverdue).length;
-    const totalRevenue = [...paidInvoices, ...deliveredInvoices].reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+    const totalRevenue = [...paidInvoices, ...deliveredInvoices].reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
 
     // Expenses (filtered by range)
     const paidExpenses = expenses.filter(e => st(e.status) === "paid" && inRange(expAnchor(e)));
-    const cashOut = paidExpenses.reduce((s, e) => s + toWs(rawAmt(e), e.currency), 0);
+    const cashOut = paidExpenses.reduce((s, e) => s + toWs(rawAmt(e), e.currency, e), 0);
     const payables = expenses
       .filter(e => ["pending","overdue","draft"].includes(st(e.status)) && inRange(expAnchor(e)))
-      .reduce((s, e) => s + toWs(rawAmt(e), e.currency), 0);
+      .reduce((s, e) => s + toWs(rawAmt(e), e.currency, e), 0);
 
     // Contracts (active ones regardless of range; contract value filtered by range)
     const activeContracts = contracts.filter(c => ["active","signed"].includes(st(c.status)) || !c.status).length;
-    const awaitingApproval = contracts.filter(c => ["pending","awaiting_approval"].includes(st(c.status))).length;
+    // C6: counted as they are. A draft (the Agent's, waiting in Needs Approval, or one made here) has not gone out; a
+    // contract that is "pending" is out with the customer for signature.
+    const { contractDrafts: awaitingApproval, contractsOut } = pipelineCounts(contracts, []);
     const expiringSoon = contracts.filter(c => st(c.status) === "expiring_soon").length;
     const rangeContracts = contracts.filter(c => inRange(cAnchor(c)));
-    const totalContractValue = rangeContracts.reduce((s, c) => s + toWs(rawAmt(c), c.currency), 0);
+    const totalContractValue = rangeContracts.reduce((s, c) => s + toWs(rawAmt(c), c.currency, c), 0);
 
     // Quotes (filtered by range)
     const rangeQuotes = quotes.filter(q => inRange(qAnchor(q)));
     const proposalsSubmitted = rangeQuotes.filter(q => ["sent","viewed","submitted"].includes(st(q.status))).length;
     const quotationsSent = rangeQuotes.filter(q => SENT_QUOTE_STATUSES.includes(st(q.status))).length;
     const quotationsViewed = rangeQuotes.filter(q => st(q.status) === "viewed").length;
-    const awaitingResponse = rangeQuotes.filter(q => ["pending","awaiting_response"].includes(st(q.status))).length;
+    const { quotesAwaitingReply: awaitingResponse, quoteDrafts } = pipelineCounts([], rangeQuotes);
     const wonQuotes = rangeQuotes.filter(q => ["won","accepted"].includes(st(q.status))).length;
     const winRate = rangeQuotes.length > 0 ? Math.round((wonQuotes / rangeQuotes.length) * 100) : 0;
     const potentialValue = rangeQuotes
       .filter(q => !["rejected","expired"].includes(st(q.status)))
-      .reduce((s, q) => s + toWs(rawAmt(q), q.currency), 0);
+      .reduce((s, q) => s + toWs(rawAmt(q), q.currency, q), 0);
 
     // RFQ (filtered by range)
     const rangeRfqs = rfqRequests.filter(r => inRange(r.created_at));
@@ -2071,7 +2129,7 @@ export default function BusinessOperationsPage() {
     }).length;
 
     return {
-      activeContracts, awaitingApproval, expiringSoon, totalContractValue,
+      activeContracts, awaitingApproval, contractsOut, quoteDrafts, expiringSoon, totalContractValue,
       cashIn, cashOut, receivables, payables, netCash: cashIn - cashOut, totalRevenue,
       proposalsSubmitted, quotationsSent, quotationsViewed, awaitingResponse, potentialValue,
       activeRfqs, rfqProposalsReceived, awaitingEvaluation, upcomingDeadlines,
@@ -2093,20 +2151,51 @@ export default function BusinessOperationsPage() {
       const fromIso = _resolveIso(overrideCurrency);
       const wsIso = _wsIso();
       if (fromIso && fromIso !== wsIso && fxRates[fromIso] != null) {
-        const converted = formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso);
-        return `${converted} (${formatCurrency(num, fromIso)})`;
+        // Its own currency first; the conversion after it, marked approximate (the owner's QA, 16 Oct).
+        return `${formatCurrency(num, fromIso)} (≈ ${formatCurrency(Math.round(num * fxRates[fromIso] * 100) / 100, wsIso)}${rateWords(fromIso)})`;
       }
+      return formatCurrency(num, fromIso || wsCurrency || "GBP");
     }
-    return formatCurrency(num, overrideCurrency || wsCurrency || "GBP");
+    // A total in the workspace currency: "≈" when other currencies were converted into it.
+    return `${fx.converted.length ? "≈ " : ""}${formatCurrency(num, wsCurrency || "GBP")}`;
   }
 
-  function toWsConverted(amount, cur) {
+  /** " at 16 Oct rate", or " at 12 Oct rate, may be out of date" when the rate is more than 2 days old. */
+  function rateWords(iso) {
+    const day = fxDates[iso];
+    if (!day) return "";
+    const d = new Date(`${day}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return "";
+    const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const old = (Date.now() - d.getTime()) / 86400000 > 3;
+    return ` at ${label} rate${old ? ", may be out of date" : ""}`;
+  }
+
+  /** A list's amount cell: the document's own currency, and under it, small and grey, "≈ ₦…" in the workspace currency. */
+  function AmountCell({ value, currency, doc = null }) {
+    const num = Number(value || 0);
+    const fromIso = _resolveIso(currency) || _wsIso();
+    const ws = _wsIso();
+    const pinned = fromIso === ws ? null : pinnedRate(doc, ws);
+    const rate = fromIso === ws ? 1 : (pinned ?? fxRates[fromIso]);
+    const when = pinned && doc?.fx?.date ? ` at ${new Date(`${String(doc.fx.date).slice(0, 10)}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate` : null;
+    return (
+      <span className="whitespace-nowrap" data-amount-cell>
+        <span className="block font-medium text-slate-800">{formatCurrency(num, fromIso)}</span>
+        {fromIso !== ws && (rate != null
+          ? <span className="block text-[11px] text-slate-400" data-amount-converted>≈ {formatCurrency(Math.round(num * rate * 100) / 100, ws)}{when ?? rateWords(fromIso)}</span>
+          : <span className="block text-[11px] text-slate-400" data-amount-converted>No {ws} rate yet</span>)}
+      </span>
+    );
+  }
+
+  function toWsConverted(amount, cur, doc = null) {
     const num = Number(amount || 0);
     const fromIso = _resolveIso(cur);
     const ws = _wsIso();
     if (!fromIso || fromIso === ws) return num;
-    const rate = fxRates[fromIso];
-    return rate != null ? num * rate : num;
+    const rate = pinnedRate(doc, ws) ?? fxRates[fromIso];
+    return rate != null ? num * rate : 0;
   }
   function receivedAmt(i) {
     if (i.payments && i.payments.length > 0) return i.payments.reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -2228,7 +2317,7 @@ export default function BusinessOperationsPage() {
         status: i.status || "—", date: invDate(i)?.slice(0,10) || "—"
       })),
       ...expenses.filter(e => inRange(expDate(e))).map(e => ({
-        type: "Expense", party: e.vendor_name || e.party_name || "—",
+        type: "Expense", party: expenseParty(e, employees),
         reference: getRef(e, null),
         description: e.description || e.category || "—",
         amount: Number(e.total_amount || e.amount || 0), currency: e.currency || wsCurrency || "",
@@ -2262,7 +2351,7 @@ export default function BusinessOperationsPage() {
     const { rows, rangeName, rangeLabel } = _reportData();
     const fmtAmt = (n, cur) => {
       const iso = (String(cur||"").match(/\(([A-Z]{3})\)/)?.[1] || String(cur||"")).toUpperCase().slice(0,3) || "GBP";
-      try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: iso, maximumFractionDigits: 2 }).format(n); }
+      try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: iso, maximumFractionDigits: 2 }).format(n); }
       catch { return `${iso} ${Number(n).toFixed(2)}`; }
     };
     const wsIso = (String(wsCurrency||"GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(wsCurrency||"GBP")).toUpperCase().slice(0,3);
@@ -2345,6 +2434,12 @@ export default function BusinessOperationsPage() {
       document.head.appendChild(s);
     }
   }
+
+  useEffect(() => {      // once the records are in, so the new number follows the ones already used
+    if (!createFromLink || loading || !recordsIn) return;
+    openCreate(createFromLink);
+    setCreateFromLink(null);
+  }, [createFromLink, loading, recordsIn]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   function openCreate(type, initialData = null) {
     const prefix = type === "invoice" ? "INV" : type === "quote" ? "QUO" : type === "expense" ? "EXP" : "CON";
@@ -2694,6 +2789,13 @@ export default function BusinessOperationsPage() {
         </SkeletonRegion>
       )}
       <div className={`mt-4 space-y-4 ${loading ? "hidden" : ""}`}>
+        {(fx.converted.length > 0 || fx.missing.length > 0) && (
+          <p className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12.5px] text-slate-500 dark:border-slate-800 dark:bg-slate-900" data-converted-note>
+            {fx.converted.length > 0 && <>≈ Totals include {fx.converted.map((c) => `${c}${rateWords(c)}`).join(", ")} amounts converted to {fx.ws}. </>}
+            {fx.missing.length > 0 && <>Not counted in totals yet: {fx.missing.join(", ")} amounts (no rate yet). </>}
+            Each document keeps its own currency.
+          </p>
+        )}
 
         {/* ===== OVERVIEW ===== */}
         {activeTab === "Overview" && guarded("Overview", () => (
@@ -2733,8 +2835,10 @@ export default function BusinessOperationsPage() {
                 <div className="space-y-3">
                   {[
                     { dot: "bg-emerald-500", label: "Requests Open", val: m.activeRfqs },
-                    { dot: "bg-blue-500", label: "Quotations Pending", val: m.awaitingResponse },
-                    { dot: "bg-amber-500", label: "Contracts Awaiting Approval", val: m.awaitingApproval },
+                    { dot: "bg-blue-500", label: "Quotations sent, waiting for a reply", val: m.awaitingResponse },
+                    { dot: "bg-slate-400", label: "Quotation drafts, not sent yet", val: m.quoteDrafts },
+                    { dot: "bg-amber-500", label: "Contract drafts, not sent yet", val: m.awaitingApproval },
+                    { dot: "bg-indigo-500", label: "Contracts out for signature", val: m.contractsOut },
                   ].map(row => (
                     <div key={row.label} className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2.5">
@@ -2801,7 +2905,7 @@ export default function BusinessOperationsPage() {
                     Customer: q.customer_name || q.recipient || "—",
                     Type: <span className="capitalize">{q.type || "Quotation"}</span>,
                     Reference: quoteRefMap.get(q.id) || "—",
-                    Value: (q.total_amount || q.amount) ? `£${Number(q.total_amount || q.amount).toLocaleString()}` : "—",
+                    Value: (q.total_amount || q.amount) ? formatCurrency(Number(q.total_amount || q.amount), q.currency || fx.ws) : "—",
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Updated: fmtDate(q.updated_at || q.created_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
@@ -2826,7 +2930,7 @@ export default function BusinessOperationsPage() {
                     Customer: q.customer_name || q.recipient || "—",
                     Reference: quoteRefMap.get(q.id) || "—",
                     Description: q.description || q.title || "—",
-                    Amount: formatMoney(Number(q.total_amount || q.amount || 0), q.currency),
+                    Amount: <AmountCell value={Number(q.total_amount || q.amount || 0)} currency={q.currency} doc={q} />,
                     Status: <StatusPill status={q.status || "Draft"} />,
                     Date: fmtDate(q.created_at || q.updated_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("quote", q) }, { label: "Edit", onClick: () => openEdit("quote", q) }, ...agentQuoteItems(q), ...(["draft", ""].includes(q.status || "") ? [{ label: "Mark as Sent", onClick: () => markAsStatus("quote", q.id, "sent") }] : []), ...(!["won", "rejected"].includes(q.status || "") ? [{ label: "Mark as Won", onClick: () => markAsStatus("quote", q.id, "won") }] : []), ...(q.status === "won" ? [{ label: "Convert to Invoice", onClick: () => convertQuoteToInvoice(q) }, { label: "Convert to Contract", onClick: () => convertQuoteToContract(q) }] : []), { label: "Share", onClick: () => shareQuote(q) }, { label: "Delete", tone: "danger", onClick: () => deleteItem("quote", q.id) }]} />,
@@ -2875,7 +2979,7 @@ export default function BusinessOperationsPage() {
                       ...(r.status === "pending" ? [
                         { label: "Respond with Quote", onClick: () => setRfqRespondTarget(r) },
                         { label: "Decline", onClick: async () => {
-                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject`, "POST"); refreshWorkspace(); }
+                          try { await apiRequest(`/marketplace/rfq/${r.id}/reject?workspace_id=${encodeURIComponent(workspaceId)}`, "POST"); refreshWorkspace(); }
                           catch (e) { alertDialog(rfqErrorMessage(e, "Could not decline this RFQ.")); }
                         } },
                       ] : []),
@@ -2904,7 +3008,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} doc={inv} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -2939,7 +3043,7 @@ export default function BusinessOperationsPage() {
                   : (String(inv.status || "").toLowerCase() === "paid" ? [{ id: `legacy-${inv.id}`, amount: invoiceReceived(inv), paid_at: inv.paid_at || inv.date || inv.created_at, legacy: true }] : []);
                 return pays.map((p) => ({ inv, p }));
               }).sort((a, b) => new Date(b.p.paid_at || 0) - new Date(a.p.paid_at || 0));
-              const totalReceived = receiptRows.reduce((s, { inv, p }) => s + toWsConverted(p.amount, inv.currency), 0);
+              const totalReceived = receiptRows.reduce((s, { inv, p }) => s + toWsConverted(p.amount, inv.currency, inv), 0);
               const issued = receiptRows.filter(({ p }) => p.receipt?.number).length;
               return (
                 <>
@@ -2957,7 +3061,7 @@ export default function BusinessOperationsPage() {
                       "Receipt #": p.receipt?.number || "—",
                       Customer: inv.customer_name || inv.recipient || inv.counterparty_name || "—",
                       "Invoice #": invoiceRefMap.get(inv.id) || "—",
-                      Amount: formatMoney(Number(p.amount || 0), inv.currency),
+                      Amount: <AmountCell value={Number(p.amount || 0)} currency={inv.currency} doc={inv} />,
                       "Date Paid": fmtDay(p.paid_at),
                       Receipt: <StatusPill status={p.receipt?.sent_at ? "Sent" : p.receipt?.number ? "Issued" : "Not issued"} />,
                       Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", inv, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", inv) }, ...agentInvoiceItems(inv), { label: "Share Receipt", onClick: () => setShareItem({ record: inv, type: "invoice", receiptMode: true }) }]} />,
@@ -3025,7 +3129,9 @@ export default function BusinessOperationsPage() {
                 </>
               );
             })()}
-            {procSub === "Proposal Requests" && <div className="mt-2"><RequestsTab createTrigger={reqCreateTrigger} /></div>}
+            {procSub === "Proposal Requests" && <div className="mt-2 space-y-4">
+              <RequestsTab createTrigger={reqCreateTrigger} />
+            </div>}
             {procSub === "Sent RFQs" && (
               <>
                 <div className="flex gap-3 overflow-x-auto mt-2">
@@ -3078,6 +3184,9 @@ export default function BusinessOperationsPage() {
                     value={unlinked.length}
                     numColor="text-orange-500" iconBg="bg-orange-50" iconColor="text-orange-500" />}
                 </div>
+                {evaluationRequest?.workspaceId === workspaceId && <ProposalEvaluation
+                  key={evaluationRequest.request.id} request={evaluationRequest.request} workspaceId={workspaceId}
+                  onClose={() => setEvaluationRequest(null)} />}
                 <TableSection title="Evaluations" searchPlaceholder="Search evaluations..."
                   cols={["Request", "Proposals", "Deadline", "Status", "Action"]}
                   rows={proposalRequests.map(r => ({
@@ -3086,6 +3195,7 @@ export default function BusinessOperationsPage() {
                     Deadline: r.deadline ? new Date(r.deadline).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—",
                     Status: <StatusPill status={r.status || "DRAFT"} />,
                     Action: <ActionMenu items={[
+                      ...(r.sourcing_kind === "RFQ" ? [] : [{ label: "Evaluate proposals", onClick: () => setEvaluationRequest({ request: r, workspaceId }) }]),
                       { label: "View Proposals", onClick: () => setProcSub("Inbox") },
                       { label: "View Request", onClick: () => setProcSub("Proposal Requests") },
                     ]} />,
@@ -3127,7 +3237,7 @@ export default function BusinessOperationsPage() {
               <>
                 <div className="flex gap-3 overflow-x-auto">
                   <KpiCard icon={IDoc} label="Active Contracts" value={m.activeContracts} numColor="text-blue-600" iconBg="bg-blue-50" iconColor="text-blue-600" />
-                  <KpiCard icon={IClock} label="Awaiting Approval" value={m.awaitingApproval} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
+                  <KpiCard icon={IClock} label="Drafts, not sent yet" value={m.awaitingApproval} numColor="text-amber-500" iconBg="bg-amber-50" iconColor="text-amber-500" />
                   <KpiCard icon={ICalendar} label="Expiring Soon" value={m.expiringSoon} numColor="text-orange-500" iconBg="bg-orange-50" iconColor="text-orange-500" />
                   <KpiCard icon={IPound} label="Total Contract Value" value={fmtMoney(m.totalContractValue)} numColor="text-emerald-600" iconBg="bg-emerald-50" iconColor="text-emerald-600" />
                 </div>
@@ -3135,8 +3245,8 @@ export default function BusinessOperationsPage() {
                 <div className="rounded-xl border border-slate-200 bg-white p-5">
                   <div className="mb-3 text-sm font-semibold text-slate-900">Contract Lifecycle</div>
                   <Pipeline stages={[
-                    { label: "Draft", value: contracts.filter(c => c.status === "draft").length, bg: "bg-slate-100", textColor: "text-slate-500" },
-                    { label: "Awaiting Approval", value: m.awaitingApproval, bg: "bg-amber-100", textColor: "text-amber-600" },
+                    { label: "Draft", value: m.awaitingApproval, bg: "bg-slate-100", textColor: "text-slate-500" },
+                    { label: "Out for signature", value: m.contractsOut, bg: "bg-amber-100", textColor: "text-amber-600" },
                     { label: "Active", value: m.activeContracts, bg: "bg-emerald-100", textColor: "text-emerald-600" },
                     { label: "Expiring Soon", value: m.expiringSoon, bg: "bg-orange-100", textColor: "text-orange-500" },
                     { label: "Expired", value: contracts.filter(c => c.status === "expired").length, bg: "bg-rose-100", textColor: "text-rose-600" },
@@ -3144,7 +3254,7 @@ export default function BusinessOperationsPage() {
                 </div>
 
                 <IntelBox
-                  message={m.expiringSoon > 0 ? `${m.expiringSoon} contracts expire within 30 days - renew to avoid lapse` : m.awaitingApproval > 0 ? `${m.awaitingApproval} contracts awaiting approval` : contracts.length === 0 ? "No contracts yet" : "All contracts are current"}
+                  message={m.expiringSoon > 0 ? `${m.expiringSoon} contracts expire within 30 days: renew them to avoid a lapse` : m.awaitingApproval > 0 ? `${m.awaitingApproval} contract drafts not sent yet` : contracts.length === 0 ? "No contracts yet" : "All contracts are current"}
                   btnLabel="Review Risks"
                   onBtn={() => { setActiveTab("Reports"); setReportSub("Contracts"); }}
                 />
@@ -3157,7 +3267,7 @@ export default function BusinessOperationsPage() {
                     Party: c.party_name || c.vendor_name || c.customer_name || "—",
                     "Contract Type": <StatusPill status={c.party_type === "customer" ? "Customer" : c.party_type === "vendor" ? "Vendor" : "—"} />,
                     Reference: contractRefMap.get(c.id) || "—",
-                    Value: (c.price || c.amount || c.value) ? `£${Number(c.price || c.amount || c.value).toLocaleString()}` : "—",
+                    Value: (c.price || c.amount || c.value) ? formatCurrency(Number(c.price || c.amount || c.value), c.currency || fx.ws) : "—",
                     "End Date": c.end_date ? new Date(c.end_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—",
                     Status: <StatusPill status={c.status || "Active"} />,
                     Source: c.source || "Manual",
@@ -3270,12 +3380,12 @@ export default function BusinessOperationsPage() {
                   cols={["Type", "Party", "Reference", "Amount", "Date", "Status", "Linked Record", "Action"]}
                   rows={[
                     ...invoices.map(i => ({ ...i, _t: "Invoice", _party: i.party_name || i.customer_name || i.recipient || "—", _linked: i.contract_id || "—", amount: i.total_amount || i.amount })),
-                    ...expenses.map(e => ({ ...e, _t: "Expense", _party: e.vendor_name || e.party_name || e.counterparty_name || "—", _linked: e.contract_id || "—", amount: e.total_amount || e.amount || e.price })),
+                    ...expenses.map(e => ({ ...e, _t: "Expense", _party: expenseParty(e, employees), _linked: e.contract_id || "—", amount: e.total_amount || e.amount || e.price })),
                   ].sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0)).slice(0, 8).map(t => ({
                     Type: <StatusPill status={t._t} />,
                     Party: t._party,
                     Reference: (!isUuidLike(t.reference) && t.reference) ? t.reference : "—",
-                    Amount: formatMoney(Number(t.total_amount || t.amount || 0), t.currency),
+                    Amount: <AmountCell value={Number(t.total_amount || t.amount || 0)} currency={t.currency} doc={t} />,
                     Date: fmtDate(t.date || t.created_at),
                     Status: <StatusPill status={t.status || "Pending"} paymentType={t.payment_type} />,
                     "Linked Record": t._linked,
@@ -3300,7 +3410,7 @@ export default function BusinessOperationsPage() {
                     Customer: inv.customer_name || inv.party_name || "—",
                     "Invoice #": invoiceRefMap.get(inv.id) || "—",
                     Description: inv.description || inv.product_name || (Array.isArray(inv.product_names) ? inv.product_names.join(', ') : inv.product_names) || inv.title || "—",
-                    Amount: formatMoney(Number(inv.total_amount || inv.amount || 0), inv.currency),
+                    Amount: <AmountCell value={Number(inv.total_amount || inv.amount || 0)} currency={inv.currency} doc={inv} />,
                     Status: invoiceHoldState(inv) ? (
                       <span className="block max-w-[240px]">
                         <StatusPill status={invoiceHoldState(inv)} />
@@ -3338,10 +3448,10 @@ export default function BusinessOperationsPage() {
                 <TableSection title="Expenses" searchPlaceholder="Search expenses..."
                   cols={["Vendor", "Reference", "Description", "Amount", "Status", "Date", "Action"]}
                   rows={[...expenses].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(e => ({
-                    Vendor: e.vendor_name || e.party_name || "—",
+                    Vendor: expenseParty(e, employees),
                     Reference: e.reference || e.id?.slice(0, 8) || "—",
                     Description: e.description || e.title || "—",
-                    Amount: formatMoney(Number(e.total_amount || e.amount || e.price || 0), e.currency),
+                    Amount: <AmountCell value={Number(e.total_amount || e.amount || e.price || 0)} currency={e.currency} doc={e} />,
                     Status: <StatusPill status={e.status || "Pending"} />,
                     Date: fmtDate(e.date || e.created_at),
                     Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", e) }, { label: "Edit", onClick: () => openEdit("expense", e) }, ...(e.status !== "paid" ? [{ label: "Mark as Paid", onClick: () => markAsPaid("expense", e.id) }] : []), { label: "Delete", tone: "danger", onClick: () => deleteItem("expense", e.id) }]} />,
@@ -3356,7 +3466,7 @@ export default function BusinessOperationsPage() {
                 rows={invoices.filter(i => i.status === "paid" || i.status === "partial").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(r => ({
                   Party: r.customer_name || r.party_name || "—",
                   Reference: r.reference || r.id?.slice(0, 8) || "—",
-                  Amount: formatMoney(receivedAmt(r), r.currency),
+                  Amount: <AmountCell value={receivedAmt(r)} currency={r.currency} doc={r} />,
                   Date: fmtDate(r.paid_at || r.date || r.created_at),
                   Status: <StatusPill status={r.status || "paid"} />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("invoice", r, { receiptMode: true }) }, { label: "Edit", onClick: () => openEdit("invoice", r, { receiptMode: true }) }]} />,
@@ -3370,7 +3480,7 @@ export default function BusinessOperationsPage() {
                 rows={expenses.filter(e => e.status === "paid").sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(p => ({
                   Party: p.vendor_name || p.supplier_name || p.party_name || "—",
                   Reference: p.reference || p.id?.slice(0, 8) || "—",
-                  Amount: formatMoney(Number(p.total_amount || p.amount || 0), p.currency),
+                  Amount: <AmountCell value={Number(p.total_amount || p.amount || 0)} currency={p.currency} doc={p} />,
                   Date: fmtDate(p.paid_at || p.date || p.created_at),
                   Status: <StatusPill status="paid" />,
                   Action: <ActionMenu items={[{ label: "View", onClick: () => openView("expense", p) }]} />,
@@ -3500,13 +3610,13 @@ export default function BusinessOperationsPage() {
                     Customer: name,
                     Proposals: quotes.filter(q => q.customer_name === name).length,
                     Won: quotes.filter(q => q.customer_name === name && (q.status === "won" || q.status === "accepted")).length,
-                    Revenue: fmtMoney(invoices.filter(i => i.customer_name === name && ["paid","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency), 0)),
+                    Revenue: fmtMoney(invoices.filter(i => i.customer_name === name && ["paid","delivered"].includes((i.status||"").toLowerCase())).reduce((s, i) => s + toWsConverted(i.total_amount || i.amount || 0, i.currency, i), 0)),
                     Receivables: fmtMoney(invoices.filter(i => i.customer_name === name).reduce((s, i) => {
                       const st2 = (i.status || "").toLowerCase();
-                      if (["sent","overdue","delivered"].includes(st2)) return s + toWsConverted(i.total_amount || i.amount || 0, i.currency);
+                      if (["sent","overdue","delivered"].includes(st2)) return s + toWsConverted(i.total_amount || i.amount || 0, i.currency, i);
                       if (st2 === "paid" && i.payment_type === "partial") {
-                        const recv = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency), 0);
-                        return s + toWsConverted(Math.max(0, Number(i.total_amount || i.amount || 0) - recv), i.currency);
+                        const recv = (i.payments || []).reduce((ps, p) => ps + toWsConverted(p.amount, i.currency, i), 0);
+                        return s + toWsConverted(Math.max(0, Number(i.total_amount || i.amount || 0) - recv), i.currency, i);
                       }
                       return s;
                     }, 0)),
@@ -3569,11 +3679,11 @@ export default function BusinessOperationsPage() {
                   cols={["Type", "Party", "Amount", "Date", "Status"]}
                   rows={[
                     ...invoices.map(i => ({ _t: "Invoice", _party: i.customer_name || i.party_name || "—", _amt: Number(i.total_amount || i.amount || 0), _cur: i.currency, date: i.date || i.created_at, status: i.status, _paymentType: i.payment_type })),
-                    ...expenses.map(e => ({ _t: "Expense", _party: e.vendor_name || e.party_name || "—", _amt: Number(e.total_amount || e.amount || e.price || 0), _cur: e.currency, date: e.date || e.created_at, status: e.status })),
+                    ...expenses.map(e => ({ _t: "Expense", _party: expenseParty(e, employees), _amt: Number(e.total_amount || e.amount || e.price || 0), _cur: e.currency, date: e.date || e.created_at, status: e.status })),
                   ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 20).map(r => ({
                     Type: <StatusPill status={r._t} />,
                     Party: r._party,
-                    Amount: formatMoney(r._amt, r._cur),
+                    Amount: <AmountCell value={r._amt} currency={r._cur} />,
                     Date: fmtDate(r.date),
                     Status: <StatusPill status={r.status || "Pending"} paymentType={r._paymentType} />,
                   }))}
@@ -3599,6 +3709,8 @@ export default function BusinessOperationsPage() {
           workspaceName={workspaceName}
           customers={customers}
           onClose={() => setShareItem(null)}
+          businessId={workspaceId}
+          onSent={refreshWorkspace}
         />
       )}
 
@@ -3632,6 +3744,7 @@ export default function BusinessOperationsPage() {
       {rfqRespondTarget && (
         <RfqRespondModal
           rfq={rfqRespondTarget}
+          workspaceId={workspaceId}
           wsCurrency={wsCurrency}
           onClose={() => setRfqRespondTarget(null)}
           onDone={() => { setRfqRespondTarget(null); refreshWorkspace(); }}
@@ -3644,12 +3757,14 @@ export default function BusinessOperationsPage() {
           type={recordModal.type}
           record={recordModal.record}
           customers={customers}
+          employees={employees}
           catalogueProducts={catalogueProducts}
           allKnownCustomers={[...new Set([
             ...invoices.map(i => i.customer_name),
             ...quotes.map(q => q.customer_name),
           ].filter(Boolean))]}
           workspaceName={workspaceName}
+          wsCurrency={wsCurrency}
           onSave={saveRecord}
           onRecordPayment={recordPayment}
           onClose={() => setRecordModal(null)}

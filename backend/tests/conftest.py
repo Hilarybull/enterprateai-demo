@@ -1,6 +1,59 @@
+import os
+
 import pytest
 
-from app.core.config import get_settings
+# QA D1: the suite never talks to a real database. backend/.env points at the dev Supabase; these
+# are cleared before the app is imported, and every test runs with no way to open a connection.
+for _name in ("SUPABASE_URL", "PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "RESEND_API_KEY"):
+    os.environ[_name] = ""
+
+from app.core.config import get_settings  # noqa: E402
+
+
+_ATTEMPTS: list[str] = []      # every test that reached for a real database, even where app code swallowed the error
+
+
+class RealDatabaseUsed(RuntimeError):
+    """A test reached for a real database. Tests use the in-memory stores (test_agent.Env) instead."""
+
+
+@pytest.fixture(autouse=True)
+def _no_breach_lookups(monkeypatch):
+    """No test reaches the password breach service."""
+    from app.shared.auth import password_rules
+
+    async def _never(_password):
+        return False
+    monkeypatch.setattr(password_rules, "_seen_in_breaches", _never)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_database(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "supabase_url", None, raising=False)
+    monkeypatch.setattr(settings, "supabase_service_role_key", None, raising=False)
+    # ... and no real model provider either: tests never call out (QA H). A test gives the understanding layer its own model.
+    for key in ("openai_api_key", "claude_api_key", "gemini_api_key"):
+        monkeypatch.setattr(settings, key, None, raising=False)
+    from app.core import supabase as sb
+
+    def _refuse(*_a, **_k):
+        _ATTEMPTS.append(f"{os.environ.get('PYTEST_CURRENT_TEST', '?').split(' ')[0]} connect")
+        raise RealDatabaseUsed("a test tried to open a real Supabase connection")
+    for name in ("_make_client", "_make_pool_client", "get_supabase_client"):
+        if hasattr(sb, name):
+            monkeypatch.setattr(sb, name, _refuse)
+
+
+@pytest.fixture(autouse=True)
+def _no_page_fetching(monkeypatch):
+    """§5: research fetches each source page on the server. No test ever reaches the web: a test gives its own fetcher;
+    without one, every page is unreachable (so nothing can be a checked source)."""
+    from app.modules.agent import credibility
+
+    async def _offline(_client, url):
+        return {"ok": False, "url": url, "reason": "offline in tests"}
+    monkeypatch.setattr(credibility, "fetch_page", _offline)
 
 
 @pytest.fixture(autouse=True)
@@ -11,6 +64,8 @@ def _no_local_qa_overrides(monkeypatch):
     monkeypatch.setattr(settings, "agent_max_active_runs_override", None)
     # No extra Marketplace moderators unless a test names them (a local .env may list QA accounts).
     monkeypatch.setattr(settings, "marketplace_moderators", "")
+    monkeypatch.setattr(settings, "marketplace_claim_invites_enabled", False)
+    monkeypatch.setattr(settings, "marketplace_claim_reminders_enabled", False)
     # The suite describes the directory with unclaimed profiles open to everyone; the tests for
     # the other visibility levels set theirs explicitly.
     monkeypatch.setattr(settings, "marketplace_unclaimed_visibility", "public")
@@ -29,3 +84,38 @@ def _monthly_task_allowance(request, monkeypatch):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "as_shipped: run with the shipped setting for the monthly task count (not applied)")
+
+
+@pytest.fixture(autouse=True)
+def isolated_telemetry_outbox(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEMETRY_OUTBOX_PATH", str(tmp_path / "telemetry.sqlite3"))
+
+
+def pytest_terminal_summary(terminalreporter):
+    tests = sorted({t.split(" ")[0] for t in _ATTEMPTS})
+    # Blocked, not failed: app code that reads optional data (a plan, a grant) carries on without it, as it would offline.
+    terminalreporter.write_line(f"real-database attempts blocked: {len(_ATTEMPTS)} in {len(tests)} tests (no connection was made)")
+
+
+@pytest.fixture(autouse=True)
+def _agent_conductor_off_unless_asked(monkeypatch):
+    """The one-Agent switch in a developer's .env never changes what the tests check: off, unless a test turns it on."""
+    from app.core.config import get_settings
+    monkeypatch.setattr(get_settings(), "agent_conductor", False, raising=False)
+
+
+@pytest.fixture
+def rules_only_intake(monkeypatch):
+    """Legacy rule-reader journeys explicitly use the supported rules-only mode.
+
+    Model control, provider failures and retries are covered by the intake model
+    suites; these older journeys assert the deterministic reader's exact wording.
+    """
+    from app.modules.agent import goals
+    original = goals.add_inputs
+
+    async def add_inputs(*args, **kwargs):
+        kwargs["rules_only"] = True
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(goals, "add_inputs", add_inputs)

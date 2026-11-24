@@ -1,6 +1,9 @@
+import UkDateInput from "../UkDateInput";
 import { useExit } from "../../lib/motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { agentErrorMessage, approveAction, editDraft, getRun, rejectAction } from "../../lib/agent";
+import { apiRequest } from "../../api/client";
 import { formatCurrency } from "../../lib/format";
 import { ButtonSpinner, LoadError, SkeletonRegion, SkeletonTable, SkeletonText } from "../Skeleton";
 import { ApprovalReview, Icon } from "./AgentBits";
@@ -180,7 +183,7 @@ function WordingEditor({ approval, options, kind, saving = false, problem = "", 
               <input className={`${input} mt-1`} aria-label="Timeline" maxLength={200} value={timeline} onChange={(e) => setTimeline(e.target.value)} />
             </label>
             <label className="block"><span className={field}>Valid until</span>
-              <input type="date" className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              <UkDateInput className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(v) => setValidUntil(v)} />
             </label>
             <label className="block sm:col-span-2"><span className={field}>What the customer needs</span>
               <textarea className={`${input} mt-1 min-h-[72px]`} aria-label="What the customer needs" maxLength={4000} value={needs} onChange={(e) => setNeeds(e.target.value)} />
@@ -434,15 +437,15 @@ function ItemsEditor({ approval, options, kind, saving = false, problem = "", on
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {po ? (
           <label className="block"><span className={field}>Deliver by</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Deliver by" value={deliverBy} onChange={(e) => change(() => setDeliverBy(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Deliver by" value={deliverBy} onChange={(v) => change(() => setDeliverBy(v))} />
           </label>
         ) : invoice ? (
           <label className="block"><span className={field}>Due date</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Due date" value={dueDate} onChange={(e) => change(() => setDueDate(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Due date" value={dueDate} onChange={(v) => change(() => setDueDate(v))} />
           </label>
         ) : (
           <label className="block"><span className={field}>Valid until</span>
-            <input type="date" className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(e) => change(() => setValidUntil(e.target.value))} />
+            <UkDateInput className={`${input} mt-1`} aria-label="Valid until" value={validUntil} onChange={(v) => change(() => setValidUntil(v))} />
           </label>
         )}
         <div className={po ? "hidden" : ""}><span className={field}>Payment terms</span>
@@ -474,12 +477,44 @@ function ItemsEditor({ approval, options, kind, saving = false, problem = "", on
 /** Which approvals can be edited from a list: every document the Agent prepares to send. */
 export const editableApproval = (item) => Boolean(KIND[item?.tool_id]);
 
+const offerMoney = (n, currency) => {
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", maximumFractionDigits: Number(n) % 1 ? 2 : 0 }).format(Number(n) || 0); }
+  catch { return String(n); }
+};
+
+/** Offered once on a draft: its items not in the catalogue yet ("Add Flower at £200 to your catalogue?"). Either answer
+ *  closes it for good; Add saves them in Catalogue > Products at the draft's price. */
+export function CatalogueOffer({ runId, items }) {
+  const [state, setState] = useState("");      // "" | "busy" | "closed" | the message after Add
+  if (!items?.length || state === "closed") return null;
+  // "Add food at £200 to your catalogue?": plain words, never a quoted label (the owner's rule on quoted labels)
+  const what = items.map((i) => `${i.name} at ${offerMoney(i.unit_price, i.currency)}`).join(", ");
+  const answer = async (add) => {
+    setState("busy");
+    try {
+      const res = await apiRequest(`/workflow-runs/${runId}/catalogue-offer`, "POST", { add });
+      setState(add ? (res?.message || "Added to your catalogue.") : "closed");
+    } catch { setState(add ? "" : "closed"); }
+  };
+  if (state && state !== "busy") return <p role="status" data-catalogue-offer className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">{state}</p>;
+  return (
+    <div data-catalogue-offer className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      <span>Add {what} to your catalogue?</span>
+      <span className="flex gap-2">
+        <button type="button" disabled={state === "busy"} onClick={() => answer(false)} className="rounded-lg px-2.5 py-1 font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-60">Not now</button>
+        <button type="button" disabled={state === "busy"} onClick={() => answer(true)} className="rounded-lg bg-brand-600 px-3 py-1 font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Add</button>
+      </span>
+    </div>
+  );
+}
+
 /** A document waiting for approval, in a drawer on the right: its preview with Approve, Decline
  *  and Edit draft, and the editor in the same place. Nothing here leaves the page. */
 export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing = true }) {
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState("");
   const [busy, setBusy] = useState("");
+  const [address, setAddress] = useState("");      // the recipient's email, when the draft has none yet
   const [problem, setProblem] = useState("");
   const [editing, setEditing] = useState(startEditing);
   const [done, setDone] = useState("");      // what happened, once it is no longer waiting
@@ -493,6 +528,9 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
   }, [runId, attempt]);
 
   const pending = (data?.approvals || []).find((a) => a.status === "pending");
+  // A draft flagged "Email needed": its address entered here before it can be sent (the owner's QA, 15 Oct).
+  const needEmail = pending?.payload?.email_needed && !pending?.payload?.to_email ? pending.payload.email_needed : null;
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim());
   async function act(name, fn, after) {
     setBusy(name);
     setProblem("");
@@ -513,14 +551,21 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
   const said = (res, fresh, fallback) => setDone(res?.message || fresh?.run?.summary || fallback);
   const button = "rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300";
 
-  return (
+  // Rendered at the top of the page: inside a section with an entrance animation (a transform), a fixed drawer
+  // would be held to that section and cut off, instead of covering the window.
+  return createPortal(
     <div className={`m-backdrop fixed inset-0 z-[80] flex items-start justify-end bg-slate-950/40 ${leaving ? "m-leaving" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) close(); }}>
       {/* As tall as what it holds, up to the height of the window (then it scrolls and the buttons stay in view). */}
       <aside role="dialog" aria-modal="true" aria-label={editing ? "Edit draft" : "Approval"} data-drawer
         className="m-drawer max-h-full w-full max-w-[720px] overflow-y-auto rounded-bl-2xl max-sm:h-full max-sm:rounded-none border-b border-l border-slate-200 bg-slate-50 p-4 shadow-2xl sm:p-5 dark:border-slate-800 dark:bg-slate-950">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{editing && pending ? "Edit draft" : done ? "Done" : "Needs your approval"}</h2>
-          <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          <span className="flex items-center gap-3">
+            {/* The whole task on its own page: every step, the history, the document (P1.11). */}
+            <a href={`/agent/runs/${runId}`} onClick={(e) => { if (onOpenTask) { e.preventDefault(); onOpenTask(runId); } }} data-open-full-page
+              className="text-[13px] font-semibold text-brand-700 hover:underline">Open full page</a>
+            <button type="button" onClick={close} aria-label="Close" className="text-slate-400 hover:text-slate-600"><Icon name="x" className="h-4 w-4" /></button>
+          </span>
         </div>
         {failed ? <LoadError what="this document" detail={failed} onRetry={() => setAttempt((n) => n + 1)} />
           : !data ? <SkeletonRegion label="this document" className="space-y-4"><SkeletonText lines={3} /><SkeletonTable rows={3} cols={4} /></SkeletonRegion>
@@ -539,6 +584,15 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
               onCancel={() => (startEditing ? onClose() : (setEditing(false), setProblem("")))} onSave={save} />
           ) : (
             <div className="space-y-3">
+              {needEmail && (
+                // The draft is ready but its recipient has no email yet: entered here, saved on the customer record.
+                <label className="block rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900" data-email-needed>
+                  <span className="font-semibold">{needEmail.customer}'s email</span>
+                  <input type="email" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="name@example.com" autoComplete="email"
+                    className="mt-1 block w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900" />
+                </label>
+              )}
+              <CatalogueOffer runId={runId} items={data.draft_options?.catalogue_offer} />
               <ApprovalReview approval={pending} lastEdit={data.run?.last_edit} editedByYou={data.draft_options?.edited_by_you} />
               {problem && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{problem}</p>}
               <div data-drawer-actions className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:-mx-5 sm:-mb-5 sm:px-5 dark:border-slate-800 dark:bg-slate-950">
@@ -549,7 +603,15 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
                     <button type="button" disabled={!!busy} onClick={() => act("reject", () => rejectAction(runId, pending.id), (res, fresh) => said(res, fresh, "Declined. Nothing was sent."))} className={button}>
                       {busy === "reject" && <ButtonSpinner />}{busy === "reject" ? "Declining…" : "Decline"}
                     </button>
-                    <button type="button" disabled={!!busy} onClick={() => act("approve", () => approveAction(runId, pending.id), (res, fresh) => said(res, fresh, "Approved and sent."))}
+                    {needEmail && (
+                      <button type="button" disabled={!!busy} data-approve-without-sending
+                        onClick={() => act("keep", () => apiRequest(`/workflow-runs/${runId}/approvals/${pending.id}/approve-without-sending`, "POST", {}), (res, fresh) => said(res, fresh, "Approved. Not sent yet."))}
+                        className={button}>Approve without sending</button>
+                    )}
+                    <button type="button" disabled={!!busy || (needEmail && !emailOk)} data-approve-and-send
+                      onClick={() => act("approve", () => (needEmail
+                        ? apiRequest(`/workflow-runs/${runId}/approvals/${pending.id}/approve-with-email`, "POST", { email: address.trim() }, { timeoutMs: 120000 })
+                        : approveAction(runId, pending.id)), (res, fresh) => said(res, fresh, "Approved and sent."))}
                       className="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
                       {busy === "approve" && <ButtonSpinner />}{busy === "approve" ? "Sending…" : "Approve and send"}
                     </button>
@@ -560,5 +622,5 @@ export function DraftDrawer({ runId, onClose, onSaved, onOpenTask, startEditing 
           )}
       </aside>
     </div>
-  );
+  , document.body);
 }

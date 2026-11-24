@@ -61,14 +61,16 @@ def approval_card(a: dict, now: datetime) -> dict:
         "contract": f"Ready to send to {p.get('customer_name')}",
         "invoice": f"Ready to send to {p.get('customer_name')}",
         "payment": f"For {p.get('customer_name')}",
-        "receipt": f"{p.get('invoice_reference')} – {p.get('customer_name')}",
+        "receipt": f"{p.get('invoice_reference')} · {p.get('customer_name')}",
         "proposal": f"Ready to send to {p.get('customer_name')}", "purchase_order": f"Ready to send to {p.get('customer_name')}",
-        "credit_note": f"{p.get('invoice_reference')} – {p.get('customer_name')}",
+        "credit_note": f"{p.get('invoice_reference')} · {p.get('customer_name')}",
     }.get(kind, "")
     return {"type": "approval", "kind": kind, "approval_id": a["id"], "run_id": a["run_id"], "title": title,
             "subtitle": subtitle, "age": _ago(a.get("created_at"), now), "created_at": a.get("created_at"),
             "tool_id": a["tool_id"], "payload": p, "payload_version": a.get("payload_version"),
-            "expires_at": a.get("expires_at")}
+            "expires_at": a.get("expires_at"),
+            # Ready, but the recipient has no address yet: shown with an "Email needed" chip, the field in the drawer.
+            "email_needed": bool(p.get("email_needed") and not p.get("to_email"))}
 
 
 def live_pending(approvals: list[dict], runs: list[dict], now: datetime) -> list[dict]:
@@ -127,7 +129,7 @@ TASK_NOUN = {
     "new_invoice": "Invoice", "quote_to_cash": "Invoice", "enquiry_to_quote": "Quotation", "new_proposal": "Proposal", "new_contract": "Contract",
     "receipt_send": "Receipt", "payment_followup": "Payment reminder", "credit_note": "Credit note", "new_purchase_order": "Purchase order",
     "supplier_bill": "Supplier bill", "record_expense": "Expense", "record_payment": "Payment", "add_customer": "New customer", "add_vendor": "New supplier",
-    "add_catalogue_item": "Catalogue item", "update_record": "Record update", "business_plan_draft": "Business plan", "market_size": "Market size",
+    "add_catalogue_item": "Catalogue item", "update_record": "Record update", "business_plan_draft": "Business plan", "sales_letter_draft": "Sales letter", "market_size": "Market size",
     "funding_pack_draft": "Funding pack", "registration_checklist": "Registration checklist", "marketplace_profile": "Marketplace profile",
     "marketplace_offering": "Marketplace offering", "scenario_help": "Scenario", "risk_concentration": "Risk check",
 }
@@ -286,7 +288,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
     conc = bz.concentration(data, alert_pct)
     overdue = bz.overdue_invoices(data, today)
     cash = bz.cash_position(data, today)
-    overdue_total = sum(bz.invoice_outstanding(i) for i in overdue)
+    overdue_total = bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i))
 
     if overdue:
         nxt = {"text": "Your receivables are slipping past terms. I'm preparing reminders for your approval.",
@@ -323,7 +325,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
 
     return [
         {"key": "next_step", "title": "Recommended Next Step", "tone": "brand", **nxt,
-         "detail": f"{len(overdue)} overdue · {fmt_money(overdue_total, cur)}" if overdue else None},
+         "detail": f"{len(overdue)} overdue · {bz.fmt_total(overdue_total, cur)}" if overdue else None},
         {"key": "risk", "title": "Fragility / Risk Alert", "tone": "rose", "text": risk_text,
          "cta": {"label": "View risk details", "capability": "risk_concentration"}, "more": {"capability": "risk_concentration"}},
         {"key": "scenario", "title": "Suggested Scenario", "tone": "indigo",
@@ -336,7 +338,7 @@ def insights_of(data: dict, policy: dict, today) -> list[dict]:
 
 
 async def build_summary(orch, user_id: str, business_id: str, email: str | None = None,
-                        with_context: bool = False) -> dict[str, Any]:
+                        with_context: bool = False, refresh_rates: bool = False) -> dict[str, Any]:
     from app.modules.agent.orchestrator import AccessDenied
 
     rt = orch.rt
@@ -382,6 +384,12 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
         actor = bz.build_actor(user_id=user_id, email=email, business_id=business_id, owner_id=owner_id, membership=None, policy=policy)
     else:
         actor, _ = await orch.actor_for(user_id, business_id, email)      # business scope enforced (raises if no access)
+    if refresh_rates:
+        # Reuse the authorised record before computing totals. Rebuilding the whole
+        # summary after a rate refresh repeats all the policy, task and billing reads.
+        from app.modules.agent import fx
+        if fx.currencies_used(data):
+            await fx.ensure(orch, business_id, data)
     plan = own_plan if (user_id == owner_id and isinstance(own_plan, str) and own_plan) else await rt.meter.plan(owner_id)
     from app.modules.agent.config import with_dev_overrides
     ent = {"plan": plan, "is_paid": plan != "explorer", **with_dev_overrides(await rt.store.plan_limits(plan))}
@@ -424,10 +432,14 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
     can = lambda capability: agent_config.plan_allows(ent["plan"], capability)      # noqa: E731
     spend = autostart.budget(policy, runs, now)
     if doing and spend["paused"] and spend["cap"] >= 0:
-        suggestions.append({"key": "budget", "icon": "info", "tone": "amber", "mood": "needs_you",
-                            "text": f"Paused: monthly automatic budget used ({spend['used']} credit{'s' if spend['used'] != 1 else ''}). Raise it in Agent settings.",
+        # Not a problem, and not the credits (the owner's QA, 27 Oct: "paused" showed while 285 credits were left): only the
+        # Agent's own starting of tasks waits, at the monthly limit the owner set; their credits are for anything they ask
+        suggestions.append({"key": "budget", "icon": "info", "tone": "slate", "mood": "fyi",
+                            "text": f"The Agent has used the {spend['cap']} credits a month you allowed for tasks it starts by itself, so it waits until next month. "
+                                    "Your credits are still there for anything you ask it to do. You can raise the limit in Agent settings.",
                             "action": {"to": "/agent?settings=1"}})
-    for r in sorted(runs, key=lambda r: r.get("created_at") or "")[-40:]:
+    from app.modules.agent.twins import without_twins
+    for r in sorted(without_twins(runs), key=lambda r: r.get("created_at") or "")[-40:]:      # a task asked twice is shown once (QA U8)
         q = r.get("pending_question") if r.get("status") == "running" else None
         if q and not q.get("optional") and actor.can_prepare and len([s for s in suggestions if s.get("question")]) < 2:
             suggestions.insert(0, {"key": f"question:{r['id']}", "icon": "chat", "tone": "amber", "mood": "needs_you", "text": question_title(r)["title"], "detail": question_title(r)["detail"],
@@ -447,8 +459,8 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                             "action": {"capability": "risk_concentration", "source_reference": "risk:concentration"}})
     if bz.eligible_for_reminder(data, policy, now) and not any(r["workflow_key"] == "payment_followup" and r["status"] not in RUN_TERMINAL for r in runs):
         due = bz.eligible_for_reminder(data, policy, now)
-        owed = sum(bz.invoice_outstanding(i) for i in due)
-        what = f"{len(due)} overdue invoice{'s' if len(due) != 1 else ''} ({fmt_money(owed, bz.currency_of(data))} outstanding)"
+        owed = bz.total_of(data, due, lambda i: bz.invoice_outstanding(i))
+        what = f"{len(due)} overdue invoice{'s' if len(due) != 1 else ''} ({bz.fmt_total(owed, bz.currency_of(data))} outstanding)"
         if doing and can("payment_followup"):
             suggestions.append({"key": "followup", "icon": "chat", "text": f"{what}: I'm preparing the reminder{'s' if len(due) != 1 else ''} for your approval.",
                                 "action": {"to": "/agent?tab=needs_approval"}})
@@ -469,8 +481,26 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                                            str(p.get("id")) for p in (i.get("payments") or []) if not (p.get("receipt") or {}).get("sent_at"))}})
 
     # Only real approvals, newest first. Risk alerts appear in suggestions and risks instead.
-    needs_approval = sorted((approval_card(a, now) for a in pending), key=lambda c: c.get("created_at") or "", reverse=True) \
-        if actor.can_send or actor.can_prepare else []
+    from app.modules.agent import drafts as _drafts
+    # The Agent's drafts waiting for review (a business plan, an idea's validation, a launch plan) sit with the approvals.
+    # An untitled draft is named by its own document ("Business Plan for Drone Cleaning"), read in one query, never by the
+    # business's name (the owner's QA, 23 Oct: a drone cleaning plan listed as "Business plan: E2E Car Wash Abuja")
+    waiting = _drafts.pending(data)
+    named: dict = {}
+    untitled = [str(d.get("ref")) for d in waiting if _drafts.untitled(d) and d.get("ref")]
+    if untitled:
+        try:
+            from app.core.supabase import sb_select
+            rows = await sb_select("blueprint_documents", filters=[("id", "in", untitled[:50])], columns="id,title") or []
+            named = {str(r.get("id")): r.get("title") for r in rows if r.get("title")}
+        except Exception:      # noqa: BLE001 - listed under its own title
+            named = {}
+    needs_approval = sorted([*(approval_card(a, now) for a in pending), *(_drafts.card(d, named.get(str(d.get("ref")))) for d in waiting)],
+                            key=lambda c: c.get("created_at") or "", reverse=True) if actor.can_send or actor.can_prepare else []
+    # Postponed by this person until a day they picked (the owner, 27 Oct): out of the list and its count until then
+    from app.modules.agent import chat_actions
+    later = chat_actions.postponed(data, user_id, now)
+    needs_approval = [c for c in needs_approval if chat_actions.card_key(c) not in later]
 
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     used = sum(1 for r in runs if (r.get("created_at") or "") >= month_start)
@@ -487,8 +517,6 @@ async def build_summary(orch, user_id: str, business_id: str, email: str | None 
                              "used": sum(1 for r in runs if r.get("workflow_key") == key and (r.get("created_at") or "") >= month_start)}
                        for key in agent_config.plan_map.QUOTA_WORDS},
             "allowance_counts": bool(agent_config.MONTHLY_TASK_ALLOWANCE_APPLIES),
-            # What a task costs to start, in credits (the first figure of its price in words); None where its own product sets the price.
-            "prices": {c: (int(m.group()) if (m := re.search(r"\d+", agent_config.cost_of(c))) else None) for c in sorted(agent_config.CAPABILITY_MIN_PLAN)},
             "agent_tasks_from": agent_config.PLAN_LABEL[min(agent_config.CAPABILITY_MIN_PLAN.values(), key=agent_config.plan_rank)],
             "monthly_runs": ent["monthly_runs"], "monthly_runs_used": used,
             "credits": credits,
@@ -595,25 +623,41 @@ async def build_metrics(orch, user_id: str, business_id: str, email: str | None 
 # ── The Agent's briefing: what it did while the owner was away, and what is waiting ──
 
 _DONE = ("succeeded", "awaiting_approval")
+_ASKED_BY_OWNER = ("text", "voice", "ui_action")      # started by a person on the page, not by the Agent on its own
+
+
+def _doing(run: dict) -> str:
+    from app.modules.agent.workflows import doing_of
+    return doing_of(run)
 
 
 def briefing_of(runs: list[dict], *, since: str | None, needs_approval: int, now: datetime) -> dict:
     """Counts for the dashboard's greeting, from the business's own tasks. `since`: when the owner
     was last here (None if never recorded). Nothing here is a sentence: the page writes those, so the
     wording and its plurals live in one place."""
-    waiting = [r for r in runs if r.get("status") == "running" and r.get("pending_question") and not (r.get("pending_question") or {}).get("optional")]
+    from app.modules.agent.twins import without_twins
+    waiting = [r for r in without_twins(runs) if r.get("status") == "running" and r.get("pending_question") and not (r.get("pending_question") or {}).get("optional")]
     working = next((r for r in runs if r.get("status") in ("running", "created") and not r.get("pending_question")), None)
     done: dict[str, int] = {}
     if since:
         for r in runs:
             when = r.get("completed_at") or r.get("updated_at") or r.get("created_at") or ""
-            if r.get("status") in _DONE and when > since and not (r.get("state") or {}).get("duplicate_of"):
+            # A task the owner asked for themselves after they were last seen was done while they were here,
+            # not "while you were away" (QA P1-5): only work started without them, or before they left, counts.
+            theirs_this_visit = r.get("source_channel") in _ASKED_BY_OWNER and (r.get("created_at") or "") > since
+            if r.get("status") in _DONE and when > since and not theirs_this_visit and not (r.get("state") or {}).get("duplicate_of"):
                 done[r.get("workflow_key") or "task"] = done.get(r.get("workflow_key") or "task", 0) + 1
+    # P2.18: what the Agent spent by itself while the owner was away ("While you were away I checked … (2 credits)").
+    spent = 0
+    if since:
+        from app.modules.agent.autostart import AUTOMATIC_CHANNELS
+        spent = sum(int(c.get("credits") or 0) for r in runs if r.get("source_channel") in AUTOMATIC_CHANNELS and r.get("status") in _DONE
+                    and (r.get("completed_at") or r.get("updated_at") or "") > since for c in (r.get("state") or {}).get("credits") or [])
     return {
-        "last_seen_at": since, "first_visit": since is None and not runs,
+        "last_seen_at": since, "first_visit": since is None and not runs, "spent_while_away": spent,
         "done_since_last_visit": done, "needs_approval_count": int(needs_approval), "needs_input_count": len(waiting),
         "first_input_run_id": waiting[0]["id"] if waiting else None,
-        "working_on": ({"run_id": working["id"], "title": working.get("title") or working.get("goal") or "your task"} if working else None),
+        "working_on": ({"run_id": working["id"], "title": working.get("title") or working.get("goal") or "your task", "doing": _doing(working)} if working else None),
         "generated_at": now.isoformat(),
     }
 

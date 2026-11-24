@@ -7,6 +7,9 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_BACKEND = __import__("pathlib").Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
@@ -16,6 +19,9 @@ class Settings(BaseSettings):
             "../.env.local",
             "backend/.env",
             "backend/.env.local",
+            # QA R9-1: the backend's own files, wherever the process is started from (a terminal, a process manager).
+            str(_BACKEND / ".env"),
+            str(_BACKEND / ".env.local"),
         ),
         env_file_encoding="utf-8",
         enable_decoding=False,
@@ -41,6 +47,8 @@ class Settings(BaseSettings):
     # Sending claim invitations by email. Off by default: outreach channels, templates and
     # cadence are a policy decision. Invitation links can still be created and shared by hand.
     marketplace_claim_invites_enabled: bool = Field(default=False, validation_alias=AliasChoices("MARKETPLACE_CLAIM_INVITES_ENABLED",))
+    # Follow-up claim reminders can be disabled independently of the first email.
+    marketplace_claim_reminders_enabled: bool = Field(default=True, validation_alias=AliasChoices("MARKETPLACE_CLAIM_REMINDERS_ENABLED",))
     # Who can see a directory profile nobody has claimed yet: admin_only | invite_only | public.
     # This is the starting value; a moderator can change it on the moderation page, and that
     # choice (kept with who made it and when) then wins. Claimed profiles are never affected.
@@ -48,6 +56,7 @@ class Settings(BaseSettings):
     # Activation and education emails (journeys A, B and C). Off by default; when first switched on
     # it still only reports what it would send (dry run) to an internal cohort.
     activation_emails_enabled: bool = Field(default=False, validation_alias=AliasChoices("ACTIVATION_EMAILS_ENABLED",))
+    welcome_emails_enabled: bool = Field(default=False, validation_alias=AliasChoices("WELCOME_EMAILS_ENABLED",))
     activation_dry_run: bool = Field(default=True, validation_alias=AliasChoices("ACTIVATION_DRY_RUN",))
     activation_cohort: str = Field(default="internal", validation_alias=AliasChoices("ACTIVATION_COHORT",))      # internal | sample | all
     activation_internal_emails: str = Field(default="", validation_alias=AliasChoices("ACTIVATION_INTERNAL_EMAILS",))
@@ -68,6 +77,18 @@ class Settings(BaseSettings):
     marketplace_moderators: str = Field(default="", validation_alias=AliasChoices("MARKETPLACE_MODERATORS",))
     # Funding and launch scenarios (FR10 / LR10). Off = the checks work and scenarios say they are unavailable.
     readiness_scenarios_enabled: bool = Field(default=True, validation_alias=AliasChoices("READINESS_SCENARIOS_ENABLED",))
+    # Sign-in and limits. REDIS_URL shares attempt counts and signed-out tokens between processes and across restarts.
+    turnstile_secret_key: str | None = Field(default=None, validation_alias=AliasChoices("TURNSTILE_SECRET_KEY",))      # off until set
+    redis_url: str | None = Field(default=None, validation_alias=AliasChoices("REDIS_URL",))
+    client_ip_header: str | None = Field(default=None, validation_alias=AliasChoices("CLIENT_IP_HEADER",))      # overrides the host's own (see limits.client_ip)
+    demo_login_enabled: bool = Field(default=True, validation_alias=AliasChoices("DEMO_LOGIN_ENABLED",))      # the public demo tour
+    cors_strict: bool = Field(default=False, validation_alias=AliasChoices("CORS_STRICT",))      # production: only CORS_ORIGINS may call the API
+    sentry_dsn: str | None = Field(default=None, validation_alias=AliasChoices("SENTRY_DSN",))
+    # AI calls: how many at once in this process, how long one may wait for its turn, how long one may run, and an optional daily ceiling (0 = none)
+    ai_max_concurrent: int = Field(default=30, validation_alias=AliasChoices("AI_MAX_CONCURRENT",))
+    ai_queue_seconds: float = Field(default=60.0, validation_alias=AliasChoices("AI_QUEUE_SECONDS",))
+    ai_http_seconds: float = Field(default=600.0, validation_alias=AliasChoices("AI_HTTP_SECONDS",))
+    ai_daily_call_limit: int = Field(default=0, validation_alias=AliasChoices("AI_DAILY_CALL_LIMIT",))
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     backend_url: str | None = Field(default=None, validation_alias=AliasChoices("BACKEND_URL", "API_URL"))
@@ -88,12 +109,21 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
+    # The Agent's intake turn: a fast model, read only for the values (the reply is written by code). Measured live on
+    # 14 Oct 2026: gpt-4.1-mini about 2.5s; Claude Sonnet 6 to 7.5s; Haiku 3.1 to 3.5s; nano fast but put values in the wrong slot.
+    intake_model: str = "gpt-4.1-mini"
 
     # Optional AI integration keys (not required for MVP routes)
     claude_api_key: str | None = Field(default=None, validation_alias=AliasChoices("CLAUDE_API_KEY", "ANTHROPIC_API_KEY"))
     # Use a stable, explicit model id by default to avoid provider-side "Not Found"
     # errors when aliases like "*-latest" are not supported for an API key.
     claude_model: str = Field(default="claude-3-5-sonnet-20240620", validation_alias=AliasChoices("CLAUDE_MODEL",))
+    # The one Agent conversation (31 Oct): on for every workspace when true; off, a workspace can still turn it on in its settings
+    agent_conductor: bool = Field(default=False, validation_alias=AliasChoices("AGENT_CONDUCTOR",))
+    # Claude model behind the one Agent conversation (chat_agent.py); OpenAI is its backup
+    agent_model: str = Field(default="claude-opus-5-5", validation_alias=AliasChoices("AGENT_MODEL",))
+    # The backup when Claude can't answer; empty means OPENAI_MODEL
+    agent_openai_model: str | None = Field(default=None, validation_alias=AliasChoices("AGENT_OPENAI_MODEL",))
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GEMINI_API_KEY",))
     gemini_model: str = Field(default="gemini-1.5-flash", validation_alias=AliasChoices("GEMINI_MODEL",))
     allow_gemini_fallback: bool = Field(default=False, validation_alias=AliasChoices("ALLOW_GEMINI_FALLBACK",))
@@ -102,6 +132,9 @@ class Settings(BaseSettings):
     # Optional integrations (placeholders for future modules)
     serp_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERP_API_KEY", "SERPAPI_KEY"))
     serper_api_key: str | None = Field(default=None, validation_alias=AliasChoices("SERPER_API_KEY",))
+    # What one search costs on the plan in use, for AI tracking (the providers bill per search, not per token).
+    serpapi_cost_per_search_usd: float = Field(default=0.015, validation_alias=AliasChoices("SERPAPI_COST_PER_SEARCH_USD",))
+    serper_cost_per_search_usd: float = Field(default=0.001, validation_alias=AliasChoices("SERPER_COST_PER_SEARCH_USD",))
     perplexity_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PERPLEXITY_API_KEY",))
     companies_house_api_key: str | None = Field(default=None, validation_alias=AliasChoices("COMPANIES_HOUSE_API_KEY",))
     fred_api_key: str | None = Field(default=None, validation_alias=AliasChoices("FRED_API_KEY",))
@@ -138,6 +171,8 @@ class Settings(BaseSettings):
     stripe_price_strategic_business_os_annual: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_STRATEGIC_BUSINESS_OS_ANNUAL",))
     # Marketplace add-ons
     stripe_price_addon_featured_1: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_1",))
+    # Decision Engine's extra seat: £15 a month, with 250 AI credits each month (the pricing PDF, 19 Oct 2026).
+    stripe_price_addon_seat: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_SEAT",))
     stripe_price_addon_featured_5: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_5",))
     stripe_price_addon_featured_20: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_FEATURED_20",))
     stripe_price_addon_rfq_20: str | None = Field(default=None, validation_alias=AliasChoices("STRIPE_PRICE_ADDON_RFQ_20",))

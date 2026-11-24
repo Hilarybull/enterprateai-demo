@@ -5,6 +5,7 @@ import contextlib
 import contextvars
 import copy
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -56,6 +57,34 @@ def _is_retriable(exc: BaseException) -> bool:
     return False
 
 
+# A database that keeps failing is given room to recover: after this many failed queries in a row, queries fail at once for
+# a few seconds instead of each waiting out its timeouts and retries (2 Nov: a stall turned into a pile-up and stayed down).
+_BREAK_AFTER = 8
+_BREAK_FOR = 15.0
+_down = {"fails": 0, "until": 0.0}
+_down_lock = threading.Lock()
+
+
+def is_database_down(exc: BaseException) -> bool:
+    """The database or its API refusing because it is overloaded: PGRST002 (no schema cache), 57014 (statement timeout)."""
+    text = str(exc)
+    return "PGRST002" in text or "57014" in text
+
+
+def _note_failed() -> None:
+    with _down_lock:
+        _down["fails"] += 1
+        if _down["fails"] >= _BREAK_AFTER:
+            _down["until"] = time.monotonic() + _BREAK_FOR
+            logger.warning("Supabase has failed %s times in a row; holding queries for %.0fs", _down["fails"], _BREAK_FOR)
+
+
+def _note_worked() -> None:
+    if _down["fails"]:
+        with _down_lock:
+            _down.update(fails=0, until=0.0)
+
+
 # ── Connection reuse ─────────────────────────────────────────────────────────
 # Building a full Supabase client and opening its TLS connection costs well over a
 # second, against a few hundred milliseconds for a query on a connection that is already
@@ -66,8 +95,8 @@ def _is_retriable(exc: BaseException) -> bool:
 # The pool is deliberately small and fixed. Opening dozens of connections at once makes
 # the database gateway refuse new ones for a while, so when every connection is busy a
 # query waits its turn (a fraction of a second) instead of opening another.
-_POOL_SIZE = 10          # connections kept open, and the most queries in flight at once
-_POOL_WAIT = 15.0        # seconds a query waits for a free connection before using a one-off
+_POOL_SIZE = max(1, int(os.environ.get("SUPABASE_POOL_SIZE") or 10))          # connections kept open, and the most queries in flight at once
+_POOL_WAIT = 2.0         # reject saturation promptly instead of opening extra connections
 _POOL_IDLE_MAX = 240.0   # seconds; a connection left idle longer is assumed closed by the server
 # Oldest on the left, most recently used on the right. Requests take from the right, so
 # the same few connections stay busy; the keep-warm task refreshes from the left.
@@ -101,7 +130,7 @@ def _make_pool_client() -> SyncPostgrestClient:
         f"{settings.supabase_url.rstrip('/')}/rest/v1",
         headers={"apikey": key, "Authorization": f"Bearer {key}"},
         # Fail fast when a connection can't be opened, rather than holding the request for 20s.
-        timeout=httpx.Timeout(20.0, connect=6.0),
+        timeout=httpx.Timeout(8.0, connect=4.0, pool=2.0),
         verify=_shared_ssl_context(),  # httpx accepts a ready-made context here
     )
 
@@ -144,39 +173,44 @@ def _take_idle(older_than: float, limit: int) -> list[SyncPostgrestClient]:
     return taken
 
 
-def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int = 3, base_delay: float = 1.0):
+def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int = 2, base_delay: float = 0.25):
     """Run fn(client) on a pooled client, retrying transient connection errors."""
-    # One of the pool's turns. If none comes free in time, carry on with a one-off
-    # connection rather than fail the request.
+    if time.monotonic() < _down["until"]:
+        raise httpx.ConnectTimeout("The database is recovering.")      # said as any other "couldn't reach the database"
+    # Keep concurrency bounded: an occupied pool must not cause a new connection
+    # storm while the database is already struggling.
     have_slot = _slots.acquire(timeout=_POOL_WAIT)
     if not have_slot:
-        logger.warning("Supabase pool busy for %.0fs; using a one-off connection", _POOL_WAIT)
+        raise httpx.PoolTimeout("The database is busy. Please retry shortly.")
     try:
         last_exc: Exception | None = None
         attempt = 0
+        force_fresh = False
         while attempt < max_attempts:
-            client, reused = _take() if have_slot else (_make_pool_client(), False)
+            client, reused = _take() if have_slot and not force_fresh else (_make_pool_client(), False)
             try:
                 result = fn(client)
             except Exception as exc:
                 if not _is_retriable(exc):
                     # The query was rejected; the connection itself is fine.
                     _give_back(client) if have_slot else _close(client)
+                    if is_database_down(exc):
+                        _note_failed()
                     raise
                 _close(client)
                 last_exc = exc
-                if reused:
-                    # The server closed this connection while it sat idle. Try the next one
-                    # straight away; this doesn't count as an attempt, and can't loop for
-                    # long because each failure removes a connection from the pool.
-                    logger.info("Supabase pooled connection had gone stale (%s); retrying", type(exc).__name__)
-                    continue
                 attempt += 1
+                if reused:
+                    logger.info("Supabase pooled connection failed (%s); retrying with a fresh connection", type(exc).__name__)
+                    force_fresh = True
+                    continue
                 if attempt < max_attempts:
                     time.sleep(base_delay * attempt)
                 continue
             _give_back(client) if have_slot else _close(client)
+            _note_worked()
             return result
+        _note_failed()
         raise last_exc  # type: ignore[misc]
     finally:
         if have_slot:
@@ -204,7 +238,7 @@ async def keep_pool_warm(interval: float = 30.0, idle_after: float = 90.0) -> No
             if first:
                 first = False
                 await asyncio.gather(
-                    *[anyio.to_thread.run_sync(_refresh, None) for _ in range(_POOL_SIZE)],
+                    *[anyio.to_thread.run_sync(_refresh, None) for _ in range(min(2, _POOL_SIZE))],
                     return_exceptions=True,
                 )
             # Refresh idle connections two at a time, so the pool is never emptied while
@@ -244,7 +278,9 @@ def _run_with_retry(fn, *, max_attempts: int = 3, base_delay: float = 1.0):
 # through these helpers to a table forgets that table's reads, and nothing is kept for longer
 # than a few seconds, so work that runs on for a while still sees what others have changed.
 _reads: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("sb_reads", default=None)
-_READ_TTL = 3.0
+# Kept for one request at most (the cache lives only inside read_cache), and any write forgets its table's reads. 10 seconds
+# covers a whole check and the case built after it ("Run the check again" in one round trip); 3 expired mid-request.
+_READ_TTL = 10.0
 
 
 @contextlib.contextmanager
@@ -321,6 +357,12 @@ async def _sb_select(
                 q = q.lte(col, value)
             elif op == "like":
                 q = q.like(col, value)
+            elif op == "ilike":
+                q = q.ilike(col, value)
+            elif op == "is":      # ("workspace_id", "is", "null")
+                q = q.is_(col, value)
+            else:      # never a silent no-op: a dropped filter would return every row
+                raise ValueError(f"Unsupported filter operator: {op}")
         if order:
             q = q.order(order, desc=desc)
         if limit:

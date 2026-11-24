@@ -9,16 +9,20 @@ guardrail and workflow can be tested without a network or database.
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 class InsufficientCredits(Exception):
     def __init__(self, available: int = 0, required: int = 0):
-        super().__init__(f"Not enough AI Credits ({available} available, {required} needed).")
+        from app.modules.agent.config import short_of
+        super().__init__(short_of(required, available))
         self.available = available
         self.required = required
 
@@ -134,7 +138,7 @@ def _recipient_message(to_email: str) -> str:
 class ResendComms(Comms):
     async def send(self, *, to_email, subject, text, html, sender_name, reply_to, idempotency_key, attachments=None):
         from app.shared.email.resend import send_email_via_resend
-        res = await send_email_via_resend(
+        res = await send_email_via_resend(kind="agent_document",
             to_email=to_email, subject=subject, text_content=text, html_content=html,
             sender_name=sender_name, reply_to_email=reply_to, attachments=attachments,
             idempotency_key=idempotency_key,
@@ -206,7 +210,8 @@ class Meter:
     async def balance(self, user_id: str) -> int: raise NotImplementedError
     async def rfq_unlocked(self, owner_id: str) -> bool: raise NotImplementedError      # may requests for a quotation be read
     async def cost(self, feature: str) -> int: raise NotImplementedError      # credits one use of this feature takes
-    def charge(self, user_id: str, feature: str): raise NotImplementedError
+    def charge(self, user_id: str, feature: str, key: str | None = None): raise NotImplementedError
+    async def refund(self, user_id: str, credits: int, reason: str, key: str) -> bool: raise NotImplementedError      # once per key
 
 
 @dataclass
@@ -224,15 +229,19 @@ class MemoryMeter(Meter):
 
     async def cost(self, feature):
         from app.modules.agent import config
-        return int(self.costs.get(feature, config.CREDIT_FEATURES.get(feature, {}).get("cost", 0)))
+        return int(self.costs.get(feature, config.default_cost(feature)))
 
     async def balance(self, user_id):
         return self.balances.get(user_id, 0)
 
     @asynccontextmanager
-    async def charge(self, user_id, feature):
+    async def charge(self, user_id, feature, key=None):
         from app.modules.agent import config
-        cost = self.costs.get(feature, config.CREDIT_FEATURES.get(feature, {}).get("cost", 0))
+        done = self.__dict__.setdefault("_keys", set())
+        if key and key in done:      # the same action again: charged once (as the wallet's idempotency key does)
+            yield
+            return
+        cost = self.costs.get(feature, config.default_cost(feature))
         available = self.balances.get(user_id, 0)
         if available < cost:
             raise InsufficientCredits(available, cost)
@@ -240,6 +249,16 @@ class MemoryMeter(Meter):
         # Committed only when the action succeeded (refunded on failure).
         self.balances[user_id] = available - cost
         self.charges.append((user_id, feature, cost))
+        if key:
+            done.add(key)
+
+    async def refund(self, user_id, credits, reason, key):
+        given = self.__dict__.setdefault("refunds", [])
+        if any(k == key for _, _, _, k in given) or credits <= 0:
+            return False
+        self.balances[user_id] = self.balances.get(user_id, 0) + int(credits)
+        given.append((user_id, int(credits), reason, key))
+        return True
 
 
 class CreditMeter(Meter):
@@ -266,7 +285,7 @@ class CreditMeter(Meter):
         hit = cache.get(feature)
         if hit and time.monotonic() - hit[0] < 300:
             return hit[1]
-        price = int(config.CREDIT_FEATURES.get(feature, {}).get("cost", 0))
+        price = config.default_cost(feature)
         try:
             from app.modules.credits.service import get_feature_config
             row = await get_feature_config(feature)
@@ -281,18 +300,40 @@ class CreditMeter(Meter):
         from app.modules.credits.service import get_balance
         return int(await get_balance(user_id) or 0)
 
+    async def refund(self, user_id, credits, reason, key):
+        """Credits given back for work that never reached the owner. The wallet's grant has no key of its own, so the
+        key is written into the transaction's description and looked for first: the same refund is never given twice."""
+        from app.modules.credits.service import get_transactions, grant_credits
+        if int(credits or 0) <= 0:
+            return False
+        tag = f"[{key}]"
+        # A member's charge came from the team's pool: given back there, and to their allowance.
+        from app.modules.plans.team import payer_for, record_use
+        payer, team = await payer_for(user_id)
+        earlier = await get_transactions(payer, limit=200, transaction_type="refund")
+        if any(tag in str(t.get("description") or "") for t in earlier or []):
+            return False
+        await grant_credits(payer, int(credits), "refund", f"{reason} {tag}")
+        await record_use(team, -int(credits))
+        return True
+
     @asynccontextmanager
-    async def charge(self, user_id, feature):
+    async def charge(self, user_id, feature, key=None):
         from fastapi import HTTPException
         from app.modules.credits.service import credit_guard
         try:
-            async with credit_guard(user_id, feature):
+            async with credit_guard(user_id, feature, key):      # `key`: the same action is charged once
                 yield
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, dict) else {}
             if e.status_code == 402 and detail.get("error") in ("INSUFFICIENT_CREDITS", "WALLET_NOT_FOUND"):
                 raise InsufficientCredits(int(detail.get("available") or 0), int(detail.get("required") or 0)) from e
-            raise
+            # Any other refusal (a plan that doesn't include it, a feature switched off) is said in its own words,
+            # never as the raw response ("403: {'error': ...}").
+            from app.modules.agent.tools import ToolStop
+            said = detail.get("message") if isinstance(detail.get("message"), str) else (e.detail if isinstance(e.detail, str) else "")
+            reason = "plan_required" if detail.get("error") == "FEATURE_NOT_ENTITLED" else "feature_unavailable"
+            raise ToolStop(reason, (said or "This isn't available on your account just now.").rstrip(".") + ". Nothing was charged.") from e
 
 
 # ── Classifier ────────────────────────────────────────────────────────────────
@@ -326,6 +367,12 @@ class LLMClassifier(Classifier):
         raw = await self._ask(system, f"<external_content>\n{text[:4000]}\n</external_content>", user_id, "agent_classify")
         answer = re.sub(r"[^a-z_]", "", raw.strip().lower())
         return answer if answer in options else None      # anything else is discarded
+
+    async def read_fields(self, *, system: str, prompt: str, user_id: str) -> str:
+        """The field reading (extraction.understand): the model's JSON, as text. Checked by the caller, never trusted."""
+        from app.shared.llm.openai_client import AutoLLMClient
+        res = await AutoLLMClient(user_id=user_id).generate_text(system=system, prompt=prompt, feature="agent_extract", max_tokens=900)
+        return res.text or ""
 
     async def extract_items(self, *, text, user_id):
         system = (
@@ -363,6 +410,13 @@ class Studio:
     async def validate_idea(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
     async def size_market(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
     async def draft_plan(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
+    async def draft_sales_letter(self, *, user_id: str, business_id: str, idea: dict) -> dict: raise NotImplementedError
+    async def draft_proposal(self, *, user_id: str, business_id: str, brief: dict) -> dict: raise NotImplementedError
+
+    async def file_document(self, *, user_id: str, business_id: str, type: str, title: str, company: str, markdown: str,
+                            document_id: str | None = None) -> str | None:
+        """Keep a document the Agent made (a proposal) in Business Blueprints, beside the generated ones. Its id."""
+        return None
 
 
 class MemoryStudio(Studio):
@@ -381,7 +435,7 @@ class MemoryStudio(Studio):
         self._note("validate_idea", idea)
         return {"score": 68, "risks": ["Demand is unproven", "Pricing is untested", "One founder carries delivery"],
                 "next_steps": ["Interview five target customers", "Test the price with a paid pilot", "Write down the first three months of costs",
-                               "Check who else offers this locally"], "result_id": "val-1"}
+                               "Check who else offers this locally"], "result_id": "val-1", "payload": validation_payload(idea, business_id)}
 
     async def size_market(self, *, user_id, business_id, idea):
         self._note("size_market", idea)
@@ -389,9 +443,151 @@ class MemoryStudio(Studio):
                                                                                  "A 0.7% share reachable in three years"],
                 "sources": [{"title": "Sector report", "url": "https://example.test/report"}]}
 
+    async def file_document(self, *, user_id, business_id, type, title, company, markdown, document_id=None):
+        self.filed = getattr(self, "filed", {})
+        doc_id = document_id or f"bp-{len(self.filed) + 1}"
+        self.filed[doc_id] = {"user_id": user_id, "business_id": business_id, "type": type, "title": title, "company": company, "markdown": markdown}
+        return doc_id
+
+    async def draft_proposal(self, *, user_id, business_id, brief):
+        self._note("draft_proposal", brief)
+        return {"document_id": f"doc-pro-{len(self.calls)}", "title": brief.get("proposal_title") or "Proposal"}
+
+    async def draft_sales_letter(self, *, user_id, business_id, idea):
+        self._note("draft_sales_letter", idea)
+        return {"document_id": "doc-sl-1", "title": f"Sales letter: {idea.get('name') or 'your business'}", "sections": 5}
+
     async def draft_plan(self, *, user_id, business_id, idea):
         self._note("draft_plan", idea)
         return {"document_id": "doc-1", "title": f"Business plan: {idea.get('name') or 'your business'}", "sections": 9}
+
+
+_FULL: set = set()      # full validations running in the background
+
+
+async def update_history_entry(user_id: str, business_id: str, history_id: str, full: dict) -> None:
+    """The draft the Agent put in Idea Validation History, given the full report once it is ready. Still pending: the owner
+    accepts or rejects it there."""
+    from app.modules.idea_validation.service import get_workspace, update_workspace
+    ws = await get_workspace(user_id=user_id, workspace_id=business_id)
+    history = list((ws.data or {}).get("validation_history") or [])
+    result = {k: v for k, v in full.items() if k != "research_data"}
+    for n, entry in enumerate(history):
+        if isinstance(entry, dict) and entry.get("id") == history_id:
+            scores = result.get("scores") or {}
+            history[n] = {**entry, "result": result, "score": scores.get("potential_score", entry.get("score")),
+                          "confidence": scores.get("evidence_confidence_score", entry.get("confidence")),
+                          "verdict": (result.get("verdict") or {}).get("category", entry.get("verdict")), "full_report": "ready"}
+            await update_workspace(user_id=user_id, workspace_id=business_id, data_patch={"validation_history": history})
+            return
+
+
+PLAN_READERS = {"investors": "Written for investors deciding whether to fund it: lead with the opportunity, traction, the funding asked and the return.",
+                "lender": "Written for a bank or lender deciding on a loan: lead with cash flow, repayment ability, security and risks.",
+                "partners": "Written for partners or suppliers: lead with what the business does, its customers and how working together helps both.",
+                "planning": "Written for the owner and team to plan the year: lead with goals, priorities, milestones and the numbers to watch."}
+
+
+def owner_words(idea: dict) -> dict:
+    """What the generators are told from the chat: the owner's words, where it operates, whether it is a separate idea, and
+    who the document is for (asked before a business plan starts, 23 Oct)."""
+    return {"owner_said": str(idea.get("said") or "")[:3000] or None, "location": str(idea.get("location") or "")[:200] or None,
+            # a separate idea, or the owner's words chosen over a profile that clashes: nothing of the stored profile is given
+            "separate_idea": bool(idea.get("separate") or idea.get("profile_clash")),
+            **({"extra_notes": PLAN_READERS[idea["purpose"]]} if idea.get("purpose") in PLAN_READERS else {})}
+
+
+def _first_sentence(text) -> str:
+    said = str(text or "").strip()
+    return (re.split(r"(?<=[.!?])\s+", said)[0] if said else "")[:140]
+
+
+def risk_sentence(flag) -> str:
+    """B5: a risk as a sentence ("Demand is unproven…"), never the engine's dict ({'dimension': ..., 'note': ...})."""
+    if isinstance(flag, str):
+        return flag.strip()
+    if isinstance(flag, dict):
+        note = str(flag.get("label") or flag.get("message") or flag.get("note") or "").strip()
+        first = re.split(r"(?<=[.!?])\s+", note)[0] if note else ""
+        return first or str(flag.get("dimension") or "A risk").replace("_", " ").capitalize() + " needs work."
+    return str(flag)
+
+
+def experiment_sentence(x) -> str:
+    if isinstance(x, str):
+        return x.strip()
+    if isinstance(x, dict):
+        name = str(x.get("name") or x.get("method") or "A test").strip()
+        how = ", ".join(str(x[k]) for k in ("sample_size", "duration") if x.get(k))
+        return f"{name}" + (f" ({how})" if how else "")
+    return str(x)
+
+
+# The wizard's own idea types and stages (ValidationWizardPage V4_IDEA_TYPES, V4_BUSINESS_STAGES): an idea told to the Agent
+# is placed in one of them, for the owner to check, so the form it fills is complete.
+_IDEA_TYPES = [(r"\bmobile app|\bapp\b|\bios\b|\bandroid\b", "Mobile application"), (r"\bsaas\b|subscription software|software as a service", "SaaS"),
+               (r"\bmarketplace\b", "Marketplace"), (r"\bplatform\b", "Platform business"), (r"\bsoftware\b|\btool\b|\bwebsite builder\b", "Software product"),
+               (r"\bonline (?:shop|store)\b|\be-?commerce\b|\bsell(?:ing)? online\b", "E-commerce"),
+               (r"\bcourses?\b|\btraining\b|\btutor\w*|\bcoaching\b|\bclass(?:es)?\b|\bschool\b|\bworkshops?\b", "Training or education"),
+               (r"\bevents?\b|\bconference\b|\bfestival\b", "Event or conference"), (r"\bsubscription\b|\bboxes? delivered\b", "Subscription business"),
+               (r"\bfranchise\b", "Franchise"), (r"\bcharity\b|\bnon-?profit\b", "Nonprofit"), (r"\bsocial enterprise\b", "Social enterprise"),
+               (r"\bconsult\w*|\bbookkeep\w*|\baccount\w*|\blegal\b|\bdesign\b|\bmarketing\b|\badvis\w*|\brecruit\w*|\bHR\b", "Professional service"),
+               (r"\bclean\w*|\bwash\w*|\bgroom\w*|\brepair\w*|\bplumb\w*|\bdeliver\w*|\bsalon\b|\bbarber\w*|\bcater\w*|\bmobile\b|\bdog\b|\bgarden\w*|\bvalet\w*",
+                "Local service"),
+               (r"\bproduct\b|\bmake\b|\bmanufactur\w*|\bbak\w*|\bcakes?\b|\bcupcakes?\b|\bfood\b|\bclothing\b|\bjewel\w*|\bcandles?\b|\bsoap\b", "Physical product")]
+_STAGES = {"idea": "Idea only", "pre_revenue": "Pre-revenue", "prototype": "Prototype", "testing": "Pilot", "ready": "MVP", "trading": "Early revenue",
+           "growing": "Scaling"}
+
+
+def idea_type_of(*texts: str) -> str:
+    said = " ".join(str(t or "") for t in texts)
+    return next((label for pattern, label in _IDEA_TYPES if re.search(pattern, said, re.I)), "Other")
+
+
+def validation_payload(idea: dict, business_id: str | None) -> dict:
+    """The Idea Validation wizard's own steps, filled from what the workspace holds (the same fields the wizard asks
+    for), so the Agent's score comes from the same information as one made by hand. A step with nothing in it is left out."""
+    k = idea.get("known") or {}
+    # As the wizard sends them: text ("300", not 300). The engine reads every field as text.
+    num = lambda v: (f"{v:g}" if isinstance(v, float) else str(v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else None      # noqa: E731
+    steps = {
+        # Every field the wizard needs to run (its idea type, one-sentence description, stage, the proposed solution), so the
+        # form the Agent fills is complete and the validation runs on it as it would from the page.
+        "step1": {"idea_name": idea.get("name") or (idea.get("description") or "")[:60], "idea_tagline": _first_sentence(idea.get("description")),
+                  "idea_description": idea.get("description") or "", "idea_type": idea_type_of(idea.get("description"), idea.get("industry")),
+                  "idea_sector": idea.get("industry") or "", "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or "",
+                  "business_stage": _STAGES.get(str(k.get("stage") or ""), k.get("stage") or "Idea only")},
+        "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or "",
+                  "proposed_solution": idea.get("description") or ""},
+        "step3": {"primary_segment": idea.get("customer") or "", "channels": k.get("channels") or ""},
+        "step4": {"direct_competitors": k.get("competitors") or ""},
+        "step5": {"solution_description": idea.get("description") or ""},
+        "step7": {"proposed_price": num(k.get("price"))},
+        "step8": {"variable_cost_per_unit": num(k.get("cost")), "variable_cost_known": "yes" if num(k.get("cost")) is not None else "",
+                  "fixed_costs_monthly": num(k.get("fixed_costs"))},
+        "step9": {"capacity_per_month": num(k.get("capacity"))},
+    }
+    # A name alone ("Bush Clearing") is never the description too (the owner, 26 Oct: "description is not even making sense"):
+    # the Agent's own fill writes those, and the name is used only when there is nothing else
+    desc = str(idea.get("description") or "").strip()
+    fill = idea.get("form_fill") or {}
+    if fill and len(desc.split()) <= 4:
+        for s, f in (("step1", "idea_tagline"), ("step1", "idea_description"), ("step2", "proposed_solution"), ("step5", "solution_description")):
+            if (fill.get(s) or {}).get(f) or (s, f) == ("step2", "proposed_solution"):
+                steps[s].pop(f, None)
+    if idea.get("country"):
+        steps["step1"]["operating_country"] = idea["country"]      # the form's own list of countries, never "Abuja, Nigeria"
+    steps = {s: {f: v for f, v in fields.items() if v not in (None, "")} for s, fields in steps.items()}
+    # Every question the owner and the records leave empty, as the Agent filled it (validation_fill), never over an answer
+    for s, fields in fill.items():
+        for f, v in (fields or {}).items():
+            if v not in (None, "", []) and str((steps.get(s) or {}).get(f) or "").strip().lower() in ("", "other", "unknown"):
+                steps.setdefault(s, {})[f] = v
+    if fill and len(desc.split()) <= 4 and not (steps.get("step2") or {}).get("proposed_solution") and (steps.get("step5") or {}).get("solution_description"):
+        steps["step2"]["proposed_solution"] = steps["step5"]["solution_description"]
+    steps = {s: fields for s, fields in steps.items() if fields}
+    return {"validation_mode": "basic", "workspace_id": business_id, "currency": idea.get("currency") or "GBP",
+            "steps_completed": sorted(int(s[4:]) for s in steps), **steps}
 
 
 class ModuleStudio(Studio):
@@ -404,15 +600,45 @@ class ModuleStudio(Studio):
                 "problem": idea.get("problem") or "", "currency": idea.get("currency") or "GBP"}
 
     async def validate_idea(self, *, user_id, business_id, idea):
+        """A3: the deterministic score at once (the wizard's own engine, from the same fields: well under a second), then
+        the full validation (AI enrichment, web research, the written report) in the background, saved where the wizard
+        saves it. The task never waits minutes for the research."""
+        from app.modules.idea_validation.engine_v4 import evaluate_v4, v4_payload_to_input
+        payload = validation_payload(idea, business_id)
+        payload["validation_mode"] = idea.get("depth") or payload.get("validation_mode") or "basic"
+        quick = evaluate_v4(v4_payload_to_input(payload))
+        # The full validation the page runs, Basic or Comprehensive alike (its research and report, at that depth), saved on
+        # the draft as the page saves its own (the owner, 26 Oct: "agent is supposed to populate the field and get me the full
+        # validation output, based on basic or comprehensive")
+        self._full_later(user_id, payload, business_id=idea.get("history_business") or business_id, history_id=idea.get("history_id"))
+        scores = quick.get("scores") or {}
+        return {"score": round(float(scores.get("potential_score") or 0)), "confidence": round(float(scores.get("evidence_confidence_score") or 0)),
+                "verdict": (quick.get("verdict") or {}).get("category"), "risks": [risk_sentence(f) for f in quick.get("risk_flags") or []][:6],
+                "next_steps": [experiment_sentence(x) for x in quick.get("experiments") or []][:6], "result_id": None, "full_report": "pending",
+                "payload": payload, "quick": quick}
+
+    @staticmethod
+    def _full_later(user_id: str, payload: dict, business_id: str | None = None, history_id: str | None = None) -> None:
+        import asyncio
         from app.modules.idea_validation.service import evaluate_v4_idea
-        res = await evaluate_v4_idea(user_id=user_id, payload={
-            "validation_mode": "basic", "workspace_id": business_id, "currency": idea.get("currency") or "GBP",
-            "step1": {"idea_name": idea.get("name") or "", "idea_description": idea.get("description") or "", "idea_sector": idea.get("industry") or "",
-                      "operating_country": idea.get("location") or "", "launch_geography": idea.get("location") or ""},
-            "step2": {"problem_description": idea.get("problem") or "", "who_affected": idea.get("customer") or ""}})
-        risks = [str(f.get("label") or f.get("message") or f) if isinstance(f, dict) else str(f) for f in res.get("risk_flags") or []] or list(res.get("reasons") or [])
-        return {"score": round(float(res.get("score") or 0)), "risks": risks[:6], "next_steps": [str(x) for x in (res.get("recommendations") or [])][:6],
-                "result_id": res.get("result_id")}
+
+        async def go() -> None:
+            try:
+                full = await evaluate_v4_idea(user_id=user_id, payload=payload)
+            except Exception:      # noqa: BLE001 - the quick score stands; the full report is only an addition
+                logger.warning("full idea validation did not finish", exc_info=True)
+                return
+            if business_id and history_id and isinstance(full, dict):
+                try:
+                    await update_history_entry(user_id, business_id, history_id, full)
+                except Exception:      # noqa: BLE001 - the draft keeps its first score
+                    logger.warning("the Agent's idea validation draft was not updated with the full report", exc_info=True)
+        try:
+            task = asyncio.get_running_loop().create_task(go())
+        except RuntimeError:
+            return
+        _FULL.add(task)
+        task.add_done_callback(_FULL.discard)
 
     async def size_market(self, *, user_id, business_id, idea):
         from app.modules.idea_validation.market_research_service import run_market_research
@@ -420,16 +646,48 @@ class ModuleStudio(Studio):
         m = report.get("market_opportunity") or report
         sources = report.get("sources") or []
         flat = [s for group in sources.values() for s in group] if isinstance(sources, dict) else list(sources)
-        return {"tam": m.get("total_addressable_market") or m.get("market_size"), "sam": m.get("serviceable_addressable_market"),
-                "som": m.get("serviceable_obtainable_market"), "assumptions": [str(a) for a in (m.get("assumptions") or report.get("assumptions") or [])][:6],
+        sizing = report.get("market_sizing") or {}
+        return {"tam": m.get("total_addressable_market") or sizing.get("total_addressable_market") or m.get("market_size"),
+                "sam": m.get("serviceable_addressable_market") or sizing.get("serviceable_addressable_market"),
+                "som": m.get("serviceable_obtainable_market"), "tam_basis": sizing.get("tam_basis"), "sam_basis": sizing.get("sam_basis"),
+                "assumptions": [str(a) for a in (m.get("assumptions") or report.get("assumptions") or [])][:6],
                 "sources": [s for s in flat if isinstance(s, dict)][:6]}
+
+    async def file_document(self, *, user_id, business_id, type, title, company, markdown, document_id=None):
+        from app.modules.blueprint.repository import save_document
+        return await save_document(user_id=user_id, type=type, title=title[:200], company_name=(company or "")[:64], industry=None, pricing_model=None,
+                                   workspace_id=business_id, document_markdown=markdown, document_html=None, provider="enterprateai_agent",
+                                   model=None, document_id=document_id)
+
+    async def draft_proposal(self, *, user_id, business_id, brief):
+        """The Client Proposal the Business Blueprints page writes, from the same inputs the page asks for."""
+        from app.modules.blueprint.schemas import BlueprintGenerateRequest
+        from app.modules.blueprint.service import generate_blueprint
+        allowed = set(BlueprintGenerateRequest.model_fields)
+        res = await generate_blueprint(BlueprintGenerateRequest(type="client_proposal", workspace_id=business_id, include_validation_snapshot=True,
+                                                                **{k: v for k, v in brief.items() if k in allowed and v not in (None, "")}), user_id=user_id)
+        return {"document_id": getattr(res, "document_id", None), "title": brief.get("proposal_title") or "Proposal"}
+
+    async def draft_sales_letter(self, *, user_id, business_id, idea):
+        from app.modules.blueprint.schemas import BlueprintGenerateRequest
+        from app.modules.blueprint.service import generate_blueprint
+        res = await generate_blueprint(BlueprintGenerateRequest(
+            type="sales_letter", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, word_count=int(idea.get("word_count") or 450),
+            industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
+            target_market=idea.get("customer") or None, **owner_words(idea)), user_id=user_id)
+        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Sales letter",
+                "sections": len(getattr(res, "sections", None) or []) or None}
 
     async def draft_plan(self, *, user_id, business_id, idea):
         from app.modules.blueprint.schemas import BlueprintGenerateRequest
         from app.modules.blueprint.service import generate_blueprint
+        separate = bool(idea.get("separate"))
         res = await generate_blueprint(BlueprintGenerateRequest(
-            type="business_plan", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, include_validation_snapshot=True,
+            # A separate idea is its own: none of the business's own validation figures or services in it (23 Oct)
+            type="business_plan", company_name=(idea.get("name") or "My business")[:64], workspace_id=business_id, include_validation_snapshot=not separate,
             industry=(idea.get("industry") or None), problem=idea.get("problem") or None, solution=idea.get("description") or None,
-            target_market=idea.get("customer") or None), user_id=user_id)
-        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or "Business plan",
+            target_market=idea.get("customer") or None, value_proposition=idea.get("value_prop") or None,
+            **({"selected_services": [str(idea.get("description"))[:120]]} if separate and idea.get("description") else {}), **owner_words(idea)), user_id=user_id)
+        # Its own title, never a generic one (the draft is then named for the idea it is about)
+        return {"document_id": getattr(res, "document_id", None) or getattr(res, "id", None), "title": getattr(res, "title", None) or None,
                 "sections": len(getattr(res, "sections", None) or []) or None}

@@ -39,7 +39,7 @@ def test_i_need_more_customers_is_a_composite_goal_with_an_honest_boundary_not_a
         assert r["resolution_class"] == "composite_goal" and r["goal_key"] == "more_customers", said
     r = goals.resolve(text="I need more customers")
     assert r["underlying_outcome"] == "Work toward winning more customers"
-    assert r["execution_boundary"] == "I can't guarantee customers or bring them to you directly."
+    assert not r["execution_boundary"]      # no "I can't guarantee…" (the owner, 30 Oct)
     assert r["message"].startswith("I can help you work toward getting more customers")
     assert not any(word in (r["message"] + r["execution_boundary"]).lower().replace("can't guarantee", "") for word in ("guarantee", "we will get you"))
     assert len(r["recommended_path"]) <= 4                                  # a short path, not the feature list
@@ -51,9 +51,9 @@ def test_i_need_funding_is_partial_support_through_funding_readiness_and_never_p
         r = goals.resolve(text=said, key="need_funding" if said is None else None)
         assert (r["resolution_class"], r["start_capability"]) == ("partial_support", "funding_readiness"), said
     r = goals.resolve(key="need_funding")
-    assert r["message"].startswith("I can help you become more funding-ready") and r["execution_boundary"] == "I can't guarantee funding, or a yes from any investor or lender."
+    assert r["message"].startswith("I can help you become more funding-ready") and not r["execution_boundary"]
     assert "will get you funding" not in r["message"].lower()
-    assert r["credit_implication"].startswith("Free to start")
+    assert not any(k.startswith("credit") for k in r)      # a task card never says what it costs
 
 
 def test_a_true_no_match_says_so_and_invents_nothing():
@@ -132,9 +132,14 @@ def test_no_capability_is_ever_offered_that_is_not_registered():
 def test_the_homepage_offers_goals_first_then_quick_tasks_all_backed_by_a_registered_path():
     s = goals.suggestions()
     assert s["prompt"] == "What do you want EnterprateAI to do for your business?"
-    assert [g["label"] for g in s["goals"]] == ["I need funding", "I need more customers", "Help me price my product/service", "I want to launch a product/service",
-                                              "Improve my cash flow", "Help me grow my business", "Test a business idea", "Help me understand my business risks"]
-    assert [t["label"] for t in s["tasks"]] == ["Create Invoice", "Create Quotation", "Create Business Plan", "Prepare Proposal"]
+    # Only funding until the others are ready (the owner, 22 Oct); typed, they are still understood
+    # risks back on (24 Oct); launch and idea validation back on (the owner, 25 Oct)
+    assert [g["label"] for g in s["goals"]] == ["I need funding", "I need more customers", "I want to launch a product/service", "Test a business idea",
+                                                "Help me understand my business risks"]      # customers on too (25 Oct)
+    assert goals.resolve(text="Test a business idea")["goal_key"] == "test_idea"
+    # Off the chips (13 Oct 2026), still understood when typed.
+    assert goals.resolve(text="Improve my cash flow")["goal_key"] == "cash_flow" and goals.resolve(text="Help me grow my business")["goal_key"] == "grow"
+    assert [t["label"] for t in s["tasks"]] == ["Create Invoice", "Create Quotation", "Create Business Plan"]      # a proposal is asked for in words, not a homepage shortcut
     assert s["reassurance"] == "Free essential business tools. 50 AI Credits to get started." and s["retention_days"] == 7
     assert not any(word in g["label"].lower() for g in s["goals"] for word in ("get funding", "get customers", "guarantee"))      # no promise in the copy
 
@@ -156,6 +161,9 @@ def world(monkeypatch):
     monkeypatch.setattr(goal_router, "get_orchestrator", lambda: env.orch)
     monkeypatch.setattr(goal_router, "_store", store)
     goal_router._STARTS.clear()
+    # These journeys are about what comes after the answers are accepted; the question itself is in test_two_accounts_same_browser.py
+    real_may_attach = goal_router._may_attach
+    monkeypatch.setattr(goal_router, "_may_attach", lambda session, user, confirm=False: real_may_attach(session, user, True))
     who = {"user": None}
 
     def current():
@@ -184,8 +192,9 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     # A new visitor, no account: the task starts.
     s = client.post("/task-sessions", json={"key": "create_invoice", "entry_mode": "quick_task"}).json()
     assert s["state"] == "collecting_context" and s["next"] == "questions" and s["authenticated"] is False
-    assert s["resolution"]["start_capability"] == "new_invoice" and [q["key"] for q in s["questions"]] == ["customer", "item", "amount"]
-    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "ABC Consulting Ltd", "item": "Website redesign", "amount": 1500}}).json()
+    assert s["resolution"]["start_capability"] == "new_invoice" and [q["key"] for q in s["questions"]] == ["customer", "customer_email", "item", "quantity", "amount", "vat_rate", "due_days"]
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "ABC Consulting Ltd", "item": "Website redesign", "amount": 1500,
+                                                                               "customer_email": "accounts@abc.test", "vat_rate": 20}}).json()
     assert s["state"] == "awaiting_identity" and s["next"] == "identity" and s["missing"] == []
     # Nothing private exists yet, and nothing can be prepared without signing in.
     assert "ABC Consulting Ltd" not in _records(env) and set(env.businesses) == before_businesses and run(env.store.list_runs("A")) == []
@@ -193,7 +202,7 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     assert env.meter.charges == []                                          # goal resolution and the questions cost nothing
     # Refresh, redirect, coming back from the verification email: the session is still there.
     again = client.get(f"/task-sessions/{s['id']}").json()
-    assert again["inputs"] == {"customer": "ABC Consulting Ltd", "item": "Website redesign", "amount": 1500.0} and again["resolution"]["original_goal"] == "Create Invoice"
+    assert {k: v for k, v in again["inputs"].items() if k in ("customer", "item", "amount")} == {"customer": "ABC Consulting Ltd", "item": "Website redesign", "amount": 1500.0} and again["resolution"]["original_goal"] == "Create Invoice"
     # Signed in as a brand-new user: attached, a business is made for them (only now), and the task resumes.
     who["user"] = NEW_USER
     env.meter.plans[NEW_USER], env.meter.balances[NEW_USER] = "starter_insight", 50
@@ -208,22 +217,18 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     prepared = client.post(f"/task-sessions/{s['id']}/prepare").json()
     assert prepared["state"] == "awaiting_review" and prepared["handoff"]["to"].startswith("/dashboard?task=") and prepared["next"] == "handoff"
     run_id = prepared["handoff"]["run_id"]
-    # On the dashboard the task shows what was said before sign-up, filled in; only what is still missing is asked.
+    # Everything the invoice needs was asked on the homepage: on the dashboard nothing about it is asked again.
     shown = client.get(f"/workflow-runs/{run_id}").json()["run"]
     assert shown["workflow_key"] == "new_invoice" and shown["business_id"] == mine
-    fields = {f["key"]: f for f in shown["pending_question"]["fields"]}
-    assert fields["customer_name"]["default"] == "ABC Consulting Ltd" and "customer_id" not in fields      # no customers yet: straight to the new one
-    assert fields["items"]["suggested"] == [{"product_id": None, "name": "Website redesign", "quantity": 1, "unit_price": 1500.0}]
-    assert "customer_email" in fields and "vat_rate" in fields              # never invented: the address and the VAT rate are asked for
-    done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {
-        "customer_name": "ABC Consulting Ltd", "customer_email": "accounts@abc.test", "vat_rate": 0,
-        "items": [{"name": "Website redesign", "quantity": 1, "unit_price": 1500}]}}).json()["run"]
-    # A brand-new business has no email of its own yet, and a document is never sent under a placeholder: that one thing is asked.
-    assert [f["key"] for f in done["pending_question"]["fields"]] == ["business_email"]
-    done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {"business_email": "hello@newcomer.test"}}).json()["run"]
+    asked = {f["key"] for f in (shown.get("pending_question") or {}).get("fields") or []}
+    assert not asked & {"customer_name", "customer_id", "customer_email", "items", "vat_rate"}
+    done = shown
+    # A brand-new business starts with the sign-up email as its contact email (the owner's rule, 16 Oct): nothing more is
+    # asked, and the draft waits for approval.
+    assert data["workspace_profile"]["email"] == NEW_USER
     assert done["status"] == "awaiting_approval", done.get("pending_question") or done.get("error")      # a reviewable draft; sending still needs approval
     approval = env.pending(done)[0]
-    assert approval["tool_id"] == "send_invoice" and (approval["payload"]["customer_name"], approval["payload"]["total"]) == ("ABC Consulting Ltd", 1500)
+    assert approval["tool_id"] == "send_invoice" and (approval["payload"]["customer_name"], approval["payload"]["total"]) == ("ABC Consulting Ltd", 1800)      # 1,500 plus the 20% VAT given on the homepage
     assert env.comms.sent == [] and [c["name"] for c in data["catalogue"]["customers"]] == ["ABC Consulting Ltd"]
     summary = client.get(f"/businesses/{mine}/agent/summary").json()
     assert summary["needs_approval_count"] == 1                             # not an empty dashboard
@@ -239,25 +244,27 @@ def test_create_an_invoice_from_the_homepage_through_sign_in_to_a_draft_waiting_
     assert set().union(*[set(e) for e in store.events]) == {"name", "at", "session_id", "entry_mode", "goal_key", "capability", "resolution_class", "signed_in"}
     assert not any(word in str(store.events) for word in ("ABC Consulting", "Website redesign", "1500", NEW_USER, "Newcomer Studio"))
     assert all(len(e["session_id"]) == 12 for e in store.events)            # a prefix: the session itself can't be opened from an event
-    # The first essential task on a new account is free, so the badge stays green and the meter does not move.
-    assert s["resolution"]["credit_badge"] == "Free"
-    assert s["resolution"]["credit_implication"] == "Free: this uses no AI Credits."
-    assert env.meter.charges == [] and env.meter.balances[NEW_USER] == 50
+    # The first task is not free any more (config.FIRST_TASK_FREE is off): the badge and the line say what it costs,
+    # and the meter moves by exactly that (QA R13: the badge said "Free" while 2 credits were charged).
+    assert not any(k.startswith("credit") for k in s["resolution"])      # a task card never says what it costs
+    assert env.meter.charges == [(NEW_USER, "agent_invoice_draft", 2)] and env.meter.balances[NEW_USER] == 48
     sent = client.post(f"/workflow-runs/{run_id}/approvals/{approval['id']}/approve").json()
     assert sent.get("run", sent).get("status") != "failed" and len(env.comms.sent) == 1
-    assert [c[2] for c in env.meter.charges] == [] and env.meter.balances[NEW_USER] == 50
-    assert data["onboarding"]["free_first_task"]["capability"] == "new_invoice"
+    assert [c[2] for c in env.meter.charges] == [2, 2] and env.meter.balances[NEW_USER] == 46      # prepared, then sent: 2 + 2
+    assert "free_first_task" not in (data.get("onboarding") or {})      # nothing is marked free while FIRST_TASK_FREE is off
 
 
 def test_an_existing_user_resumes_into_their_own_business_and_another_account_cannot_take_the_session(world):
     env, store, client, who = world
     s = client.post("/task-sessions", json={"text": "Create an invoice for BrightTech Ltd", "entry_mode": "free_text"}).json()
     # The customer was in the sentence: proposed for confirmation, and only the rest is still to be asked.
-    assert s["proposed"] == {"customer": "BrightTech Ltd"} and s["missing"] == ["item", "amount"] and s["next"] == "questions"
-    assert [(q["key"], q["proposed"], q["default"]) for q in s["questions"]] == [("customer", True, "BrightTech Ltd"), ("item", False, ""), ("amount", False, "")]
-    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Strategy Workshop", "amount": 1500}}).json()
-    assert s["inputs"] == {"customer": "BrightTech Ltd", "item": "Strategy Workshop", "amount": 1500.0} and s["proposed"] == {} and s["next"] == "identity"
-    assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "BrightTech Ltd"), ("What is it for?", "Strategy Workshop"), ("How much?", "£1,500")]
+    assert s["proposed"] == {"customer": "BrightTech Ltd"} and s["missing"] == ["customer_email", "item", "amount", "vat_rate"] and s["next"] == "questions"
+    assert [(q["key"], q["proposed"], q["default"]) for q in s["questions"] if q["key"] in ("customer", "item", "amount")] == [("customer", True, "BrightTech Ltd"), ("item", False, ""), ("amount", False, "")]
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Strategy Workshop", "amount": 1500, "customer_email": "buyer@brighttech.test", "vat_rate": 20}}).json()
+    assert {k: v for k, v in s["inputs"].items() if k in ("customer", "item", "amount")} == {"customer": "BrightTech Ltd", "item": "Strategy Workshop", "amount": 1500.0} and s["proposed"] == {} and s["next"] == "identity"
+    assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "BrightTech Ltd"), ("What is their email address?", "buyer@brighttech.test"), ("What is it for?", "Strategy Workshop"),
+                                                                ("What price for each?", "£1,500"), ("Do you charge VAT on this?", "20%"),
+                                                                ("Total", "£1,800 including VAT")]      # VAT as a rate, and the total (26 Oct)
     who["user"] = OWNER
     resumed = client.post(f"/task-sessions/{s['id']}/resume").json()
     assert resumed["business_id"] == "A" and len([b for b in env.businesses.values() if b["owner"] == OWNER]) == 1      # no duplicate business
@@ -276,12 +283,13 @@ def test_an_existing_user_resumes_into_their_own_business_and_another_account_ca
 def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_case_with_no_promise(world):
     env, store, client, who = world
     s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
-    assert s["resolution"]["resolution_class"] == "partial_support" and "can't guarantee funding" in s["resolution"]["execution_boundary"]
-    assert [q["key"] for q in s["questions"]] == ["amount", "use", "stage"]      # only the three relevant early inputs
-    amount, _use, stage = s["questions"]
-    assert amount["prefix"] == "£" and [c["label"] for c in amount["chips"]] == ["£10,000", "£25,000", "£50,000", "£100,000", "£250,000"]
-    assert stage["default"] == "" and s["missing"] == ["amount", "use", "stage"]      # no answer is guessed for them
-    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 50000, "use": "Hire two developers and fund six months of marketing", "stage": "trading"}}).json()
+    assert s["resolution"]["resolution_class"] == "partial_support" and not s["resolution"]["execution_boundary"]
+    assert [q["key"] for q in s["questions"] if not q.get("hidden")] == ["amount", "use", "stage", "route", "timing", "traction"]      # the six questions asked (the place is read, never asked)
+    assert s["progress"] == {"answered": 0, "total": 6} and s["resolution"]["recommended_path"] == []      # counted in questions; no list of engines
+    amount, _use, stage = s["questions"][:3]
+    assert amount["prefix"] == "£" and [c["label"] for c in amount["chips"]] == ["£10k", "£25k", "£50k", "£100k", "£250k"]      # short, as people say them (the owner's brief)
+    assert stage["default"] == "" and s["missing"] == ["amount", "use", "stage", "route", "timing", "traction"]      # no answer is guessed for them
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 50000, "use": "Hire two developers and fund six months of marketing", "stage": "trading", "route": "equity", "timing": "Within 3 months", "traction": "Paying customers"}}).json()
     assert s["next"] == "identity"
     who["user"] = OWNER
     client.post(f"/task-sessions/{s['id']}/resume")
@@ -291,7 +299,7 @@ def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_ca
     # First value is the result, not an empty case: the check has been run, and the case opens on it.
     said = prepared["handoff"]["message"]
     # Their words are quoted as they wrote them, not bent into the sentence.
-    assert said.startswith('I set up your funding case from what you told me: £50,000 to fund: "Hire two developers and fund six months of marketing". ')
+    assert said.startswith('I set up your funding plan from what you told me: £50,000 to fund: "Hire two developers and fund six months of marketing". ')
     assert prepared["preparing_label"] == "Checking your funding readiness"
     assert "guarantee" not in said.lower() and "Run the check" not in said
     assert prepared["handoff"]["to"].endswith("?tab=results") and prepared["handoff"]["assessment_id"]
@@ -304,14 +312,19 @@ def test_i_need_funding_keeps_the_goal_through_sign_in_and_lands_on_a_funding_ca
     assert case["kind"] == rules.FUNDING and case["business_id"] == "A"
     assert (case["data"]["target_amount"], case["data"]["purpose"], case["data"]["stage"], case["data"]["pinned"]) == \
            (50000, "Hire two developers and fund six months of marketing", "trading", True)
-    assert case["data"]["title"] == "£50,000 for hire two developers and fund six months of marketing"      # named from the answers, not "Funding case"
+    assert case["data"]["title"].startswith("£50k equity investment to hire two developers")      # named in plain words (the owner's brief)
     assert env.meter.balances[OWNER] == credits and env.meter.charges == []      # getting here used no AI Credits
 
 
 def test_a_no_match_and_a_clarifying_question_from_the_homepage(world):
     env, store, client, who = world
-    none = client.post("/task-sessions", json={"text": "book me a flight to Lagos"}).json()
-    assert none["state"] == "blocked" and none["next"] == "none" and none["questions"] == []      # honest, no fake task, no sign-up asked for
+    # QA U1a: the rules alone never refuse. With no model to agree that nothing fits (as in tests), the closest
+    # goals are offered in one question, and "Something else" ends it plainly.
+    unplaced = client.post("/task-sessions", json={"text": "book me a flight to Lagos"}).json()
+    assert unplaced["next"] == "clarify" and unplaced["questions"] == []
+    assert [o["value"] for o in unplaced["clarify"]["options"]][-1] == "other"
+    ended = client.post(f"/task-sessions/{unplaced['id']}/inputs", json={"answers": {"goal_key": "other"}}).json()
+    assert ended["state"] == "blocked" and ended["next"] == "none" and ended["questions"] == []      # honest, no fake task, no sign-up asked for
     unsure = client.post("/task-sessions", json={"text": "I need funding to launch my new product"}).json()
     assert unsure["next"] == "clarify" and unsure["clarify"]["key"] == "goal_key"
     picked = client.post(f"/task-sessions/{unsure['id']}/inputs", json={"answers": {"goal_key": "need_funding"}}).json()
@@ -331,18 +344,18 @@ def test_a_no_match_and_a_clarifying_question_from_the_homepage(world):
 def test_everything_said_in_one_sentence_is_shown_for_confirmation_and_nothing_is_asked_twice(world):
     env, store, client, who = world
     s = client.post("/task-sessions", json={"text": "Create an invoice for ABC Consulting Ltd for website redesign £1,500", "entry_mode": "free_text"}).json()
-    assert s["proposed"] == {"customer": "ABC Consulting Ltd", "item": "website redesign", "amount": 1500.0} and s["missing"] == []
+    assert s["proposed"] == {"customer": "ABC Consulting Ltd", "item": "website redesign", "amount": 1500.0} and s["missing"] == ["customer_email", "vat_rate"]
     assert s["next"] == "questions" and s["inputs"] == {}                   # proposed, not yet the visitor's confirmed answers
     assert [(x["value"], x["proposed"]) for x in s["summary"]] == [("ABC Consulting Ltd", True), ("website redesign", True), ("£1,500", True)]
     # "That's right" confirms them as they are; a correction sent with the form wins over what was read.
     ok = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {}, "confirm": True}).json()
-    assert ok["inputs"] == s["proposed"] and ok["proposed"] == {} and ok["next"] == "identity"
+    assert ok["inputs"] == s["proposed"] and ok["proposed"] == {} and ok["next"] == "questions" and ok["missing"] == ["customer_email", "vat_rate"]      # what was said is confirmed; only the rest is asked
     t = client.post("/task-sessions", json={"text": "Create an invoice for ABC Consulting Ltd for website redesign £1,500"}).json()
     fixed = client.post(f"/task-sessions/{t['id']}/inputs", json={"answers": {"amount": 1800}}).json()
     assert fixed["inputs"] == {"customer": "ABC Consulting Ltd", "item": "website redesign", "amount": 1800.0}
     # Funding: the amount and what it is for are read; only the stage is left to ask.
     f = client.post("/task-sessions", json={"text": "I need £50k for hiring", "entry_mode": "free_text"}).json()
-    assert f["goal_key"] == "need_funding" and f["proposed"] == {"amount": 50000.0, "use": "hiring"} and f["missing"] == ["stage"]
+    assert f["goal_key"] == "need_funding" and f["proposed"] == {"amount": 50000.0, "use": "hiring"} and f["missing"] == ["stage", "route", "timing", "traction"]
 
 
 def test_the_page_reports_only_known_funnel_steps_and_never_content(world):
@@ -362,7 +375,12 @@ def test_the_page_reports_only_known_funnel_steps_and_never_content(world):
     assert {"demo_opened", "demo_completed", "demo_try_it_clicked"} <= set(goals.CLIENT_EVENTS)
     assert (set(goals.CLIENT_EVENTS) | set(goals.SERVER_EVENTS)) - {"demo_opened", "demo_completed", "demo_try_it_clicked"} == {
         "homepage_goal_prompt_viewed", "entry_mode_selected", "goal_or_task_submitted", "goal_outcome_resolved", "capability_match_classified",
-        "verification_started", "email_verified", "task_or_goal_path_resumed", "first_output_prepared", "dashboard_handoff_completed"}
+        "verification_started", "email_verified", "task_or_goal_path_resumed", "first_output_prepared", "dashboard_handoff_completed",
+        "questions_avoided", "first_value_shown",
+        # QA PF7: the funnel past the goal (first value, the premium step chosen, its upgrade, the clarifying choice).
+        "first_value_premium_clicked", "premium_upgrade_clicked", "onboarding_match_choice",
+        # Time to the first question (a number of milliseconds, nothing typed).
+        "first_question_shown"}
     assert client.get("/task-sessions/not-a-session").status_code == 404
     assert client.post("/task-sessions", json={}).status_code == 422
 
@@ -379,46 +397,43 @@ def test_anonymous_starts_are_capped_and_nothing_here_spends_credits(world):
 
 def _funding(client, amount=50000, use="hiring"):
     s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
-    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": amount, "use": use, "stage": "trading"}})
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": amount, "use": use, "stage": "trading", "route": "equity", "timing": "Within 3 months", "traction": "Paying customers"}})
     client.post(f"/task-sessions/{s['id']}/resume")
     return s["id"], client.post(f"/task-sessions/{s['id']}/prepare").json()
 
 
-def test_a_second_funding_goal_asks_whether_to_update_the_case_that_is_there_or_start_another(world):
+def test_a_different_funding_need_asks_replace_or_update_on_the_one_case(world):
+    """One funding case per business, kept to the latest need (the owner, 23 Oct). G2: "I need funding" turned the grant case
+    into a loan unasked; a different need (amount, route or purpose) now asks Replace (the default, the old need kept in
+    History) or Update; Update changes only what differs and keeps the title. Never a second case."""
     env, store, client, who = world
     who["user"] = OWNER
     svc = service_for(env.orch)
-    cases = lambda: [r for r in run(svc.store.list("subjects", "A", kind=rules.FUNDING)) if r["status"] != "archived"]      # noqa: E731
+    cases = lambda: run(svc.store.list("subjects", "A", kind=rules.FUNDING))      # noqa: E731
     _first, made = _funding(client)
-    assert made["state"] == "handed_off" and len(cases()) == 1 and cases()[0]["data"]["title"] == "£50,000 for hiring"
+    data = cases()[0]["data"]
+    assert made["state"] == "handed_off" and len(cases()) == 1 and data["title"] == "£50k equity investment for hiring"
+    assert (data["target_amount"], data["purpose"], data["route_preference"], data["traction"]["summary"]) == (50000, "hiring", "equity", "Paying customers")
     first_id = made["handoff"]["subject_id"]
-    # Asked again: nothing is created. One question, with what would change said on the option.
     sid, asked = _funding(client, amount=80000, use="a second site")
-    assert asked["next"] == "choose" and asked["handoff"] is None and asked["state"] == "collecting_required_data" and len(cases()) == 1
-    assert asked["choose"]["label"] == "You already have a funding case. Update it or start a new one?"
-    assert asked["choose"]["options"] == [{"value": first_id, "label": "Update £50,000 for hiring (amount £50,000 → £80,000)"}, {"value": "new", "label": "Start a new case"}]
-    assert client.post(f"/task-sessions/{sid}/prepare").json()["next"] == "choose" and len(cases()) == 1      # still nothing until they say
-    assert client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": "not-theirs"}}).json()["next"] == "choose"
-    # Update: the same case, with the new answers, checked again.
-    assert client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": first_id}}).json()["next"] == "prepare"
-    updated = client.post(f"/task-sessions/{sid}/prepare").json()
-    assert updated["state"] == "handed_off" and updated["handoff"]["subject_id"] == first_id and updated["handoff"]["updated_existing"] is True
-    assert updated["handoff"]["to"] == f"/funding/{first_id}?tab=results"
-    assert updated["handoff"]["message"].startswith('I updated "£50,000 for hiring" with what you told me: £80,000 to fund: "a second site". ')
-    assert len(cases()) == 1 and (cases()[0]["data"]["target_amount"], cases()[0]["data"]["purpose"]) == (80000, "a second site")
-    # Start a new one: a second case, named from its own answers.
-    sid, asked = _funding(client, amount=20000, use="Stock for Christmas")
-    assert asked["next"] == "choose"
-    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": "new"}})
-    fresh = client.post(f"/task-sessions/{sid}/prepare").json()
-    assert fresh["handoff"]["subject_id"] != first_id and fresh["handoff"]["updated_existing"] is False and len(cases()) == 2
-    assert {c["data"]["title"] for c in cases()} == {"£50,000 for hiring", "£20,000 for stock for Christmas"}
-    # With two on record the question names both. An archived case is not offered.
-    sid, asked = _funding(client, amount=1000, use="tools")
-    assert asked["choose"]["label"] == "You already have funding cases. Update one or start a new one?" and len(asked["choose"]["options"]) == 3
-    run(svc.set_status(OWNER, "A", rules.FUNDING, first_id, "archive", OWNER))
-    sid, asked = _funding(client, amount=1000, use="tools")
-    assert [o["value"] for o in asked["choose"]["options"]] == [fresh["handoff"]["subject_id"], "new"]
+    assert asked["choose"]["key"] == "subject_choice" and asked["choose"]["default"] == f"replace:{first_id}"
+    assert [o["value"] for o in asked["choose"]["options"]] == [f"replace:{first_id}", f"update:{first_id}"]
+    assert cases()[0]["data"]["target_amount"] == 50000      # nothing changed before the choice
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"replace:{first_id}"}})
+    done = client.post(f"/task-sessions/{sid}/prepare").json()
+    data = cases()[0]["data"]
+    assert done["handoff"]["subject_id"] == first_id and len(cases()) == 1 and (data["target_amount"], data["purpose"]) == (80000, "a second site")
+    assert data["previous_needs"][0]["title"] == "£50k equity investment for hiring"
+    sid, asked = _funding(client, amount=60000, use="a second site")
+    client.post(f"/task-sessions/{sid}/inputs", json={"answers": {"subject_choice": f"update:{first_id}"}})
+    client.post(f"/task-sessions/{sid}/prepare")
+    data = cases()[0]["data"]
+    assert data["target_amount"] == 60000 and len(cases()) == 1
+    import pytest
+    from app.modules.readiness.service import Conflict
+    with pytest.raises(Conflict) as e:
+        run(svc.create_subject(OWNER, "A", rules.FUNDING, {"title": "Another"}, OWNER))
+    assert e.value.code == "one_funding_case" and e.value.current["id"] == first_id
     assert env.meter.charges == []
 
 
@@ -445,31 +460,32 @@ def test_i_need_an_invoice_for_mark_300_dollars_on_the_homepage_reads_as_the_age
     s = client.post("/task-sessions", json={"text": text, "entry_mode": "free_text"}).json()
     assert s["goal_key"] == "create_invoice" and s["proposed"] == {"customer": "Mark", "amount": 300.0}
     assert (s["currency"], s["currency_note"], s["currency_options"]) == ("USD", "In USD", ["USD", "GBP"])
-    assert s["missing"] == ["item"]                                         # only "What is it for?" is asked
-    assert [(q["key"], q["proposed"], q["default"]) for q in s["questions"]] == [("customer", True, "Mark"), ("item", False, ""), ("amount", True, 300.0)]
-    assert [q.get("prefix") for q in s["questions"]] == [None, None, "$"]   # the sign follows what was written, not the default
-    assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "Mark"), ("How much?", "$300"), ("Currency", "USD")]
-    assert s["resolution"]["credit_badge"] == "Free"
+    assert s["missing"] == ["customer_email", "item", "vat_rate"]           # only what was not said is asked
+    assert [(q["key"], q["proposed"], q["default"]) for q in s["questions"] if q["key"] in ("customer", "item", "amount")] == [("customer", True, "Mark"), ("item", False, ""), ("amount", True, 300.0)]
+    assert [q.get("prefix") for q in s["questions"] if q["key"] in ("customer", "item", "amount")] == [None, None, "$"]   # the sign follows what was written, not the default
+    assert [(x["label"], x["value"]) for x in s["summary"]] == [("Who is it for?", "Mark"), ("What price for each?", "$300"), ("Currency", "USD")]
+    assert not any(k.startswith("credit") for k in s["resolution"])      # no price on the card, signed in or not
     # One reader: the Agent chat takes the same name, amount and currency from the same words.
     told = said.read(text, date(2026, 10, 7))
     assert (told["party"].lower(), told["amount"], told["currency"]) == ("mark", 300.0, "USD") and "work" not in told
     # Carried through sign-in: the invoice is prepared for Mark, at 300, in dollars.
-    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting"}}).json()
-    assert s["inputs"] == {"customer": "Mark", "item": "Consulting", "amount": 300.0} and s["next"] == "identity" and s["currency"] == "USD"
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting", "customer_email": "mark@example.test", "vat_rate": 0}}).json()
+    assert s["inputs"] == {"customer": "Mark", "item": "Consulting", "amount": 300.0, "customer_email": "mark@example.test", "vat_rate": 0.0} and s["next"] == "identity" and s["currency"] == "USD"
     who["user"] = OWNER
     client.post(f"/task-sessions/{s['id']}/resume")
     run_id = client.post(f"/task-sessions/{s['id']}/prepare").json()["handoff"]["run_id"]
     shown = client.get(f"/workflow-runs/{run_id}").json()["run"]
-    fields = {f["key"]: f for f in shown["pending_question"]["fields"]}
-    assert fields["customer_name"]["default"] == "Mark" and fields["currency"]["default"] == "USD"
-    assert fields["items"]["suggested"] == [{"product_id": None, "name": "Consulting", "quantity": 1, "unit_price": 300.0}]
+    # Everything was said or answered before sign-up: the draft is in dollars and nothing is asked again.
+    assert shown["status"] == "awaiting_approval", shown.get("pending_question")
+    drafted = env.pending(shown)[0]["payload"]
+    assert (drafted["customer_name"], drafted["currency"]) == ("Mark", "USD") and "Consulting" in str(drafted)
     # Switched to pounds in the form: the figure stays, the sign changes, nothing is converted.
     t = client.post("/task-sessions", json={"text": text}).json()
-    t = client.post(f"/task-sessions/{t['id']}/inputs", json={"answers": {"currency": "GBP", "item": "Consulting"}}).json()
-    assert (t["currency"], t["currency_note"], t["inputs"]["amount"]) == ("GBP", "", 300.0) and t["questions"][2]["prefix"] == "£"
+    t = client.post(f"/task-sessions/{t['id']}/inputs", json={"answers": {"currency": "GBP", "item": "Consulting", "customer_email": "mark@example.test", "vat_rate": 0}}).json()
+    assert (t["currency"], t["currency_note"], t["inputs"]["amount"]) == ("GBP", "", 300.0) and next(q for q in t["questions"] if q["key"] == "amount")["prefix"] == "£"
     # A sentence in pounds says nothing about currency at all.
     plain = client.post("/task-sessions", json={"text": "invoice for mark, £300"}).json()
-    assert (plain["currency"], plain["currency_note"], plain["currency_options"]) == ("GBP", "", []) and plain["questions"][2]["prefix"] == "£"
+    assert (plain["currency"], plain["currency_note"], plain["currency_options"]) == ("GBP", "", []) and next(q for q in plain["questions"] if q["key"] == "amount")["prefix"] == "£"
 
 
 def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged_in_credits(world):
@@ -479,22 +495,18 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     env.meter.plans[OWNER] = "explorer"                                     # the free plan, as that workspace was
     who["user"] = OWNER
     s = client.post("/task-sessions", json={"text": "I need an invoice for mark, $300", "entry_mode": "free_text"}).json()
-    assert s["resolution"]["credit_badge"] == "Uses AI Credits"
-    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting"}})
+    assert not any(k.startswith("credit") for k in s["resolution"])      # charged as before, never said on the card
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting", "customer_email": "mark@example.test", "vat_rate": 0}})
     client.post(f"/task-sessions/{s['id']}/resume")
     done = client.post(f"/task-sessions/{s['id']}/prepare").json()
     # The homepage promises free essential tools: the invoice is prepared, on the dashboard, waiting for what is still missing.
     assert done["state"] == "awaiting_review" and done["handoff"]["to"].startswith("/dashboard?task=") and "blocked" not in done["handoff"]
     shown = client.get(f"/workflow-runs/{done['handoff']['run_id']}").json()["run"]
-    assert shown["workflow_key"] == "new_invoice" and {f["key"]: f for f in shown["pending_question"]["fields"]}["customer_name"]["default"] == "Mark"
-    # And it goes all the way on the free plan: answered, approved, sent. Nothing later in the task turns it away.
-    fields = {f["key"]: f for f in shown["pending_question"]["fields"]}
-    answered = client.post(f"/workflow-runs/{shown['id']}/input", json={"answers": {
-        **({"customer_id": "new"} if "customer_id" in fields else {}), "customer_name": "Mark", "customer_email": "mark@example.test", "currency": "USD",
-        "items": [{"name": "Consulting", "quantity": 1, "unit_price": 300}], **({"vat_rate": 0} if "vat_rate" in fields else {})}}).json()["run"]
+    # And it goes all the way on the free plan, with nothing asked again: approved, sent. Nothing later in the task turns it away.
+    answered = shown
     assert answered["status"] == "awaiting_approval", answered.get("pending_question") or answered.get("error")
     approval = env.pending(answered)[0]
-    assert (approval["payload"]["customer_name"], approval["payload"]["total"], approval["payload"]["currency"]) == ("Mark", 360, "USD")      # 300 plus this business's 20% VAT, in dollars
+    assert (approval["payload"]["customer_name"], approval["payload"]["total"], approval["payload"]["currency"]) == ("Mark", 300, "USD")      # the VAT rate answered on the homepage (none), in dollars
     assert client.get("/businesses/A/agent/summary").json()["needs_approval_count"] == 1      # it is there on the dashboard, in Needs Approval
     sent = client.post(f"/workflow-runs/{shown['id']}/approvals/{approval['id']}/approve")
     assert sent.status_code == 200 and len(env.comms.sent) == 1 and env.fin["invoices"][-1]["status"] == "sent"
@@ -506,16 +518,25 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
                                                   "params": {"essential_handoff": True}, "source_reference": "goal:anything"}).json()
     assert forged["kind"] == "blocked"                                      # the pass is the server's to give, not the caller's to claim
     # Every homepage goal and task is carried out on the free plan, not just the invoice: none is turned away for the plan.
-    answers = {"amount": 1000, "use": "stock", "stage": "trading", "sell": "bookkeeping", "customer": "Frank", "channel": "referrals", "price": 100, "cost": 40,
+    answers = {"amount": 1000, "use": "stock", "stage": "trading", "route": "loan", "timing": "Within 3 months", "traction": "Paying customers", "kind": "service", "where": "Leeds", "evidence": "None yet",
+               "monthly_sales": 10, "capacity": 20, "demand": "enquiries", "fixed_costs": 100, "positioning": "mid", "goal": "5 new clients", "sell": "bookkeeping", "customer": "Frank", "channel": "referrals", "price": 100, "cost": 40,
                "target_date": "2026-12-01", "owed": "some", "pressure": "late payers", "limit": "time", "description": "Bookkeeping for small firms",
-               "problem": "month end takes too long", "worry": "one big client", "item": "Consulting", "solution": "A website redesign"}
-    for n, goal in enumerate(goals.GOALS):                                  # twelve tasks: well past Explorer's five a month, and still none refused
+               "problem": "month end takes too long", "purpose": "investors", "worry": "one big client", "top_share": "over_50", "runway": "3_6", "paid_on_time": "on_time", "key_person": "slows", "cash_in_bank": 400, "monthly_costs": 300, "item": "Consulting", "solution": "A website redesign",
+               # the document questions (an invoice or a quotation asks these too)
+               "customer_email": "frank@example.test", "quantity": 1, "vat_rate": 0, "due_days": 14}
+    from app.modules.agent import config as _cfg
+    for n, goal in enumerate(g for g in goals.GOALS if g.get("start") not in _cfg.PLAN_GATED_FROM_HOMEPAGE):      # the business plan is Starter (31 Oct)
         g = client.post("/task-sessions", json={"key": goal["key"]}).json()
-        assert g["resolution"]["credit_badge"] in ("Free", "Uses AI Credits"), goal["key"]      # never "needs a plan"
+        assert "credit_badge" not in g["resolution"], goal["key"]
         client.post(f"/task-sessions/{g['id']}/inputs", json={"answers": {q["key"]: answers[q["key"]] for q in g["questions"]}})
         client.post(f"/task-sessions/{g['id']}/resume")
         out = client.post(f"/task-sessions/{g['id']}/prepare").json()
-        assert out["state"] in ("awaiting_review", "handed_off") and (out["handoff"].get("run_id") or out["handoff"].get("subject_id")), (goal["key"], out["handoff"])
+        if out.get("confirm"):      # a paid task: its price shown first (P0.5c), then Start
+            assert " credits" in out["confirm"]["message"] and out["confirm"]["message"].startswith("I'll ")
+            out = client.post(f"/task-sessions/{g['id']}/prepare", json={"confirmed": True}).json()
+        # The risk check is a free calculation shown as its result: no background task (R-1, 24 Oct)
+        started = out["handoff"].get("run_id") or out["handoff"].get("subject_id") or (goal["key"] in goals.FREE_CHECKS and out["handoff"].get("free"))
+        assert out["state"] in ("awaiting_review", "handed_off") and started, (goal["key"], out["handoff"])
         assert "blocked" not in out["handoff"] and "Upgrade" not in str(out["handoff"].get("message") or "")
     # What does stop a task is AI Credits. With none left it is said (never swallowed), what was told is kept, and it goes through once there are credits.
     env.meter.balances[OWNER] = 0
@@ -533,12 +554,14 @@ def test_a_task_started_from_the_homepage_is_carried_out_on_any_plan_and_charged
     # A brand-new account is on the free plan too: its first task is carried out, and charged.
     who["user"] = None
     n = client.post("/task-sessions", json={"key": "create_business_plan", "entry_mode": "quick_task"}).json()
-    client.post(f"/task-sessions/{n['id']}/inputs", json={"answers": {"description": "Bookkeeping for small firms", "customer": "Small practices", "problem": "Month end takes a week"}})
+    client.post(f"/task-sessions/{n['id']}/inputs", json={"answers": {"description": "Bookkeeping for small firms", "customer": "Small practices", "problem": "Month end takes a week", "purpose": "investors"}})
     who["user"] = "brand.new@example.test"
     env.meter.balances["brand.new@example.test"] = 50                       # no plan set: Explorer
     client.post(f"/task-sessions/{n['id']}/attach-user")
     client.post(f"/task-sessions/{n['id']}/resume", json={"business_name": "Brand New Ltd"})
     first = client.post(f"/task-sessions/{n['id']}/prepare").json()
+    assert first["confirm"]["message"] == "I'll write your business plan, for investors. It costs 40 credits, and you have 50." and first["handoff"] is None      # its price first (P0.5c)
+    first = client.post(f"/task-sessions/{n['id']}/prepare", json={"confirmed": True}).json()
     assert first["state"] == "awaiting_review" and first["handoff"]["run_id"], first["handoff"]
     done = client.get(f"/workflow-runs/{first['handoff']['run_id']}").json()["run"]
     assert done["workflow_key"] == "business_plan_draft" and done["status"] in ("succeeded", "running", "awaiting_approval")
@@ -550,7 +573,7 @@ def test_the_funding_case_does_not_ask_again_for_what_was_given_on_the_homepage(
     env, store, client, who = world
     who["user"] = OWNER
     s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
-    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 25000, "use": "business", "stage": "pre_revenue"}})
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"amount": 25000, "use": "business", "stage": "pre_revenue", "route": "equity", "timing": "Within 3 months", "traction": "Paying customers"}})
     client.post(f"/task-sessions/{s['id']}/resume")
     done = client.post(f"/task-sessions/{s['id']}/prepare").json()
     svc = service_for(env.orch)
@@ -559,16 +582,21 @@ def test_the_funding_case_does_not_ask_again_for_what_was_given_on_the_homepage(
     detail = run(svc.get_subject(OWNER, "A", rules.FUNDING, done["handoff"]["subject_id"], OWNER))
     actions = {a["code"]: a for a in detail["actions"]}
     # Each action names only what is still missing.
-    assert actions["C1.A"]["title"] == "Enter when you expect to receive the funding, then confirm the amount and date."
-    assert actions["C1.A"]["why"] == "Not entered yet: intended receipt date. Already entered: GBP 25,000.00."
+    # "Within 3 months" is the receipt date now and the amount came from the chat: confirmed, nothing to ask (20 Oct).
+    assert "C1.A" not in actions
+    assert case["receipt_date"]
     assert actions["C1.B"]["title"] == "Add a milestone the funding pays for, with a measure and a target, and link the purpose to it."
     assert actions["C1.B"]["why"] == "What the funding is for is entered. It isn't linked to a milestone yet."
     assert not any("the amount you want to raise" in a["title"] or a["title"].startswith("Say what the funding is for") for a in detail["actions"])
     # With nothing given, the full wording stands; the result itself (state, score, gates) is the same either way.
+    # (One funding case per business: the first is set aside here, so the empty one can be compared with it.)
+    run(svc.store.update("subjects", done["handoff"]["subject_id"], {"status": "cancelled"}))
     bare = run(svc.create_subject(OWNER, "A", rules.FUNDING, {"title": "Empty case"}, OWNER))
     run(svc.request_assessment(OWNER, "A", rules.FUNDING, bare["id"], email=OWNER))
     empty = {a["code"]: a for a in run(svc.get_subject(OWNER, "A", rules.FUNDING, bare["id"], OWNER))["actions"]}
-    assert empty["C1.A"]["title"].startswith("Enter the amount you want to raise")
+    # A case made by hand in the same business is filled from what was said there too (the owner's QA, 17 Oct): only the
+    # date is asked, never the amount again.
+    assert empty["C1.A"]["title"] == "When do you need the money?"
     assert detail["assessment"]["result"]["classification"] == run(svc.get_subject(OWNER, "A", rules.FUNDING, bare["id"], OWNER))["assessment"]["result"]["classification"]
 
 
@@ -618,7 +646,7 @@ def mail(world, monkeypatch):
 
 def _ready_to_save(client, text="I need an invoice for mark, $300"):
     s = client.post("/task-sessions", json={"text": text, "entry_mode": "free_text"}).json()
-    return client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting"}}).json()
+    return client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"item": "Consulting", "customer_email": "mark@example.test", "vat_rate": 0}}).json()
 
 
 def test_a_new_email_is_verified_with_a_code_in_place_then_the_account_the_business_name_and_the_draft(mail):
@@ -647,8 +675,10 @@ def test_a_new_email_is_verified_with_a_code_in_place_then_the_account_the_busin
     run_id = prepared["handoff"]["run_id"]
     assert prepared["handoff"]["to"] == f"/dashboard?task={run_id}"
     shown = client.get(f"/workflow-runs/{run_id}").json()["run"]
-    done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {"customer_name": "Mark", "customer_email": "mark@example.test", "vat_rate": 0, "currency": "USD",
-                                                                              "items": [{"name": "Consulting", "quantity": 1, "unit_price": 300}]}}).json()["run"]
+    done = shown
+    if done.get("pending_question") and any(f["key"] in ("customer_name", "items") for f in done["pending_question"]["fields"]):
+        done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {"customer_name": "Mark", "customer_email": "mark@example.test", "vat_rate": 0, "currency": "USD",
+                                                                                  "items": [{"name": "Consulting", "quantity": 1, "unit_price": 300}]}}).json()["run"]
     if done.get("pending_question"):      # a brand-new business has no email of its own yet: that one thing is asked
         done = client.post(f"/workflow-runs/{run_id}/input", json={"answers": {"business_email": "hello@person.test"}}).json()["run"]
     assert shown["workflow_key"] == "new_invoice" and done["status"] == "awaiting_approval"
@@ -686,7 +716,7 @@ def test_a_wrong_or_expired_code_keeps_the_task_and_a_new_code_can_be_sent(mail)
     assert bad.status_code == 400 and bad.json()["detail"] == "That code isn't right. Check the email and try again."
     # The task is exactly as it was: a refresh mid-verification shows the code step again, with everything given.
     again = client.get(f"/task-sessions/{sid}").json()
-    assert again["inputs"] == {"customer": "Mark", "item": "Consulting", "amount": 300.0} and again["currency"] == "USD" and again["next"] == "identity"
+    assert again["inputs"] == {"customer": "Mark", "item": "Consulting", "amount": 300.0, "customer_email": "mark@example.test", "vat_rate": 0.0} and again["currency"] == "USD" and again["next"] == "identity"
     assert again["verification"]["sent"] is True and again["verification"]["masked"] == "n•••@example.test" and again["authenticated"] is False
     # Asking again straight away does not flood the inbox; after a pause a fresh code replaces the old one.
     client.post(f"/task-sessions/{sid}/email", json={})
@@ -746,3 +776,219 @@ def test_the_name_given_at_the_checkpoint_fills_an_account_that_has_none_and_nev
     client.post(f"/task-sessions/{s['id']}/email", json={})
     client.post(f"/task-sessions/{s['id']}/verify", json={"code": sent[-1]["code"]})
     assert accounts.users["later@example.test"]["name"] == "Later Person"
+
+
+def test_a_request_nothing_fits_is_refused_only_when_the_model_agrees(world, monkeypatch):  # noqa: F811
+    """QA U1a: "doesn't do that" needs the model's agreement, never the rules' alone."""
+    from app.modules.agent import understanding as und
+    _env, _store, client, _who = world
+
+    async def agrees(message, context, **_k):
+        return und.Understanding(intent=und.UNSUPPORTED, confidence=0.9, method="llm+rules")
+    monkeypatch.setattr(und, "understand", agrees)
+    none = client.post("/task-sessions", json={"text": "book me a flight to Lagos"}).json()
+    assert none["state"] == "blocked" and none["next"] == "none" and none["questions"] == []
+
+
+def test_a_price_typed_in_another_currency_sets_it_to_confirm(world):  # noqa: F811
+    _env, _store, client, _who = world
+    s = client.post("/task-sessions", json={"key": "create_quotation", "entry_mode": "quick_task"}).json()
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"customer": "Investors", "amount": 300, "currency_said": "USD"}}).json()
+    assert s["currency"] == "USD" and s["currency_note"] == "In USD" and s["currency_options"] == ["USD", "GBP"]      # shown, with the switch back
+    row = next(r for r in s["summary"] if r["key"] == "currency")
+    assert row["value"] == "USD" and row["proposed"] is True      # theirs to confirm, not taken as settled
+
+
+def test_the_agent_chat_edits_the_one_funding_case_and_checks_it_again(world):
+    """QA P0.2: "Change the amount in my funding readiness to £60,000 and check it again" asks first, then changes the same
+    case (provenance "Changed via Agent"), checks it again for free, and starts no intake and no second case."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    sessions_before = len(store.sessions) if hasattr(store, "sessions") else None
+    out = client.post("/agent/requests", json={"business_id": "A", "text": "Change the amount in my funding readiness to £60,000 and check it again",
+                                              "source_channel": "text"}).json()
+    assert out["message"] == "Change the target from £50,000 to £60,000?"
+    yes = out["offers"][0]
+    assert yes["label"] == "Yes, update" and out["offers"][1] == {"label": "Cancel", "dismiss": True}
+    assert run(svc.store.get("subjects", case_id))["data"]["target_amount"] == 50000      # nothing written before Yes
+    done = client.post(yes["post"]["url"], json=yes["post"]["body"]).json()
+    case = run(svc.store.get("subjects", case_id))["data"]
+    assert case["target_amount"] == 60000 and case["provenance"]["target_amount"]["source"].startswith("Changed via Agent, ")
+    assert done["message"].startswith(("Updated. Score ", "Updated. Checked again: ")) and done["actions"][-1] == {"label": "Open funding case", "to": f"/funding/{case_id}?tab=results"}
+    assert len(run(svc.store.list("subjects", "A", kind=rules.FUNDING))) == 1
+    if sessions_before is not None:
+        assert len(store.sessions) == sessions_before
+    assert env.meter.charges == []
+
+
+def test_the_same_message_sent_twice_is_answered_once(world):
+    """P1.8: a retry of the same message (the page's client_message_id) never adds a second turn or a second reply."""
+    env, store, client, who = world
+    s = client.post("/task-sessions", json={"key": "need_funding", "entry_mode": "business_goal"}).json()
+    body = {"answers": {"amount": 8000000}, "message": "8 million naira", "asked": "amount", "client_message_id": "m-1"}
+    first = client.post(f"/task-sessions/{s['id']}/inputs", json=body).json()
+    again = client.post(f"/task-sessions/{s['id']}/inputs", json=body).json()
+    assert len(again.get("turns") or []) == len(first.get("turns") or []) and again["inputs"] == first["inputs"]
+
+
+def test_add_these_answers_makes_a_new_launch_plan_for_a_new_launch(world):
+    """QA, 15 Oct: several launches are allowed. Answers for another offering make a NEW launch plan (a draft) with its link;
+    answers for the same launch go onto that launch's own plan."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    launches = lambda: run(svc.store.list("subjects", "A", kind=rules.LAUNCH))      # noqa: E731
+    a = {"sell": "Home cleaning", "kind": "service", "customer": "Busy households in Leeds", "target_date": "In 3 to 6 months", "stage": "testing"}
+    first = client.post("/businesses/A/quick-check/launch/attach", json={"answers": a}).json()
+    second = client.post("/businesses/A/quick-check/launch/attach", json={"answers": {**a, "sell": "Mobile car wash", "customer": "Office workers in Abuja"}}).json()
+    assert first["created"] and second["created"] and first["initiative_id"] != second["initiative_id"] and len(launches()) == 2
+    assert second["to"].startswith(f"/launch/{second['initiative_id']}")
+    again = client.post("/businesses/A/quick-check/launch/attach", json={"answers": a}).json()
+    assert again["created"] is False and again["initiative_id"] == first["initiative_id"] and len(launches()) == 2
+
+
+def test_a_pinned_funding_case_shows_on_the_dashboard_live_and_unpins_with_undo(world):
+    """P1.14: the case pinned to the dashboard (stored on the case, per workspace) as a live card: its label, score, verdict
+    and where to open it; Unpin removes it and pin (Undo) brings it back."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    _sid, made = _funding(client)      # a funding goal pins its case
+    case_id = made["handoff"]["subject_id"]
+    cards = client.get("/businesses/A/pinned").json()["items"]
+    card = next(c for c in cards if c["id"] == case_id)
+    assert card["label"].startswith("Funding readiness · ") and card["open"] == f"/funding/{case_id}" and card["answers"] == f"/funding/{case_id}?tab=answers"
+    assert card["verdict"] in ("Ready to approach funders", "Not ready to approach funders yet")
+    client.post(f"/businesses/A/pinned/{case_id}/unpin")
+    assert not [c for c in client.get("/businesses/A/pinned").json()["items"] if c["id"] == case_id]
+    client.post(f"/businesses/A/pinned/{case_id}/pin")
+    assert [c for c in client.get("/businesses/A/pinned").json()["items"] if c["id"] == case_id]
+
+
+def test_history_says_what_changed_and_its_effect(world):
+    """P2.19: each check in History says what changed and its effect, and who changed it."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    out = client.post("/agent/requests", json={"business_id": "A", "text": "Change the amount in my funding readiness to £60,000", "source_channel": "text"}).json()
+    client.post(out["offers"][0]["post"]["url"], json=out["offers"][0]["post"]["body"])
+    items = run(svc.history(OWNER, "A", rules.FUNDING, case_id, OWNER))
+    assert items[0]["what_changed"].startswith("Target £50,000 → £60,000 (changed via Agent)")
+    assert items[-1]["what_changed"] == "First check"
+
+
+def test_replacing_a_need_saves_what_each_document_said_for_view_details(world):
+    """Saved in full at Replace (QA, 15 Oct): each document's linked evidence in words and its latest prepared text, so
+    "View details" shows them next time, never only a title or the record's ids."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _first, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    ev = run(svc.store.insert("evidence", {"id": "ev-1", "business_id": "A", "kind": "document", "subject_id": None, "revision": 1, "key": "k1",
+                                           "data": {"title": "Executive summary v1", "type": "document", "effective_date": "2026-10-01",
+                                                    "verification": "unverified", "notes": "Raising for two vans.", "links": []},
+                                           "created_by": OWNER, "created_at": "2026-10-01T00:00:00+00:00", "updated_at": "2026-10-01T00:00:00+00:00"}))
+    run(svc.store.insert("artifacts", {"id": "art-1", "business_id": "A", "kind": "executive_summary", "subject_id": case_id, "status": "draft", "revision": 1,
+                                       "key": None, "data": {"title": "Executive summary draft", "body": "We wash cars for office workers.", "version": 2},
+                                       "created_by": OWNER, "created_at": "2026-10-04T00:00:00+00:00", "updated_at": "2026-10-04T00:00:00+00:00"}))
+    row = run(svc.store.get("subjects", case_id))
+    run(svc.store.update("subjects", case_id, {"data": {**row["data"], "documents": {"executive_summary": {"reviewed": True, "evidence_id": ev["id"] if isinstance(ev, dict) else "ev-1",
+                                                                                                          "reviewed_at": "2026-10-04"}}}}))
+    out = run(svc.replace_need(OWNER, "A", case_id, {"target_amount": 250000, "purpose": "a new office"}, OWNER))
+    saved = run(svc.store.get("subjects", case_id))["data"]["previous_needs"][0]["documents"]["executive_summary"]["saved"]
+    assert saved["title"] == "Executive summary v1" and saved["notes"] == "Raising for two vans." and saved["text"] == "We wash cars for office workers."
+    shown = out["data"]["previous_needs"][0]["documents"]["executive_summary"]["preview"]
+    assert shown == saved and "evidence_id" not in shown
+
+
+def _launch(client, sell="Monthly car wash subscription", when="In 1 to 3 months"):
+    s = client.post("/task-sessions", json={"key": "launch", "entry_mode": "business_goal"}).json()
+    client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {"kind": "service", "sell": sell, "stage": "testing", "customer": "Office workers in Abuja",
+                                                                       "where": "Abuja", "target_date": when, "evidence": "10 pre-orders"}})
+    client.post(f"/task-sessions/{s['id']}/resume")
+    return s["id"], client.post(f"/task-sessions/{s['id']}/prepare").json()
+
+
+@pytest.mark.parametrize("when, date_kept, name", [("Within a month", "2026-11-30", "Monthly car wash subscription, Abuja, November 2026"),
+                                                   ("In 1 to 3 months", "2027-01-31", "Monthly car wash subscription, Abuja, January 2027"),
+                                                   ("Not decided yet", None, "Monthly car wash subscription, Abuja")])
+def test_a_launch_chat_sets_up_its_plan_with_a_real_date_whichever_chip_was_picked(world, when, date_kept, name):
+    """QA, 15 Oct: a date chip ("In 1 to 3 months") failed the plan's date check, so a launch chat never set its plan up.
+    Now the chip is the end of that month, each answer is in its own field, the plan is pinned, and its result card and
+    pinned card name it."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    from datetime import date
+    from app.modules.agent import goals as goals_mod
+    real = goals_mod.launch_date
+    goals_mod.launch_date = lambda said, today=None: real(said, date(2026, 10, 15))
+    try:
+        sid, made = _launch(client, when=when)
+    finally:
+        goals_mod.launch_date = real
+    assert made["state"] == "handed_off" and made["handoff"]["to"].startswith("/launch/"), made.get("problem")
+    plan = run(service_for(env.orch).store.list("subjects", "A", kind=rules.LAUNCH))[0]["data"]
+    assert (plan["name"], plan["audience"], plan["geography"], plan.get("target_date"), plan["pinned"]) == \
+        (name, "Office workers in Abuja", "Abuja", date_kept, True)
+    result = client.get(f"/task-sessions/{sid}/first-value").json()["result"]
+    assert result["assessment"]["kind"] == "launch" and result["assessment"]["title"] == name
+    pinned = client.get("/businesses/A/pinned").json()["items"]
+    assert pinned[0]["id"] == result["assessment"]["initiative_id"] and pinned[0]["label"] == f"Launch readiness · {name}"
+    assert pinned[0]["verdict"] == "Not enough evidence to judge the launch yet"
+    # A second launch chat asks whether to update the plan or start another, before anything is written.
+    _sid, again = _launch(client, sell="Van washing")
+    assert [o["label"] for o in again["choose"]["options"]] == [f"Update {name}", "Start a new launch plan"]
+
+
+def test_the_result_card_edits_the_answers_updates_the_case_and_runs_again(world):
+    """QA, 15 Oct: "I should be able to edit, update and rerun from there": the card's answers are changed in place, the
+    funding case gets only what changed, the check runs again, and the new result comes from the new answers."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    first = client.get(f"/task-sessions/{sid}/first-value").json()
+    assert {q["key"] for q in first["edit"]["questions"]} >= {"amount", "use", "stage", "route", "timing", "traction"}
+    assert first["edit"]["answers"]["amount"] == 50000
+    again = client.post(f"/task-sessions/{sid}/answers", json={"answers": {"amount": "120000", "use": "a new van", "traction": "No traction yet"}}).json()
+    data = run(service_for(env.orch).store.get("subjects", case_id))["data"]
+    assert (data["target_amount"], data["purpose"]) == (120000, "a new van")
+    assert again["edit"]["answers"]["amount"] == 120000 and again["result"]["assessment_type"] == "funding_readiness_initial"
+    assert any("No traction yet" == b["label"] for b in again["result"]["blockers"])
+    assert env.meter.charges == []      # free: no model, no research
+    # Someone else can't edit it.
+    who["user"] = "someone.else@example.test"
+    assert client.post(f"/task-sessions/{sid}/answers", json={"answers": {"amount": 1}}).status_code == 404
+
+
+def test_after_two_replaces_the_first_needs_items_can_still_be_kept(world):
+    """QA, 15 Oct: replacing twice hid the first need's items; Keep works on any earlier need."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    svc = service_for(env.orch)
+    _first, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    for amount, use in ((120000, "a new van"), (250000, "a new office")):      # replaced from the case page (the chat asks update or new)
+        run(svc.replace_need(OWNER, "A", case_id, {"target_amount": amount, "purpose": use, "title": f"£{amount // 1000}k for {use}"}, OWNER))
+    needs = run(svc.store.get("subjects", case_id))["data"]["previous_needs"]
+    assert len(needs) == 2 and "traction" in needs[1]["set_aside"]
+    out = run(svc.keep_previous(OWNER, "A", case_id, "traction", True, OWNER, need=1))
+    assert out["data"]["previous_needs"][1]["review"] == {"traction": "kept"} and out["data"]["previous_needs"][0]["review"] == {}
+
+
+def test_run_the_check_again_returns_the_case_in_the_same_request(world):
+    """QA: "Run the check again" in one round trip: the check returns the case as it is after the check."""
+    env, store, client, who = world
+    who["user"] = OWNER
+    _sid, made = _funding(client)
+    case_id = made["handoff"]["subject_id"]
+    case = client.get(f"/businesses/A/funding-cases/{case_id}").json()
+    out = client.post(f"/businesses/A/funding-cases/{case_id}/assessments", json={"revision": case["revision"], "idempotency_key": "again-1", "with_detail": True}).json()
+    assert out["subject"]["id"] == case_id and out["subject"]["latest_assessment"]["id"] == out["id"] if "latest_assessment" in out["subject"] else out["subject"]["id"] == case_id
+    plain = client.post(f"/businesses/A/funding-cases/{case_id}/assessments", json={"revision": out["subject"]["revision"], "idempotency_key": "again-2"}).json()
+    assert "subject" not in plain      # only when asked for

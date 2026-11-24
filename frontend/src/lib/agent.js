@@ -1,3 +1,5 @@
+import { onBrowserCleared } from "./browserData";
+import { useEffect, useRef } from "react";
 import { apiRequest, apiRequestCached } from "../api/client";
 import { useAuthStore } from "../store/auth";
 
@@ -19,9 +21,10 @@ function announce(promise) {
 
 // ── The conversation with the Agent ──────────────────────────────────────────
 // One conversation per business and per signed-in user, shared by the chat bubble and the
-// Agent box, kept for the browser session and sent with every message so a follow-up has its
-// context. It never crosses businesses: the business id is part of the key.
+// Agent box, held in memory for this tab and sent with every message so a follow-up has its context; a reload reads it back
+// from the server. Never written to browser storage. It never crosses businesses: the business id is part of the key.
 const memoryConversations = new Map();
+onBrowserCleared(() => memoryConversations.clear());
 function conversationKey(businessId) {
   let who = "me";
   try { who = useAuthStore.getState().email || "me"; } catch { /* signed-out or not loaded */ }
@@ -29,31 +32,24 @@ function conversationKey(businessId) {
 }
 export function getConversation(businessId) {
   if (!businessId) return [];
-  const key = conversationKey(businessId);
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (Array.isArray(stored)) return stored;
-  } catch { /* storage unavailable: the in-memory copy is used */ }
-  return memoryConversations.get(key) || [];
+  return memoryConversations.get(conversationKey(businessId)) || [];
 }
 function setConversation(businessId, turns) {
   const key = conversationKey(businessId);
   const kept = turns.slice(-20);
   memoryConversations.set(key, kept);
-  try { sessionStorage.setItem(key, JSON.stringify(kept)); } catch { /* fine without it */ }
+}
+/** An earlier conversation, opened again: what the Agent is told was said, so it carries on from there (27 Oct). */
+export function continueConversation(businessId, messages) {
+  if (!businessId) return;
+  setConversation(businessId, (messages || []).filter((m) => (m.role === "user" || m.role === "assistant") && m.content).map((m) => ({ role: m.role, content: String(m.content).slice(0, 4000) })));
 }
 export function clearConversation(businessId) {
   if (!businessId) return;
   const key = conversationKey(businessId);
   memoryConversations.delete(key);
-  try { sessionStorage.removeItem(key); } catch { /* fine without it */ }
 }
 
-/** "Used 2 credits." for a task that cost something; nothing for one that didn't. */
-export function creditsText(run) {
-  const n = Number(run?.credits_used) || 0;
-  return n > 0 ? `Used ${n} credit${n === 1 ? "" : "s"}.` : "";
-}
 
 /** What the Agent said, in words, for any kind of reply (used in the chat and kept in the conversation). */
 export function replyText(res) {
@@ -62,8 +58,8 @@ export function replyText(res) {
   if (res.kind === "workflow") {
     const run = res.run || {};
     if ((res.runs || []).length > 1) return `I've started ${res.runs.length} tasks. Each one waits for your review before anything is sent.`;
-    if (run.status === "succeeded") return [run.summary, run.next_action, creditsText(run)].filter(Boolean).join(" ");
-    if (run.status === "awaiting_approval") return [`${run.summary || "I've prepared it."} It's in Needs Approval: nothing is sent until you approve it.`, creditsText(run)].filter(Boolean).join(" ");
+    if (run.status === "succeeded") return [run.summary, run.next_action].filter(Boolean).join(" ");
+    if (run.status === "awaiting_approval") return `${run.summary || "I've prepared it."} It's in Needs Approval: nothing is sent until you approve it.`;
     if (run.pending_question) return run.pending_question.question;
     return run.error || run.next_action || "I've started working on that.";
   }
@@ -74,10 +70,53 @@ export function replyText(res) {
   return res.message || "";
 }
 
-export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false }) {
+const replyPolls = new Map();
+const replyKey = businessId => `ea:agent:pending-reply:${businessId}:${useAuthStore.getState().email || "me"}`;
+export function pendingAgentReply(businessId) {
+  try { return JSON.parse(sessionStorage.getItem(replyKey(businessId)) || "null"); } catch { return null; }
+}
+function rememberReply(businessId, job) {
+  try { sessionStorage.setItem(replyKey(businessId), JSON.stringify(job)); } catch { /* polling still works without storage */ }
+}
+function forgetReply(businessId, job) {
+  if (pendingAgentReply(businessId)?.job_id !== job.job_id) return;
+  try { sessionStorage.removeItem(replyKey(businessId)); } catch { /* ignore */ }
+}
+export function resumeAgentReply(businessId, job = pendingAgentReply(businessId)) {
+  if (!job?.job_id) return Promise.reject(new Error("No pending reply was found."));
+  const key = `${businessId}:${job.job_id}`;
+  if (replyPolls.has(key)) return replyPolls.get(key);
+  const poll = async () => {
+    let errors = 0;
+    let unavailableSince = null;
+    for (;;) {
+      let result;
+      try { result = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${encodeURIComponent(job.job_id)}`, "GET", undefined, { timeoutMs: 30000 }); errors = 0; unavailableSince = null; }
+      catch (e) {
+        if (e.status === 403 || e.status === 404) { forgetReply(businessId, job); throw e; }
+        unavailableSince ??= Date.now();
+        errors += 1;
+        if (e.status === 401 || Date.now() - unavailableSince >= 240000) { const error = new Error(e.status === 401 ? "Please sign in again to pick up your saved reply." : "I couldn't reconnect to check the reply. Your request is still saved. Check again to pick it up."); error.code = "AGENT_REPLY_PENDING"; throw error; }
+      }
+      if (result?.state === "complete") { forgetReply(businessId, job); return result.result; }
+      if (result?.state === "failed") { forgetReply(businessId, job); const error = new Error(result.message || "The reply couldn't finish. Please try again."); error.code = "AGENT_REPLY_FAILED"; throw error; }
+      await new Promise(resolve => setTimeout(resolve, errors ? Math.min(10000, errors * 2000) : 1500));
+    }
+  };
+  const promise = poll().finally(() => replyPolls.delete(key));
+  replyPolls.set(key, promise);
+  return promise;
+}
+
+export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false, page = null, caseId = null, chatId = null, history: priorHistory = null }) {
   const typed = typeof text === "string" && text.trim() ? text.trim() : null;
-  const history = typed ? getConversation(businessId).slice(-18) : [];
-  const sent = apiRequest("/agent/requests", "POST", {
+  // The visible Agent Centre thread is the source of context, including task cards and
+  // handovers that never went through this text API. This lets natural follow-ups refer to
+  // "that invoice" or "the draft we just made" without needing its exact name repeated.
+  const history = typed ? (Array.isArray(priorHistory)
+    ? priorHistory.filter((m) => (m?.role === "user" || m?.role === "assistant") && m?.content).slice(-18).map((m) => ({ role: m.role, content: String(m.content).slice(0, 4000) }))
+    : getConversation(businessId).slice(-18)) : [];
+  const payload = {
     history,
     business_id: businessId,
     text: text || null,
@@ -86,14 +125,39 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
     source_channel: sourceChannel,
     source_reference: sourceReference || null,
     recommendation_id: recommendationId || null,
+    confirmed: Boolean(confirmed),      // a priced task's price was shown and Start pressed
     // The task is started and carried on by the server; the screen watches it and shows its step.
     background: Boolean(background),
-  }, { timeoutMs: 120000 });
+    defer_reply: Boolean(typed && background && !capability),
+    client_request_id: globalThis.crypto?.randomUUID?.() || `reply-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    chat_id: chatId,
+    // Sent from a module's own Assistant: its conversation answers, never another module's (the owner, 27 Oct)
+    ...(page ? { page } : {}),
+    ...(caseId ? { case_id: caseId } : {}),      // the case or plan the page is on: its answer is about that one (28 Oct)
+  };
+  const post = () => apiRequest("/agent/requests", "POST", payload, { timeoutMs: payload.defer_reply ? 30000 : 120000 });
+  const acknowledge = async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      try { return await post(); } catch (error) {
+        // The identifier is stable: a transient failure after acceptance cannot
+        // execute or charge for the turn twice when its acknowledgement is retried.
+        const transient = ["TIMEOUT", "NETWORK_ERROR", "service_unavailable"].includes(error?.code)
+          || [502, 503, 504].includes(error?.status);
+        if (!payload.defer_reply || !transient || attempt >= 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  };
+  const sent = acknowledge().then(result => {
+    if (result?.kind !== "pending_reply") return result;
+    rememberReply(businessId, { job_id: result.job_id }); // Identifiers only; no conversation text in browser storage.
+    return resumeAgentReply(businessId, result);
+  });
   if (typed) {
     // Both sides of the exchange are kept, so the next message carries them.
     sent.then((res) => {
       const said = replyText(res).slice(0, 4000);
-      setConversation(businessId, [...getConversation(businessId), { role: "user", content: typed.slice(0, 4000) }, ...(said ? [{ role: "assistant", content: said }] : [])]);
+      setConversation(businessId, [...history, { role: "user", content: typed.slice(0, 4000) }, ...(said ? [{ role: "assistant", content: said }] : [])]);
     }, () => {});
   }
   return announce(sent);
@@ -101,7 +165,25 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
 
 export const getAgentSummary = (businessId) => apiRequestCached(`/businesses/${businessId}/agent/summary`);
 export const getRun = (runId) => apiRequest(`/workflow-runs/${runId}`, "GET");
+/** Where "See details" goes: the task's own result when it has one (an idea's validation results), else its task page
+ *  (the owner, 26 Oct: "see details should be going to the validation result not agent centre"). */
+export async function detailsOf(runId, { wait = 0 } = {}) {
+  // `wait`: seconds to give a task just started to reach its result (an idea's validation takes a few)
+  const until = Date.now() + wait * 1000;
+  for (;;) {
+    try {
+      const got = await getRun(runId);
+      const run = got?.run || got;
+      const to = (run?.outcome?.links || []).find((l) => l.primary)?.to;
+      if (to) return to;
+      if (!["queued", "running"].includes(run?.status) || Date.now() >= until) return `/agent/runs/${runId}`;
+    } catch { if (Date.now() >= until) return `/agent/runs/${runId}`; }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 export const listRuns = (businessId, query = "") => apiRequest(`/businesses/${businessId}/workflow-runs${query}`, "GET");
+// Approved and kept as ready, nothing sent to the customer yet (the owner, 29 Oct: sending is its own step)
+export const approveWithoutSending = (runId, approvalId) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/approve-without-sending`, "POST", {}, { timeoutMs: 60000 }));
 export const approveAction = (runId, approvalId) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/approve`, "POST", {}, { timeoutMs: 120000 }));
 export const rejectAction = (runId, approvalId, note) => announce(apiRequest(`/workflow-runs/${runId}/approvals/${approvalId}/reject`, "POST", { note: note || null }));
 export const answerRun = (runId, answers, background = false) =>
@@ -114,6 +196,9 @@ export const fixCustomerEmail = (runId, email) => announce(apiRequest(`/workflow
 // Mark an invoice disputed, voided, cancelled or credited (with a reason and date), or reopen it.
 export const setInvoiceState = (businessId, invoiceId, state, reason, date) =>
   announce(apiRequest(`/businesses/${businessId}/invoices/${encodeURIComponent(invoiceId)}/state`, "POST", { state, reason: reason || null, date: date || null }));
+// A receipt the owner emailed themselves (Share Receipt): issued and marked sent, like one the Agent sends.
+export const recordManualReceipt = (businessId, invoiceId, sentTo, messageId) =>
+  announce(apiRequest(`/businesses/${businessId}/invoices/${encodeURIComponent(invoiceId)}/receipt-sent`, "POST", { sent_to: sentTo, message_id: messageId || null }));
 // A send that couldn't be confirmed and is unsafe to retry: the user says whether it arrived
 // ("delivered": recorded as sent, nothing goes out) or not ("resend").
 export const resolveDelivery = (runId, outcome) => announce(apiRequest(`/workflow-runs/${runId}/delivery`, "POST", { outcome }, { timeoutMs: 120000 }));
@@ -124,10 +209,12 @@ const _zoneTried = new Set();
 export function ensureBusinessTimezone(businessId, workspace) {
   try {
     const profile = workspace?.data?.workspace_profile;
-    if (!businessId || !workspace || workspace.id !== businessId || profile?.timezone || _zoneTried.has(businessId)) return;
+    // C5: a business with a country works on its country's clock (the server's default): whoever's browser opens the
+    // page never sets it ("Africa/Lagos" for a UK business). The browser's zone is used only when no country is known.
+    if (!businessId || !workspace || workspace.id !== businessId || profile?.timezone || String(profile?.country || "").trim() || _zoneTried.has(businessId)) return;
     _zoneTried.add(businessId);
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (zone) apiRequest(`/businesses/${businessId}/agent/policy`, "PUT", { timezone: zone }).catch(() => {});
+    if (zone) apiRequest(`/businesses/${businessId}/agent/policy`, "PUT", { timezone: zone, timezone_source: "browser" }).catch(() => {});
   } catch {
     // A convenience only: never in the way of the page.
   }
@@ -171,10 +258,10 @@ const ERROR_CODE_TEXT = {
 export function agentErrorMessage(e, fallback = "Something went wrong. Please try again.") {
   const raw = e instanceof Error ? e.message : String(e || "");
   if (e?.code === "NETWORK_ERROR" || raw === "NETWORK_ERROR") {
-    return "Can't reach EnterprateAI right now. Check your connection; nothing was changed, so it's safe to retry.";
+    return "Can’t reach EnterprateAI right now. Your request may still finish. Check your tasks before trying again.";
   }
   if (e?.code === "TIMEOUT") {
-    return "That's taking longer than expected. It may still finish, so check the Agent Centre before trying again.";
+    return "That's taking longer than expected. It may still finish, so give it a minute before trying again.";
   }
   const status = e?.status || Number(raw.match(/^HTTP (\d+):/)?.[1]) || 0;
   let data = e?.data;
@@ -193,7 +280,7 @@ export function agentErrorMessage(e, fallback = "Something went wrong. Please tr
     if (why === "FEATURE_NOT_FOUND") return "This isn't set up on the price list yet, so nothing was charged and nothing was run. Please tell support.";
     if (why === "FEATURE_DISABLED") return "This is switched off at the moment. Nothing was charged.";
     if (why === "FEATURE_NOT_ENTITLED") return "Your plan doesn't include this. Upgrade to use it.";
-    return said || "Out of AI Credits. Add credits or upgrade your plan to continue.";
+    return said || "You have no credits left. Top up.";
   }
   if (status === 403) return said ? `Permission changed: ${said}` : "Permission changed: you no longer have access to do this.";
   if (status === 404) return "This item no longer exists, or you don't have access to it.";
@@ -225,7 +312,7 @@ export const SUBSTATUS_LABEL = {
 const REASON_LABEL = {
   permission_changed: "Permission changed",
   source_state_changed: "Source data changed",
-  credits_exhausted: "Out of AI Credits",
+  credits_exhausted: "No credits left",
   plan_limit: "Plan limit reached",
   action_failed: "Didn't go through",
   delivery_status_uncertain: "Delivery status uncertain",
@@ -242,10 +329,11 @@ const REASON_LABEL = {
 
 export function runStateLabel(run) {
   if (!run) return "";
-  if (run.retrying) return "Trying again";      // the Agent is handling it: nothing for the owner to do
+  if (run.retrying) return "Waiting to finish";
+  if (run.display_status === "waiting_for_review") return "Waiting for your review";      // its draft is pending (QA, 15 Oct)      // the Agent is handling it: nothing for the owner to do (QA, 15 Oct)
   if (run.status === "failed") return REASON_LABEL[run.reason_code] || SUBSTATUS_LABEL[run.substatus] || "Needs attention";
   if (run.status === "running" && run.substatus) return SUBSTATUS_LABEL[run.substatus] || "In progress";
-  if (run.status === "succeeded" && run.outcome?.skipped) return "No action needed";      // finished correctly, nothing sent
+  if (run.display_status === "nothing_to_do" || (run.status === "succeeded" && run.outcome?.skipped)) return "Nothing to do";      // C2: not "Completed"
   return RUN_STATUS_LABEL[run.status] || run.status;
 }
 
@@ -257,3 +345,132 @@ export function runTone(run) {
   if (run.status === "cancelled") return "slate";
   return "indigo";
 }
+
+// A typed reply to the Agent's buttons (the owner, 27 Oct: "it recommends actions in the chat, and no option to type to go
+// ahead", "it should be smart"): "yes" or "go ahead" is the first button, a button's own name is that button, "not now" closes
+// them; anything else is a new message (null).
+const _YES_WORDS = /\b(?:yes|yeah|yep|yup|ok|okay|sure|go ahead|go on|go for it|do it|do that|start it|start|proceed|continue|please do|please|sounds good|lets do it|lets go|thats fine|fine|alright|great|perfect|cool)\b/g;
+// Every word a yes-word ("yes, go ahead", "ok do it please"): a yes, never one that says something more
+const _isYes = (text) => {
+  const t = _plain(text);
+  return t.length > 0 && t.replace(_YES_WORDS, " ").replace(/\b(?:and|then|now|just)\b/g, " ").trim() === "";
+};
+const _NO = /^\s*(?:no|nope|not now|cancel|stop|later|skip|leave it|never mind)\b[\s.!]*$/i;
+const _plain = (t) => String(t || "").toLowerCase().replace(/[“”"'’.,!?]/g, "").replace(/\s+/g, " ").trim();
+export function offerFor(text, offers) {
+  const all = (offers || []).filter((o) => o && o.label);
+  const live = all.filter((o) => !o.dismiss);
+  if (!live.length) return null;
+  const said = _plain(text);
+  if (!said) return null;
+  if (_NO.test(text)) return all.find((o) => o.dismiss) || { dismiss: true };
+  // A button named: "open it" for the only Open, "start a new launch plan", "fix allocations"
+  const named = live.find((o) => { const l = _plain(o.label); return said === l || (said.length > 3 && (said.includes(l) || l.includes(said))); })
+    || (/^\s*open\b/i.test(text) ? live.filter((o) => /^open\b/i.test(o.label)).length === 1 && live.find((o) => /^open\b/i.test(o.label)) : null);
+  if (named) return named;
+  return _isYes(text) ? live[0] : null;
+}
+
+// The Agent panel's conversations, kept on the server per person and business (the owner, 27 Oct: "hope it stores history
+// conversations too"): the list, one, and saving the current one.
+export const listChats = (businessId) => apiRequest(`/businesses/${businessId}/agent/chats`, "GET");
+export const getChat = (businessId, id) => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "GET");
+// One save at a time per conversation, in the order made, each dated so an older one never lands over a newer one (the owner,
+// 30 Oct: the validation result posted, then gone after a visit to its page: a slow, retried older save had overwritten it)
+const saving = new Map();
+export function saveChat(businessId, id, messages) {
+  const key = `${businessId}:${id}`;
+  const body = { messages, client_at: Date.now() };
+  const put = () => apiRequest(`/businesses/${businessId}/agent/chats/${id}`, "PUT", body);
+  const next = (saving.get(key) || Promise.resolve()).catch(() => {}).then(() => put().catch(() => put()));      // tried once more if it fails
+  saving.set(key, next);
+  const clear = () => { if (saving.get(key) === next) saving.delete(key); };
+  next.then(clear, clear);
+  return next;
+}
+/** A typed message carried on in the side panel when it is on the page (the owner, 27 Oct: "it should be by the side");
+ *  false when it isn't, and the caller answers in place as before. */
+export function toSidePanel(text) {
+  const detail = { text, handled: false };
+  try { window.dispatchEvent(new CustomEvent("ea:chat", { detail })); } catch { return false; }
+  return detail.handled;
+}
+/** Kept for older callers: typed requests stay in their current conversation.
+ * Specialists run behind /agent/requests; opening their workspace is an explicit action. */
+export async function caseChatPath() {
+  return null;
+}
+export const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+// The buttons that start the paid work for the owner ("Do all for me", "Draft the rest", "Run the idea validation"): shown first
+// and filled, so the way to have it done is obvious (the owner, 31 Oct: "the Do it button is another task, make it obvious")
+// A new request or question, never the answer to what was just asked (the owner, 1 Nov: "Research funding options" was taken as
+// the answer to a business plan's question): every chat checks this before treating a message as an answer or a no
+// A long task started from a chat, followed until it ends and then said in that chat, also after a reload (the owner, 1 Nov:
+// "no response"): a message carrying follow: {run_id} gets its result posted under the conversation, once.
+const RUN_POLL_MS = 4000;
+const RUN_FOLLOW_MS = 15 * 60000;
+export function ranMessage(run) {
+  const to = (run?.outcome?.links || []).filter((l) => l.to).map((l) => ({ label: l.label, to: l.to }));
+  const open = run?.status === "failed" ? [] : to.length ? to : [{ label: "See it", to: `/agent/runs/${run?.id}` }];
+  return { role: "assistant", at: new Date().toISOString(), links: open,
+    content: run?.status === "failed" ? (run.error || "That didn't finish. Nothing was charged; please try again.") : replyText({ kind: "workflow", run }) || "It's done." };
+}
+export function useFollowRuns(messages, update) {
+  const seen = useRef(new Set());
+  const live = useRef(true);
+  const latest = useRef(update);
+  latest.current = update;
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => {
+    (messages || []).forEach((m) => {
+      const id = m.follow?.run_id;
+      if (!id || m.follow.done || seen.current.has(id)) return;
+      seen.current.add(id);
+      (async () => {
+        const until = Date.now() + RUN_FOLLOW_MS;
+        let run = null;
+        while (live.current && Date.now() < until) {
+          try {
+            const got = await apiRequest(`/workflow-runs/${id}`, "GET");
+            run = got?.run || got;
+            if (run && (run.pending_question || !["queued", "running"].includes(run.status))) break;
+            run = null;
+          } catch { /* asked again below */ }
+          await new Promise((r) => setTimeout(r, RUN_POLL_MS));
+        }
+        if (!live.current) return;
+        const said = run ? ranMessage(run) : { role: "assistant", at: new Date().toISOString(), content: "This is taking longer than usual. It's still in your Agent Centre, and I'll have it there when it finishes.",
+          links: [{ label: "See it", to: `/agent/runs/${id}` }] };
+        latest.current((prev) => [...prev.map((x) => (x.follow?.run_id === id ? { ...x, follow: { ...x.follow, done: true } } : x)), said]);
+        try { window.dispatchEvent(new CustomEvent("ea:credits:refresh")); } catch { /* read on the next page */ }
+      })();
+    });
+  }, [messages]);
+}
+// A form or action card leaves the conversation once it has been dealt with, on every chat (the owner, 1 Nov: "don't like when the
+// user still scrolls... to attend to forms they already attended to... if they want to attend again they can request"): it shows
+// only until the owner replies or a newer one comes. Results stay, as the record of what happened. A draft stays as one line with
+// Show it again; work still running keeps its card.
+const FORM_CARDS = new Set(["choose", "findings", "pending", "next", "steps", "approvals", "change", "idea_form", "idea_inputs", "options", "research_again", "segments", "risk", "records", "progress", "work"]);
+// What to do next comes after the reply's words; results before them (the owner, 1 Nov: "next steps card should be after the chat")
+export const AFTER_WORDS = new Set(["next", "steps", "pending"]);
+export function cardsToShow(list, i, stillWorking = false) {
+  const cards = (list[i]?.cards || []);
+  if (!cards.length) return cards;
+  const later = list.slice(i + 1);
+  const movedOn = later.some((m) => m.role === "user" || (m.cards || []).some((c) => FORM_CARDS.has(c.type)));
+  if (!movedOn) return cards;
+  return cards.filter((c) => !FORM_CARDS.has(c.type) || (c.type === "progress" && stillWorking))
+    .map((c) => (c.type === "preview" && c.item ? { type: "preview", item: { ...c.item, open: false } } : c));
+}
+export const NEW_REQUEST = /^\s*(?:research|find|search|draft|create|write|prepare|generate|validate|run|check|publish|edit|modify|update|delete|remove|send|help me|do (?:it )?all|i (?:want|need|would like)|can you|could you|how|what|why|which|when|where|show me|tell me)\b/i;
+// The next question of a task, as chat words and buttons: the same on every chat
+export function questionOf(fields, params = {}) {
+  const f = (fields || []).find((x) => x.required && [undefined, null, ""].includes(params[x.key])) || (fields || [])[0];
+  if (!f) return null;
+  const options = (f.options || f.chips || []).map((o) => (typeof o === "string" ? { value: o, label: o } : o));
+  return { field: f, label: f.label, options, prompts: options.map((o) => ({ label: o.label, prompt: o.label })) };
+}
+export const DOES_IT = /^(?:go ahead|do (?:it )?all for me|do it for me|fill (?:it )?all for me|draft the rest|fill the rest|run the idea validation|research (?:it )?for me)\b/i;
+export const doesItFirst = (list) => [...(list || [])].sort((a, b) => Number(DOES_IT.test(String(b.label || ""))) - Number(DOES_IT.test(String(a.label || ""))));

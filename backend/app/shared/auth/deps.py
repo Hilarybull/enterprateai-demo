@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import Depends, HTTPException, Request, status
 from app.core.supabase import sb_select
 from app.shared.auth.security import decode_token
+from app.shared.limits import is_revoked
 
 # Short-lived in-process user cache to avoid per-request Supabase round-trips.
 # Keyed by JWT token string; each entry expires after _USER_CACHE_TTL seconds.
@@ -60,7 +61,7 @@ async def get_optional_user(request: Request) -> Dict[str, Any] | None:
     except Exception:
         return None
     user_id = payload.get("sub")
-    if not user_id:
+    if not user_id or is_revoked(payload.get("jti")):
         return None
     cached = _cache_get(token)
     if cached is not None:
@@ -84,6 +85,8 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+    if is_revoked(payload.get("jti")):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You signed out. Sign in again to continue.")
     cached = _cache_get(token)
     if cached is not None:
         if cached.get("is_blocked"):

@@ -139,9 +139,13 @@ export function assembleOutput(data = {}) {
     recommendations = [],
     scenarioRun,
     scenarioTimeline = [],
-    multiEngineOutput = null,
+    multiEngineOutput: rawMultiEngineOutput = null,
     marketResearch = null,
   } = data;
+  // Simulation audit, Phase 0 (16 Nov 2026): engine output counts only when its scores can actually be read here.
+  // Before, any object (even one whose scores sat under other keys) set confidence to MEDIUM and listed every engine
+  // as having run, while the scores shown were this file's own fallbacks.
+  const multiEngineOutput = readableEngineOutput(rawMultiEngineOutput);
 
   const snap = financialInsights?.stateSnapshot || {};
   const viability = ideaValidation?.result || ideaValidation || null;
@@ -564,6 +568,16 @@ function buildExecutiveSummary({ viabilityScore, stabilityScore, survivalScore, 
   };
 }
 
+/** Engine output with at least one score this file reads (survival/stability/growth scores or a BI score), else null. */
+export function readableEngineOutput(output) {
+  if (!output || typeof output !== "object") return null;
+  const readable = output?.survival?.scores?.survival_score != null
+    || output?.stability?.scores?.stability_score != null
+    || output?.growth?.scores?.growth_score != null
+    || output?.master?.bi_score != null;
+  return readable ? output : null;
+}
+
 function buildEngineResults({ viabilityScore, stabilityScore, survivalScore, growthScore,
   revenue, costs, profit, startingCash, runwayMonths, currency, confidenceLevel,
   confidenceNotes, viability, topRisks, topRecs, multiEngineOutput }) {
@@ -657,31 +671,39 @@ function buildScenarioBlock(scenarioRun, timeline) {
   const multiEngine = scenarioRun.multi_engine || {};
   const lastRow = timeline.length ? timeline[timeline.length - 1] : null;
 
-  // Extract all 6 scores from multi-engine output when available
-  const baselineStates = multiEngine.baseline_states || {};
-  const scenarioStates = multiEngine.scenario_states || {};
-
-  function _eng(states, engine, ...keys) {
-    const s = states[engine] || {};
-    const scores = s.scores || s;
-    for (const k of keys) {
-      if (scores[k] != null) return scores[k];
+  // Simulation audit, Phase 3 (17 Nov 2026), one source of truth: engine scores as the server stores them
+  // (multi_engine.scenario.engine_deltas[engine] = {baseline, scenario, change, direction}). This used to read
+  // multi_engine.baseline_states / scenario_states, which the server never writes, so the report fell back to the
+  // rule-based stability indicator. Engines the server did not assess stay null.
+  const engineDeltas = multiEngine?.scenario?.engine_deltas || {};
+  const baselineStates = {};
+  const scenarioStates = {};
+  for (const [engine, d] of Object.entries(engineDeltas)) {
+    if (d && typeof d === "object") {
+      baselineStates[engine] = { score: d.baseline };
+      scenarioStates[engine] = { score: d.scenario };
     }
-    return null;
   }
 
-  const baseViability = _eng(baselineStates, "viability", "score", "viability_score") ?? base.viability_score ?? null;
-  const baseSurvival = _eng(baselineStates, "survival", "survival_score", "score") ?? base.survival_score ?? null;
-  const baseStability = _eng(baselineStates, "stability", "stability_score", "score") ?? base.stability_score ?? null;
-  const baseGrowth = _eng(baselineStates, "growth", "growth_score", "score") ?? base.growth_score ?? null;
-  const baseFragility = _eng(baselineStates, "fragility", "fragility_index", "fragility_score") ?? base.fragility_index ?? null;
+  function _eng(states, engine) {
+    const v = states[engine]?.score;
+    return typeof v === "number" ? v : null;
+  }
+
+  // Only engine results; the rule-based stability indicator in the run's metrics is not an engine score
+  const baseViability = _eng(baselineStates, "viability");
+  const baseSurvival = _eng(baselineStates, "survival");
+  const baseStability = _eng(baselineStates, "stability");
+  const baseGrowth = _eng(baselineStates, "growth");
+  const baseFragility = _eng(baselineStates, "fragility");
   const baseBI = deriveBusinessIntelligenceScore({ viabilityScore: baseViability, survivalScore: baseSurvival, stabilityScore: baseStability, growthScore: baseGrowth });
 
-  const simViability = _eng(scenarioStates, "viability", "score", "viability_score") ?? sim.viability_score ?? null;
-  const simSurvival = _eng(scenarioStates, "survival", "survival_score", "score") ?? sim.survival_score ?? null;
-  const simStability = _eng(scenarioStates, "stability", "stability_score", "score") ?? sim.stability_score ?? null;
-  const simGrowth = _eng(scenarioStates, "growth", "growth_score", "score") ?? sim.growth_score ?? null;
-  const simFragility = _eng(scenarioStates, "fragility", "fragility_index", "fragility_score") ?? sim.fragility_index ?? null;
+  // Only engine results; the rule-based stability indicator in the run's metrics is not an engine score
+  const simViability = _eng(scenarioStates, "viability");
+  const simSurvival = _eng(scenarioStates, "survival");
+  const simStability = _eng(scenarioStates, "stability");
+  const simGrowth = _eng(scenarioStates, "growth");
+  const simFragility = _eng(scenarioStates, "fragility");
   const simBI = deriveBusinessIntelligenceScore({ viabilityScore: simViability, survivalScore: simSurvival, stabilityScore: simStability, growthScore: simGrowth });
 
   function _delta(a, b) { return a != null && b != null ? Math.round((b - a) * 10) / 10 : null; }
@@ -717,9 +739,21 @@ function buildScenarioBlock(scenarioRun, timeline) {
     riskChanges: [],
     recommendationChanges: (scenarioRun.recommendations || multiEngine.recommendation_delta || [])
       .map((r) => ({ text: r.title, action: r.action_type })).filter((r) => r.text),
+    // The server's verdict, confidence and range: the same the Simulation page shows (Phases 0 and 2)
+    verdict: sim.verdict || null,
+    confidence: sim.uncertainty?.confidence || null,
+    robustness: sim.uncertainty?.ranges?.robustness || null,
+    netCashRange: sim.uncertainty?.ranges?.cases?.base?.scenario
+      ? {
+        low: sim.uncertainty.ranges.cases.low?.scenario?.net_cash ?? null,
+        base: sim.uncertainty.ranges.cases.base.scenario.net_cash,
+        high: sim.uncertainty.ranges.cases.high?.scenario?.net_cash ?? null,
+      }
+      : null,
+    assumptions: sim.projection?.assumptions || [],
     decisionPath: {
-      rankingScore: multiEngine.scenario_ranking_score ?? scenarioRun.scenario_ranking_score ?? null,
-      reason: scenarioRun.state_result || multiEngine.state_result || "neutral",
+      rankingScore: null,      // removed in Phase 0 (it came from a fixed table)
+      reason: sim.verdict?.reason || scenarioRun.state_result || multiEngine.state_result || "neutral",
       recommendedActions: (scenarioRun.recommendations || []).map((r) => r.title).filter(Boolean),
     },
     timelineSummary: lastRow

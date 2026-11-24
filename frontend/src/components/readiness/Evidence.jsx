@@ -1,4 +1,5 @@
-import { useState } from "react";
+import UkDateInput from "../UkDateInput";
+import { useEffect, useRef, useState } from "react";
 import { addEvidence, attachEvidenceFile, attest, dateLabel, downloadEvidenceFile, readinessError, reviewEvidence } from "../../lib/readiness";
 import { todayLocal } from "../../lib/format";
 import { Btn, Notice, Pill, inputClass } from "./Fields";
@@ -52,10 +53,10 @@ export function AddEvidence({ businessId, feature, subject, defaultCheck, onAdde
           <textarea rows={2} className={`mt-1 ${inputClass}`} value={form.claim} onChange={set("claim")} />
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Date it is from
-          <input type="date" max={todayLocal()} className={`mt-1 ${inputClass}`} value={form.effective_date} onChange={set("effective_date")} />{err("effective_date")}
+          <UkDateInput max={todayLocal()} className={`mt-1 ${inputClass}`} value={form.effective_date} onChange={(v) => set("effective_date")({ target: { value: v } })} />{err("effective_date")}
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Expires on (if it does)
-          <input type="date" className={`mt-1 ${inputClass}`} value={form.expires_on} onChange={set("expires_on")} />{err("expires_on")}
+          <UkDateInput className={`mt-1 ${inputClass}`} value={form.expires_on} onChange={(v) => set("expires_on")({ target: { value: v } })} />{err("expires_on")}
         </label>
         <label className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">Source
           <select className={`mt-1 ${inputClass}`} value={form.kind} onChange={set("kind")}>
@@ -118,8 +119,17 @@ function ReviewForm({ businessId, feature, item, onDone }) {
   );
 }
 
-export function EvidenceList({ businessId, feature, subject, checks, onChanged, emptyText = "No evidence attached yet." }) {
-  const [adding, setAdding] = useState(false);
+export function EvidenceList({ businessId, feature, subject, checks, onChanged, emptyText = "No evidence attached yet.", startAdding = false, onAddedReturn = null }) {
+  const [adding, setAdding] = useState(Boolean(startAdding));
+  const addBox = useRef(null);
+  useEffect(() => {
+    if (!startAdding) return undefined;
+    const t = setTimeout(() => {
+      addBox.current?.scrollIntoView?.({ block: "center" });
+      addBox.current?.querySelector("input, select, textarea")?.focus?.({ preventScroll: true });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [startAdding]);
   const [reviewing, setReviewing] = useState(null);
   const [problem, setProblem] = useState(null);
   const can = subject.can || {};
@@ -180,7 +190,8 @@ export function EvidenceList({ businessId, feature, subject, checks, onChanged, 
       </ul>
       {problem && <Notice tone="rose" role="alert">{problem}</Notice>}
       {editable && !adding && <Btn onClick={() => setAdding(true)}>Add evidence</Btn>}
-      {adding && <AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={checks?.[0]} onCancel={() => setAdding(false)} onAdded={() => { setAdding(false); onChanged(); }} />}
+      {adding && <div ref={addBox} data-add-evidence><AddEvidence businessId={businessId} feature={feature} subject={subject} defaultCheck={checks?.[0]} onCancel={() => setAdding(false)}
+        onAdded={() => { setAdding(false); onChanged(); onAddedReturn?.(); }} /></div>}
     </div>
   );
 }

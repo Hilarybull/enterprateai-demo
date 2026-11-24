@@ -106,10 +106,12 @@ export function TipsPrompt() {
     getMyPreferences().then(setPrefs).catch(() => setPrefs(null));      // never an error for something optional
   }, [token]);
   if (!token || !prefs?.available || !prefs.ask_once) return null;
-  async function answer(on) {
+  function answer(on) {
+    // Closed at once and saved in the background (QA P2-13: it took ~3s with a dead button). If the save fails,
+    // nothing was agreed to: the question is simply asked again another time.
     setBusy(true);
-    try { await answerTipsPrompt(on); } catch { /* asked again another time */ }
     setPrefs({ ...prefs, ask_once: false });
+    answerTipsPrompt(on).catch(() => { /* asked again another time */ });
   }
   return (
     <aside role="dialog" aria-label="Email tips" className="fixed bottom-4 right-4 z-40 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-4 shadow-lg dark:border-slate-700 dark:bg-slate-900">

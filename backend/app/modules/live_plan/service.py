@@ -1076,7 +1076,11 @@ async def adopt_scenario(*, user_id: str, business_id: str, scenario_id: str) ->
         current_kpis = _initial_kpi_rows(None, None)
     for kpi in current_kpis:
         code = kpi.get("code")
-        target = target_map.get(code, kpi.get("target_value_json"))
+        # A target the scenario doesn't give keeps the current one (it used to become blank: the key was present with
+        # no value; simulation audit, Phase 1 coordination, 17 Nov 2026)
+        target = target_map.get(code)
+        if target is None:
+            target = kpi.get("target_value_json")
         await _safe_insert(
             "plan_kpis",
             {

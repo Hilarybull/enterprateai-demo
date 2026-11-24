@@ -1,0 +1,26 @@
+Mock production run: 200 businesses, run on 2026-11-19, checked on 2027-06-01, model projection-1.6
+Pre-registration verified: truth.json 34290ca31302..., expected.json b78b1e498335...
+
+Archetype              n   WAPE  oracle  naive   bias exp.bias  in range  trend  season
+A_steady              30   9.5%    9.5%  12.0%  +0.2%    +0.0%      100%      0       1
+B_growing             30   7.5%    5.8%  10.4%  -3.6%    -2.1%       90%     21       1
+C_seasonal            30   7.8%    5.2%  21.9%  +1.4%    +0.0%      100%      2      30
+D_seasonal_growing    30   8.3%    5.4%  18.5%  -3.2%    -1.5%       97%     16      30
+E_young               30   8.7%    7.7%  12.3%  -0.7%    +0.0%       93%      0       0
+F_declining           30  10.2%    5.8%  17.4%  +6.5%    +5.4%       87%     25       1
+G_sudden_drop         20   9.1%    3.8%   5.8%  +6.7%    +2.7%      100%     16       0
+
+Pass marks (written before the run, expected.json):
+  PASS  P1: pooled WAPE A-F 8.5% (mark: <= 25%)
+  PASS  P2: pooled bias A-F -0.9% (mark: within +/-10%)
+  PASS  P3: WAPE within 1.5x oracle + systematic + 1 per archetype: A 9.5<=15.2, B 7.5<=11.8, C 7.8<=8.8, D 8.3<=10.6, E 8.7<=12.6, F 10.2<=15.1
+  PASS  P4: bias within 3 points of the predicted systematic bias: A +0.2 vs +0.0, B -3.6 vs -2.1, C +1.4 vs +0.0, D -3.2 vs -1.5, E -0.7 vs +0.0, F +6.5 vs +5.4
+  PASS  P5: beats the naive forecast for 79% of businesses (mark: >= 60%)
+  PASS  P6: actual 6-month revenue inside the low-high range for 94% (mark: >= 90%)
+  PASS  P7: mean WAPE high confidence 7.5% (n=112) vs medium/low 11.8% (n=68)
+  note  G: WAPE 9.1% (A: 9.5%), bias +6.7% (expected: higher error than A and positive bias)
+
+Scenarios with a known true answer:
+  PASS  S1: with the true inputs: verdict right in 160/160; largest 12-month profit error 0.0000% (mark: all right, <= 0.1%)
+  PASS  S2: with standard figures: verdict as specified in 160/160; agrees with the TRUE verdict in 75.6% (predicted 75.6%)
+  PASS  S3: wrong verdicts flagged 'not robust' when the true input is inside the tested range: 20/21 (95%, mark >= 90%); outside the range: 14/18 flagged

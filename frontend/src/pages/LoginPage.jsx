@@ -323,12 +323,19 @@ export default function LoginPage() {
     setMode(next);
     setForgotNotice(null);
   }
+  // No account for that Google email: the create form opens, the message shown above it (the owner, 31 Oct)
+  const noAccount = useAuthStore((s) => s.noAccount);
+  useEffect(() => {
+    if (!noAccount) return;
+    useAuthStore.setState({ noAccount: false });
+    if (mode !== "signup") setMode("signup");
+  }, [noAccount]);      // eslint-disable-line react-hooks/exhaustive-deps
 
   if (verificationPending) {
     return (
       <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-50 px-4">
         <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xl">
-          <img src={logoUrl} alt="EnterprateAI" className="mx-auto mb-6 h-7 w-auto object-contain" />
+          <Link to="/" aria-label="EnterprateAI home" className="mx-auto mb-6 block w-fit"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto object-contain" /></Link>
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-100">
             <svg className="h-7 w-7 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -382,7 +389,7 @@ export default function LoginPage() {
       <div className="lg-grid">
         <section className="lg-left">
           <div className="lg-left-head">
-            <img src={authLogoUrl} alt="EnterprateAI" className="lg-left-logo" />
+            <Link to="/" aria-label="EnterprateAI home" style={{ pointerEvents: "auto" }}><img src={authLogoUrl} alt="EnterprateAI" className="lg-left-logo" /></Link>
             <div className="lg-pill">
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="lg-pill-icon">
                 <rect x="2.4" y="10.5" width="3.6" height="7" rx="1.6" fill="currentColor" />
@@ -450,7 +457,7 @@ export default function LoginPage() {
           </div>
 
           <div className="lg-card">
-            <img src={authLogoUrl} alt="EnterprateAI" className="lg-card-logo" />
+            <Link to="/" aria-label="EnterprateAI home" style={{ display: "block" }}><img src={authLogoUrl} alt="EnterprateAI" className="lg-card-logo" /></Link>
             {claiming && (
               <p role="status" className="mb-3 rounded-xl bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800">
                 You are claiming: {claiming.name}
@@ -467,7 +474,7 @@ export default function LoginPage() {
             )}
             <h2 className="lg-welcome">{isSignup ? "Create your account" : taskId ? "Welcome back. Sign in to save your work" : "Welcome back"}</h2>
             <p className="lg-signsub">{isSignup ? "Start free. No credit card required." : "Sign in to your EnterprateAI account"}</p>
-            {isSignup && !claiming && <p className="mb-2 text-[13px] text-slate-500">Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-indigo-600 hover:underline">Claim your business</a></p>}
+            {isSignup && !claiming && <p className="mb-2 text-center text-[13px] text-slate-500">Already listed on the Marketplace? <a href="/marketplace?find=1" className="font-semibold text-indigo-600 hover:underline">Claim your business</a></p>}
 
             <form className="lg-form" onSubmit={onSubmit}>
               {isSignup ? (
@@ -548,7 +555,7 @@ export default function LoginPage() {
               ) : null}
 
               {isSignup && (
-                <label className="mb-3 flex items-start gap-2 text-left text-[13px] text-slate-600">
+                <label className="mb-3 mt-4 flex items-start gap-2 text-left text-[13px] text-slate-600">
                   <input type="checkbox" className="mt-0.5" checked={wantsTips} onChange={(e) => setWantsTips(e.target.checked)} />
                   <span>Send me getting-started guides and product tips by email. Optional; you can unsubscribe at any time.</span>
                 </label>
@@ -571,7 +578,7 @@ export default function LoginPage() {
                     <span>Continue with Google</span>
                   </div>
                   <div className="lg-google-hit">
-                    <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred)} />
+                    <GoogleSignInButton disabled={isLoading} onCredential={(cred) => googleLogin(cred, isSignup ? "signup" : "signin")} />
                   </div>
                 </div>
               </>

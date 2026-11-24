@@ -65,6 +65,12 @@ class BlueprintGenerateRequest(BaseModel):
     contact_name: Optional[str] = None
     objective: Optional[str] = None
     subject_lines: Optional[str] = None
+    # Asked for in the Agent chat: the owner's own words, which come before the workspace profile wherever they differ,
+    # and where the business or idea operates. separate_idea: the idea isn't this workspace's business, so nothing from
+    # the workspace's profile, services or figures describes it.
+    owner_said: Optional[str] = None
+    location: Optional[str] = None
+    separate_idea: bool = False
     followup_sequence: Optional[str] = None
     sections: Optional[list[str]] = Field(default=None, description="Optional section identifiers to generate.")
     word_count: Optional[int] = Field(default=None, ge=50, le=5000, description="Target word count for sales letters.")

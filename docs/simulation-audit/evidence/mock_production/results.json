@@ -1,0 +1,123 @@
+{
+ "by_archetype": {
+  "A_steady": {
+   "wape": 9.480523734445038,
+   "bias": 0.22029980514530265,
+   "oracle": 9.47381280322044,
+   "naive": 12.986939556551683,
+   "in_range": 93.33333333333333,
+   "trend": 2,
+   "season": 0
+  },
+  "B_growing": {
+   "wape": 9.719689886453546,
+   "bias": -5.6983105593943115,
+   "oracle": 6.851503421013791,
+   "naive": 10.713541425541694,
+   "in_range": 80.0,
+   "trend": 14,
+   "season": 0
+  },
+  "C_seasonal": {
+   "wape": 8.846204251291747,
+   "bias": -0.12215145562949356,
+   "oracle": 5.259753370769034,
+   "naive": 30.817009034048894,
+   "in_range": 93.33333333333333,
+   "trend": 3,
+   "season": 30
+  },
+  "D_seasonal_growing": {
+   "wape": 9.808204644001613,
+   "bias": -2.8707225145127033,
+   "oracle": 5.325544559287384,
+   "naive": 23.821522605105816,
+   "in_range": 86.66666666666667,
+   "trend": 14,
+   "season": 29
+  },
+  "E_young": {
+   "wape": 9.40063925178731,
+   "bias": 1.0089865770937008,
+   "oracle": 8.50279972464649,
+   "naive": 10.662026248891483,
+   "in_range": 96.66666666666667,
+   "trend": 1,
+   "season": 0
+  },
+  "F_declining": {
+   "wape": 11.52180888362404,
+   "bias": 4.8109557129781875,
+   "oracle": 6.549676131217956,
+   "naive": 16.93660595895495,
+   "in_range": 93.33333333333333,
+   "trend": 25,
+   "season": 0
+  },
+  "G_sudden_drop": {
+   "wape": 10.080122632779295,
+   "bias": 8.329861676505331,
+   "oracle": 3.990481806374038,
+   "naive": 5.476558046569937,
+   "in_range": 100.0,
+   "trend": 13,
+   "season": 0
+  }
+ },
+ "pooled_wape": 9.704153316816155,
+ "pooled_bias": -1.134615404237359,
+ "beats_naive_pct": 76.11111111111111,
+ "range_coverage_pct": 90.55555555555556,
+ "confidence_wape": {
+  "medium": 12.07284177192507,
+  "high": 8.749542901947269,
+  "low": 11.310641134471506
+ },
+ "confidence_counts": {
+  "medium": 71,
+  "high": 102,
+  "low": 7
+ },
+ "marks": {
+  "P1": {
+   "passed": true,
+   "detail": "pooled WAPE A-F 9.7% (mark: <= 25%)"
+  },
+  "P2": {
+   "passed": true,
+   "detail": "pooled bias A-F -1.1% (mark: within +/-10%)"
+  },
+  "P3": {
+   "passed": true,
+   "detail": "WAPE within 1.5x oracle + systematic + 1 per archetype: A 9.5<=15.2, B 9.7<=13.4, C 8.8<=8.9, D 9.8<=10.5, E 9.4<=13.8, F 11.5<=15.7"
+  },
+  "P4": {
+   "passed": false,
+   "detail": "bias within 3 points of the predicted systematic bias: A +0.2 vs +0.0, B -5.7 vs -2.0 X, C -0.1 vs +0.0, D -2.9 vs -1.5, E +1.0 vs -0.0, F +4.8 vs +4.9"
+  },
+  "P5": {
+   "passed": true,
+   "detail": "beats the naive forecast for 76% of businesses (mark: >= 60%)"
+  },
+  "P6": {
+   "passed": true,
+   "detail": "actual 6-month revenue inside the low-high range for 91% (mark: >= 90%)"
+  },
+  "P7": {
+   "passed": true,
+   "detail": "mean WAPE high confidence 8.7% (n=102) vs medium/low 12.0% (n=78)"
+  },
+  "S1": {
+   "passed": true,
+   "detail": "with the true inputs: verdict right in 160/160; largest 12-month profit error 0.0000% (mark: all right, <= 0.1%)"
+  },
+  "S2": {
+   "passed": true,
+   "detail": "with standard figures: verdict as specified in 160/160; agrees with the TRUE verdict in 71.9% (predicted 71.9%)"
+  },
+  "S3": {
+   "passed": true,
+   "detail": "wrong verdicts flagged 'not robust' when the true input is inside the tested range: 26/27 (96%, mark >= 90%); outside the range: 17/18 flagged"
+  }
+ }
+}

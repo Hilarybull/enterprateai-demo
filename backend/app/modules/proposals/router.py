@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.shared.auth.deps import get_current_user
 from app.modules.credits.service import credit_guard
-from app.modules.proposals import service
+from app.modules.proposals import evaluation, service, sourcing
 from app.modules.plans.access import plan_meets
 from fastapi import HTTPException, status as http_status
 
 
 async def _require_paid_for_proposals(user_id: str, action: str) -> None:
     if not await plan_meets(user_id, "starter_insight", grant_module="marketplace"):
-        raise HTTPException(
-            status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{action} requires the Starter plan or above.",
-        )
+        # QA PF1: a plan refusal is 403 with the plan in words, not 402 (that is for credits).
+        from app.modules.plans.access import refusal
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=await refusal(user_id, "starter_insight", action))
 from app.modules.proposals.schemas import (
     ProposalPreferencesIn,
     ProposalRequestIn,
@@ -62,7 +63,7 @@ async def create_request(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
-    await _require_paid_for_proposals(user["id"], "Posting a proposal request")
+    # Posting a Request for Proposal is open to every plan, Explorer included (the owner, 12 Nov).
     return await service.create_request(user["id"], workspace_id, body.model_dump())
 
 
@@ -178,6 +179,12 @@ async def submit_proposal(
     user=Depends(get_current_user),
 ):
     await _require_paid_for_proposals(user["id"], "Submitting a proposal")
+    if getattr(body, "request_id", None):
+        # Answering another business's posted request is "Access to RFP Leads", on Decision Engine (the pricing PDF,
+        # 19 Oct 2026). Posting your own request, and sending a proposal direct, stay on Starter.
+        if not await plan_meets(user["id"], "decision_engine", grant_module="marketplace"):
+            from app.modules.plans.access import refusal
+            raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=await refusal(user["id"], "decision_engine", "Answering RFP leads"))
     payload = body.model_dump()
     payload["proposer_email"] = user.get("email")
     return await service.submit_proposal(user["id"], workspace_id, payload)
@@ -358,3 +365,57 @@ Return ONLY the description text — no headings, no bullet points, no extra com
         import logging
         logging.getLogger(__name__).warning("generate-description failed: %s", exc)
         return {"description": ""}
+
+@router.post("/sourcing/assist")
+async def sourcing_assist(
+    body: sourcing.SourcingBrief,
+    request_id: UUID,
+    workspace_id: str = Query(min_length=1),
+    user=Depends(get_current_user),
+):
+    return await sourcing.generate_for_request(user["id"], workspace_id, str(request_id), body)
+
+
+@router.post("/sourcing/match-suppliers")
+async def sourcing_match_suppliers(
+    body: sourcing.MatchInput,
+    workspace_id: str = Query(min_length=1),
+    user=Depends(get_current_user),
+):
+    return await sourcing.match_suppliers(user["id"], workspace_id, body)
+
+
+@router.put("/sourcing/drafts/{request_id}")
+async def save_sourcing_draft(
+    request_id: UUID, body: sourcing.SaveDraft,
+    workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.save_draft(user["id"], workspace_id, str(request_id), body)
+
+
+@router.get("/sourcing/drafts/{request_id}")
+async def load_sourcing_draft(
+    request_id: UUID, workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.load_draft(user["id"], workspace_id, str(request_id))
+
+@router.post("/sourcing/drafts/{request_id}/send-rfq")
+async def send_sourcing_rfq(
+    request_id: UUID, body: sourcing.SendDraft,
+    workspace_id: str = Query(min_length=1), user=Depends(get_current_user),
+):
+    return await sourcing.send_rfq_draft(user, workspace_id, str(request_id), body)
+
+@router.get("/requests/{request_id}/evaluation")
+async def read_evaluation(request_id: str, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.read(user["id"], workspace_id, request_id)
+
+
+@router.post("/requests/{request_id}/evaluation/assist/{proposal_id}")
+async def assist_evaluation(request_id: str, proposal_id: str, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.generate(user["id"], workspace_id, request_id, proposal_id)
+
+
+@router.post("/requests/{request_id}/evaluation/confirm")
+async def confirm_evaluation(request_id: str, body: evaluation.Review, workspace_id: str = Query(min_length=1), user=Depends(get_current_user)):
+    return await evaluation.confirm(user["id"], workspace_id, request_id, body)

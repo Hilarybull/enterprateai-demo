@@ -1,11 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ReportBox, TrustBadge } from "../components/marketplace/Directory";
-import MarketplaceHeader, { Initials } from "../components/marketplace/MarketplaceHeader";
-import { Btn, Notice, Panel } from "../components/readiness/Fields";
-import { activateMarketplaceProfile, directoryError, getBusinessProfile, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
+import LeaveARequest from "../components/marketplace/LeaveARequest";
+import MarketplaceHeader, { BusinessMark } from "../components/marketplace/MarketplaceHeader";
+import { Btn, Notice, Panel as BasePanel } from "../components/readiness/Fields";
+import { activateMarketplaceProfile, directoryError, getBusinessProfile, myClaims, profileAccess, recordProfileView, verifyOwnBusiness } from "../lib/directory";
+import { apiRequest } from "../api/client";
+import { useAuthStore } from "../store/auth";
 import { confirmDialog } from "../lib/dialog";
 import { SkeletonBlock, SkeletonCard, SkeletonRegion, SkeletonText } from "../components/Skeleton";
+
+const MarketplaceProposalFlow = lazy(() => import("./MarketplaceListings").then((module) => ({ default: module.MarketplaceProposalFlow })));
+
+function Panel({ className = "", ...props }) {
+  return <BasePanel {...props} className={`border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 shadow-sm dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50 ${className}`} />;
+}
 
 // W02 and W12: a business's public Marketplace profile. Before a claim it shows what public
 // sources say, labelled as such, with a clear way to claim it. After a claim it shows what
@@ -17,7 +26,7 @@ import { SkeletonBlock, SkeletonCard, SkeletonRegion, SkeletonText } from "../co
 
 export function PublicFrame({ children }) {
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen overflow-x-clip bg-slate-50 dark:bg-slate-950">
       <MarketplaceHeader />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
     </div>
@@ -50,13 +59,14 @@ function useAway(open, close, box) {
 const sourceLine = (profile) => (profile.source_basis ? `Based on public sources${profile.sources?.length ? ` · ${profile.sources.join(", ")}` : ""}` : `${profile.trust.label} · what this means`);
 
 /** What the badge means and where the details come from, as sentences. Used by the badge's tooltip and the trust card. */
+/** What the badge means, said once (QA R9): one sentence (where the profile came from, when it came from public
+ * sources; otherwise what the badge means), the sources on the same line, and the registered number. */
 function TrustWords({ profile }) {
-  const sourced = Boolean(profile.source_basis);
+  const sentence = profile.source_basis || profile.trust.meaning;
+  const sources = profile.sources?.length ? ` Sources: ${profile.sources.join(", ")}.` : "";
   return (
     <>
-      <p><span className="font-semibold">{profile.trust.label}.</span> {profile.trust.meaning}</p>
-      {sourced && <p>{profile.source_basis}{profile.sources?.length ? ` Sources: ${profile.sources.join(", ")}.` : ""}</p>}
-      {sourced && !profile.claimed && <p>The business can confirm or change these details after claiming the profile.</p>}
+      <p data-trust-sentence><span className="font-semibold">{profile.trust.label}.</span> {sentence}{sources}</p>
       {profile.legal_identifier && <p>Registered number {profile.legal_identifier}, from the public register.</p>}
     </>
   );
@@ -112,11 +122,6 @@ const WAYS = [
   ["subcontracting", "Subcontract work", "Bring them in on part of a project of yours."],
 ];
 
-function since(iso) {
-  const d = iso ? new Date(iso) : null;
-  return d && !Number.isNaN(d.getTime()) ? `On EnterprateAI since ${d.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}` : null;
-}
-
 /** The owner's own controls, above the public page: a row of links, or one menu on a phone. */
 function OwnerBar({ profile, busy, problem, onVerify, onUnlist, onVisitor }) {
   const navigate = useNavigate();
@@ -131,17 +136,15 @@ function OwnerBar({ profile, busy, problem, onVerify, onUnlist, onVisitor }) {
     profile.activated && { key: "unlist", label: busy === "unlist" ? "Unlisting…" : "Unlist", onClick: onUnlist, danger: true },
     { key: "visitor", label: "View as visitor", onClick: onVisitor },
   ].filter(Boolean);
-  const link = (i) => `text-[13px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 ${i.danger ? "text-rose-700 dark:text-rose-300" : "text-brand-700 dark:text-brand-300"}`;
   return (
     <div data-owner-bar role="region" aria-label="Your profile" className="mb-4 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-900 dark:bg-brand-950/40">
       <div className="flex items-center justify-between gap-3">
         <p className="min-w-0 text-[13px] font-semibold text-brand-900 dark:text-brand-100">You're viewing your public profile</p>
-        <div className="hidden flex-wrap items-center justify-end gap-x-4 gap-y-1 md:flex">
-          {items.map((i) => <button key={i.key} type="button" disabled={Boolean(busy)} onClick={i.onClick} className={link(i)}>{i.label}</button>)}
-        </div>
-        <div ref={box} className="relative md:hidden">
-          <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
-            className="rounded-lg border border-brand-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-brand-800 dark:border-brand-800 dark:bg-slate-900 dark:text-brand-200">Manage</button>
+        <div ref={box} className="relative shrink-0">
+          <button type="button" aria-label="Profile options" title="Profile options" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 bg-white text-brand-800 hover:bg-brand-100 focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-brand-800 dark:bg-slate-900 dark:text-brand-200 dark:hover:bg-slate-800">
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5" fill="currentColor"><circle cx="4" cy="10" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="16" cy="10" r="1.5" /></svg>
+          </button>
           {open && (
             <div role="menu" className="absolute right-0 top-10 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
               {items.map((i) => (
@@ -157,15 +160,49 @@ function OwnerBar({ profile, busy, problem, onVerify, onUnlist, onVisitor }) {
   );
 }
 
+// Visits to this profile (the owner, 14 Nov): shown to its owner and the Marketplace team only, never to visitors.
+// One visit per person a day; the owner's own visits and the team's aren't counted.
+function ProfileVisits({ views, mine }) {
+  const total = Number(views.total || 0);
+  return (
+    <Panel title="Profile visits" data-profile-visits>
+      <p className="text-[15px] text-slate-700 dark:text-slate-200" data-visits-headline>
+        <span className="text-2xl font-bold tabular-nums text-brand-600 dark:text-brand-300">{total.toLocaleString()}</span>{" "}
+        {total === 1 ? "person may have" : "people may have"} viewed {mine ? "your" : "this"} profile
+      </p>
+      <p className="mt-2.5 text-[12px] text-slate-500">{total === 0 ? "No tracked visits yet. " : ""}Only you can see this.</p>
+    </Panel>
+  );
+}
+
 export default function DirectoryProfilePage() {
   const { slug } = useParams();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [state, setState] = useState({ loading: true });
   const [owner, setOwner] = useState({});      // the owner's controls: what is running, or what went wrong
   const [asVisitor, setAsVisitor] = useState(false);
   const [shared, setShared] = useState("");
+  const [proposalFlowOpen, setProposalFlowOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
   const b = state.profile;
+  // QA P2-11: someone who has already claimed this profile is told where their claim stands, not offered a new one.
+  const signedIn = useAuthStore((st) => Boolean(st.token)) || (() => { try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; } })();
+  const openToolLibrary = () => navigate(signedIn ? "/tools" : `/login?signup=1&next=${encodeURIComponent("/tools")}`);
+  const [myClaim, setMyClaim] = useState(null);
+  useEffect(() => {
+    if (!b || b.claimed || !signedIn) { setMyClaim(null); return undefined; }
+    let live = true;
+    myClaims().then((r) => {
+      if (!live) return;
+      const slugs = [b.slug, b.canonical_slug].filter(Boolean);
+      setMyClaim((r.items || []).find((c) => slugs.includes(c.profile?.slug) && ["claim_started", "verification_pending", "disputed"].includes(c.status)) || null);
+    }).catch(() => { if (live) setMyClaim(null); });      // only a help: the profile shows either way
+    return () => { live = false; };
+  }, [b?.slug, b?.claimed, signedIn]);      // eslint-disable-line react-hooks/exhaustive-deps
   // What opens this profile if unclaimed profiles aren't public: an invitation link or an exact-match lookup.
   const via = profileAccess(slug, params);
   useNoIndex(Boolean(b?.noindex));
@@ -218,6 +255,7 @@ export default function DirectoryProfilePage() {
   const claimLink = `/marketplace/claim/${b.canonical_slug || b.slug}${carried ? `?${carried}` : ""}`;
   const paused = b.trust.state === "disputed";
   const mine = Boolean(b.owner_controls) && !asVisitor;
+  const canViewViews = Boolean(b.can_view_profile_views ?? b.owner_controls) && !asVisitor;
 
   async function unlist() {
     if (!(await confirmDialog("Your profile will no longer be shown on the Marketplace. Your profile, offerings and settings are kept, and you can list it again at any time.",
@@ -243,29 +281,70 @@ export default function DirectoryProfilePage() {
   // What a visitor can do. Only what the business switched on, and nothing while ownership is under review.
   const toListing = b.listing_id ? `/marketplace?tab=products&business=${b.listing_id}` : null;
   const quoteLink = (offering) => `${toListing}&quote=1${offering ? `&offering=${encodeURIComponent(offering)}` : ""}`;
-  const open = b.claimed && !paused && toListing ? (b.opportunities || {}) : {};
-  const goTo = { enquiries: toListing, rfqs: toListing && quoteLink(), proposals: toListing, partnerships: toListing, subcontracting: toListing };
+  const open = b.claimed && !paused && !mine && toListing ? (b.opportunities || {}) : {};
+  const goTo = { enquiries: toListing, rfqs: toListing && quoteLink(), proposals: null, partnerships: toListing, subcontracting: toListing };
   const ways = WAYS.filter(([key]) => open[key]).map(([key, label, line]) => ({ key, label, line, to: goTo[key] }));
   const mail = !paused && b.contact?.email ? `mailto:${b.contact.email}` : null;
   // One main button: a quote where quotes are on, otherwise the way to get in touch.
-  const main = !b.claimed ? (b.claim?.eligible ? { label: b.claim.cta, go: () => navigate(claimLink) } : null)
+  const reviewing = myClaim && (myClaim.next_step === "pending_review" || myClaim.status === "verification_pending");
+  const main = !b.claimed ? (myClaim ? { label: reviewing ? "Your claim is under review" : "Continue your claim", go: () => navigate(claimLink) }
+    : b.claim?.eligible ? { label: b.claim.cta, go: () => navigate(claimLink) } : null)
     : open.rfqs ? { label: "Request a quote", go: () => navigate(quoteLink()) }
       : open.enquiries ? { label: "Contact", go: () => navigate(toListing) }
         : mail ? { label: "Contact", go: () => { window.location.href = mail; } } : null;
   const site = b.website ? (/^https?:\/\//.test(b.website) ? b.website : `https://${b.website}`) : null;
-  const place = [b.location, b.country].filter(Boolean).filter((x, i, all) => all.findIndex((y) => String(y).toLowerCase() === String(x).toLowerCase()) === i).join(", ");
-  const joined = since(b.since);
+  const locationParts = String(b.location || "").split(",").map((part) => part.trim()).filter(Boolean);
+  const place = [...locationParts.filter((part) => part.toLowerCase() !== String(b.country || "").trim().toLowerCase()), b.country]
+    .filter(Boolean).filter((part, i, all) => all.findIndex((other) => String(other).toLowerCase() === String(part).toLowerCase()) === i).join(", ");
   const meta = [b.category, place].filter(Boolean);
   const sticky = b.claimed && main;      // on a phone, the main button stays in reach
 
+  function dismissPasswordPrompt() {
+    const next = new URLSearchParams(params);
+    next.delete("set_password");
+    setParams(next, { replace: true });
+    setPasswordError("");
+  }
+
+  async function savePassword(event) {
+    event.preventDefault();
+    if (password.length < 10) { setPasswordError("Use at least 10 characters. A short phrase works well."); return; }
+    if (password.length > 72) { setPasswordError("Use 72 characters or fewer."); return; }
+    setPasswordBusy(true);
+    setPasswordError("");
+    try {
+      await apiRequest("/auth/me/set-password", "POST", { new_password: password });
+      useAuthStore.setState({ hasPassword: true });
+      setPassword("");
+      dismissPasswordPrompt();
+    } catch (e) {
+      if (e?.status === 409) {
+        useAuthStore.setState({ hasPassword: true });
+        dismissPasswordPrompt();
+      } else {
+        setPasswordError(typeof e?.data?.detail === "string" ? e.data.detail : "Couldn't save the password. Please try again.");
+      }
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
   return (
     <PublicFrame>
+      {/* QA P3: back to the search the visitor came from (or the directory, when they arrived straight here). */}
+      <button type="button" data-back-to-results onClick={() => (location.key !== "default" ? navigate(-1) : navigate("/marketplace?tab=businesses"))}
+        className="mb-3 inline-flex items-center gap-1 text-[13px] font-semibold text-slate-500 hover:text-brand-700">
+        <span aria-hidden="true">←</span> Back to results
+      </button>
       {mine && <OwnerBar profile={b} busy={owner.busy} problem={owner.problem} onVerify={verifyMine} onUnlist={unlist} onVisitor={() => setAsVisitor(true)} />}
       {b.owner_controls && asVisitor && (
         <div data-owner-bar role="region" aria-label="Your profile" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] dark:border-slate-700 dark:bg-slate-900">
           <span className="font-semibold text-slate-700 dark:text-slate-200">This is what a visitor sees</span>
           <button type="button" onClick={() => setAsVisitor(false)} className="font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300">Back to your view</button>
         </div>
+      )}
+      {mine && params.get("setup") === "needed" && (
+        <Notice tone="amber" className="mb-4" role="status">Your profile is claimed. Some profile details couldn't be filled or published automatically, so please review and finish them from Edit profile.</Notice>
       )}
       {mine && b.quality_hold?.length > 0 && (
         <Notice tone="amber" role="alert" className="mb-4">
@@ -279,7 +358,7 @@ export default function DirectoryProfilePage() {
       <section aria-label="Business" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <Initials name={b.name} size={56} />
+            <BusinessMark name={b.name} logo={b.logo_data_url} size={56} />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <h1 className="min-w-0 break-words text-2xl font-bold leading-tight text-slate-900 sm:text-[28px] dark:text-slate-100">{b.name}</h1>
@@ -293,12 +372,11 @@ export default function DirectoryProfilePage() {
                     <a href={site} target="_blank" rel="noopener noreferrer nofollow" className="min-w-0 truncate font-semibold text-brand-700 hover:underline dark:text-brand-300">{b.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}</a>
                   </span>
                 )}
-                {joined && <span className="inline-flex items-center gap-2">{(meta.length > 0 || site) && <span aria-hidden="true" className="text-slate-300">·</span>}{joined}</span>}
               </p>
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {main && <Btn kind="primary" className="w-full !px-5 !py-2.5 sm:w-auto" onClick={main.go}>{main.label}</Btn>}
+            {main && !mine && <Btn kind="primary" className="w-full !px-5 !py-2.5 sm:w-auto" onClick={main.go}>{main.label}</Btn>}
             <Btn className="w-full !py-2.5 sm:w-auto" onClick={share}>Share</Btn>
             {shared && <span role="status" className="text-[12px] text-slate-500">{shared}</span>}
           </div>
@@ -316,7 +394,7 @@ export default function DirectoryProfilePage() {
                   <li key={o.id} className="flex flex-col rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                     <p className="break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{o.name}</p>
                     {o.description && <p className="mt-0.5 line-clamp-3 break-words text-[13px] text-slate-600 dark:text-slate-300">{o.description}</p>}
-                    <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200">{o.price ? `From ${new Intl.NumberFormat("en-GB", { style: "currency", currency: o.currency || "GBP", maximumFractionDigits: 0 }).format(o.price)}` : "Price on request"}</p>
+                    <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200">{o.price ? `From ${new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: o.currency || "GBP", maximumFractionDigits: 0 }).format(o.price)}` : "Price on request"}</p>
                     {(open.rfqs || open.enquiries) && (
                       <Btn className="mt-3 w-full !py-2" aria-label={`${open.rfqs ? "Request a quote" : "Ask about this"}: ${o.name}`}
                         onClick={() => navigate(open.rfqs ? quoteLink(o.name) : toListing)}>{open.rfqs ? "Request a quote" : "Ask about this"}</Btn>
@@ -330,8 +408,9 @@ export default function DirectoryProfilePage() {
             ) : !b.offerings?.length && <p className="text-sm text-slate-500">Nothing listed yet.</p>}
           </Panel>
 
-          <Panel title="How to work with us">
-            {paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
+          {!mine && <Panel title="How to work with us">
+            {!b.claimed && b.held_requests_open ? <LeaveARequest slug={b.slug} name={b.name} via={via} services={b.service_tags || []} proposalsOpen={Boolean(b.held_proposals_open)} startQuoteFor={params.get("request") === "quote" ? params.get("service") || b.service_tags?.[0] || "" : null} />
+              : paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
               : ways.length > 0 ? (
                 <ul className="divide-y divide-slate-100 dark:divide-slate-800" data-ways>
                   {ways.map((w) => (
@@ -343,27 +422,96 @@ export default function DirectoryProfilePage() {
                         <span className="block text-sm font-semibold text-slate-900 dark:text-slate-100">{w.label}</span>
                         <span className="block text-[13px] text-slate-600 dark:text-slate-300">{w.line}</span>
                       </span>
-                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => navigate(w.to)}>{w.label}</Btn>
+                      <Btn className="!py-2 max-sm:w-full" aria-label={`${w.label}: start`} onClick={() => w.key === "proposals" ? setProposalFlowOpen(true) : navigate(w.to)}>{w.label}</Btn>
                     </li>
                   ))}
                 </ul>
               ) : <p className="text-sm text-slate-600 dark:text-slate-300">{b.claimed ? (b.activated ? "This business hasn't opened any ways to work with it yet." : "This business hasn't published its Marketplace profile yet.") : b.opportunity_note}</p>}
-          </Panel>
+          </Panel>}
 
-          <div className="mt-auto px-1"><ReportBox slug={b.slug} via={via} /></div>
+          <section aria-labelledby="owner-benefits-title" data-owner-benefits className="relative isolate overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-4 shadow-sm sm:p-5 dark:border-brand-900 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/50">
+            <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full bg-brand-200/30 blur-2xl dark:bg-brand-500/10" />
+            <header className="relative mb-4 flex items-start gap-3">
+              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-500 text-white shadow-sm">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16l1 2.5 2.5 1-2.5 1L19 23l-1-2.5-2.5-1 2.5-1L19 16Z"/></svg>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-brand-700 dark:text-brand-300">EnterprateAI Platform</p>
+                <h2 id="owner-benefits-title" className="mt-0.5 text-base font-bold text-slate-900 dark:text-slate-100">What you get with Enterprate<span className="text-red-600">AI</span></h2>
+                <p className="mt-1 text-[13px] leading-5 text-slate-600 dark:text-slate-300">Plan, operate, sell and grow with AI-powered business tools.</p>
+              </div>
+            </header>
+            <ul className="relative grid gap-3 sm:grid-cols-2" data-benefits-grid>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M6 3.75h9l4.5 4.5v12H6a2.25 2.25 0 0 1-2.25-2.25V6A2.25 2.25 0 0 1 6 3.75Z"/><path strokeLinecap="round" strokeLinejoin="round" d="M14.25 3.75v5.1h5.1M8 13h8M8 16.5h8M8 9.5h2"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Plan</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Business Plan, Idea Validation, Launch Readiness, Funding Readiness</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 3.75h14A1.25 1.25 0 0 1 20.25 5v14A1.25 1.25 0 0 1 19 20.25H5A1.25 1.25 0 0 1 3.75 19V5A1.25 1.25 0 0 1 5 3.75Z"/><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8h9M7.5 12h9M7.5 16h5"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Operate</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Free Invoices, Quotations, Contracts, Receipts, Customer &amp; Product Records</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4.5h2l2.2 10.1a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 1.9-1.4L21 8H6"/><circle cx="10" cy="20" r="1.2"/><circle cx="18" cy="20" r="1.2"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Sell</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Receive RFQs, Open RFP Leads, Publish RFPs, Marketplace Listing &amp; SEO</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+              <li className="min-w-0"><button type="button" onClick={openToolLibrary} className="flex h-full w-full gap-3 rounded-xl border border-brand-100 bg-white/90 p-3.5 text-left transition hover:border-brand-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-900/80">
+                <span aria-hidden="true" className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"><svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M3.5 19.5h17M5 18V9l7-5 7 5v9M9 19.5v-6h6v6M8 10h.01M16 10h.01M8 14h.01M16 14h.01"/></svg></span>
+                <div className="min-w-0 flex-1"><p className="text-lg font-bold leading-6 text-slate-900 dark:text-slate-100">Intelligence</p><p className="mt-1 text-[13px] leading-5 text-slate-700 dark:text-slate-300">Simulation, Risk Alerts, Fragility Index, Recommendations &amp; Insights</p><span className="mt-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-[12px] font-semibold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200"><span aria-hidden="true">▣</span>Powered by AI Agent</span></div>
+              </button></li>
+            </ul>
+          </section>
+
+
+
+          {!mine && <div className="mt-auto px-1"><ReportBox slug={b.slug} via={via} /></div>}
         </div>
 
         {/* On a tablet and a phone this sits straight under the header card; on a desktop it stays in view while the page scrolls. */}
-        <aside className="order-first lg:order-none">
+        <aside className="order-last lg:order-none">
           <div className="space-y-4 lg:sticky lg:top-[88px]">
+            {mine && (params.get("welcome") === "1" || params.get("set_password") === "1") && (
+              <Panel title={params.get("welcome") === "1" ? `${b.name} is now yours` : "Set a password for next time"} data-claim-setup>
+                {params.get("welcome") === "1" && (
+                  <div data-claim-welcome role="status">
+                    <p className="text-[13px] leading-5 text-slate-600 dark:text-slate-300">Your email is confirmed and your workspace is ready, filled in from this profile. Check the details here, then carry on in your dashboard.</p>
+                    <Btn kind="primary" className="mt-3 w-full !py-2" onClick={() => navigate("/dashboard")}>Open your dashboard</Btn>
+                  </div>
+                )}
+                {params.get("welcome") === "1" && params.get("set_password") === "1" && <hr className="my-4 border-slate-200 dark:border-slate-700" />}
+                {params.get("set_password") === "1" && (
+                  <div data-claim-password>
+                    {params.get("welcome") === "1" && <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Set a password for next time</h3>}
+                    <p className="mt-1 text-[13px] leading-5 text-slate-600 dark:text-slate-300">Choose a password so you can sign in with your email next time.</p>
+                    <form className="mt-3 flex flex-col gap-2" onSubmit={savePassword}>
+                      <div className="min-w-0">
+                        <label htmlFor="claim-new-password" className="sr-only">New password</label>
+                        <input id="claim-new-password" type="password" autoComplete="new-password" minLength={10} maxLength={72} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 10 characters" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                        {passwordError && <p role="alert" className="mt-1 text-sm text-rose-600">{passwordError}</p>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Btn kind="primary" type="submit" disabled={passwordBusy || !password} className="w-full">{passwordBusy ? "Saving…" : "Set password"}</Btn>
+                        <Btn type="button" disabled={passwordBusy} onClick={dismissPasswordPrompt} className="w-full">Do this later</Btn>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </Panel>
+            )}
+            {canViewViews && b.views && <ProfileVisits views={b.views} mine={mine} />}
             {!b.claimed ? (
-              <Panel title="Is this your business?">
-                <p className="text-sm text-slate-700 dark:text-slate-200">Claim it to control this profile, publish your offerings, choose the opportunities you want and connect to EnterprateAI's business tools.</p>
-                {b.claim?.eligible
+              <Panel title={myClaim ? "Your claim" : "Is this your business?"}>
+                {/* While their claim is under review the claimant sees where it stands, not the pitch to claim it (QA R9). */}
+                {!myClaim && b.requests_waiting > 0 && <Notice tone="amber" className="mb-2" data-requests-waiting>{b.requests_waiting === 1 ? "1 request is" : `${b.requests_waiting} requests are`} waiting for this business. Claim it to read and answer {b.requests_waiting === 1 ? "it" : "them"}.</Notice>}
+                {!myClaim && <p className="text-sm text-slate-700 dark:text-slate-200">Claim it to control this profile, publish your offerings, choose the opportunities you want and connect to EnterprateAI's business tools.</p>}
+                {myClaim
+                  ? <p className="mt-2 text-[13px] text-slate-600 dark:text-slate-300" data-my-claim>{reviewing
+                    ? "You've claimed this profile and it is being reviewed. Nothing changes on it until the review is done."
+                    : "You've started claiming this profile. Carry on where you left off."}</p>
+                  : b.claim?.eligible
                   ? <p className="mt-2 text-[12px] text-slate-500">Claiming is free. You'll be asked to show that you manage the business.</p>
                   : <p className="mt-2 text-[13px] text-slate-500">This profile can't be claimed right now.</p>}
               </Panel>
-            ) : (
+            ) : !mine ? (
               <Panel title={open.rfqs ? `Get a quote from ${b.name}` : `Contact ${b.name}`} data-contact-card>
                 {paused ? <p className="text-sm text-slate-600 dark:text-slate-300">Actions are paused while who manages this profile is reviewed.</p>
                   : !main ? <p className="text-sm text-slate-600 dark:text-slate-300">{b.activated ? "This business hasn't opened a way to contact it yet." : "This business hasn't published its Marketplace profile yet."}</p>
@@ -377,18 +525,20 @@ export default function DirectoryProfilePage() {
                 {!paused && b.contact?.email && <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">Email: <a href={`mailto:${b.contact.email}`} className="break-all font-semibold text-brand-600 hover:underline">{b.contact.email}</a></p>}
                 {!paused && b.contact?.phone && <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">Phone: <a href={`tel:${b.contact.phone}`} className="font-semibold text-brand-600 hover:underline">{b.contact.phone}</a></p>}
               </Panel>
-            )}
-            <Panel title="About this badge" data-trust-card>
-              <div className="space-y-2 text-[13px] text-slate-600 dark:text-slate-300"><TrustWords profile={b} /></div>
-            </Panel>
+            ) : null}
           </div>
         </aside>
       </div>
 
-      {sticky && (
+      {sticky && !mine && (
         <div data-sticky-action className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-sm md:hidden dark:border-slate-800 dark:bg-slate-950/95">
           <Btn kind="primary" className="w-full !py-3" aria-label={`${main.label} (${b.name})`} onClick={main.go}>{main.label}</Btn>
         </div>
+      )}
+      {proposalFlowOpen && b.listing_id && (
+        <Suspense fallback={<div role="status" className="fixed inset-0 z-[85] grid place-items-center bg-black/30 text-sm text-white">Loading proposal form…</div>}>
+          <MarketplaceProposalFlow listing={{ workspace_id: b.listing_id, company_name: b.name, logo_data_url: b.logo_data_url }} onClose={() => setProposalFlowOpen(false)} />
+        </Suspense>
       )}
     </PublicFrame>
   );

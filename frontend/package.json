@@ -9,20 +9,24 @@
     "preview": "vite preview",
     "lint": "echo \"(optional) add eslint\"",
     "test": "vitest run",
-    "check:overflow": "node scripts/check-overflow.mjs"
+    "check:overflow": "node scripts/check-overflow.mjs",
+    "check:nav": "node scripts/check-nav-menus.mjs",
+    "check:premium": "node scripts/check-premium-research.mjs"
   },
   "dependencies": {
+    "@sentry/react": "^8.55.2",
     "@stripe/react-stripe-js": "^6.3.0",
     "@stripe/stripe-js": "^9.4.0",
+    "dompurify": "^3.4.17",
     "html2pdf.js": "^0.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "recharts": "^3.9.0",
-    "xlsx": "^0.18.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.2",
     "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",

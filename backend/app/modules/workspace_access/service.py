@@ -10,33 +10,28 @@ from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update
 from app.core.config import get_settings
 from app.shared.email.resend import send_workspace_invitation_email_with_link
 
-# Invited (non-owner) seats per plan, on top of the workspace owner.
-PLAN_MEMBER_LIMIT = {
-    "explorer": 0,
-    "starter_insight": 1,
-    "decision_engine": 3,
-    "growth_navigator": 10,
-    "strategic_business_os": 25,
-}
+# Seats per plan, the owner counted: app/modules/plans/team.py (SEATS_INCLUDED), with extra seats on Decision Engine.
 
 
 async def _require_seat_available(workspace_id: str) -> None:
-    from app.modules.plans.access import effective_plan_key
+    """A free seat on the owner's plan (the pricing PDF, 19 Oct 2026): Explorer and Starter are 1 seat (the owner);
+    Decision Engine 3 included, plus any extra seats bought at £15 a month."""
+    from app.modules.plans.team import seats
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], columns="id,user_id", single=True)
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    limit = PLAN_MEMBER_LIMIT.get(await effective_plan_key(ws["user_id"]), 0)
-    current = await sb_select("workspace_members", filters=[("workspace_id", "eq", workspace_id)], columns="id")
-    if len(current or []) >= limit:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Your plan doesn't include more team members. Upgrade to invite more people, "
-                "or remove an existing member first."
-                if limit else
-                "Inviting team members is available on paid plans. Upgrade to invite your team."
-            ),
-        )
+    s = await seats(ws["user_id"])
+    if s["can_invite"]:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "NO_FREE_SEAT", "seats": s,
+            "message": (f"All {s['total']} seats on your plan are in use. Add an extra seat (£15 a month, with 250 AI credits), "
+                        "or remove a member first.") if s["can_buy"] else
+                       "Your plan includes 1 user seat. Inviting your team is on Decision Engine, with 3 user seats included.",
+        },
+    )
 
 
 def _normalize_expiry_days(expires_in_days: int | None) -> int:
@@ -337,8 +332,10 @@ async def list_members(workspace_id: str) -> list:
     user_ids = [m["user_id"] for m in members]
     users = await sb_select("users", filters=[("id", "in", user_ids)])
     user_map = {u["id"]: u["email"] for u in users}
+    from app.modules.plans.team import allowance_of
     for m in members:
         m["email"] = user_map.get(m["user_id"], "")
+        m["credits"] = allowance_of(m)      # their monthly allowance from the team's pool, and what this month has used
     return members
 
 
@@ -348,6 +345,10 @@ async def update_member(
     permission_type: str,
     permissions: Dict[str, Any],
 ) -> Dict[str, Any]:
+    # Their access changes; their credit allowance (kept in the same record) stays as the owner set it.
+    current = await sb_select("workspace_members", filters=[("id", "eq", member_id), ("workspace_id", "eq", workspace_id)], single=True)
+    if current and ((current.get("permissions") or {}).get("credits")) and "credits" not in (permissions or {}):
+        permissions = {**(permissions or {}), "credits": current["permissions"]["credits"]}
     result = await sb_update(
         "workspace_members",
         payload={
@@ -360,6 +361,25 @@ async def update_member(
     if not result:
         raise HTTPException(status_code=404, detail="Member not found.")
     return result[0]
+
+
+async def set_member_credits(member_id: str, workspace_id: str, owner_id: str, monthly: int | None) -> Dict[str, Any]:
+    """The owner gives a member a monthly allowance from the team's pooled credits (None: no limit within the pool)."""
+    from app.modules.plans.team import TEAM_PLANS, allowance_of, this_month
+    from app.modules.plans.access import effective_plan_key
+    if await effective_plan_key(owner_id) not in TEAM_PLANS:
+        raise HTTPException(status_code=403, detail="Sharing credits with your team is on Decision Engine.")
+    m = await sb_select("workspace_members", filters=[("id", "eq", member_id), ("workspace_id", "eq", workspace_id)], single=True)
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found.")
+    a = allowance_of(m)
+    perms = dict(m.get("permissions") or {})
+    perms["credits"] = {"monthly": None if monthly is None else max(0, int(monthly)), "month": this_month(), "used": a["used"]}
+    rows = await sb_update("workspace_members", payload={"permissions": perms, "updated_at": datetime.now(timezone.utc).isoformat()},
+                           filters=[("id", "eq", member_id), ("workspace_id", "eq", workspace_id)])
+    out = (rows or [m])[0]
+    out["credits"] = allowance_of(out)
+    return out
 
 
 async def remove_member(member_id: str, workspace_id: str) -> None:

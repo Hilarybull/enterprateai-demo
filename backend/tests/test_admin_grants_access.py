@@ -99,7 +99,7 @@ def test_the_agent_gate_lets_a_full_access_explorer_account_work_and_read_its_re
     env.fin["rfq_requests"] = [{"id": "r1", "status": "pending", "customer_name": "BrightTech Ltd", "customer_email": "buyer@brighttech.test",
                                 "items": [{"name": "Strategy Workshop", "quantity": 1}]}]
     blocked = env.submit(capability="enquiry_to_quote", params={"rfq_id": "r1"}, channel="ui_action")
-    assert blocked["kind"] == "blocked" and blocked["reason_codes"] == ["plan_capability"]
+    assert blocked["kind"] == "blocked" and blocked["reason_codes"] == ["rfq_upgrade_required"] and blocked["reason"] == "plan"
     assert run(agent_rfq.received(env.orch, "A", "r1")) is None and run(env.orch.visible_data("A"))["financials"]["rfq_requests"][0]["locked"] is True
     account["grants"] = FULL                                              # the admin grants full access
     assert run(env.orch.entitlement("A"))["plan"] == "strategic_business_os"

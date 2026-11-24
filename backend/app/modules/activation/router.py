@@ -24,6 +24,7 @@ router = APIRouter(tags=["activation"])
 ADMIN_EMAIL = "tech.support@enterprateai.com"
 _service: ActivationService | None = None
 _task: asyncio.Task | None = None
+_wake: asyncio.Event | None = None
 
 
 def parse_emails(value) -> frozenset:
@@ -50,7 +51,7 @@ def read_config() -> Config:
     base = str(s.frontend_url or "").split(",")[0].strip().rstrip("/")
     start = rules.parse(s.activation_start_at) if s.activation_start_at else None
     return Config(
-        enabled=bool(s.activation_emails_enabled), dry_run=bool(s.activation_dry_run), cohort=str(s.activation_cohort or "internal").lower(),
+        enabled=bool(s.activation_emails_enabled), welcome_live=bool(s.welcome_emails_enabled), dry_run=bool(s.activation_dry_run), cohort=str(s.activation_cohort or "internal").lower(),
         internal_emails=parse_emails(s.activation_internal_emails),
         sample_percent=int(s.activation_sample_percent), holdout_percent=int(s.activation_holdout_percent), start_at=start, backlog_batch=int(s.activation_backlog_batch),
         base_url=base or "http://localhost:5173", api_base_url=str(s.activation_api_base_url or "").strip(), secret=str(s.jwt_secret_key or "dev-activation-secret"),
@@ -59,8 +60,8 @@ def read_config() -> Config:
 
 async def _send(message: dict) -> SendResult:
     from app.shared.email.resend import send_email_via_resend
-    r = await send_email_via_resend(to_email=message["to"], subject=message["subject"], text_content=message["text"], html_content=message["html"],
-                                    reply_to_email=message.get("reply_to"), idempotency_key=message["idempotency_key"], headers=message.get("headers"), marketing=True)
+    r = await send_email_via_resend(kind="activation", to_email=message["to"], subject=message["subject"], text_content=message["text"], html_content=message["html"],
+                                    reply_to_email=message.get("reply_to"), idempotency_key=message["idempotency_key"], headers=message.get("headers"), marketing=message.get("marketing", True))
     return SendResult(sent=bool(r.sent), message_id=getattr(r, "message_id", None), uncertain=bool(getattr(r, "uncertain", False)),
                       recipient_rejected=bool(getattr(r, "recipient_rejected", False)), error=getattr(r, "error", None))
 
@@ -88,10 +89,29 @@ def require_admin(user=Depends(get_current_user)):
 
 # ── the scheduled job ─────────────────────────────────────────────────────────
 
+async def queue_welcome(user_id: str) -> None:
+    """Persist the welcome before waking the sender; email failures cannot fail signup/claim."""
+    config = read_config()
+    if not config.enabled and not config.welcome_live:
+        return
+    try:
+        async with asyncio.timeout(5):
+            queued = await get_service().welcome(user_id)
+        if queued and _wake is not None:
+            _wake.set()
+    except NotSetUp:
+        logger.warning("Welcome email could not be queued: run migration 033")
+    except Exception:
+        logger.exception("Welcome email could not be queued")
+
+
 async def _loop(interval_s: int) -> None:
+    global _wake
+    _wake = asyncio.Event()
     while True:
+        _wake.clear()
         try:
-            if read_config().enabled:
+            if read_config().enabled or read_config().welcome_live:
                 out = await get_service().tick()
                 logger.info("activation run: %d selected, %d handled", len(out["selected"]), len(out["delivered"]))
         except asyncio.CancelledError:
@@ -100,7 +120,10 @@ async def _loop(interval_s: int) -> None:
             logger.warning("activation emails are switched on but not set up: run migration 033")
         except Exception as e:      # noqa: BLE001 - one bad run never stops the next
             logger.warning("activation run failed: %s", e)
-        await asyncio.sleep(interval_s)
+        try:
+            await asyncio.wait_for(_wake.wait(), timeout=interval_s)
+        except asyncio.TimeoutError:
+            pass
 
 
 def start_scheduler(interval_s: int = 900) -> None:
@@ -214,6 +237,10 @@ async def resend_webhook(request: Request):
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not JSON.")
     data = event.get("data") or {}
+    # Every email's own record (the superadmin's Emails area): delivered, opened, clicked, bounced, complained
+    from app.shared.email import catalog
+    await catalog.record_event(event_id=msg_id, type_=str(event.get("type") or ""), message_id=data.get("email_id") or data.get("id"),
+                               at=str(event.get("created_at") or datetime.now(timezone.utc).isoformat()), data=data)
     return await _run(get_service().delivery_event(event_id=msg_id, type_=str(event.get("type") or ""), message_id=data.get("email_id") or data.get("id"),
                                               at=rules.parse(event.get("created_at")) or datetime.now(timezone.utc)))
 
@@ -263,3 +290,53 @@ async def record_permission(user_id: str, body: PermissionIn, user=Depends(requi
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No account with that email.")
     return await _run(svc.user_journey(user_id.strip().lower()))
+
+
+# ── opting out of other optional emails (the link in their footer; no sign-in needed) ──
+
+def _optout_from(token: str) -> tuple[str, str]:
+    from app.shared.email import catalog
+    found = catalog.read_optout_token(token)
+    if not found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This link isn't valid.")
+    return found
+
+
+async def _optout_state(email: str, kind: str) -> dict:
+    from app.core.supabase import sb_select
+    from app.shared.email import catalog
+    try:
+        rows = await sb_select("email_optouts", filters=[("email", "eq", email)]) or []
+    except Exception:
+        rows = []
+    kinds = {r.get("kind") for r in rows}
+    masked = email[0] + "***" + email[email.index("@"):] if "@" in email and email.index("@") > 1 else email
+    return {"email": masked, "kind": kind, "label": catalog.public_name(kind), "this": kind in kinds, "all": "all" in kinds}
+
+
+@router.get("/email/opt-out")
+async def read_optout(t: str = Query(max_length=600)):
+    return await _optout_state(*_optout_from(t))
+
+
+@router.post("/email/opt-out")
+async def do_optout(t: str = Query(max_length=600), scope: str = Query(default="this", max_length=10), one_click: int = Query(default=0)):
+    """From the email's link, or the mail app's own unsubscribe button (one click). Effective at once."""
+    from app.shared.email import catalog
+    email, kind = _optout_from(t)
+    try:
+        await catalog.opt_out(email, "all" if scope == "all" else kind, "one_click" if one_click else "unsubscribe_link")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="That couldn't be saved just now. Please try again in a few minutes.")
+    return await _optout_state(email, kind)
+
+
+@router.post("/email/opt-in")
+async def undo_optout(t: str = Query(max_length=600), scope: str = Query(default="this", max_length=10)):
+    from app.shared.email import catalog
+    email, kind = _optout_from(t)
+    try:
+        await catalog.opt_in(email, None if scope == "all" else kind)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="That couldn't be saved just now. Please try again in a few minutes.")
+    return await _optout_state(email, kind)

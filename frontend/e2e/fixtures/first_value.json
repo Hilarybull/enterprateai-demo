@@ -1,0 +1,137 @@
+{
+ "session_id": "sess-1",
+ "business_id": "A",
+ "goal_key": "price_offer",
+ "result": {
+  "assessment_type": "pricing_health_initial",
+  "headline": "Pricing Health",
+  "ruleset_version": "first-value-1.0",
+  "provisional": true,
+  "basis": [
+   "What you told me",
+   "What is already on record for your business"
+  ],
+  "score": "Strong",
+  "score_label": "",
+  "classification": "Strong",
+  "evidence_coverage": 67,
+  "criteria": [
+   {
+    "key": "offer",
+    "label": "What is priced",
+    "state": "met"
+   },
+   {
+    "key": "margin",
+    "label": "Margin",
+    "state": "met"
+   },
+   {
+    "key": "volume",
+    "label": "Monthly volume",
+    "state": "met"
+   },
+   {
+    "key": "comparables",
+    "label": "Comparable prices",
+    "state": "unknown"
+   },
+   {
+    "key": "sensitivity",
+    "label": "Customer price sensitivity",
+    "state": "unknown"
+   },
+   {
+    "key": "positioning",
+    "label": "Positioning",
+    "state": "met"
+   }
+  ],
+  "strengths": [
+   "Strong margin at this price",
+   "Monthly volume estimated",
+   "Positioning chosen"
+  ],
+  "blockers": [
+   {
+    "key": "comparables",
+    "label": "Comparable prices are not known",
+    "kind": "unknown",
+    "state": "unknown"
+   },
+   {
+    "key": "sensitivity",
+    "label": "How customers react to a different price is not known",
+    "kind": "unknown",
+    "state": "unknown"
+   }
+  ],
+  "metrics": [
+   {
+    "label": "Proposed price",
+    "value": "₦30,000"
+   },
+   {
+    "label": "Cost per sale",
+    "value": "₦12,000"
+   },
+   {
+    "label": "Contribution",
+    "value": "₦18,000"
+   },
+   {
+    "label": "Margin",
+    "value": "60%"
+   },
+   {
+    "label": "At 40 sales a month",
+    "value": "₦720,000 contribution before fixed costs"
+   }
+  ],
+  "premium_next_action": {
+   "label": "Find my best price",
+   "explains": "I can now research competitor prices and market price bands, and test alternative prices against demand.",
+   "capability": "pricing_health_intelligence"
+  },
+  "free_next_actions": [
+   {
+    "label": "Save the price in your catalogue",
+    "to": "/catalogue",
+    "catalogue": {
+     "name": "Cupcake boxes",
+     "base_price": 30000.0,
+     "cost_of_sales": 12000.0
+    }
+   },
+   {
+    "label": "Create a quotation",
+    "to": "/operations?tab=Sales&sub=Quotations&new=quote"
+   },
+   {
+    "label": "Save for later",
+    "save": true
+   }
+  ],
+  "generated_at": "2026-10-14T22:50:56.059495+00:00",
+  "currency_sign": "₦",
+  "note": "This is how the price works on your own numbers. It is not a recommended market price.",
+  "band": "Strong",
+  "key_numbers": [
+   "₦30,000 price",
+   "60% margin",
+   "₦720,000 a month before fixed costs"
+  ],
+  "gaps": {
+   "failed": [],
+   "unknown": [
+    "comparable prices",
+    "customer price sensitivity"
+   ]
+  },
+  "premium_gate": {
+   "allowed": true,
+   "reason": null,
+   "message": "I can now research competitor prices and market price bands, and test alternative prices against demand."
+  }
+ }
+}

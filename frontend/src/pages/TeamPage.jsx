@@ -4,6 +4,7 @@ import { apiRequest } from "../api/client";
 import { describePermissions } from "../lib/permissions";
 import InviteModal from "../components/InviteModal";
 import { TeamIllustration } from "../components/Illustrations";
+import { MemberCredits, SeatsStrip } from "../components/TeamSeats";
 
 function UserIcon() {
   return (
@@ -48,10 +49,9 @@ function PlusIcon() {
   );
 }
 
-function initialsFromEmail(email) {
-  const name = (email || "").split("@")[0] || "?";
-  const parts = name.split(/[.\-_]+/).filter(Boolean);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "?";
+function initialsFromName(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "U";
 }
 
 function StatusBadge({ status }) {
@@ -150,16 +150,20 @@ export default function TeamPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [editingMember, setEditingMember] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
+  const [seats, setSeats] = useState(null);      // seats on the plan, and whether one is free (the pricing PDF)
+  const [seatNote, setSeatNote] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [mem, inv, shares] = await Promise.all([
+      const [mem, inv, shares, seat] = await Promise.all([
         apiRequest("/workspace/members", "GET"),
         apiRequest("/workspace/invitations", "GET"),
         apiRequest("/workspace/share-links", "GET"),
+        apiRequest("/workspace/seats", "GET").catch(() => null),
       ]);
+      setSeats(seat || null);
       setMembers(mem || []);
       setInvitations(inv || []);
       setShareLinks(shares || []);
@@ -213,6 +217,17 @@ export default function TeamPage() {
     }
   }
 
+  const openInvite = () => {
+    if (seats && !seats.can_invite) {
+      setSeatNote(seats.can_buy ? `All ${seats.total} seats are in use. Add a seat (£${seats.seat_price}/mo) or remove a member first.`
+        : "Your plan includes 1 user seat. Inviting your team is on Decision Engine, with 3 user seats included.");
+      return;
+    }
+    setSeatNote("");
+    setShowInvite(true);
+  };
+  const teamCredits = Boolean(seats?.can_buy);      // pooled credits and allowances: Decision Engine and above
+  const savedCredits = (out) => setMembers((ms) => ms.map((m) => (m.id === out.id ? { ...m, credits: out.credits, permissions: out.permissions || m.permissions } : m)));
   const pendingInvites = invitations.filter((i) => i.status === "pending");
   const pastInvites = invitations.filter((i) => i.status !== "pending");
   const activeShareLinks = shareLinks.filter((i) => i.status === "pending");
@@ -230,13 +245,16 @@ export default function TeamPage() {
         </div>
         <button
           type="button"
-          onClick={() => setShowInvite(true)}
+          onClick={openInvite}
           className="flex shrink-0 items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
         >
           <PlusIcon />
           Invite member
         </button>
       </div>
+
+      <SeatsStrip seats={seats} />
+      {seatNote && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900" data-seat-note>{seatNote}</p>}
 
       {/* Tabs */}
       <div className="flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800 w-fit">
@@ -283,7 +301,7 @@ export default function TeamPage() {
               action={
                 <button
                   type="button"
-                  onClick={() => setShowInvite(true)}
+                  onClick={openInvite}
                   className="mt-4 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition"
                 >
                   Invite member
@@ -298,6 +316,7 @@ export default function TeamPage() {
                   <tr className="border-b border-slate-100 dark:border-slate-800">
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Member</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Access</th>
+                    <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">AI credits this month</th>
                     <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Role</th>
                     <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400">Actions</th>
                   </tr>
@@ -308,13 +327,16 @@ export default function TeamPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-slate-800 dark:text-brand-400">
-                            {initialsFromEmail(m.email)}
+                            {initialsFromName(m.name)}
                           </span>
                           <span className="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[200px]">{m.email}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3">
                         <PermissionPill type={m.permission_type} permissions={m.permissions} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <MemberCredits member={m} enabled={teamCredits} onSaved={savedCredits} />
                       </td>
                       <td className="px-4 py-3">
                         <span className="capitalize text-xs text-slate-500">{m.role}</span>
@@ -350,13 +372,14 @@ export default function TeamPage() {
                 {members.map((m) => (
                   <div key={m.id} className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-slate-800 dark:text-brand-400">
-                      {initialsFromEmail(m.email)}
+                      {initialsFromName(m.name)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-semibold text-slate-800 dark:text-slate-200">{m.email}</div>
                       <div className="mt-0.5">
                         <PermissionPill type={m.permission_type} permissions={m.permissions} />
                       </div>
+                      <div className="mt-1"><MemberCredits member={m} enabled={teamCredits} onSaved={savedCredits} /></div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       <button
@@ -452,7 +475,7 @@ export default function TeamPage() {
                         <div key={inv.id} className="px-4 py-3 flex items-center gap-3">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-slate-800">
                             {inv.email
-                              ? <span className="text-xs font-bold">{initialsFromEmail(inv.email)}</span>
+                              ? <span className="text-xs font-bold">U</span>
                               : <LinkIcon className="h-3.5 w-3.5" />
                             }
                           </div>
@@ -616,7 +639,7 @@ export default function TeamPage() {
                         <div key={inv.id} className="flex items-center gap-3 px-4 py-3 opacity-60">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
                             {inv.email
-                              ? <span className="text-xs font-bold">{initialsFromEmail(inv.email)}</span>
+                              ? <span className="text-xs font-bold">U</span>
                               : <LinkIcon className="h-3.5 w-3.5" />
                             }
                           </div>

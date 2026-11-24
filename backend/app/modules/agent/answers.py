@@ -8,6 +8,7 @@ are answered conversationally by the Business Assistant.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from typing import Any
@@ -54,6 +55,80 @@ def _requests_answer(data: dict) -> dict:
             "actions": [{"label": "Open requests", "to": "/operations?tab=Sales"}]}
 
 
+# "How many invoices do I have?", "list my quotes", "what customers have I got": a question about the records, answered from
+# them, never a new invoice started (the owner, 1 Nov: "it can't answer simple questions")
+# Only asking how many or which there are: "what if I lose my biggest client" and "which customers owe me" are other questions
+_ASKS = re.compile(r"^\s*(?:how many\b|list\b|count\b|show(?: me)?\b|(?:what|which)\b.*\b(?:do|have)\s+i\b|do i have\b|have i (?:got|sent|made|raised)\b)", re.I)
+_DOING = re.compile(r"\b(?:create|make|draft|raise|write|prepare|generate|send|new)\b(?! (?:have|did))", re.I)
+_KINDS = [("invoices", re.compile(r"\binvoices?\b", re.I)), ("quotes", re.compile(r"\bquot(?:e|es|ation|ations)\b", re.I)),
+          ("customers", re.compile(r"\b(?:customers?|clients?)\b", re.I))]
+
+
+_NAMED = re.compile(r"^\s*(?:do (?:you|i|we) have|have (?:you|i|we) got|is there|are there|can you find|find|look up|search(?: for)?)\b.*?\b(?:records?|mention|anything)\s+(?:of|on|about|for|called|named)\s+(.{2,200}?)\s*[?.!]*$", re.I)
+_MY_OWN = re.compile(r"^(?:my|our|the|all|any|your)\b|\b(?:customers?|clients?|invoices?|quot(?:e|es|ation|ations)|business|records?)\s*$", re.I)
+
+
+def names_asked(text: str) -> list[str]:
+    """The named things in "do you have any record of ORCHID-7731 or Mrs Tate?"; none for "any record of my customers"."""
+    m = _NAMED.search(str(text or ""))
+    if not m or _MY_OWN.search(m.group(1).strip()):
+        return []
+    return [p.strip(" \"'") for p in re.split(r",|\band\b|\bor\b", m.group(1)) if p.strip(" \"'")][:6]
+
+
+def named_records_answer(names: list[str], data: dict) -> dict:
+    """Each name looked for in the workspace's own customers, products, suppliers, invoices and quotations, and said as found or not."""
+    fin, cat = data.get("financials") or {}, data.get("catalogue") or {}
+    where = {"customers": cat.get("customers"), "products": cat.get("products"), "suppliers": cat.get("vendors"), "invoices": fin.get("invoices"), "quotations": bz.quotes_of(data)}
+    found, missing = [], []
+    for name in names:
+        hit = next((k for k, rows in where.items() if name.lower() in json.dumps(rows or [], default=str, ensure_ascii=False).lower()), None)
+        (found.append(f"{name} (in your {hit})") if hit else missing.append(name))
+    said = [f"I found {', '.join(found)}." if found else "", f"I can't find {', '.join(missing)} in your customers, products, suppliers, invoices or quotations." if missing else ""]
+    return {"topic": "records", "message": " ".join(x for x in said if x) + " Next step: tell me what you'd like to do with it, or add it to your records.", "evidence": [],
+            "actions": [{"label": "Open your catalogue", "to": "/catalogue"}], "source": "Based on your records."}
+
+
+def records_kind(text: str) -> str | None:
+    """The records a question is about, when it asks about them rather than for something new."""
+    t = str(text or "")
+    if topic_of(t) or not _ASKS.search(t) or _DOING.search(re.sub(r"^\s*(?:have i|what have i)\s+(?:sent|made|raised)\b", "", t, flags=re.I)):
+        return None
+    return next((k for k, rx in _KINDS if rx.search(t)), None)
+
+
+def records_answer(kind: str, data: dict) -> dict:
+    cur = bz.currency_of(data)
+    fin = data.get("financials") or {}
+    if kind == "customers":
+        names = [c.get("name") for c in ((data.get("catalogue") or {}).get("customers") or []) if isinstance(c, dict) and c.get("name")]
+        if not names:
+            return {"topic": "records", "message": "You have no customers on record yet. Add one in your Catalogue, or start a quotation and I'll add the customer for you.",
+                    "evidence": [], "actions": [{"label": "Open your customers", "to": "/catalogue?tab=customers"}], "source": "Based on your Catalogue."}
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        return {"topic": "records", "message": f"You have {len(names)} customer{'s' if len(names) != 1 else ''} on record: {shown}.",
+                "evidence": [], "actions": [{"label": "Open your customers", "to": "/catalogue?tab=customers"}], "source": "Based on your Catalogue."}
+    docs = [d for d in (fin.get("invoices") if kind == "invoices" else bz.quotes_of(data)) or [] if isinstance(d, dict) and not d.get("archived")]
+    word, page = ("invoice", "/operations?tab=Sales&sub=Invoices") if kind == "invoices" else ("quotation", "/operations?tab=Sales&sub=Quotations")
+    if not docs:
+        return {"topic": "records", "message": f"You have no {word}s yet. Ask me to draft one whenever you're ready.", "evidence": [],
+                "actions": [{"label": f"Draft a {word}", "kind": "explain", "prompt": f"Create a {word}"}], "source": "Based on your records."}
+    total = sum(bz.invoice_total(d) for d in docs if bz.doc_currency(d, cur) == cur)
+    message = f"You have {len(docs)} {word}{'s' if len(docs) != 1 else ''}, {fmt_money(total, cur)} in all."
+    if kind == "invoices":
+        unpaid = [d for d in docs if bz.invoice_outstanding(d) > 0 and bz.doc_currency(d, cur) == cur]
+        if unpaid:
+            message += f" {len(unpaid)} {'is' if len(unpaid) == 1 else 'are'} unpaid, {fmt_money(sum(bz.invoice_outstanding(d) for d in unpaid), cur)} still to come in."
+        else:
+            message += " All of them are paid."
+    latest = sorted(docs, key=lambda d: str(d.get("created_at") or d.get("issue_date") or d.get("date") or ""), reverse=True)[:3]
+    lines = [f"{d.get('reference') or d.get('number') or word.capitalize()} for {d.get('customer_name') or 'a customer'}, "
+             f"{fmt_money(bz.invoice_total(d), bz.doc_currency(d, cur))}" for d in latest]
+    if lines:
+        message += " The latest: " + "; ".join(lines) + "."
+    return {"topic": "records", "message": message, "evidence": [], "actions": [{"label": f"Open your {word}s", "to": page}], "source": "Based on your records."}
+
+
 def topic_of(text: str) -> str | None:
     return next((key for key, pattern in _TOPICS if pattern.search(text or "")), None)
 
@@ -72,7 +147,7 @@ def _facts(data: dict, policy: dict, today: date) -> dict[str, Any]:
         "alert_pct": alert_pct,
         "conc": bz.concentration(data, alert_pct),
         "overdue": overdue,
-        "overdue_total": sum(bz.invoice_outstanding(i) for i in overdue),
+        "overdue_total": bz.total_of(data, overdue, lambda i: bz.invoice_outstanding(i)),      # in the workspace currency, converted where needed
         "oldest_days": oldest,
         "cash": bz.cash_position(data, today),
     }
@@ -92,11 +167,12 @@ def _evidence(f: dict) -> list[dict]:
         ev.append({"label": "Revenue recorded", "value": "None yet"})
     if f["overdue"]:
         oldest = f" (oldest {f['oldest_days']} days)" if f["oldest_days"] is not None else ""
-        ev.append({"label": "Overdue invoices", "value": f"{len(f['overdue'])} · {fmt_money(f['overdue_total'], cur)}{oldest}"})
+        ev.append({"label": "Overdue invoices", "value": f"{len(f['overdue'])} · {bz.fmt_total(f['overdue_total'], cur)}{oldest}"})
     else:
         ev.append({"label": "Overdue invoices", "value": "None"})
     runway = f" · {cash['runway_months']:g} months of runway" if cash["runway_months"] is not None else ""
-    ev.append({"label": "Cash position", "value": f"{fmt_money(cash['cash'], cur)}{runway}"})
+    # Never a made-up figure: with no money in or out on record there is no cash position to state (QA P2-5).
+    ev.append({"label": "Cash position", "value": f"{fmt_money(cash['cash'], cur)}{runway}" if cash.get("recorded", True) else "Not recorded yet"})
     return ev
 
 
@@ -122,7 +198,7 @@ def _risks(f: dict) -> list[dict]:
         n = len(f["overdue"])
         oldest = f", the oldest by {f['oldest_days']} days" if f["oldest_days"] else ""
         out.append({"key": "overdue", "text": f"late payment: {n} invoice{'s are' if n != 1 else ' is'} overdue "
-                                              f"({fmt_money(f['overdue_total'], cur)}){oldest}",
+                                              f"({bz.fmt_total(f['overdue_total'], cur)}){oldest}",
                     "action": {"label": "Prepare payment follow-ups", "capability": "payment_followup"}})
     return out
 
@@ -159,7 +235,7 @@ def answer_question(text: str, data: dict, policy: dict, today: date) -> dict | 
         if f["overdue"]:
             names = ", ".join(sorted({str(i.get("customer_name") or "a customer") for i in f["overdue"]})[:3])
             message = (f"{len(f['overdue'])} invoice{'s are' if len(f['overdue']) != 1 else ' is'} overdue, "
-                       f"{fmt_money(f['overdue_total'], cur)} in total, from {names}.")
+                       f"{bz.fmt_total(f['overdue_total'], cur)} in total, from {names}.")
             actions = [{"label": "Prepare payment follow-ups", "capability": "payment_followup"}]
         else:
             message = "Nothing is overdue. Every issued invoice is either paid or still within its payment terms."
@@ -215,7 +291,30 @@ UNAVAILABLE: dict[str, dict[str, Any]] = {
 }
 
 
-def unavailable(capability: str, label: str | None = None) -> dict:
+# What now has a free check of its own (and its premium step: research that closes the gaps). Asked for in the Agent
+# box, it opens that check with the owner's own words, never "isn't available as an Agent action yet".
+CHECKS = {"funding_readiness": ("need_funding", "Funding readiness"),
+          "launch": ("launch", "Launch readiness"),
+          "growth": ("more_customers", "Customer growth")}
+# A task that needs records the workspace doesn't have yet (three months of revenue for a price test) hands over to
+# the homepage's check for the same goal: worked out from the owner's answers, so it still gives a result.
+CHECK_OF_GOAL = {"price_offer": "Pricing", "more_customers": "Customer growth", "need_funding": "Funding readiness", "launch": "Launch readiness"}
+
+
+def check_instead(goal: str, said: str | None, why: str) -> dict:
+    what = CHECK_OF_GOAL[goal]
+    return {"kind": "check", "capability": goal, "goal_key": goal, "said": (said or "")[:500],
+            "message": f"{why} So I'll work it out from what you tell me instead: {what.lower()} check below."}
+
+
+def unavailable(capability: str, label: str | None = None, said: str | None = None) -> dict:
+    if capability in CHECKS:
+        # The Agent runs it, here: the check opens in the Agent card with the owner's own words and what the
+        # workspace already knows; its result, then the research that closes the gaps, follow in place.
+        goal, what = CHECKS[capability]
+        return {"kind": "check", "capability": capability, "goal_key": goal, "said": (said or "")[:500],
+                "message": f"{what}: I'll check where you stand now, from what you've told me and what's on record. "
+                           "Answer anything I still need below, then I can research and close the gaps."}
     spec = UNAVAILABLE.get(capability) or {"what": label or "That task", "explain": None, "draft": None}
     offers = []
     if spec.get("explain"):

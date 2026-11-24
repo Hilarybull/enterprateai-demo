@@ -2,6 +2,13 @@ import { create } from "zustand";
 import { apiRequest, apiRequestCached, clearSessionCache, sessionGet } from "../api/client";
 import { useWorkspaceStore } from "./workspace";
 import { firstNameOf } from "../lib/greeting";
+import { humanCheck } from "../lib/turnstile";
+import { claimBrowser, clearOnSignOut, sweepOldData } from "../lib/browserData";
+
+sweepOldData();
+
+// Signing in with Google where there's no account (the server's 404, said in words, never "HTTP 404: …"; 31 Oct)
+const noAccountError = (msg) => /NO_ACCOUNT|no EnterprateAI account/i.test(String(msg || ""));
 
 function humanizeAuthError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -14,9 +21,11 @@ function humanizeAuthError(e) {
     return "We couldn't reach the server. Please check your connection and try again in a moment.";
   }
   if (msg === "AUTH_RESPONSE_INVALID") return "Authentication failed. Please try again.";
+  if (noAccountError(msg)) return "There's no EnterprateAI account for this Google email. Create an account to get started.";
   if (msg.startsWith("HTTP 401:")) return "Invalid credentials. Try again or create an account.";
   if (msg.startsWith("HTTP 403:")) {
     const lower = msg.toLowerCase();
+    if (lower.includes("from a person")) return msg.replace(/^HTTP 403:\s*/, "");
     if (lower.includes("suspended") || lower.includes("blocked")) {
       return msg.replace(/^HTTP 403:\s*/, "");
     }
@@ -26,9 +35,9 @@ function humanizeAuthError(e) {
     return "Access denied.";
   }
   if (msg.startsWith("HTTP 409:")) return "Account already exists. Sign in instead.";
-  if (msg.startsWith("HTTP 422:")) return "Please enter a valid email and a password (8+ characters).";
+  if (msg.startsWith("HTTP 422:")) return /too common|at least 10/i.test(msg) ? msg.replace(/^HTTP 422:\s*/, "") : "Please enter a valid email and a password (10+ characters).";
   if (msg.startsWith("HTTP 500:")) return "Server configuration error. Try again later.";
-  return msg;
+  return msg.replace(/^HTTP \d{3}:\s*/, "");      // the words only, never a status code
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,10 +74,17 @@ async function fetchPlatformGrants({ force = false } = {}) {
 
 async function fetchSubscription({ force = false } = {}) {
   try {
-    return await withRetry((again) => sessionGet("/plans/my", { force: force || again }));
+    return effectiveSubscription(await withRetry((again) => sessionGet("/plans/my", { force: force || again })));
   } catch {
     return null;
   }
+}
+
+/** QA E8: one entitlement everywhere. `plan_key` is what the account can use (its plan plus admin grants, from
+ * the server's single resolver); `subscribed_plan_key` is what it pays for, for the billing pages. */
+export function effectiveSubscription(sub) {
+  if (!sub || !sub.effective_plan_key || sub.effective_plan_key === sub.plan_key) return sub ? { ...sub, subscribed_plan_key: sub.plan_key } : sub;
+  return { ...sub, subscribed_plan_key: sub.plan_key, subscribed_status: sub.status, plan_key: sub.effective_plan_key, status: "active" };
 }
 
 // The dashboard needs the workspace and the agent summary as well as the session.
@@ -159,6 +175,8 @@ export const useAuthStore = create((set, get) => ({
         localStorage.removeItem("ea_email");
         clearSessionCache();
         clearDemoTourState();
+        useWorkspaceStore.getState().resetForUser(null);
+        clearOnSignOut();
         set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, connecting: false });
       };
 
@@ -186,6 +204,7 @@ export const useAuthStore = create((set, get) => ({
       }
 
       const [restrictions, grants, sub] = await rest;
+      if (claimBrowser(me?.email ?? email)) useWorkspaceStore.getState().resetForUser(me?.email ?? email);      // another account signed in, in another tab
       set({
         token,
         email: me?.email ?? email,
@@ -237,7 +256,7 @@ export const useAuthStore = create((set, get) => ({
           localStorage.removeItem("ea_referral");
         }
       } catch (_) {}
-      const result = await apiRequest("/auth/register", "POST", { email, password, ...extra, ...refData });
+      const result = await apiRequest("/auth/register", "POST", { email, password, ...extra, ...refData }, await humanCheck());
       if (result?.email_verification_sent) {
         set({ verificationPending: true, verificationEmail: email });
         return;
@@ -256,6 +275,7 @@ export const useAuthStore = create((set, get) => ({
       const tokenRes = await apiRequest("/auth/login", "POST", { email, password });
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+      claimBrowser(email);
       localStorage.setItem("ea_token", token);
       localStorage.setItem("ea_email", email);
       clearDemoTourState();
@@ -291,6 +311,7 @@ export const useAuthStore = create((set, get) => ({
   /** Signed in by a verified email code (a task saved from the homepage): the same state a password or Google sign-in leaves. */
   tokenLogin: async (token, email) => {
     if (!token) throw new Error("AUTH_RESPONSE_INVALID");
+    claimBrowser(email);
     localStorage.setItem("ea_token", token);
     if (email) localStorage.setItem("ea_email", email);
     clearDemoTourState();
@@ -308,7 +329,7 @@ export const useAuthStore = create((set, get) => ({
     }).catch(() => {});
   },
 
-  googleLogin: async (credential) => {
+  googleLogin: async (credential, intent = null) => {
     set({ isLoading: true, error: null });
     try {
       let refData = {};
@@ -323,7 +344,7 @@ export const useAuthStore = create((set, get) => ({
           localStorage.removeItem("ea_referral");
         }
       } catch (_) {}
-      const tokenRes = await apiRequest("/auth/google", "POST", { credential, ...refData });
+      const tokenRes = await apiRequest("/auth/google", "POST", { credential, ...refData, ...(intent ? { intent } : {}) });
       const token = tokenRes?.access_token ?? tokenRes?.token ?? null;
       if (!token) throw new Error("AUTH_RESPONSE_INVALID");
       localStorage.setItem("ea_token", token);
@@ -334,6 +355,7 @@ export const useAuthStore = create((set, get) => ({
         fetchPlatformGrants(),
         fetchSubscription(),
       ]).then(async ([me, restrictions, grants, sub]) => {
+        claimBrowser(me?.email);
         if (me?.email) localStorage.setItem("ea_email", me.email);
         if (me?.email && me.email !== "demo") clearDemoTourState();
         if (me?.email) useWorkspaceStore.getState().resetForUser(me.email);
@@ -350,7 +372,7 @@ export const useAuthStore = create((set, get) => ({
         await backfillAuthName(me?.email ?? localStorage.getItem("ea_email") ?? "", me?.name ?? null, set);
       }).catch(() => {});
     } catch (e) {
-      set({ error: humanizeAuthError(e) });
+      set({ error: humanizeAuthError(e), noAccount: noAccountError(e?.message || e) });
     } finally {
       set({ isLoading: false });
     }
@@ -359,11 +381,13 @@ export const useAuthStore = create((set, get) => ({
   setProfile: ({ name, picture, authProvider, hasPassword }) => set({ name, picture, authProvider, hasPassword: hasPassword ?? false }),
 
   logout: () => {
+    if (localStorage.getItem("ea_token")) { try { apiRequest("/auth/logout", "POST")?.catch?.(() => {}); } catch { /* signed out here regardless */ } }
     localStorage.removeItem("ea_token");
     localStorage.removeItem("ea_email");
     clearSessionCache();
     clearDemoTourState();
     useWorkspaceStore.getState().resetForUser(null);
+    clearOnSignOut();
     set({ token: null, email: null, name: null, picture: null, authProvider: null, hasPassword: false, hydrated: true, connecting: false, platformRestrictions: [], platformGrants: [], subscription: DEFAULT_SUB, creditBalance: null, creditInfo: null });
   }
 }));
@@ -372,5 +396,29 @@ export const useAuthStore = create((set, get) => ({
 if (typeof window !== "undefined") {
   window.addEventListener("ea:unauthorized", () => {
     if (useAuthStore.getState().token) useAuthStore.getState().logout();
+  });
+}
+
+// Signing in, signing up or signing out in one tab reaches every other open tab at once: without this a tab
+// opened before (the homepage task, say) kept asking for an email or a login until it was reloaded.
+export function syncAuthAcrossTabs(event) {
+  if (event.key !== "ea_token" && event.key !== null) return;      // null: storage was cleared
+  const token = localStorage.getItem("ea_token");
+  const state = useAuthStore.getState();
+  if (token === state.token) return;
+  if (!token) { state.logout(); return; }
+  hydrating = null;      // a fresh check for the new token, not the one in flight for the old
+  state.hydrate();
+}
+if (typeof window !== "undefined") window.addEventListener("storage", syncAuthAcrossTabs);
+
+/** Signed in, as the page should show it (the owner's QA, 15 Oct): the confirmed token, or, while the first check is still
+ *  on its way, the token this browser kept. The nav no longer shows "Sign in" to someone signed in, and a task begun while
+ *  the check runs is kept under their own account, never as a visitor's. A token the server refuses still signs out. */
+export function useSignedIn() {
+  return useAuthStore((s) => {
+    if (s.token) return true;
+    if (s.hydrated) return false;
+    try { return Boolean(localStorage.getItem("ea_token")); } catch { return false; }
   });
 }

@@ -54,8 +54,9 @@ class SalesCycleInputs:
     sales_cycle_days  : how long from lead to closed sale
     payment_terms_days: how long after sale until cash received
     """
-    sales_cycle_days: int = 30
-    payment_terms_days: int = 14
+    # None = not given: the dimension is "not assessed", never filled with a favourable default (simulation audit F5)
+    sales_cycle_days: int | None = None
+    payment_terms_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +144,7 @@ REASON_CODE_MESSAGES: dict[ReasonCode, str] = {
     ReasonCode.BREAK_EVEN_UNITS_ZERO:
         "Break-even cannot be calculated because monthly units sold is zero.",
     ReasonCode.BREAK_EVEN_TOO_LONG:
-        "Break-even takes longer than 12 months at current sales velocity.",
+        "Planned sales are below, or too close to, the break-even level.",
     ReasonCode.LOW_RUNWAY:
         "Cash runway is critically low — the business may run out of cash before break-even.",
     ReasonCode.CAPACITY_MISMATCH:
@@ -202,7 +203,13 @@ def calculate_break_even_units(inputs: FinancialInputs) -> float | None:
     return max(0.0, inputs.fixed_costs_monthly) / contribution
 
 
-def calculate_break_even_months(inputs: FinancialInputs) -> float | None:
+def calculate_break_even_sales_ratio(inputs: FinancialInputs) -> float | None:
+    """Break-even units as a share of planned monthly units: 0.67 = sales cover fixed costs at two thirds of the plan;
+    2.0 = twice the planned sales are needed. None when no volume covers fixed costs (price <= variable cost) or no units
+    are planned.
+
+    Simulation audit F9 (16 Nov 2026): this same figure used to be returned as ``break_even_months``. It is not a time.
+    In a model where sales are the same every month, a business is either profitable from month 1 or never."""
     units_be = calculate_break_even_units(inputs)
     if units_be is None:
         return None
@@ -210,6 +217,14 @@ def calculate_break_even_months(inputs: FinancialInputs) -> float | None:
     if units <= 0:
         return None
     return units_be / units
+
+
+def calculate_margin_of_safety_pct(break_even_sales_ratio: float | None) -> float | None:
+    """How far planned sales can fall before the business stops covering its costs, as % of planned sales.
+    Negative when the plan is below break-even: -50 means sales must rise by 50% of the plan to break even."""
+    if break_even_sales_ratio is None:
+        return None
+    return (1.0 - break_even_sales_ratio) * 100.0
 
 
 def calculate_runway_months(inputs: FinancialInputs) -> float | None:
@@ -272,19 +287,34 @@ def score_margin(margin: float) -> int:
     return 25
 
 
-def score_break_even(break_even_months: float | None) -> int:
-    if break_even_months is None:
-        return 20
-    m = max(0.0, break_even_months)
-    if m <= 3:
+def score_break_even(break_even_sales_ratio: float | None) -> int:
+    """Scored on the margin of safety (standard cost-volume-profit measure).
+
+    Simulation audit F9: the old bands treated the ratio as months, so a plan that needed 3x its sales to break even
+    scored 100 ("excellent"). Now a plan below break-even can never score above 30.
+
+      margin of safety >= 50%  (ratio <= 0.5)  -> 100
+      >= 30%                   (<= 0.7)        -> 85
+      >= 10%                   (<= 0.9)        -> 65
+      0-10%                    (<= 1.0)        -> 50   just covering costs
+      sales must rise <= 50%   (<= 1.5)        -> 30   below break-even
+      sales must rise > 50%    (> 1.5)         -> 15
+      no break-even possible   (None)          -> 10   price <= variable cost, or no units
+    """
+    if break_even_sales_ratio is None:
+        return 10
+    r = max(0.0, break_even_sales_ratio)
+    if r <= 0.5:
         return 100
-    if m <= 6:
+    if r <= 0.7:
         return 85
-    if m <= 12:
+    if r <= 0.9:
         return 65
-    if m <= 18:
-        return 45
-    return 30
+    if r <= 1.0:
+        return 50
+    if r <= 1.5:
+        return 30
+    return 15
 
 
 def score_runway(runway_months: float | None) -> int:
@@ -531,24 +561,19 @@ def explain_unit_economics(*, margin: float) -> str:
     return f"Contribution margin is {m_pct}%, which falls in {band}."
 
 
-def explain_break_even(*, break_even_months: float | None) -> str:
-    if break_even_months is None:
+def explain_break_even(*, break_even_sales_ratio: float | None, break_even_units: float | None = None,
+                       units_per_month: float | None = None) -> str:
+    if break_even_sales_ratio is None:
         return (
             "Break-even is not reachable with current unit economics "
             "(typically price <= variable cost, or units/month is 0)."
         )
-    m = round(float(break_even_months), 1)
-    if m <= 3:
-        band = "<= 3 months (excellent)"
-    elif m <= 6:
-        band = "4–6 months (strong)"
-    elif m <= 12:
-        band = "7–12 months (okay)"
-    elif m <= 18:
-        band = "13–18 months (weak)"
-    else:
-        band = "> 18 months (very weak)"
-    return f"Break-even is {m} months, which falls in {band}."
+    mos = round((1.0 - float(break_even_sales_ratio)) * 100.0, 1)
+    units = (f"You need {break_even_units:,.1f} sales a month to cover fixed costs and plan {units_per_month:,.1f}. "
+             if break_even_units is not None and units_per_month else "")
+    if mos >= 0:
+        return f"{units}Margin of safety: sales can fall {mos}% before the business stops covering its costs."
+    return f"{units}Planned sales are below break-even: they would need to rise by {abs(mos)}% of the plan to cover costs."
 
 
 def explain_runway(*, runway_months: float | None) -> str:
@@ -568,7 +593,7 @@ def explain_runway(*, runway_months: float | None) -> str:
 
 def explain_capacity(*, capacity_result: dict | None) -> str:
     if not capacity_result or capacity_result.get("feasible") is None:
-        return "Capacity inputs are missing. Defaulting to 60/100 (neutral)."
+        return "Not assessed: no team capacity was given, so this is left out of the score."
     feasible = capacity_result.get("feasible")
     util = capacity_result.get("utilization")
     util_pct = round(float(util) * 100.0, 1) if isinstance(util, (int, float)) else None
@@ -581,7 +606,9 @@ def explain_capacity(*, capacity_result: dict | None) -> str:
     )
 
 
-def explain_cash_timing(*, payment_terms_days: int, starting_cash: float, costs_monthly: float) -> str:
+def explain_cash_timing(*, payment_terms_days: int | None, starting_cash: float, costs_monthly: float) -> str:
+    if payment_terms_days is None:
+        return "Not assessed: no payment terms were given, so this is left out of the score."
     terms = int(payment_terms_days or 0)
     cash = float(starting_cash or 0.0)
     costs = float(costs_monthly or 0.0)
@@ -614,7 +641,9 @@ def explain_proof(*, proof: ProofInputs) -> str:
     return f"Market validation is {label}{count_note}."
 
 
-def explain_sales_cycle(*, sales_cycle_days: int, runway_months: float | None) -> str:
+def explain_sales_cycle(*, sales_cycle_days: int | None, runway_months: float | None) -> str:
+    if sales_cycle_days is None:
+        return "Not assessed: no sales cycle was given, so this is left out of the score."
     days = int(sales_cycle_days)
     runway_note = ""
     if runway_months is not None:
@@ -630,7 +659,7 @@ def explain_concentration(*, concentration: ConcentrationInputs) -> str:
     share = float(concentration.top_client_share_pct)
     count = int(concentration.client_count)
     if share <= 0:
-        return "No client concentration data provided. Defaulting to neutral (75/100)."
+        return "Not assessed: no client concentration data was given, so this is left out of the score."
     count_note = f" across {count} clients" if count > 0 else ""
     if share < 35:
         risk = "acceptable"
@@ -677,7 +706,7 @@ def _detect_root_cause(
     revenue = metrics.get("revenue_monthly", 0.0)
     margin = metrics.get("margin", 0.0)
     runway = metrics.get("runway_months")
-    breakeven = metrics.get("break_even_months")
+    breakeven = metrics.get("break_even_sales_ratio")
     net = metrics.get("net_monthly", 0.0)
 
     price = max(0.0, inputs.price_per_unit)
@@ -732,21 +761,26 @@ def _detect_root_cause(
             "Break-even cannot be calculated because monthly units sold is zero."
         )
         recs.append(
-            "Set a realistic monthly units figure to compute your break-even timeline."
+            "Set a realistic monthly units figure to compute your break-even point."
         )
         codes.append(ReasonCode.BREAK_EVEN_UNITS_ZERO)
 
     elif breakeven is not None and ds["break_even"] < 65:
-        months = round(breakeven, 1)
-        reasons.append(
-            f"Break-even takes {months} months at current sales velocity — "
-            "longer than the 12-month target."
-        )
+        mos = round((1.0 - breakeven) * 100.0, 1)
+        if mos < 0:
+            reasons.append(
+                f"Planned sales are below break-even: they would need to rise by {abs(mos)}% "
+                "to cover fixed costs."
+            )
+        else:
+            reasons.append(
+                f"Margin of safety is only {mos}%: a small fall in sales would stop the business covering its costs."
+            )
         recs.append(
             "Increase monthly sales volume, reduce fixed costs, or improve margin "
-            "to reach break-even faster."
+            "to build a margin of safety of at least 10–30%."
         )
-        codes.append(ReasonCode.BREAK_EVEN_TOO_LONG)
+        codes.append(ReasonCode.BREAK_EVEN_TOO_LONG)      # code kept for the UI's routing; message updated below
 
     # ------------------------------------------------------------------
     # 3. Runway — only meaningful if actually burning cash
@@ -783,7 +817,7 @@ def _detect_root_cause(
     # ------------------------------------------------------------------
     # 5. Cash timing
     # ------------------------------------------------------------------
-    if ds["cash_timing"] < 55:
+    if ds["cash_timing"] is not None and ds["cash_timing"] < 55:
         terms = sales_cycle.payment_terms_days
         reasons.append(
             f"Payment terms of {terms} days create a cash gap that starting cash cannot cover."
@@ -800,7 +834,9 @@ def _detect_root_cause(
     sc_days = sales_cycle.sales_cycle_days
     runway_days = (runway * 30.0) if runway is not None else None
 
-    if runway is not None and runway_days is not None and sc_days >= runway_days:
+    if sc_days is None:
+        pass      # not given: not assessed
+    elif runway is not None and runway_days is not None and sc_days >= runway_days:
         reasons.append(
             f"Sales cycle ({sc_days} days) is longer than your cash runway "
             f"({round(runway_days)} days) — you may run out of cash before closing your first sale."
@@ -968,8 +1004,8 @@ def classify(score: int) -> str:
 def evaluate_viability_v3(
     inputs: FinancialInputs,
     *,
-    payment_terms_days: int = 14,
-    sales_cycle_days: int = 30,
+    payment_terms_days: int | None = None,
+    sales_cycle_days: int | None = None,
     capacity: CapacityInputs | None = None,
     proof: ProofInputs | None = None,
     sales_cycle: SalesCycleInputs | None = None,
@@ -1027,7 +1063,9 @@ def evaluate_viability_v3(
     revenue = calculate_revenue(inputs)
     costs = calculate_costs(inputs)
     margin = calculate_margin(inputs)
-    break_even_months = calculate_break_even_months(inputs)
+    break_even_units = calculate_break_even_units(inputs)
+    break_even_sales_ratio = calculate_break_even_sales_ratio(inputs)
+    margin_of_safety_pct = calculate_margin_of_safety_pct(break_even_sales_ratio)
     runway_months = calculate_runway_months(inputs)
     net = calculate_net_surplus(revenue, costs)
 
@@ -1037,7 +1075,10 @@ def evaluate_viability_v3(
         "revenue_monthly": revenue,
         "costs_monthly": costs,
         "margin": margin,
-        "break_even_months": break_even_months,
+        # Audit F9: "break_even_months" is no longer produced (it was a ratio, not a time).
+        "break_even_units": break_even_units,
+        "break_even_sales_ratio": break_even_sales_ratio,
+        "margin_of_safety_pct": margin_of_safety_pct,
         "runway_months": runway_months,
         "net_monthly": net,
         "payment_terms_days": sc.payment_terms_days,
@@ -1049,23 +1090,36 @@ def evaluate_viability_v3(
     # ------------------------------------------------------------------
     # Dimension scores
     # ------------------------------------------------------------------
+    # Audit F5: a dimension whose inputs were not given is not assessed (None) and left out of the weighted score, with
+    # the reason. It used to be filled with a favourable default (capacity 60, concentration 75, 14-day terms 85...).
+    not_assessed: dict = {}
+    if not capacity_result or capacity_result.get("feasible") is None:
+        not_assessed["capacity"] = "No team capacity was given."
+    if sc.payment_terms_days is None:
+        not_assessed["cash_timing"] = "No payment terms were given."
+    if sc.sales_cycle_days is None:
+        not_assessed["sales_cycle"] = "No sales cycle was given."
+    if float(concentration.top_client_share_pct or 0) <= 0:
+        not_assessed["concentration"] = "No client concentration data was given."
     ds = {
         "unit_economics": score_margin(margin),
-        "break_even": score_break_even(break_even_months),
+        "break_even": score_break_even(break_even_sales_ratio),
         "runway": score_runway(runway_months),
         "capacity": score_capacity(capacity_result),
-        "cash_timing": score_cash_timing(
+        "cash_timing": None if "cash_timing" in not_assessed else score_cash_timing(
             payment_terms_days=sc.payment_terms_days,
             starting_cash=float(inputs.starting_cash),
             costs_monthly=costs,
         ),
         "proof": score_proof(proof),
-        "sales_cycle": score_sales_cycle(
+        "sales_cycle": None if "sales_cycle" in not_assessed else score_sales_cycle(
             sales_cycle_days=sc.sales_cycle_days,
             runway_months=runway_months,
         ),
         "concentration": score_concentration(concentration),
     }
+    for key in not_assessed:
+        ds[key] = None
 
     # ------------------------------------------------------------------
     # Weighted total (rubric v0.2)
@@ -1103,7 +1157,12 @@ def evaluate_viability_v3(
             "concentration":  0.05,
         }
 
-    score_pre_context = clamp_score(sum(weights[k] * ds[k] for k in weights))
+    # Weighted over the dimensions that were assessed, re-scaled so their weights sum to 1 (audit F5). Coverage is the share
+    # of the full weighting that rests on given data; confidence follows from it.
+    assessed_weight = sum(w for k, w in weights.items() if ds.get(k) is not None)
+    score_pre_context = clamp_score(sum(weights[k] * ds[k] for k in weights if ds.get(k) is not None) / assessed_weight) if assessed_weight else 0
+    data_coverage_pct = round(assessed_weight / sum(weights.values()) * 100, 1)
+    confidence = "high" if data_coverage_pct >= 85 else "medium" if data_coverage_pct >= 60 else "low"
 
     # ------------------------------------------------------------------
     # Apply market context adjustment (±10 cap)
@@ -1119,7 +1178,11 @@ def evaluate_viability_v3(
     # ------------------------------------------------------------------
     dimension_explanations = {
         "unit_economics": explain_unit_economics(margin=margin),
-        "break_even": explain_break_even(break_even_months=break_even_months),
+        "break_even": explain_break_even(
+            break_even_sales_ratio=break_even_sales_ratio,
+            break_even_units=break_even_units,
+            units_per_month=float(inputs.units_per_month),
+        ),
         "runway": explain_runway(runway_months=runway_months),
         "capacity": explain_capacity(capacity_result=capacity_result),
         "cash_timing": explain_cash_timing(
@@ -1162,15 +1225,15 @@ def evaluate_viability_v3(
         flags.append("break_even_risk")
     if ds["runway"] < 50:
         flags.append("low_runway")
-    if ds["capacity"] < 60:
+    if ds["capacity"] is not None and ds["capacity"] < 60:
         flags.append("capacity_risk")
-    if ds["cash_timing"] < 55:
+    if ds["cash_timing"] is not None and ds["cash_timing"] < 55:
         flags.append("payment_terms_risk")
     if ds["proof"] < 40:
         flags.append("unvalidated_demand")
-    if ds["sales_cycle"] < 50:
+    if ds["sales_cycle"] is not None and ds["sales_cycle"] < 50:
         flags.append("sales_cycle_risk")
-    if ds["concentration"] < 60:
+    if ds["concentration"] is not None and ds["concentration"] < 60:
         flags.append("concentration_risk")
     if "market_fit" in ds and ds["market_fit"] < 40:
         flags.append("weak_market_fit")
@@ -1197,6 +1260,12 @@ def evaluate_viability_v3(
         "flags": sorted(set(flags)),
         "dimension_scores": ds,
         "dimension_explanations": dimension_explanations,
-        "validation_explanation": validation_explanation,
-        "rubric_version": "v0.3",
+        "validation_explanation": validation_explanation + (
+            f" Not assessed (no data, left out and the rest re-weighted): {', '.join(sorted(not_assessed))}." if not_assessed else ""),
+        "not_assessed": not_assessed,
+        "data_coverage_pct": data_coverage_pct,
+        "confidence": confidence,
+        # v0.4 (16 Nov 2026): break-even on margin of safety (audit F9). v0.5 (17 Nov 2026): dimensions with no data are
+        # not assessed instead of scored with a favourable default; coverage and confidence reported (audit F5).
+        "rubric_version": "v0.5",
     }

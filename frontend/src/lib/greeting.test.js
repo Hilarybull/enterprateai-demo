@@ -5,8 +5,8 @@ import { briefingOf, firstNameOf, getGreeting, greetingAt, hourIn, workspaceName
 const at = (iso) => new Date(iso);
 
 describe("the greeting", () => {
-  it("follows the time of day: morning from 05:00, afternoon from 12:00, evening from 17:00 to 04:59", () => {
-    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Good evening", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Good evening"]);
+  it("follows the time of day: morning from 05:00, afternoon from 12:00, evening from 17:00, and evening on through the night to 04:59", () => {
+    expect([4, 5, 11, 12, 16, 17, 23, 0].map(greetingAt)).toEqual(["Hi", "Good morning", "Good morning", "Good afternoon", "Good afternoon", "Good evening", "Good evening", "Hi"]);
     expect(hourIn("Africa/Lagos", at("2026-10-08T13:30:00Z"))).toBe(14);      // by the timezone given, not the device
     expect(hourIn("Not/AZone", at("2026-10-08T13:30:00Z"))).toBe(at("2026-10-08T13:30:00Z").getHours());
   });
@@ -16,7 +16,7 @@ describe("the greeting", () => {
     expect(getGreeting({ subject: "QA Onboarding Test Ltd", tz: "Europe/London", now })).toBe("Good afternoon, QA Onboarding Test Ltd");
     expect(getGreeting({ subject: "Munah", tz: "Europe/London", now })).toBe("Good afternoon, Munah");
     expect(getGreeting({ tz: "Europe/London", now })).toBe("Good afternoon");
-    expect(getGreeting({ subject: "  ", tz: "Asia/Tokyo", now })).toBe("Good evening");
+    expect(getGreeting({ subject: "  ", tz: "Asia/Tokyo", now })).toBe("Good evening");      // 22:30 in Tokyo: evening, never "Hello"
   });
 
   it("takes a first name from what is on record, and tells a real workspace name from a placeholder", () => {
@@ -37,7 +37,8 @@ describe("the briefing: only what the Agent did or is doing", () => {
   });
 
   it("a task in progress comes first; with nothing done it asks what is next; a first visit asks for the first job", () => {
-    expect(briefingOf({ working_on: { title: "Your quotation for Mark" }, done_since_last_visit: { new_invoice: 1 } })).toEqual({ kind: "working", text: "I'm working on your quotation for Mark. I'll let you know when it's ready." });
+    expect(briefingOf({ working_on: { run_id: "r5", title: "Change a Customer, Supplier or Catalogue Item", doing: "updating your catalogue item" }, done_since_last_visit: { new_invoice: 1 } }))
+      .toEqual({ kind: "working", runId: "r5", text: "I'm updating your catalogue item. I'll let you know when it's ready." });      // F4: the task's own words, never its title
     expect(briefingOf({ done_since_last_visit: {}, needs_approval_count: 3, needs_input_count: 2 })).toEqual({ kind: "next", text: "What should I work on next?" });      // what is waiting is not repeated here
     expect(briefingOf({ done_since_last_visit: {}, first_visit: true })).toEqual({ kind: "first", text: "Tell me the first job and I'll get on it." });
     expect(briefingOf(null)).toEqual({ kind: "none", text: "" });

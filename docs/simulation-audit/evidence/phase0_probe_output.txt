@@ -1,0 +1,24 @@
+=== E1: money owed TO the business (after Phase 0) ===
+With a 25,000 invoice owed to it  (month, profit, cash, label): [(1, 8000.0, 43000.0, 'tight'), (2, 8000.0, 51000.0, 'tight'), (3, 8000.0, 59000.0, 'tight'), (4, 8000.0, 67000.0, 'tight'), (5, 8000.0, 75000.0, 'stable'), (6, 8000.0, 83000.0, 'stable')]
+  checks: {'cash_reconciles': True, 'receivables_reconcile': True}
+Same business, nothing owed       (month, profit, cash, label): [(1, 8000.0, 18000.0, 'stress'), (2, 8000.0, 26000.0, 'stress'), (3, 8000.0, 34000.0, 'stress'), (4, 8000.0, 42000.0, 'tight'), (5, 8000.0, 50000.0, 'tight'), (6, 8000.0, 58000.0, 'tight')]
+With invoice owed, +10% price     (month, profit, cash, label): [(1, 10000.0, 43000.0, 'tight'), (2, 10000.0, 53000.0, 'tight'), (3, 10000.0, 63000.0, 'tight'), (4, 10000.0, 73000.0, 'stable'), (5, 10000.0, 83000.0, 'stable'), (6, 10000.0, 93000.0, 'stable')]
+  verdict: improved - Profit and/or cash end materially higher than if nothing changes.
+
+=== E2: price rise (volume response still not modelled: Phase 1) ===
+Baseline: {'monthly_revenue': 20000.0, 'net_profit': 8000.0, 'stability_score': 80.0}
++50% price: {'monthly_revenue': 30000.0, 'net_profit': 18000.0, 'stability_score': 80.0}
+Verdict: improved / improved | profit change over 6 months: 60000.0
+
+=== E3: multi-engine score changes now computed from each business ===
+Strong business: engine changes {'survival': {'baseline': 85.0, 'scenario': 85.0, 'change': 0.0, 'direction': 'unchanged'}}
+  not assessed: ['fragility', 'growth', 'stability', 'viability'] | ranking score: None
+Weak business: engine changes {'survival': {'baseline': 64.0, 'scenario': 85.0, 'change': 21.0, 'direction': 'better'}}
+  not assessed: ['fragility', 'growth', 'stability', 'viability'] | ranking score: None
+
+=== E4: break-even reported as margin of safety ===
+Price 100, variable cost 40, fixed 2,000/month, selling 50 units/month:
+  break_even_months present: False
+  break_even_units = 33.33 | margin_of_safety_pct = 33.3 | break-even score = 85
+Same, selling 10 units/month (needs 3.3x the plan): break-even score = 15 (was 85 before Phase 0)
+  You need 33.3 sales a month to cover fixed costs and plan 10.0. Planned sales are below break-even: they would need to rise by 233.3% of the plan to cover costs.

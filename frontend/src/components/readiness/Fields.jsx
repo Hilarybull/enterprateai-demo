@@ -1,10 +1,13 @@
-import { TONE, dateLabel, getPath, newKey } from "../../lib/readiness";
+import UkDateInput from "../UkDateInput";
+import { useState } from "react";
+import { getCurrencySymbol } from "../../lib/currencies";
+import { TONE, dateLabel, getPath, milestoneWords, newKey } from "../../lib/readiness";
 
 // Small building blocks shared by the readiness screens, and the fields the guided sections
 // are drawn from. The sections themselves come from the checklist profile, so a new profile
 // version changes the questions without changing this file.
 
-export const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+export const inputClass = "min-w-0 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
 export function Panel({ title, description, actions, children, className = "", id }) {
   return (
@@ -54,9 +57,26 @@ function Label({ field, htmlFor, children }) {
   return (
     <label htmlFor={htmlFor} className="block">
       <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">{field.label}</span>
-      {field.help && <span className="mt-0.5 block text-[12px] text-slate-500 dark:text-slate-400">{field.help}</span>}
+      {field.help && <span className="mt-0.5 block whitespace-normal break-words text-[12px] text-slate-500 dark:text-slate-400">{field.help}</span>}
       {children}
     </label>
+  );
+}
+
+/** An amount with its currency symbol and separators ("₦ 5,000,000"); typed as digits, kept as typed while editing.
+ *  Blank stays blank (unknown), never zero. */
+export function MoneyInput({ value, currency, onChange, className = "", ...rest }) {
+  const [typing, setTyping] = useState(null);
+  const plain = value === null || value === undefined || value === "" ? "" : String(value);
+  const shown = typing !== null ? typing : /^-?\d+(\.\d+)?$/.test(plain) ? Number(plain).toLocaleString("en-GB", { maximumFractionDigits: 2 }) : plain;
+  const sign = currency ? getCurrencySymbol(currency) : "";
+  return (
+    <span className="relative block" data-money-input>
+      {sign && <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 mt-0.5 -translate-y-1/2 text-[14px] text-slate-500">{sign}</span>}
+      <input {...rest} type="text" inputMode="decimal" value={shown} className={`${className} ${sign ? "pl-8" : ""}`}
+        onFocus={() => setTyping(plain)} onBlur={() => setTyping(null)}
+        onChange={(e) => { const raw = e.target.value.replace(/(\d),(?=\d)/g, "$1").replace(/^\s+|\s+$/g, ""); setTyping(e.target.value); onChange(raw); }} />
+    </span>
   );
 }
 
@@ -67,17 +87,49 @@ function optionsOf(field, data, selfId) {
   return (field.options || []).map((o) => ({ value: o, label: field.labels?.[o] || (typeof o === "string" ? o.charAt(0).toUpperCase() + o.slice(1).replace(/_/g, " ") : String(o)) }));
 }
 
-function Control({ field, id, value, onChange, disabled, data, selfId, evidence }) {
+function EvidencePick({ common, value, onChange, evidence, upload, label, disabled }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const pick = async (file) => {
+    if (!file || !upload) return;
+    setBusy(true);
+    setProblem("");
+    try { const made = await upload(file, label); if (made) onChange(made); }
+    catch { setProblem("That file couldn't be saved. Try again."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <span className="block">
+      <span className="flex flex-wrap items-center gap-2">
+        <select {...common} className={`${common.className} !w-auto min-w-0 flex-1`} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+          <option value="">No evidence attached</option>
+          {(evidence || []).map((e) => <option key={e.id} value={e.id}>{e.title} ({dateLabel(e.effective_date)})</option>)}
+        </select>
+        {upload && !disabled && (
+          <label className={`mt-1 inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+            {busy ? "Uploading…" : "Upload a file"}
+            <input type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-evidence-upload
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; pick(f); }} />
+          </label>
+        )}
+      </span>
+      {problem && <span role="alert" className="mt-1 block text-[12px] text-rose-700">{problem}</span>}
+    </span>
+  );
+}
+
+function Control({ field, id, value, onChange, disabled, data, selfId, evidence, upload = null, uploadLabel = "" }) {
   const common = { id, disabled, className: `mt-1 ${inputClass}` };
   switch (field.type) {
     case "textarea":
       return <textarea {...common} rows={3} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
     case "money":
+      return <MoneyInput {...common} value={value} currency={data?.currency} onChange={onChange} />;
     case "number":
       // Text, not a number input: blank stays blank (unknown) and is never turned into zero.
       return <input {...common} type="text" inputMode="decimal" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
     case "date":
-      return <input {...common} type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} />;
+      return <UkDateInput {...common} value={value ?? ""} onChange={(v) => onChange(v || null)} />;      // dd/mm/yyyy (QA P2-12)
     case "month":
       return <input {...common} type="month" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} />;
     case "select":
@@ -89,12 +141,9 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
         </select>
       );
     case "evidence":
-      return (
-        <select {...common} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-          <option value="">No evidence attached</option>
-          {(evidence || []).map((e) => <option key={e.id} value={e.id}>{e.title} ({dateLabel(e.effective_date)})</option>)}
-        </select>
-      );
+      // Choose what is on record, or upload it here (the owner's QA, 23 Oct: "no evidence attached yet, no place or option
+      // to attach it"): saved as evidence dated today, and chosen
+      return <EvidencePick common={common} value={value} onChange={onChange} evidence={evidence} upload={upload} label={uploadLabel} disabled={disabled} />;
     case "refs": {
       const chosen = Array.isArray(value) ? value : [];
       const options = optionsOf(field, data, selfId);
@@ -117,11 +166,14 @@ function Control({ field, id, value, onChange, disabled, data, selfId, evidence 
 }
 
 function Provenance({ entry }) {
-  if (!entry) return null;
-  return <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Reused from {entry.source} · copied {dateLabel(entry.as_of)}. Change it here to use your own figure for this check only.</p>;
+  // Where an answer came from is said once, on its section (the owner's brief, 20 Oct); here only "Changed by you", on a
+  // field you edited yourself; "From you" on one you told the Agent in chat.
+  if (/^From you\b/.test(String(entry?.source || ""))) return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-from-you>From you</p>;
+  if (!entry || !/\b(you|your edit|edited|changed)\b/i.test(String(entry.source || "")) || /chat|agent|records|profile|research|invoices|expenses|catalogue/i.test(String(entry.source || ""))) return null;
+  return <p className="mt-1 text-[11px] font-medium text-slate-500 dark:text-slate-400" data-changed-by-you>Changed by you</p>;
 }
 
-function ListField({ field, items, onChange, disabled, data, errors, evidence, idBase }) {
+function ListField({ field, items, onChange, disabled, data, errors, evidence, idBase, upload = null }) {
   const list = Array.isArray(items) ? items : [];
   const update = (i, key, value) => onChange(list.map((item, n) => (n === i ? { ...item, [key]: value } : item)));
   return (
@@ -134,6 +186,8 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
           <li key={item.id || i} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
             <div className="grid gap-3 sm:grid-cols-2">
               {field.fields.map((sub) => {
+                // A follow-up only where it is asked for ("Why it does not apply" once it doesn't apply)
+                if (sub.when && !Object.entries(sub.when).every(([k, v]) => item[k] === v)) return null;
                 const id = `${idBase}-${field.key}-${i}-${sub.key}`;
                 const error = errors[`${field.key}.${i}.${sub.key}`];
                 if (sub.type === "boolean") {
@@ -147,7 +201,8 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
                 return (
                   <div key={sub.key}>
                     <Label field={sub} htmlFor={id}>
-                      <Control field={sub} id={id} value={item[sub.key]} onChange={(v) => update(i, sub.key, v)} disabled={disabled} data={data} selfId={item.id} evidence={evidence} />
+                      <Control field={sub} id={id} value={item[sub.key]} onChange={(v) => update(i, sub.key, v)} disabled={disabled} data={data} selfId={item.id} evidence={evidence}
+                        upload={upload ? (file, title) => upload(field.key, file, title) : null} uploadLabel={item.name || item.outcome || field.item || field.label} />
                     </Label>
                     {error && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error}</p>}
                   </div>
@@ -167,14 +222,51 @@ function ListField({ field, items, onChange, disabled, data, errors, evidence, i
   );
 }
 
+/** The Agent's draft for one field, waiting beside it (the owner's brief, 25 Oct; F-10): Accept puts it in the field, Edit
+ *  puts it there to change, Reject removes it for good. A field that already holds a value keeps it until Accept. */
+export function DraftBox({ field, draft, data, onChange, inputId }) {
+  const amount = field.type === "money" && /^\s*-?\d[\d,]*(\.\d+)?\s*$/.test(String(draft.value ?? ""));
+  const sign = getCurrencySymbol(data?.currency) || "";
+  const shown = Array.isArray(draft.value)
+    ? draft.value.map((r) => milestoneWords(r) || Object.entries(r || {}).filter(([k, v]) => k !== "id" && v).map(([, v]) => v).join(": ")).filter(Boolean)
+    : [amount ? `${sign}${Math.round(Number(String(draft.value).replace(/,/g, ""))).toLocaleString("en-GB")}` : String(draft.value)];
+  const rest = () => Object.fromEntries(Object.entries(data?.agent_drafts || {}).filter(([k]) => k !== field.key));
+  const use = (focus) => {
+    onChange(field.key, draft.value);
+    onChange("agent_drafts", rest());
+    if (focus) setTimeout(() => document.getElementById(inputId)?.focus(), 50);
+  };
+  const reject = () => {
+    onChange("agent_drafts", rest());
+    onChange("rejected_drafts", [...new Set([...(data?.rejected_drafts || []), field.key])]);
+  };
+  const replaces = draft.replaces !== undefined && draft.replaces !== null && draft.replaces !== "";
+  return (
+    <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 p-2.5 text-[13px] text-slate-800 dark:border-indigo-800 dark:bg-indigo-900/20 dark:text-slate-100" data-agent-draft={field.key}>
+      <p className="text-[12px] font-semibold text-indigo-700 dark:text-indigo-300">{replaces ? "AI suggestion" : "AI draft"}</p>
+      {shown.length > 1 ? <ul className="mt-1 list-disc space-y-0.5 pl-5">{shown.map((t) => <li key={t}>{t}</li>)}</ul> : <p className="mt-1 whitespace-pre-wrap">{shown[0]}</p>}
+      <p className="mt-1 text-[12px] text-slate-500">{/^suggested/i.test(String(draft.source || "")) ? `${String(draft.source)[0].toUpperCase()}${String(draft.source).slice(1)}.` : `Drafted ${draft.source || "from your records and research"}.`}{replaces ? " Your current answer stays until you accept." : ""}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Btn kind="primary" className="!px-3 !py-1 text-[12.5px]" onClick={() => use(false)} data-draft-accept>Accept</Btn>
+        <Btn className="!px-3 !py-1 text-[12.5px]" onClick={() => use(true)} data-draft-edit>Edit</Btn>
+        <Btn className="!px-3 !py-1 text-[12.5px]" onClick={reject} data-draft-reject>Reject</Btn>
+      </div>
+    </div>
+  );
+}
+
 /** One field of a guided section. `onChange(path, value)`. */
-export function Field({ field, data, onChange, errors = {}, disabled, evidence, idBase = "f" }) {
+export function Field({ field, data, onChange, errors = {}, disabled, evidence, idBase = "f", upload = null }) {
   if (field.when && !Object.entries(field.when).every(([k, v]) => getPath(data, k) === v)) return null;
   const value = getPath(data, field.key);
-  if (field.type === "list") {
-    return <ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} />;
-  }
+  const raw = !disabled ? (data?.agent_drafts || {})[field.key] : null;
+  // A draft that says what the field already says is no draft (the owner, 25 Oct: suggestions word for word the answer)
+  const draft = raw && !(JSON.stringify(raw.value ?? "") === JSON.stringify(value ?? "") || String(raw.value ?? "").trim() === String(value ?? "").trim()) ? raw : null;
   const id = `${idBase}-${field.key}`;
+  const box = draft ? <DraftBox field={field} draft={draft} data={data} onChange={onChange} inputId={id} /> : null;
+  if (field.type === "list") {
+    return <div><ListField field={field} items={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} errors={errors} evidence={evidence} idBase={idBase} upload={upload} />{box}</div>;
+  }
   const error = errors[field.key];
   if (field.type === "boolean") {
     return (
@@ -187,10 +279,12 @@ export function Field({ field, data, onChange, errors = {}, disabled, evidence, 
   return (
     <div>
       <Label field={field} htmlFor={id}>
-        <Control field={field} id={id} value={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} evidence={evidence} />
+        <Control field={field} id={id} value={value} onChange={(v) => onChange(field.key, v)} disabled={disabled} data={data} evidence={evidence}
+          upload={upload ? (file, title) => upload(field.key, file, title) : null} uploadLabel={field.label} />
       </Label>
       {error && <p role="alert" className="mt-1 text-[12px] font-medium text-rose-600">{error}</p>}
       <Provenance entry={data?.provenance?.[field.key]} />
+      {box}
     </div>
   );
 }

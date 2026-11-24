@@ -208,3 +208,11 @@
   background: #0f172a;
   color: #94a3b8;
 }
+
+/* The document read inside a chat card: the same formatting, without the page's height, cover space or page breaks */
+.ea-doc.ea-doc-inline { min-height: 0; max-width: none; }
+.ea-doc.ea-doc-inline .cover-page { min-height: 0; padding: 8px 0 4px; }
+.ea-doc.ea-doc-inline .page-break { height: 0; margin: 14px 0; border-top: 1px solid #e2e8f0; }
+.ea-doc.ea-doc-inline .page-break::after { content: none; }
+.ea-doc.ea-doc-inline h1 { font-size: 20px; }
+.ea-doc.ea-doc-inline img { max-width: 100%; max-height: 160px; margin: 0 auto; }

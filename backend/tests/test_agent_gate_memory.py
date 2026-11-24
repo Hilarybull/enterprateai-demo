@@ -64,16 +64,18 @@ def test_the_same_gate_stops_every_automatic_trigger_and_the_assistant_route():
     env = Env(plan="explorer")
     _records(env)
     on(env)
-    assert run(autostart.sweep(env.orch, "A")) == []                      # automatic starting
+    started = run(autostart.sweep(env.orch, "A"))                         # automatic starting: only what the plan includes
+    assert all(agent_config.plan_allows("explorer", r["workflow_key"]) for r in started)
     env.fin["rfq_requests"] = [{"id": "r1", "status": "pending", "customer_name": "Buyer", "customer_email": "b@x.test", "items": [{"name": "Strategy Workshop", "quantity": 1}]}]
     assert run(agent_rfq.received(env.orch, "A", "r1")) is None           # a marketplace request arriving
-    typed = env.submit(text="Prepare a quotation for BrightTech Ltd for 2 x Strategy Workshop", channel="text")      # typed to the assistant
+    before = (len(run(env.store.list_runs("A"))), list(env.meter.charges))
+    typed = env.submit(capability="new_proposal", channel="ui_action")      # asked for directly: a proposal is not on Explorer
     assert typed["kind"] == "blocked" and typed["reason_codes"] == ["plan_capability"]
-    assert run(env.store.list_runs("A")) == [] and env.meter.charges == []
+    assert (len(run(env.store.list_runs("A"))), list(env.meter.charges)) == before      # nothing started, nothing charged
     # A task from before a downgrade can't be carried on either.
     paid = Env()
-    r = paid.submit(capability="enquiry_to_quote", params={"body": "Please quote for your Unpriced Service"})["run"]
-    run(paid.store.update_run(r["id"], {"status": "failed"}))
+    r = paid.submit(capability="registration_checklist", channel="ui_action")["run"]
+    run(paid.store.update_run(r["id"], {"status": "failed", "workflow_key": "new_proposal"}))      # a premium task, from before the downgrade
     paid.meter.plans[OWNER] = "explorer"
     with pytest.raises(Exception):
         run(paid.orch.retry(r["id"], OWNER))
@@ -120,7 +122,7 @@ def test_who_sent_my_latest_request_is_answered_from_the_requests_and_not_from_q
     assert a["kind"] == "answer" and a["topic"] == "requests"
     assert "Nova Labs (dana@novalabs.test) on 2026-09-30" in a["message"] and "2 x Strategy Workshop" in a["message"] and "waiting for a reply" in a["message"]
     assert "QA Round Six" not in str(a) and "made-up@example.test" not in str(a) and "100" not in a["message"]
-    assert run(env.store.list_runs("A")) == [] and env.meter.charges == []      # an answer from records: no task, no charge
+    assert run(env.store.list_runs("A")) == [] and {c[1] for c in env.meter.charges} <= {"chat_message"}      # an answer from records: no task, one chat reply (the owner, 1 Nov)
     none = Env()
     none.fin["quotes"] = list(env.fin["quotes"])
     said = none.submit(text=QUESTION)
@@ -251,7 +253,7 @@ def test_the_memory_and_settings_endpoints(monkeypatch):
             assert client.delete(f"/businesses/A/agent/memory/{fact['id']}").json() == {"removed": True}
             policy = client.get("/businesses/A/agent/policy").json()
             assert len(policy["events"]) == 18 and {c["capability"] for c in policy["capabilities"]} == set(WORKFLOWS)
-            assert all(c["minimum_plan_label"] in ("Explorer", "Starter") and c["available"] for c in policy["capabilities"])
+            assert all(c["minimum_plan_label"] in ("Explorer", "Starter") and c["available"] for c in policy["capabilities"] if c["capability"] != "funding_pack_draft")      # the funding pack: Decision Engine
             asked = client.post("/agent/requests", json={"business_id": "A", "text": "remember that we close at 5pm"}).json()
             assert asked["kind"] == "remember" and asked["fact"] == "we close at 5pm"
             app.dependency_overrides[get_current_user] = lambda: {"id": OUTSIDER, "email": OUTSIDER}

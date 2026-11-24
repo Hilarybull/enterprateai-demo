@@ -192,7 +192,7 @@ const PLAN_ACCENT = {
 function PaymentModal({ plan, billing, onClose }) {
   const [method, setMethod] = useState(null); // null | 'card'
 
-  const price = plan.monthlyPrice;
+  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const billingLabel =
     billing === BILLING.annual
       ? `£${plan.annualTotal}/yr (£${price}/mo, billed annually)`
@@ -425,9 +425,31 @@ function AddonCard({ addon, mode, token }) {
 
 // â”€â”€ Plan card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+// Monthly or annual billing (restored, 23 Oct: removed by the 19 Oct copy change). The saving is the plans' own.
+export function BillingToggle({ billing, onChange, className = "mt-8" }) {
+  const best = Math.max(0, ...PLANS.map((p) => Number(p.annualSaving) || 0));
+  return (
+    <div className={`${className} inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900`} role="group" aria-label="Billing period" data-billing-toggle>
+      {[{ value: BILLING.monthly, label: "Monthly" }, { value: BILLING.annual, label: "Annual" }].map((opt) => (
+        <button key={opt.value} type="button" aria-pressed={billing === opt.value} onClick={() => onChange(opt.value)}
+          className={"relative rounded-xl px-5 py-2 text-sm font-semibold transition " + (billing === opt.value
+            ? "bg-brand-600 text-white shadow" : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100")}>
+          {opt.label}
+          {opt.value === BILLING.annual && best > 0 && (
+            <span className={"ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide " + (billing === BILLING.annual
+              ? "bg-white/25 text-white" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400")}>
+              Save up to £{best}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function PlanCard({ plan, billing, onAction, currentPlanKey }) {
   const isPopular = !!plan.badge;
-  const price = plan.monthlyPrice;
+  const price = billing === BILLING.annual ? plan.annualPrice : plan.monthlyPrice;
   const isFree = plan.monthlyPrice === 0;
   const isCurrent = plan.key === currentPlanKey;
   const accent = PLAN_ACCENT[plan.key] || PLAN_ACCENT.explorer;
@@ -547,7 +569,7 @@ export default function PricingPage() {
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const subscription = useAuthStore((s) => s.subscription);
-  const [billing] = useState(BILLING.monthly);
+  const [billing, setBilling] = useState(BILLING.monthly);
   const [activeModal, setActiveModal] = useState(null);
 
   // Deep link from the marketplace "Get featured" button.
@@ -612,9 +634,7 @@ export default function PricingPage() {
           <p className="mx-auto mt-3 max-w-xl text-base text-slate-500 dark:text-slate-400">
             From getting started to making smarter decisions and supporting more businesses.
           </p>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-
-          </p>
+          <BillingToggle billing={billing} onChange={setBilling} />
         </div>
 
 
@@ -642,37 +662,37 @@ export default function PricingPage() {
               {
                 title: "Idea Validation",
                 desc: "Submit a product or service idea and get an AI-driven viability assessment covering market fit, revenue potential, and a clear accept or reject outcome to guide your next step.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Business Blueprints",
                 desc: "Turn your validated idea into professional documents: business plans, investor-ready proposals, and sales letters, all generated from your actual business profile.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Catalogue",
                 desc: "Manage products, customers, and vendors in one place. Free on Explorer with no record limits. Starter includes up to 250 products, 500 customers, and 250 vendors.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Financials",
                 desc: "Create invoices, raise quotations, log expenses, and manage contracts. Explorer includes unlimited invoices and quotations. Starter includes 50 of each per month.",
-                plans: ["Explorer", "Starter", "Decision Engine"],
+                plans: ["Explorer", "Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Scenario Simulation",
                 desc: "Run what-if analyses to see how your business holds up under different conditions. Adjust revenue, costs, and growth assumptions to stress-test decisions before committing.",
-                plans: ["Starter", "Decision Engine"],
+                plans: ["Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Fragility Index",
                 desc: "As you run simulations, the system flags variables that put your business model under stress, surfacing risk signals early so you can course-correct before they become real problems.",
-                plans: ["Starter", "Decision Engine"],
+                plans: ["Starter", "Pro (Decision Engine)"],
               },
               {
                 title: "Live Plan Intelligence",
-                desc: "Decision Engine adds live-plan import, section refresh, variance interpretation, and board-ready summaries for ongoing operating visibility.",
-                plans: ["Decision Engine"],
+                desc: "Pro (Decision Engine) adds live-plan import, section refresh, variance interpretation, and board-ready summaries for ongoing operating visibility.",
+                plans: ["Pro (Decision Engine)"],
               },
             ].map((item) => (
               <div key={item.title} className="space-y-1.5">
@@ -698,6 +718,7 @@ export default function PricingPage() {
         </div>
 
         {/* â”€â”€ Marketplace Add-ons â”€â”€ */}
+        {/* Hidden for now (the owner, 4 Nov): put back by removing this comment.
         <div id="addons" className="mt-12 scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-1 flex items-center gap-2">
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
@@ -712,7 +733,7 @@ export default function PricingPage() {
           </p>
 
           <div className="mt-6 space-y-6">
-            {/* Featured Listing Boosts */}
+            Featured Listing Boosts:
             <div>
               <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                 Featured Listing Boosts
@@ -728,7 +749,7 @@ export default function PricingPage() {
               </div>
             </div>
 
-            {/* RFQ Credit Packs */}
+            RFQ Credit Packs:
             <div>
               <h3 className="mb-3 text-[12px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
                 RFQ Response Credit Packs
@@ -745,6 +766,7 @@ export default function PricingPage() {
             </div>
           </div>
         </div>
+        */}
 
         <div className="mt-10 text-center">
           <p className="text-sm text-slate-500 dark:text-slate-400">

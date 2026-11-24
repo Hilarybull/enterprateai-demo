@@ -1,3 +1,4 @@
+import UkDateInput from "../components/UkDateInput";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
@@ -2108,7 +2109,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function approveRfq(rfqId, itemPrices, validityDays = 30) {
     setError(null);
     try {
-      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve`, "POST", {
+      const result = await apiRequest(`/marketplace/rfq/${rfqId}/approve?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {
         validity_days: validityDays,
         item_prices: itemPrices || undefined,
       });
@@ -2151,7 +2152,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
     setError(null);
     try {
       const rfqBefore = rfqRequests.find((r) => r.id === rfqId);
-      const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject`, "POST", {});
+      const rfq = await apiRequest(`/marketplace/rfq/${rfqId}/reject?workspace_id=${encodeURIComponent(workspaceId)}`, "POST", {});
       setRfqRequests((prev) => prev.map((r) => r.id === rfqId ? rfq : r));
       // Send rejection notification email to customer
       if (rfqBefore?.customer_email) {
@@ -2193,7 +2194,7 @@ ${contractList !== null ? section("Contracts","Active contracts and their value.
   async function _doDeleteRfq(rfqId) {
     setError(null);
     try {
-      await apiRequest(`/marketplace/rfq/${rfqId}`, "DELETE");
+      await apiRequest(`/marketplace/rfq/${rfqId}?workspace_id=${encodeURIComponent(workspaceId)}`, "DELETE");
       setRfqRequests((prev) => prev.filter((r) => r.id !== rfqId));
       await persist({ invoices, quotes, expenses, contracts });
     } catch (e) {
@@ -2980,10 +2981,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-slate-500 shrink-0">Date range</span>
-                    <input type="date" value={invoiceDateFrom} onChange={(e) => { setInvoiceDateFrom(e.target.value); setInvoiceListPage(0); }}
+                    <UkDateInput value={invoiceDateFrom} onChange={(v) => { setInvoiceDateFrom(v); setInvoiceListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     <span className="text-xs text-slate-400">–</span>
-                    <input type="date" value={invoiceDateTo} onChange={(e) => { setInvoiceDateTo(e.target.value); setInvoiceListPage(0); }}
+                    <UkDateInput value={invoiceDateTo} onChange={(v) => { setInvoiceDateTo(v); setInvoiceListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     {(invoiceDateFrom || invoiceDateTo) && (
                       <button type="button" onClick={() => { setInvoiceDateFrom(""); setInvoiceDateTo(""); setInvoiceListPage(0); }}
@@ -3784,10 +3785,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-slate-500 shrink-0">Date range</span>
-                    <input type="date" value={expenseDateFrom} onChange={(e) => { setExpenseDateFrom(e.target.value); setExpenseListPage(0); }}
+                    <UkDateInput value={expenseDateFrom} onChange={(v) => { setExpenseDateFrom(v); setExpenseListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     <span className="text-xs text-slate-400">–</span>
-                    <input type="date" value={expenseDateTo} onChange={(e) => { setExpenseDateTo(e.target.value); setExpenseListPage(0); }}
+                    <UkDateInput value={expenseDateTo} onChange={(v) => { setExpenseDateTo(v); setExpenseListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     {(expenseDateFrom || expenseDateTo) && (
                       <button type="button" onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); setExpenseListPage(0); }}
@@ -4090,10 +4091,10 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-slate-500 shrink-0">Date range</span>
-                    <input type="date" value={contractDateFrom} onChange={(e) => { setContractDateFrom(e.target.value); setContractListPage(0); }}
+                    <UkDateInput value={contractDateFrom} onChange={(v) => { setContractDateFrom(v); setContractListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     <span className="text-xs text-slate-400">–</span>
-                    <input type="date" value={contractDateTo} onChange={(e) => { setContractDateTo(e.target.value); setContractListPage(0); }}
+                    <UkDateInput value={contractDateTo} onChange={(v) => { setContractDateTo(v); setContractListPage(0); }}
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:outline-none" />
                     {(contractDateFrom || contractDateTo) && (
                       <button type="button" onClick={() => { setContractDateFrom(""); setContractDateTo(""); setContractListPage(0); }}
@@ -4951,7 +4952,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
                     }}
                   />
                   <span className="text-right text-sm text-slate-600 dark:text-slate-300">
-                    {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(item.unit_price * item.quantity)}
+                    {new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: String(currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || currency || "GBP" }).format(item.unit_price * item.quantity)}
                   </span>
                 </div>
               ))}
@@ -4959,7 +4960,7 @@ th{text-transform:uppercase;letter-spacing:.05em;font-size:11px;color:#64748b;}
               <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
                 <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Grand total</span>
                 <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  {new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(
+                  {new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: String(currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || currency || "GBP" }).format(
                     rfqApproveModal.items.reduce((sum, it) => sum + it.unit_price * it.quantity, 0)
                   )}
                 </span>
@@ -5465,11 +5466,10 @@ function StatusDateForm({ modal, onConfirm, onCancel }) {
     <div className="px-6 py-5 space-y-4">
       <div>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">{label} <span className="text-slate-400 font-normal">(optional)</span></label>
-        <input
-          type="date"
+        <UkDateInput
           value={date}
           max={today}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(v) => setDate(v)}
           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
         />
         <p className="mt-1 text-xs text-slate-400">Defaults to today if left unchanged.</p>
@@ -5606,7 +5606,7 @@ function RecordPaymentModal({ invoice, formatMoney, onConfirm, onCancel }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Date received</label>
-            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)}
+            <UkDateInput value={date} max={today} onChange={(v) => setDate(v)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             />
           </div>

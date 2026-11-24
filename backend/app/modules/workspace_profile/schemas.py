@@ -85,6 +85,9 @@ class WorkspaceProfile(BaseModel):
 class WorkspaceProfileUpsertRequest(BaseModel):
     workspace_id: str | None = None
     profile: WorkspaceProfile
+    # The profile as the form loaded it. A field the owner left untouched is not written back, so a form opened before
+    # the Agent filled a field can't put the old value back over it.
+    seen: dict | None = None
 
 
 class WorkspaceProfilePatchRequest(BaseModel):
@@ -96,3 +99,6 @@ class WorkspaceProfileResponse(BaseModel):
     workspace_id: str
     profile: WorkspaceProfile
     updated_at: datetime
+    # After a rename: the unsent drafts still showing the old name, for the owner to update or leave (never changed unasked).
+    renamed_from: str | None = None
+    unsent_drafts: list[dict] | None = None

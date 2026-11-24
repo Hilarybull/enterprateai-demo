@@ -1,0 +1,7 @@
+Written by generate.py before evaluate.py was run. Any later change to these files changes their SHA-256.
+truth.json  34290ca31302761b804cbf36a1bd2c42b9bc70af406aa411220a45221e4e80a4
+expected.json  b78b1e4983354764eb7a00ef7bcec3097cdf71beacd7fde523865f92199f777b
+Holdout pass marks, written before evaluation (model projection-1.3, RANGE_CALIBRATION = 1.4 set on the 19 Nov set):
+  H1: actual 6-month revenue inside the low-high revenue range for at least 86% of businesses A-F (target 90%).
+  H2: pooled WAPE A-F at or below 25%; pooled bias within +/-10%.
+  H3: no archetype A-F with range coverage below 70%.

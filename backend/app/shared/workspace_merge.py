@@ -48,7 +48,7 @@ def _keep_invoice_state(incoming: dict, stored: dict) -> None:
 _CUSTOMER_RESPONSE = ("status", "responded_at", "acceptance", "declined_reason")
 
 
-_CATALOGUE_LISTS = ("customers", "products", "vendors")
+_CATALOGUE_LISTS = ("customers", "products", "vendors", "employees")
 _FINANCIAL_LISTS = ("invoices", "quotes", "quotations", "contracts", "expenses", "proposals", "purchase_orders", "credit_notes", "supplier_bills")
 
 
@@ -95,6 +95,8 @@ def _keep_what_was_added(incoming: dict, stored: dict) -> None:
 def preserve_server_fields(incoming: dict, stored: dict) -> dict:
     """`incoming` (the new workspace data) with server-written facts carried over from `stored`."""
     if isinstance(incoming, dict) and isinstance(stored, dict):
+        if "agent_reply_jobs" in stored:
+            incoming["agent_reply_jobs"] = stored["agent_reply_jobs"]
         _keep_what_was_added(incoming, stored)
     fin_in = incoming.get("financials") if isinstance(incoming, dict) else None
     fin_st = stored.get("financials") if isinstance(stored, dict) else None

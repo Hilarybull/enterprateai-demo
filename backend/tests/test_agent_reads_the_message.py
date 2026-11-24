@@ -112,7 +112,7 @@ def test_invoice_for_someone_new_in_dollars_asks_only_for_their_email_and_what_i
     assert (f["customer_id"]["default"], f["customer_name"]["default"]) == ("new", "Mark")      # nobody called Mark on record: "+ New", name filled in
     assert f["items"]["suggested"] == [{"product_id": None, "name": "", "quantity": 1, "unit_price": 300}]      # one line at 300
     assert _said(f) == {"customer_id": "Mark (new)"}
-    assert _still_to_ask(f) == ["customer_email", "items"]                  # Mark's email, and the item's description
+    assert _still_to_ask(f) == ["items"] and "customer_email" in f      # the item; Mark's email offered, optional (it can come later)                  # Mark's email, and the item's description
     # The currency that was written is kept and said, with the way to switch: never dropped, never converted.
     cur = f["currency"]
     assert (cur["default"], cur["hint"], cur["toggle"]) == ("USD", "In USD (your default is GBP).", True)
@@ -142,7 +142,7 @@ def test_invoice_with_work_terms_and_a_named_stranger():
     env = _world()
     r, f = _ask(env, "invoice Mark $300 for consulting, due in 14 days")
     assert _said(f) == {"customer_id": "Mark (new)", "items": "1 × consulting at $300.00", "due_date": (env.now + timedelta(days=14)).strftime("%d %b %Y").lstrip("0")}
-    assert _still_to_ask(f) == ["customer_email"]
+    assert _still_to_ask(f) == [] and "customer_email" in f      # the email offered, optional (it can come later)
     assert f["due_date"]["default"] == (env.now + timedelta(days=14)).date().isoformat()
 
 
@@ -191,9 +191,9 @@ def test_reminder_names_the_invoice_and_goes_straight_to_approval():
 def test_contract_reads_who_scope_price_term_and_start():
     env = _world()
     r, f = _ask(env, "contract with QA Test Ltd for monthly bookkeeping, £300/month, 12 months from 1 Nov")
-    assert r["workflow_key"] == "new_contract" and "customer_id" not in f      # on record
+    assert r["workflow_key"] == "new_contract" and f["customer_id"]["said"] is True      # on record: shown, not asked (C4)
     assert (f["description"]["default"], f["total"]["default"], f["term"]["default"], f["start_date"]["default"]) == ("Monthly bookkeeping", 300, "12 months", "2026-11-01")
-    assert set(_said(f)) == {"description", "total", "term", "start_date"} and _still_to_ask(f) == []
+    assert set(_said(f)) == {"customer_id", "description", "total", "term", "start_date"} and _still_to_ask(f) == []
     done = _answer(env, r, _defaults(f))
     assert done["status"] == "awaiting_approval", done.get("pending_question")
     assert env.pending(done)[0]["payload"]["customer_name"] == "QA Test Ltd"
@@ -205,7 +205,7 @@ def test_proposal_reads_who_what_price_and_timeline():
     assert r["workflow_key"] == "new_proposal"
     assert (f["customer_name"]["default"], f["solution"]["default"], f["total"]["default"], f["timeline"]["default"]) == ("Inject Test Ltd", "A website redesign", 1500, "4 weeks")
     assert _said(f) == {"customer_id": "Inject Test Ltd (new)", "solution": "a website redesign", "total": "£1,500.00", "timeline": "4 weeks"}
-    assert _still_to_ask(f) == ["customer_email"]
+    assert _still_to_ask(f) == [] and "customer_email" in f      # the email offered, optional (it can come later)
     done = _answer(env, r, _defaults(f, customer_email="hello@inject.test"))
     assert done["status"] == "awaiting_approval", done.get("pending_question")
     p = env.pending(done)[0]["payload"]
@@ -383,7 +383,9 @@ def test_someone_described_is_not_taken_for_their_name_so_the_name_is_asked_for(
     assert said.read("invoice mark for research work", TODAY)["party"] == "mark" and said.read("invoice Acme Research Ltd £400", TODAY)["party"] == "Acme Research Ltd"
 
 
-def test_the_business_email_question_offers_the_address_the_owner_signed_in_with():
+def test_the_business_email_question_never_offers_the_address_the_owner_signed_in_with():
+    """QA P5-3 (this replaces the earlier rule): the suggestion comes from the business's own records; a sign-in
+    address alone is never assumed to be where customers' replies should go."""
     from test_agent import Env
     env = Env()
     env.businesses["A"]["data"].setdefault("workspace_profile", {}).pop("email", None)
@@ -392,4 +394,4 @@ def test_the_business_email_question_offers_the_address_the_owner_signed_in_with
     q = (r.get("pending_question") or {}).get("fields") or []
     asked = {f["key"]: f for f in q}
     if "business_email" in asked:      # this business has no email of its own on record
-        assert asked["business_email"]["default"] == OWNER and asked["business_email"]["required"] is True
+        assert "default" not in asked["business_email"] and asked["business_email"]["required"] is True

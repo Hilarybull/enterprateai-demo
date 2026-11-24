@@ -33,6 +33,36 @@ def enabled(subject_type: str) -> bool:
     return bool(s.funding_readiness_enabled if subject_type == rules.FUNDING else s.launch_readiness_enabled)
 
 
+async def _require_readiness_plan(business_id: str, user=Depends(get_current_user)) -> None:
+    """The paid parts of Launch and Funding Readiness (scenarios, generated materials) are on Starter and above. The case,
+    its inputs, evidence, confirmations and the deterministic check and score are on every plan, the free one too (the
+    owner, 24 Oct: "the free plan is allowed the first deterministic score... not the do it all for me"). The research
+    ("Do all for me") and the funding pack have their own gates."""
+    from app.modules.agent import config as agent_config
+    from app.modules.agent.router import get_orchestrator
+    plan = (await get_orchestrator().entitlement(business_id)).get("plan")
+    if agent_config.plan_rank(plan) < agent_config.plan_rank("starter_insight"):
+        have = agent_config.PLAN_LABEL.get(plan, plan)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+            "error": "FEATURE_NOT_ENTITLED", "feature_name": "This part of Launch and Funding Readiness", "minimum_plan": "starter_insight",
+            "minimum_plan_label": "Starter", "plan": plan, "plan_label": have, "upgrade": True,
+            "message": f"Scenarios and generated documents are included from the Starter plan. You're on {have}."})
+
+
+async def _require_funding_pack(user: dict, business_id: str) -> None:
+    """The funding pack (its documents, prepared by hand or by the Agent) is included from Decision Engine (the owner, 16 Oct):
+    the workspace owner's plan, the same one the Agent checks."""
+    from app.modules.agent import config as agent_config
+    from app.modules.agent.router import get_orchestrator
+    plan = (await get_orchestrator().entitlement(business_id)).get("plan")
+    if not agent_config.plan_allows(plan, "funding_pack_draft"):
+        need = agent_config.CAPABILITY_MIN_PLAN.get("funding_pack_draft", "decision_engine")
+        label, have = agent_config.PLAN_LABEL.get(need, need), agent_config.PLAN_LABEL.get(plan, plan)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+            "error": "FEATURE_NOT_ENTITLED", "feature_name": "The funding pack", "minimum_plan": need, "minimum_plan_label": label,
+            "plan": plan, "plan_label": have, "upgrade": True, "message": f"The funding pack is included from the {label} plan. You're on {have}."})
+
+
 def _type(segment: str) -> str:
     subject_type = SEGMENTS.get(segment)
     if not subject_type or not enabled(subject_type):
@@ -89,14 +119,16 @@ class ForecastLinkIn(BaseModel):
 
 class AttestIn(BaseModel):
     code: str = Field(max_length=20)
-    passed: bool
-    rationale: str = Field(max_length=4000)
+    passed: bool = True
+    rationale: str = Field(default="", max_length=4000)
     independent: bool = False
+    withdraw: bool = False      # Undo: the confirmation taken back, as if never given
 
 
 class AssessIn(BaseModel):
     revision: int | None = None
     idempotency_key: str | None = Field(default=None, max_length=120)
+    with_detail: bool = False      # return the case as it is after the check, so the page needs no second request
 
 
 class ActionPatch(BaseModel):
@@ -256,6 +288,8 @@ def _subject_routes(segment: str) -> APIRouter:
 
     @r.post("/{subject_id}/attestations")
     async def attest(business_id: str, subject_id: str, body: AttestIn, user=Depends(get_current_user)):
+        if body.withdraw:
+            return await _run(get_service().withdraw_attestation(user["id"], business_id, _type(segment), subject_id, body.code, user.get("email")))
         return await _run(get_service().attest(user["id"], business_id, _type(segment), subject_id, body.code, body.passed, body.rationale,
                                                body.independent, user.get("email")))
 
@@ -266,7 +300,8 @@ def _subject_routes(segment: str) -> APIRouter:
         calculated, so its status can be read back with the id at any time."""
         body = body or AssessIn()
         return await _run(get_service().request_assessment(user["id"], business_id, _type(segment), subject_id, revision=body.revision,
-                                                           idempotency_key=body.idempotency_key, email=user.get("email")))
+                                                           idempotency_key=body.idempotency_key, email=user.get("email"),
+                                                           with_detail=body.with_detail))
 
 
     @r.get("/{subject_id}/assessments")
@@ -285,7 +320,7 @@ def _subject_routes(segment: str) -> APIRouter:
                                                       body.model_dump(exclude_unset=True), user.get("email")))
 
 
-    @r.post("/{subject_id}/scenarios")
+    @r.post("/{subject_id}/scenarios", dependencies=[Depends(_require_readiness_plan)])
     async def run_scenario(business_id: str, subject_id: str, body: dict[str, Any], user=Depends(get_current_user)):
         return await _run(get_service().scenario(user["id"], business_id, _type(segment), subject_id, body, user.get("email")))
 
@@ -295,8 +330,10 @@ def _subject_routes(segment: str) -> APIRouter:
         return await _run(get_service().list_materials(user["id"], business_id, _type(segment), subject_id, user.get("email")))
 
 
-    @r.post("/{subject_id}/materials", status_code=201)
+    @r.post("/{subject_id}/materials", status_code=201, dependencies=[Depends(_require_readiness_plan)])
     async def generate_material(business_id: str, subject_id: str, body: MaterialIn, user=Depends(get_current_user)):
+        if SEGMENTS.get(segment) == rules.FUNDING:
+            await _require_funding_pack(user, business_id)
         return await _run(get_service().generate_material(user["id"], business_id, _type(segment), subject_id, body.kind, assessment_id=body.assessment_id,
                                                           idempotency_key=body.idempotency_key, email=user.get("email")))
 
@@ -306,7 +343,7 @@ def _subject_routes(segment: str) -> APIRouter:
         return await _run(get_service().get_material(user["id"], business_id, _type(segment), subject_id, artifact_id, user.get("email")))
 
 
-    @r.patch("/{subject_id}/materials/{artifact_id}")
+    @r.patch("/{subject_id}/materials/{artifact_id}", dependencies=[Depends(_require_readiness_plan)])
     async def update_material(business_id: str, subject_id: str, artifact_id: str, body: MaterialPatch, user=Depends(get_current_user)):
         return await _run(get_service().update_material(user["id"], business_id, _type(segment), subject_id, artifact_id, body=body.body,
                                                         reviewed=body.reviewed, revision=body.revision, email=user.get("email")))
@@ -335,6 +372,43 @@ async def review_document(business_id: str, subject_id: str, key: str, body: Doc
     return await _run(get_service().review_document(user["id"], business_id, subject_id, key, reviewed=body.reviewed, evidence_id=body.evidence_id,
                                                     artifact_id=body.artifact_id, email=user.get("email"),
                                                     attach=bool({"evidence_id", "artifact_id"} & body.model_fields_set)))
+
+
+class PreviousNeedIn(BaseModel):
+    item: str = Field(..., max_length=120)      # "evidence:<id>", "document:<key>" or a field
+    keep: bool
+    need: int = Field(default=0, ge=0, le=9)      # which earlier need it is from: 0 the latest replaced, 1 the one before…
+
+
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/previous-need")
+async def previous_need(business_id: str, subject_id: str, body: PreviousNeedIn, user=Depends(get_current_user)):
+    """[Keep] or [Remove] for something from the funding need this case replaced."""
+    _type("funding-cases")
+    return await _run(get_service().keep_previous(user["id"], business_id, subject_id, body.item, body.keep, email=user.get("email"), need=body.need))
+
+
+class NewNeedIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    purpose: str = Field(..., min_length=1, max_length=2000)
+    target_amount: float | None = Field(default=None, ge=0)
+    previous_title: str | None = Field(default=None, max_length=200)
+
+
+@router.post("/businesses/{business_id}/funding-cases/{subject_id}/new-need")
+async def new_need(business_id: str, subject_id: str, body: NewNeedIn, user=Depends(get_current_user)):
+    """A new title that names a different need (the owner's QA, 23 Oct): the case becomes that need, the old one goes to
+    History with its milestones, allocations, market and traction set aside, exactly as Replace in the funding chat."""
+    _type("funding-cases")
+    from app.modules.agent.goals import need_summary, need_title
+    svc = get_service()
+    row = await svc.store.get("subjects", subject_id)
+    before = (row or {}).get("data") or {}
+    # The form saved the new title already: the old need is named from its own amount, route and purpose
+    was = (body.previous_title or "").strip() or (need_title(before) if str(before.get("title") or "").strip() == body.title.strip() else None)
+    changes = {"title": body.title.strip(), "purpose": body.purpose.strip(), **({"target_amount": body.target_amount} if body.target_amount else {})}
+    return await _run(svc.replace_need(user["id"], business_id, subject_id, changes, user.get("email"),
+                                       provenance={"purpose": "You entered it", **({"target_amount": "You entered it"} if body.target_amount else {})},
+                                       summary=need_summary(before), previous_title=was))
 
 
 @router.post("/businesses/{business_id}/funding-cases/{subject_id}/contradictions")

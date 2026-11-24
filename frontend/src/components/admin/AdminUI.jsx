@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Input from "../Input";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // The admin area's shared pieces, in the same design language as the Adaptive Dashboard:
 // the grouped sidebar (the app sidebar's item style), the page header, KPI tiles with a small
@@ -44,25 +45,32 @@ export const ADMIN_NAV = [
   ] },
   { group: "Growth", items: [
     { key: "upgrades", label: "Upgrade clicks", subtitle: "Interest in paid plans", icon: "arrowUp" },
+    { key: "discounts", label: "Pricing discounts", subtitle: "Create and manage offer codes", icon: "puzzle" },
     { key: "module-interest", label: "Module interest", subtitle: "Tools people asked about", icon: "puzzle" },
     { key: "referrals", label: "Referrals", subtitle: "Referral links and rewards", icon: "share" },
     { key: "activation", label: "Activation emails", subtitle: "Getting-started journeys", icon: "mail" },
+    { key: "emails", label: "Emails", subtitle: "Sent, switched on, wording", icon: "mail" },
     { key: "contacts", label: "Contacts", subtitle: "Names, emails and consent", icon: "list" },
     { key: "mailing-list", label: "Mailing list", subtitle: "Newsletter sign-ups", icon: "list" },
     { key: "demo-requests", label: "Demo requests", subtitle: "People who asked for a demo", icon: "calendar" },
   ] },
   { group: "Marketplace", items: [
+    { key: "marketplace-index", label: "Index & invites", subtitle: "Add records, make claim links", icon: "upload", marketplace: true },
     { key: "marketplace-queue", label: "Claims & reports", subtitle: "Decisions waiting for a person", icon: "shield", marketplace: true },
+    { key: "marketplace-decided", label: "Approved & rejected", subtitle: "What's been decided, and who was told", icon: "list", marketplace: true },
     { key: "marketplace-unclaimed", label: "Unclaimed profiles", subtitle: "Indexed, not yet claimed", icon: "store", marketplace: true },
     { key: "marketplace-visibility", label: "Visibility", subtitle: "Who sees unclaimed profiles", icon: "eye", marketplace: true },
-    { key: "marketplace-index", label: "Index & invites", subtitle: "Add records, make claim links", icon: "upload", marketplace: true },
+    { key: "tender-sync", label: "Public tender sync", subtitle: "Find a Tender feed health", icon: "list" },
+    { key: "marketplace-team", label: "Team", subtitle: "Who can add and manage profiles", icon: "users" },
   ] },
   { group: "Content", items: [
     { key: "blog", label: "Blog", subtitle: "Articles, categories and tags", icon: "pen" },
     { key: "research", label: "Research & Development", subtitle: "Research notes", icon: "beaker" },
   ] },
   { group: "Support", items: [{ key: "support", label: "Support messages", subtitle: "Messages from users", icon: "chat" }] },
-  { group: null, items: [{ key: "ai-usage", label: "AI usage", subtitle: "Calls, tokens and cost", icon: "spark" }] },
+  { group: null, items: [{ key: "ai-usage", label: "AI usage", subtitle: "Calls, tokens and cost", icon: "spark" },
+    { key: "simulation-accuracy", label: "Simulation accuracy", subtitle: "Forecasts against what happened", icon: "grid" },
+    { key: "research-diagnostics", label: "Research diagnostics", subtitle: "Queries, sources and drops per run", icon: "beaker" }] },
 ];
 
 /** The sidebar list: the app sidebar's item (icon tile, title, subtitle, brand-50 pill when current), in groups. */
@@ -272,21 +280,166 @@ export function RowMenu({ label, items }) {
   );
 }
 
+const DATE_KEY = /(_at$|^date$|_date$|^since$|^when$|joined)/;
+const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(new Date(v).getTime());
+const asWord = (v) => (v === true ? "Yes" : v === false ? "No" : v == null ? "" : String(v));
+/** Empty values last either way; numbers as numbers, dates and words as text (ISO dates sort as text). */
+function compare(a, b, dir) {
+  const empty = (v) => v == null || v === "";
+  if (empty(a) || empty(b)) return empty(a) && empty(b) ? 0 : empty(a) ? 1 : -1;
+  const n = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  return dir === "desc" ? -n : n;
+}
+
+export function AdminDateFilter({ start = "", end = "", onApply, label = "Date" }) {
+  const dialog = useRef(null);
+  const [draftStart, setDraftStart] = useState("");
+  const [draftEnd, setDraftEnd] = useState("");
+  const invalid = Boolean(draftStart && draftEnd && draftStart > draftEnd);
+  const active = start || end;
+  const summary = start && end ? start + " to " + end : start ? "From " + start : end ? "Through " + end : "Select Date";
+
+  function open() {
+    setDraftStart(start);
+    setDraftEnd(end);
+    dialog.current.showModal();
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-slate-500">{label}</span>
+      <button type="button" aria-haspopup="dialog" aria-label={"Filter by date: " + label + ", " + summary} onClick={open}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+        {summary}
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>
+      </button>
+      <dialog ref={dialog} aria-label="Filter by Date" className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl bg-white p-5 text-slate-900 shadow-xl backdrop:bg-slate-950/35 backdrop:backdrop-blur-sm sm:p-6 dark:bg-slate-900 dark:text-slate-100">
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          if (invalid) return;
+          onApply(draftStart, draftEnd);
+          dialog.current.close();
+        }}>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-base font-semibold">Filter by Date</h2>
+            <button type="button" aria-label="Close date filter" onClick={() => dialog.current.close()} className="grid size-8 place-items-center rounded-full text-lg hover:bg-slate-100 dark:hover:bg-slate-800">&#215;</button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid min-w-0 gap-1 text-sm">Start Date
+              <Input type="date" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
+            </label>
+            <label className="grid min-w-0 gap-1 text-sm">End Date
+              <Input type="date" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
+            </label>
+          </div>
+          {invalid && <p role="alert" className="mt-2 text-xs text-rose-600">End Date must be on or after Start Date.</p>}
+          <button type="submit" disabled={invalid} className="mt-4 w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Apply Filter</button>
+          {active && <button type="button" className="mt-2 w-full py-1 text-xs font-semibold text-brand-600 dark:text-brand-300" onClick={() => {
+            onApply("", "");
+            dialog.current.close();
+          }}>Clear date filter</button>}
+        </form>
+      </dialog>
+    </div>
+  );
+}
+
 /** One table for every admin section: a white rounded card, a header that stays put, status chips
  *  (use <Chip>), a row actions menu, an empty state and pages.
  *  columns: [{ key, label, render?(row), className?, tdClass? }] · rowActions?(row) -> [{ label, onClick, danger?, disabled? }]
  *  expanded?(row) -> content shown under that row, or null. */
-export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", rowKey = (r, i) => r.id ?? i, rowActions, rowLabel = (r) => r.name || r.email || "this row", expanded, pageSize = 25, minWidth = 640, caption,
-  selection = null }) {      // selection: { selected: Set of row keys, onChange(Set) } for an action on many rows
+export function AdminTable({ columns, rows: allRows, emptyText = "Nothing here yet.", rowKey = (r, i) => r.id ?? i, rowActions, rowLabel = (r) => r.name || r.email || "this row", expanded, pageSize = 25, minWidth = 640, caption,
+  selection = null, defaultSort, filters = true, search = filters, searchValue }) {      // selection: { selected: Set of row keys, onChange(Set) } for an action on many rows
+  // Sorting, newest first and filters, on every admin table (the owner, 14 Nov: rows were in no order, with no way to sort or filter).
+  // A column sorts by c.sortValue(row), or else by row[c.key]; it filters by c.filterValue(row), or else by row[c.key] when that
+  // has a few repeating values. defaultSort: { key, dir } or null for the order given; by default the date column, newest first.
+  const source = allRows || [];
+  const valueOf = (c, r) => (c.sortValue ? c.sortValue(r) : r[c.key]);
+  const sortable = (c) => c.sortable !== false && c.label && (c.sortValue || source.some((r) => ["string", "number", "boolean"].includes(typeof r[c.key])));
+  const dateCol = columns.find((c) => DATE_KEY.test(c.key) && source.some((r) => isDate(valueOf(c, r))));
+  const [sort, setSort] = useState(() => (defaultSort !== undefined ? defaultSort : dateCol ? { key: dateCol.key, dir: "desc" } : null));
+  const [picked, setPicked] = useState({});      // column key -> the value it is filtered to
+  const [query, setQuery] = useState("");
+  const [from, setFrom] = useState("");
+  const [until, setUntil] = useState("");
+  const choices = !filters || source.length < 4 ? [] : columns.flatMap((c) => {
+    if (c.filterable === false || !c.label || c === dateCol) return [];
+    const raw = source.map((r) => (c.filterValue ? c.filterValue(r) : r[c.key]));
+    const vals = [...new Set(raw.map(asWord).filter((v) => v !== ""))];
+    // Only a column whose values repeat (a status, a source, a plan): never names, emails or dates, which are all different.
+    const repeats = vals.length >= 2 && vals.length <= (c.filterValue ? 12 : 8) && vals.length < raw.filter((v) => asWord(v) !== "").length
+      && raw.every((v) => v == null || ["string", "number", "boolean"].includes(typeof v)) && !raw.some(isDate);
+    return repeats ? [{ c, vals: vals.sort((a, b) => a.localeCompare(b)) }] : [];
+  });
+  const rows = useMemo(() => {
+    let out = source.filter((r) => choices.every(({ c }) => !picked[c.key] || asWord(c.filterValue ? c.filterValue(r) : r[c.key]) === picked[c.key]));
+    if (search && query.trim()) {
+      const terms = query.trim().toLowerCase().split(/\s+/);
+      out = out.filter((row) => {
+        const values = searchValue ? searchValue(row) : [rowLabel(row), ...columns.filter((c) => c.label).map((c) => valueOf(c, row))];
+        const words = values.filter((v) => typeof v === "string" || typeof v === "number").join(" ").toLowerCase();
+        return terms.every((term) => words.includes(term));
+      });
+    }
+    if ((from || until) && dateCol) {
+      out = out.filter((r) => {
+        const value = valueOf(dateCol, r);
+        if (!isDate(value)) return false;
+        const day = value.slice(0, 10);
+        return (!from || day >= from) && (!until || day <= until);
+      });
+    }
+    const col = sort && columns.find((c) => c.key === sort.key);
+    if (col) out = [...out].sort((a, b) => compare(valueOf(col, a), valueOf(col, b), sort.dir));
+    return out;
+  }, [source, picked, query, from, until, sort, columns, search, searchValue, rowLabel]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [page, setPage] = useState(1);
-  const total = rows?.length || 0;
+  const total = rows.length;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   useEffect(() => { if (page > pages) setPage(pages); }, [page, pages]);
+  useEffect(() => { setPage(1); }, [picked, query, from, until, sort]);
+  const narrowed = Object.values(picked).some(Boolean) || Boolean(query || from || until);
+  const toolbar = (search || choices.length > 0 || (filters && dateCol)) && (
+    <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 text-[12px] dark:border-slate-700 dark:bg-slate-900">
+      {search && <input type="search" aria-label={caption ? `Search ${caption}` : "Search table"} placeholder="Search..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-transparent px-2 py-1 sm:w-52 dark:border-slate-700 dark:text-slate-200" />}
+      {filters && dateCol && <AdminDateFilter label={dateCol.label} start={from} end={until} onApply={(start, end) => {
+        setFrom(start);
+        setUntil(end);
+      }} />}
+      {choices.map(({ c, vals }) => (
+        <label key={c.key} className="flex items-center gap-1.5 text-slate-500">{c.label}
+          <select value={picked[c.key] || ""} onChange={(e) => setPicked((p) => ({ ...p, [c.key]: e.target.value }))} className="max-w-[12rem] rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <option value="">All</option>{vals.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select></label>
+      ))}
+      {narrowed && <button type="button" onClick={() => { setPicked({}); setQuery(""); setFrom(""); setUntil(""); }} className="font-semibold text-brand-600 hover:underline">Clear filters</button>}
+      <span className="ml-auto text-slate-400">{total === source.length ? `${total} ${total === 1 ? "row" : "rows"}` : `${total} of ${source.length}`}</span>
+    </div>
+  );
+  const header = (c) => {
+    if (!sortable(c)) return c.label;
+    const on = sort?.key === c.key ? sort.dir : null;
+    return (
+      <button type="button" onClick={() => setSort({ key: c.key, dir: on ? (on === "asc" ? "desc" : "asc") : (DATE_KEY.test(c.key) ? "desc" : "asc") })}
+        aria-label={`Sort by ${c.label}${on ? (on === "asc" ? ", now lowest first" : ", now highest or newest first") : ""}`}
+        className="inline-flex items-center gap-1 font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+        {c.label}<span aria-hidden="true" className={on ? "text-brand-600" : "text-slate-300"}>{on === "asc" ? "▲" : on === "desc" ? "▼" : "↕"}</span>
+      </button>
+    );
+  };
+  if (!total && narrowed) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        {toolbar}
+        <p className="px-4 py-8 text-center text-sm text-slate-500">Nothing matches these filters.</p>
+      </div>
+    );
+  }
   if (!total) {
     return (
       <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-10 text-center dark:border-slate-800 dark:bg-slate-900">
         <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-800"><AdminIcon name="list" className="h-5 w-5" /></span>
-        <p className="mt-3 text-sm text-slate-500">{emptyText}</p>
+        <p className="mt-3 text-sm text-slate-500">{source.length && narrowed ? "No rows match your search or filters." : emptyText}</p>
       </div>
     );
   }
@@ -298,13 +451,16 @@ export function AdminTable({ columns, rows, emptyText = "Nothing here yet.", row
   const tickAll = (on) => { const next = new Set(selection.selected); keys.forEach((k) => (on ? next.add(k) : next.delete(k))); selection.onChange(next); };
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className={`max-h-[70vh] overflow-auto ${HIDE_SCROLLBAR}`}>
+      {toolbar}
+      {/* A visible scrollbar: the table scrolls in its own box, and a hidden one left no sign there were more rows. */}
+      <div className="ea-scroll max-h-[70vh] overflow-auto">
         <table className="w-full border-collapse text-sm" style={{ minWidth }}>
           {caption && <caption className="sr-only">{caption}</caption>}
           <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800">
             <tr>
               {selection && <th scope="col" className="w-10 border-b border-slate-200 px-3 py-2.5 dark:border-slate-700"><input type="checkbox" aria-label="Select all on this page" checked={allTicked} onChange={(e) => tickAll(e.target.checked)} /></th>}
-              {columns.map((c) => <th key={c.key} scope="col" className={`whitespace-nowrap border-b border-slate-200 px-4 py-2.5 text-left text-[12px] font-semibold text-slate-500 dark:border-slate-700 ${c.className || ""}`}>{c.label}</th>)}
+              {columns.map((c) => <th key={c.key} scope="col" className={`whitespace-nowrap border-b border-slate-200 px-4 py-2.5 text-left text-[12px] font-semibold text-slate-500 dark:border-slate-700 ${c.className || ""}`}
+                aria-sort={sort?.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}>{header(c)}</th>)}
               {rowActions && <th scope="col" className="border-b border-slate-200 px-2 py-2.5 dark:border-slate-700"><span className="sr-only">Actions</span></th>}
             </tr>
           </thead>

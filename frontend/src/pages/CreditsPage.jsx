@@ -1,7 +1,52 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { welcomeWords } from "../lib/creditCopy";
+import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuthStore } from "../store/auth";
+import { useWorkspaceStore } from "../store/workspace";
+
+/**
+ * What each Agent task was charged, with the task's name and a link to it. The one place an Agent charge is listed:
+ * the Agent itself never says what anything cost.
+ */
+export function AgentCharges({ businessId }) {
+  const [rows, setRows] = useState(null);
+  const [total, setTotal] = useState(0);
+  useEffect(() => {
+    if (!businessId) return undefined;
+    let alive = true;
+    apiRequest(`/businesses/${businessId}/agent/charges`, "GET")
+      .then((res) => {
+        if (!alive) return;
+        const list = Array.isArray(res?.charges) ? res.charges : [];
+        setRows(list);
+        setTotal(typeof res?.total === "number" ? res.total : list.reduce((n, r) => n + (Number(r.credits) || 0), 0));
+      })
+      .catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, [businessId]);
+  if (!rows || rows.length === 0) return null;
+  return (
+    <section data-agent-charges className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <h2 className="flex items-center justify-between border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900 dark:border-slate-800 dark:text-slate-100">
+        <span>Agent tasks and answers</span><span data-agent-charges-total className="tabular-nums">{total}</span>
+      </h2>
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        {rows.map((r, i) => (
+          <li key={`${r.run_id}-${r.at}-${i}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-[13px]">
+            <span className="min-w-0">
+              {r.link
+                ? <Link to={r.link} className="block truncate font-semibold text-brand-700 hover:underline dark:text-brand-300">{r.task}</Link>
+                : <span className="block truncate font-semibold text-slate-800 dark:text-slate-100">{r.task}</span>}
+              <span className="block truncate text-[12px] text-slate-500">{r.what}{r.at ? ` · ${new Date(r.at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}</span>
+            </span>
+            <span className={`shrink-0 tabular-nums font-semibold ${r.credits < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-slate-700 dark:text-slate-200"}`}>{r.credits < 0 ? `+${-r.credits}` : r.credits}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 const FEATURE_LABELS = {
   idea_validation: "Idea Validation",
@@ -40,8 +85,10 @@ export default function CreditsPage() {
   const navigate = useNavigate();
   const creditInfo = useAuthStore((s) => s.creditInfo);
   const creditBalance = useAuthStore((s) => s.creditBalance);
+  const workspaceId = useWorkspaceStore((s) => s.workspaceId);
 
   const [transactions, setTransactions] = useState([]);
+  const [actions, setActions] = useState(null);      // P2.17: one plain line per action, from the server
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -57,6 +104,7 @@ export default function CreditsPage() {
     try {
       const data = await apiRequest("/credits/transactions?limit=200", "GET");
       setTransactions(Array.isArray(data?.transactions) ? data.transactions : []);
+      setActions(Array.isArray(data?.actions) ? data.actions : null);
     } catch (e) {
       setError("Failed to load transaction history.");
     } finally {
@@ -96,7 +144,7 @@ export default function CreditsPage() {
           {available.toLocaleString()}
         </div>
         <div className="text-sm text-white/70">
-          {planCode === "explorer" ? "Free trial allocation · one-time" : "Purchase more credits when needed"}
+          {planCode === "explorer" ? `${welcomeWords(creditInfo)}. The 50 welcome credits don't expire; once they're used, they're gone.` : "Purchase more credits when needed"}
         </div>
         <div className="mt-3 grid grid-cols-3 gap-3">
           <div className="rounded-xl bg-white/10 px-3 py-2">
@@ -113,6 +161,8 @@ export default function CreditsPage() {
           </div>
         </div>
       </div>
+
+      <AgentCharges businessId={workspaceId} />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
@@ -152,6 +202,25 @@ export default function CreditsPage() {
           <div className="py-12 text-center text-sm text-slate-400">No transactions found.</div>
         ) : (
           <>
+            {actions && !filterFeature && !filterType ? (
+              <ul className="divide-y divide-slate-100" data-credit-actions>
+                {actions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-[13px]" data-credit-action>
+                    <span className="min-w-0">
+                      <span className="font-semibold text-slate-800">{a.label}</span>
+                      {a.detail && <span className="text-slate-500"> · {a.detail}</span>}
+                      {a.source && <span className="text-slate-400"> · {a.source}</span>}
+                      <span className="block text-[11px] text-slate-400">{a.at ? new Date(a.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                    </span>
+                    <span className="flex items-center gap-3">
+                      <span className={`font-bold tabular-nums ${a.credits > 0 ? "text-emerald-600" : a.credits < 0 ? "text-rose-600" : "text-slate-500"}`}>
+                        {a.credits > 0 ? `+${a.credits}` : a.credits < 0 ? `${Math.abs(a.credits)} credits` : "0"}</span>
+                      {a.status && a.credits <= 0 && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10.5px] font-semibold text-slate-600">{a.status}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -199,6 +268,7 @@ export default function CreditsPage() {
                 </tbody>
               </table>
             </div>
+            )}
             {totalPages > 1 && (
               <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
                 <span className="text-xs text-slate-400">

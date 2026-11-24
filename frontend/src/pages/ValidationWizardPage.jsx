@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { confirmDialog } from "../lib/dialog";
+import { forgetCameFrom } from "../lib/cameFrom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../components/Button";
 import InlineAlert from "../components/InlineAlert";
@@ -21,6 +22,7 @@ import { generateValidationInsightPdf } from "../lib/reports/index";
 import ValidationLoadingOverlay from "../components/ValidationLoadingOverlay";
 import { useDemoTour } from "../context/DemoTourContext";
 import CreditConfirmModal from "../components/CreditConfirmModal";
+import { alreadyApplied, fillEmpty, markApplied } from "../lib/agentValidationForm";
 
 function humanizeValidationError(e) {
   const msg = e instanceof Error ? e.message : String(e || "");
@@ -158,24 +160,40 @@ const VALIDATION_DEFAULTS_KEY = "ea_validation_stage_defaults";
 const V4_DRAFT_KEY = "ea_v4_draft";
 const FREQUENCY_OPTIONS = ["daily", "weekly", "monthly", "yearly", "custom"];
 
+// A draft and its defaults belong to one account's one workspace (the owner, 31 Oct: another workspace's idea, "A mobile App
+// for Building Design", in a new workspace's form): kept under that pair, the old shared copies removed and never read
+function scoped(key) {
+  const who = String(useAuthStore.getState().email || "").toLowerCase();
+  const ws = String(useWorkspaceStore.getState().workspaceId || "");
+  return who && ws ? `${key}:${who}:${ws}` : null;
+}
+function dropShared() {
+  try { window.localStorage.removeItem(V4_DRAFT_KEY); window.localStorage.removeItem(VALIDATION_DEFAULTS_KEY); } catch { /* nothing kept */ }
+}
 function loadV4Draft() {
+  dropShared();
   try {
-    const raw = window.localStorage.getItem(V4_DRAFT_KEY);
+    const key = scoped(V4_DRAFT_KEY);
+    const raw = key && window.localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch { return null; }
 }
 function saveV4Draft(form, step, journey) {
-  try { window.localStorage.setItem(V4_DRAFT_KEY, JSON.stringify({ form, step, journey })); } catch {}
+  const key = scoped(V4_DRAFT_KEY);
+  try { if (key) window.localStorage.setItem(key, JSON.stringify({ form, step, journey })); } catch {}
 }
 function clearV4Draft() {
-  try { window.localStorage.removeItem(V4_DRAFT_KEY); } catch {}
+  const key = scoped(V4_DRAFT_KEY);
+  try { if (key) window.localStorage.removeItem(key); } catch {}
 }
 
 function loadValidationStageDefaults() {
   if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(VALIDATION_DEFAULTS_KEY);
+    dropShared();
+    const key = scoped(VALIDATION_DEFAULTS_KEY);
+    const raw = key && window.localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -203,9 +221,9 @@ function buildInitialBusinessForm() {
     pathway: "",
     context: {
       business_name: defaults.business_name || "",
-      business_type_category: defaults.business_type_category || "Technology",
+      business_type_category: defaults.business_type_category || "",      // C7: never assumed (it was "Technology" for every business)
       business_type_other: defaults.business_type_other || "",
-      primary_industry_category: defaults.primary_industry_category || "IT",
+      primary_industry_category: defaults.primary_industry_category || "",      // C7: never assumed (it was "IT")
       primary_industry_other: defaults.primary_industry_other || "",
       location: defaults.location || "",
       currency: defaults.currency || "GBP",
@@ -220,7 +238,7 @@ function buildInitialBusinessForm() {
       description: "" // NEW: for the large textarea idea
     },
     problem: {
-      customer_segment_category: defaults.customer_segment_category || "SMEs",
+      customer_segment_category: defaults.customer_segment_category || "",
       customer_segment_other: defaults.customer_segment_other || "",
       problem_type: defaults.problem_type || "", // Map to "What problem?"
       proposed_solution: "",
@@ -258,9 +276,9 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.validation ||= {};
 
   next.context.business_name ||= defaults.business_name || "";
-  next.context.business_type_category ||= defaults.business_type_category || "Technology";
+  next.context.business_type_category ||= defaults.business_type_category || "";
   next.context.business_type_other ||= defaults.business_type_other || "";
-  next.context.primary_industry_category ||= defaults.primary_industry_category || "IT";
+  next.context.primary_industry_category ||= defaults.primary_industry_category || "";
   next.context.primary_industry_other ||= defaults.primary_industry_other || "";
   next.context.location ||= defaults.location || "";
   next.context.currency ||= defaults.currency || "GBP";
@@ -271,7 +289,7 @@ function mergeStageDefaultsIntoBusinessForm(source) {
   next.context.country ||= defaults.country || "";
   next.context.country_other ||= defaults.country_other || "";
 
-  next.problem.customer_segment_category ||= defaults.customer_segment_category || "SMEs";
+  next.problem.customer_segment_category ||= defaults.customer_segment_category || "";
   next.problem.customer_segment_other ||= defaults.customer_segment_other || "";
   next.problem.problem_type ||= defaults.problem_type || "";
   next.problem.alternatives ||= defaults.alternatives || "";
@@ -385,12 +403,14 @@ function ResumeButton({ entry, onEdit }) {
 export default function ValidationWizardPage() {
   const navigate = useNavigate();
   const { triggerDemoGate } = useDemoTour() || {};
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const editingWorkspaceId = searchParams.get("workspace_id");
   const fromOtherModule = searchParams.get("from") === "module";
   const isCreateWorkspace = fromOtherModule;
   const returnTo = searchParams.get("return");
   const requestedHistoryId = searchParams.get("history_id");
+  // Opened on its own (not from a chat link): its results go back here, not to an earlier chat
+  useEffect(() => { if (!requestedHistoryId) forgetCameFrom(); }, []);      // eslint-disable-line react-hooks/exhaustive-deps
   const requestedHistoryType = searchParams.get("history_type");
   const requestedEditMode = searchParams.get("edit") === "1";
   const storedWorkspaceId = useWorkspaceStore((s) => s.workspaceId);
@@ -495,6 +515,16 @@ export default function ValidationWizardPage() {
   const [v4Journey, setV4Journey] = useState(null); // always start at selection screen
   const [v4Step, setV4Step] = useState(0); // always start at step 0
   const [v4Form, setV4Form] = useState(_v4Draft?.form ?? {});
+  // Another workspace chosen: its own draft, never the last one's left on screen (31 Oct)
+  const draftFor = useRef(storedWorkspaceId);
+  useEffect(() => {
+    if (draftFor.current === storedWorkspaceId) return;
+    const was = draftFor.current;
+    draftFor.current = storedWorkspaceId;
+    // only a real switch from one workspace to another: never when the workspace is first known, which wiped the answers a
+    // validation had just loaded (the owner, 31 Oct: the Agent's validation opened as an empty form)
+    if (was && storedWorkspaceId) setV4Form(loadV4Draft()?.form ?? {});
+  }, [storedWorkspaceId]);
   const [v4Error, setV4Error] = useState(null);
   const v4ErrorRef = useRef(null);
   const [v4Saving, setV4Saving] = useState(false);
@@ -1094,6 +1124,34 @@ export default function ValidationWizardPage() {
   const pagedHistory = filteredValidationHistory.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE);
   const activeWorkspaceId = editingWorkspaceId || storedWorkspaceId;
 
+  // Idea validation asked for in the Agent chat fills this form: the fields still empty, once per task, and said so.
+  const [agentFilled, setAgentFilled] = useState(null);
+  const v4FormRef = useRef(v4Form);
+  v4FormRef.current = v4Form;
+  const openedForEntry = useRef(Boolean(requestedHistoryId));      // opened on a saved validation: never refilled from the chat (31 Oct)
+  useEffect(() => {
+    if (!activeWorkspaceId || requestedHistoryId || openedForEntry.current) return undefined;
+    let gone = false;
+    // Said while it loads, when it takes more than a moment (the owner, 31 Oct: "at least let me know you're loading it")
+    const slow = setTimeout(() => { if (!gone) setAgentFilled((x) => x || { loading: true }); }, 400);
+    (async () => {
+      try {
+        const ws = await apiRequest(`/validation/${activeWorkspaceId}`, "GET");
+        const drafted = ws?.data?.agent_validation_form;
+        if (gone || !drafted?.form || !drafted.run_id || alreadyApplied(drafted.run_id)) { if (!gone) setAgentFilled((x) => (x?.loading ? null : x)); return; }
+        const { form: next, filled } = fillEmpty(v4FormRef.current, drafted.form);
+        if (filled) setV4Form(next);
+        markApplied(drafted.run_id);
+        setAgentFilled({ filled, idea: drafted.idea || "" });
+      } catch {
+        if (!gone) setAgentFilled((x) => (x?.loading ? null : x));      /* the form opens as it was */
+      } finally {
+        clearTimeout(slow);
+      }
+    })();
+    return () => { gone = true; clearTimeout(slow); };
+  }, [activeWorkspaceId, requestedHistoryId]);
+
   const isProductPath = form.pathway === "product_service_idea";
   const marketResearch = isProductPath ? serviceMarketResearch : businessMarketResearch;
   const tabMarketResearch = mrResearchTab === "service" ? serviceMarketResearch : businessMarketResearch;
@@ -1262,7 +1320,17 @@ export default function ValidationWizardPage() {
     setContentTab("builder");
     if (requestedHistoryType === "service_validation") setMode("fill");
     if (requestedHistoryId) {
-      editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, true, requestedEditMode);
+      // Opened from a link (the Agent's task, History): the form, prefilled with the saved answers, on its first step, even
+      // when the Agent's draft already has a quick score (the owner's QA, 21 Oct: it went to the results instead). The
+      // result is one press away from there. Then the link's id leaves the address, so the "Loading" spinner never stays.
+      // "Open the validation results" (view=results) goes to its results dashboard instead (the owner, 26 Oct)
+      const toResults = searchParams.get("view") === "results";
+      // Gone to the results: the address is never tidied here after, which brought the owner back to this page (26 Oct)
+      // a validation that has run opens on its result, Modify one press away; one not yet run opens its form (the owner, 31 Oct:
+      // "open and load the specific validation")
+      // "See your validation results": its result; "Open the form" and Modify: its filled form, on its first step (31 Oct)
+      Promise.resolve(editHistoryEntry({ id: requestedHistoryId, type: requestedHistoryType, status: "pending" }, !toResults, true))
+        .finally(() => window.location.pathname.endsWith("/validation") && setSearchParams((p) => { const next = new URLSearchParams(p); next.delete("history_id"); next.delete("history_type"); next.delete("view"); next.delete("edit"); return next; }, { replace: true }));
     } else if (requestedHistoryType === "service_validation") {
       // history_type present but no specific history_id — find the active service entry
       (async () => {
@@ -1421,7 +1489,8 @@ export default function ValidationWizardPage() {
       alternatives: String(form?.problem?.alternatives || "").trim(),
     };
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(VALIDATION_DEFAULTS_KEY, JSON.stringify(payload));
+      const defaultsKey = scoped(VALIDATION_DEFAULTS_KEY);
+      if (defaultsKey) window.localStorage.setItem(defaultsKey, JSON.stringify(payload));
     }
   }, [
     form?.context?.business_name,
@@ -1658,13 +1727,13 @@ export default function ValidationWizardPage() {
           if (primary?.service_category) updateService("service_category", primary.service_category);
         }
         const bt = String(next?.context?.business_type ?? "").trim();
-        next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : "Other";
+        next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "";
         next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
         const pi = String(next?.context?.primary_industry ?? "").trim();
-        next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "IT";
+        next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "";
         next.context.primary_industry_other = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? "" : pi;
         const cs = String(next?.problem?.customer_segment ?? "").trim();
-        next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
+        next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "";
         next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
         const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
         next.problem.frequency = frequencyFields.frequency;
@@ -1885,15 +1954,15 @@ export default function ValidationWizardPage() {
     next.validation ||= { spoken_count: "No", demand_proof: [] };
 
     const bt = String(next?.context?.business_type ?? "").trim();
-    next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "Technology";
+    next.context.business_type_category = BUSINESS_TYPE_OPTIONS.includes(bt) ? bt : bt ? "Other" : "";
     next.context.business_type_other = BUSINESS_TYPE_OPTIONS.includes(bt) ? "" : bt;
 
     const pi = String(next?.context?.primary_industry ?? "").trim();
-    next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "IT";
+    next.context.primary_industry_category = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? pi : pi ? "Other" : "";
     next.context.primary_industry_other = PRIMARY_INDUSTRY_OPTIONS.includes(pi) ? "" : pi;
 
     const cs = String(next?.problem?.customer_segment ?? "").trim();
-    next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "SMEs";
+    next.problem.customer_segment_category = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? cs : cs ? "Other" : "";
     next.problem.customer_segment_other = CUSTOMER_SEGMENT_OPTIONS.includes(cs) ? "" : cs;
     const frequencyFields = deriveFrequencyFields(next?.problem?.frequency ?? "");
     next.problem.frequency = frequencyFields.frequency;
@@ -2379,15 +2448,15 @@ export default function ValidationWizardPage() {
 
     const bt = String(payload.context.business_type_category || "").trim();
     const btOther = String(payload.context.business_type_other || "").trim();
-    payload.context.business_type = bt === "Other" ? btOther || "Other" : bt || "Other";
+    payload.context.business_type = bt === "Other" ? btOther || "Other" : bt;
 
     const pi = String(payload.context.primary_industry_category || "").trim();
     const piOther = String(payload.context.primary_industry_other || "").trim();
-    payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi || "Other";
+    payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi;
 
     const cs = String(payload.problem.customer_segment_category || "").trim();
     const csOther = String(payload.problem.customer_segment_other || "").trim();
-    payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs || "Other";
+    payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs;
 
     const duCat = String(payload.offer.deliverable_unit_category || "").trim();
     const duOther = String(payload.offer.deliverable_unit_other || "").trim();
@@ -2636,17 +2705,17 @@ export default function ValidationWizardPage() {
       payload.existing_business = null;
       const bt = String(payload.context.business_type_category || "").trim();
       const btOther = String(payload.context.business_type_other || "").trim();
-      payload.context.business_type = bt === "Other" ? btOther || "Other" : bt || "Other";
+      payload.context.business_type = bt === "Other" ? btOther || "Other" : bt;
       delete payload.context.business_type_category;
       delete payload.context.business_type_other;
       const pi = String(payload.context.primary_industry_category || "").trim();
       const piOther = String(payload.context.primary_industry_other || "").trim();
-      payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi || "Other";
+      payload.context.primary_industry = pi === "Other" ? piOther || "Other" : pi;
       delete payload.context.primary_industry_category;
       delete payload.context.primary_industry_other;
       const cs = String(payload.problem.customer_segment_category || "").trim();
       const csOther = String(payload.problem.customer_segment_other || "").trim();
-      payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs || "Other";
+      payload.problem.customer_segment = cs === "Other" ? csOther || "Other" : cs;
       delete payload.problem.customer_segment_category;
       delete payload.problem.customer_segment_other;
       payload.context.founder_hours_per_week = parseNumber(payload.context.founder_hours_per_week, 40);
@@ -3687,6 +3756,16 @@ export default function ValidationWizardPage() {
 
               {v4Error && <div ref={v4ErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{v4Error}</div>}
               {savedNotice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{savedNotice}</div>}
+              {agentFilled?.loading && (
+                <div role="status" data-agent-filling className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                  <Spinner size={14} /> Filling the form from your Agent chat…
+                </div>
+              )}
+              {agentFilled && agentFilled.filled > 0 && (
+                <div data-agent-filled className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                  Filled from your Agent chat{agentFilled.idea ? ` about ${agentFilled.idea}` : ""}. Check each answer and change anything that isn't right before you run the validation.
+                </div>
+              )}
 
               {/* V4 wizard body */}
               {v4Step === 0 ? (
@@ -3829,6 +3908,11 @@ export default function ValidationWizardPage() {
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  {/* A result the Agent already worked out, waiting to be accepted: its results one press away, never only the form
+                                      (the owner, 31 Oct: the free plan's validation by the Agent "is not showing") */}
+                                  {entry.status !== "accepted" && entry.status !== "rejected" && (entry.source === "agent" || entry.score != null) && (
+                                    <Button size="sm" onClick={() => editHistoryEntry(entry, false, false)} data-see-results>See results</Button>
+                                  )}
                                   <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
                                     {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
                                   </Button>
@@ -4519,7 +4603,7 @@ export default function ValidationWizardPage() {
                           <button
                             type="button"
                             disabled={v4Saving}
-                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 10 : 5, onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
+                            onClick={() => { if (triggerDemoGate?.("validation")) return; setCreditModal({ featureName: "Idea Validation", creditCost: v4Journey === "comprehensive" ? 25 : 0, featureCode: v4Journey === "comprehensive" ? "idea_validation_comprehensive" : "idea_validation", onConfirm: () => { setCreditModal(null); markV4StepComplete(v4Step); handleV4Evaluate(); } }); }}
                             className="flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
                           >
                             {v4Saving ? "Running validation..." : "Run Validation"}
@@ -4640,6 +4724,11 @@ export default function ValidationWizardPage() {
                                 </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                {/* A result the Agent already worked out, waiting to be accepted: its results one press away, never only the form
+                                    (the owner, 31 Oct: the free plan's validation by the Agent "is not showing") */}
+                                {entry.status !== "accepted" && entry.status !== "rejected" && (entry.source === "agent" || entry.score != null) && (
+                                  <Button size="sm" onClick={() => editHistoryEntry(entry, false, false)} data-see-results>See results</Button>
+                                )}
                                 <Button size="sm" variant="secondary" onClick={() => editHistoryEntry(entry)}>
                                   {entry.status === "accepted" || entry.status === "rejected" ? "View" : "Resume"}
                                 </Button>
@@ -4740,6 +4829,7 @@ export default function ValidationWizardPage() {
                           <div>
                             <FieldLabel info="Who is the primary audience for this?">4. Who experiences this problem?</FieldLabel>
                             <select className="ea-input" value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)}>
+                              <option value="">Choose who it is for</option>
                               {["Individuals", "Students", "Professionals", "SMEs", "Enterprises", "Government", "Other"].map(o => (
                                 <option key={o} value={o}>{o}</option>
                               ))}
@@ -5693,6 +5783,7 @@ export default function ValidationWizardPage() {
                             <div className="md:col-span-2 xl:col-span-3">
                               <FieldLabel info="Who you're selling to.">Customer segment</FieldLabel>
                               <select value={form.problem.customer_segment_category} onChange={(e) => update("problem.customer_segment_category", e.target.value)} className="ea-input">
+                                <option value="">Choose who it is for</option>
                                 {CUSTOMER_SEGMENT_OPTIONS.map((o) => (<option key={o} value={o}>{o}</option>))}
                               </select>
                               {form.problem.customer_segment_category === "Other" ? <div className="mt-2"><Input value={form.problem.customer_segment_other} onChange={(e) => update("problem.customer_segment_other", e.target.value)} placeholder="Type customer segment" /></div> : null}
@@ -6004,7 +6095,7 @@ export default function ValidationWizardPage() {
                               disabled={isLoading || isPrefilling || !canRun}
                               onClick={() => {
                                 if (!isCreateWorkspace) {
-                                  setCreditModal({ featureName: "Idea Validation", creditCost: 5, onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
+                                  setCreditModal({ featureName: "Idea Validation", creditCost: 0, featureCode: "idea_validation", onConfirm: () => { setCreditModal(null); saveWorkspace(true); } });
                                 } else {
                                   saveWorkspace(false);
                                 }
@@ -6031,6 +6122,7 @@ export default function ValidationWizardPage() {
           <CreditConfirmModal
             featureName={creditModal.featureName}
             creditCost={creditModal.creditCost}
+          featureCode={creditModal.featureCode}
             onConfirm={creditModal.onConfirm}
             onCancel={() => setCreditModal(null)}
           />

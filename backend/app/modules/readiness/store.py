@@ -46,6 +46,11 @@ class Store:
     async def find_key(self, coll: str, business_id: str, subject_id: str | None, key: str) -> dict | None: raise NotImplementedError
     async def update(self, coll: str, record_id: str, patch: dict, *, expect_revision: int | None = None, bump: bool = True) -> dict | None: raise NotImplementedError
     async def put_file(self, path: str, content: bytes, content_type: str) -> None: raise NotImplementedError
+
+    async def update_many(self, coll: str, rows: list[dict]) -> None:
+        """Several whole rows saved at once, each as given (no revision bump). One request where the store allows it."""
+        for row in rows:
+            await self.update(coll, row["id"], {k: v for k, v in row.items() if k != "id"}, bump=False)
     async def get_file(self, path: str) -> bytes | None: raise NotImplementedError
 
 
@@ -166,6 +171,14 @@ class SupabaseStore(Store):
                 payload["revision"] = revision + 1
         rows = await self._call(self.sb.sb_update, self.tables[coll], payload=payload, filters=filters)
         return rows[0] if rows else None
+
+    async def update_many(self, coll, rows):
+        """One upsert for every row (the whole row each time, so nothing is lost): a check again saved its 13 actions in 13
+        requests, about a second; now one."""
+        if not rows:
+            return
+        payload = [{k: _iso(v) for k, v in r.items()} for r in rows]
+        await self._call(self.sb.sb_upsert, self.tables[coll], payload=payload, on_conflict="id")
 
     async def put_file(self, path, content, content_type):
         import anyio

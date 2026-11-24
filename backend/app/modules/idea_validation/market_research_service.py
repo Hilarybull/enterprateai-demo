@@ -688,40 +688,18 @@ STRICT CONSTRAINTS:
 
 
 async def _call_claude(prompt: str, *, user_id: str = "", feature: str = "idea_validation.market_research", max_tokens: int = 4096) -> dict:
+    """The synthesis, through the one AI gateway (Claude first, then the other configured provider on an error), never one
+    provider alone. Its usage is recorded by the provider client that served it."""
+    from app.shared.llm.openai_client import AutoLLMClient
     settings = get_settings()
-    if not settings.claude_api_key:
-        logger.warning("Claude API key missing in settings.")
+    if not (settings.claude_api_key or settings.openai_api_key):
+        logger.warning("No AI provider is configured.")
         return {}
-    headers = {
-        "x-api-key": settings.claude_api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    body = {
-        "model": settings.claude_model or "claude-3-5-sonnet-20241022",
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    logger.info("Calling Claude with model: %s", body["model"])
+    depth = 0
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=15.0, read=180.0, write=15.0, pool=10.0)) as client:
-            response = await client.post(CLAUDE_BASE, headers=headers, json=body)
-        if response.status_code != 200:
-            logger.error("Claude API error: status=%s, body=%s", response.status_code, response.text)
-            return {}
-        data = response.json()
-        usage = data.get("usage") if isinstance(data, dict) and isinstance(data.get("usage"), dict) else {}
-        await record_ai_usage(
-            user_id=user_id or None,
-            feature=feature,
-            provider="anthropic",
-            model=body["model"],
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
-            total_tokens=int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0),
-            request_id=data.get("id") if isinstance(data, dict) else None,
-        )
-        text = data["content"][0]["text"].strip()
+        res = await AutoLLMClient(user_id=user_id or None).generate_text(system="Reply with one JSON object only.", prompt=prompt, feature=feature,
+                                                                       max_tokens=max_tokens)
+        text = (res.text or "").strip()
         # Strip markdown fences
         if text.startswith("```"):
             lines = text.splitlines()
@@ -843,11 +821,16 @@ def _fallback_report(fields: dict[str, Any]) -> dict[str, Any]:
     currency = _clean_text(fields.get("currency") or "GBP")
     industry = _clean_text(fields.get("industry") or fields.get("primary_industry") or "")
 
+    # The name on its own and the description as its own sentences, never glued together (the owner, 31 Oct: "Shoe polish
+    # production A small local producer… appears directionally promising")
+    name = _clean_text(fields.get("business_name") or "")
+    about = what if not name else _clean_text(what[len(name):] if what.lower().startswith(name.lower()) else what)
+    about = about.strip(" .")
+    place = f"the {location}" if location.lower().startswith(("united ", "netherlands", "philippines")) else location
+    lead = f"{name or 'This idea'} looks promising for {segment} in {place}."
+    summary = (f"{about[:1].upper() + about[1:]}. " if about and about.lower() != (name or "").lower() else "") + lead +         " The best next step is to check how urgently they need it and what they would pay, before building further."
     return {
-        "executive_summary": (
-            f"{what} appears directionally promising for {segment} in {location}. "
-            f"The best next step is to validate urgency and willingness to pay before building deeply."
-        ),
+        "executive_summary": summary,
         "idea_validation_result": {
             "overall_score": "Fair",
             "market_demand": "Medium",

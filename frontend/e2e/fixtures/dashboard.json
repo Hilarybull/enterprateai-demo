@@ -1,0 +1,1259 @@
+{
+ "enabled": true,
+ "business_id": "A",
+ "context": {
+  "pathway": "startup",
+  "business_stage": "pre_launch",
+  "stage_label": "Pre-launch",
+  "stage_source": "records",
+  "detected_stage": "pre_launch",
+  "stage_signals": [
+   "Products or services listed",
+   "No invoices issued yet"
+  ],
+  "stages": [
+   {
+    "key": "idea",
+    "label": "Idea"
+   },
+   {
+    "key": "pre_launch",
+    "label": "Pre-launch"
+   },
+   {
+    "key": "startup",
+    "label": "Startup"
+   },
+   {
+    "key": "operating",
+    "label": "Operating"
+   },
+   {
+    "key": "growth",
+    "label": "Growth"
+   }
+  ],
+  "headline": {
+   "key": "launch_readiness",
+   "label": "Launch readiness",
+   "value": "3 of 7",
+   "state": "available",
+   "tone": "amber"
+  },
+  "transition": null,
+  "preview": false,
+  "account_scope": "single_business",
+  "role": "owner",
+  "can_change_stage": true,
+  "current_goal": null,
+  "goals": [
+   {
+    "key": "launch",
+    "label": "Launch the business"
+   },
+   {
+    "key": "funding",
+    "label": "Prepare for funding"
+   },
+   {
+    "key": "cash",
+    "label": "Improve cash flow"
+   },
+   {
+    "key": "growth",
+    "label": "Grow revenue"
+   },
+   {
+    "key": "risk_reduction",
+    "label": "Reduce risk"
+   }
+  ]
+ },
+ "action_cards": [
+  {
+   "key": "business_plan",
+   "widget_id": "business_plan",
+   "title": "Business Plan",
+   "description": "Draft and refine a structured plan for your business.",
+   "cta": "Open Business Plans",
+   "href": "/blueprint?tab=business-plans",
+   "icon": "book"
+  },
+  {
+   "key": "funding_readiness",
+   "widget_id": "funding_readiness",
+   "title": "Funding Readiness",
+   "description": "Check how prepared you are to approach funders, and what is missing.",
+   "cta": "Check Funding Readiness",
+   "href": "/funding",
+   "icon": "cash"
+  },
+  {
+   "key": "registration",
+   "widget_id": "registration",
+   "title": "Business Registration",
+   "description": "Register the business and cover the legal steps.",
+   "cta": "Open Registration",
+   "href": "/registration",
+   "icon": "shield"
+  },
+  {
+   "key": "scenarios",
+   "widget_id": "scenarios",
+   "title": "Scenarios",
+   "description": "Simulate decisions and forecast outcomes.",
+   "cta": "Open Simulator",
+   "href": "/simulation",
+   "icon": "bars"
+  }
+ ],
+ "kpis": [
+  {
+   "key": "launch_readiness",
+   "widget_id": "launch_readiness",
+   "label": "Launch Readiness",
+   "client_trend": null,
+   "to": "/launch",
+   "good_when_up": true,
+   "value": "43%",
+   "state": "available",
+   "hint": "3 of 7 in place",
+   "tone": "amber",
+   "trend": {
+    "points": [
+     {
+      "at": "2026-10-01",
+      "value": 43.0
+     }
+    ]
+   }
+  },
+  {
+   "key": "runway",
+   "widget_id": "runway",
+   "label": "Runway",
+   "client_trend": null,
+   "to": "/launch",
+   "good_when_up": true,
+   "value": null,
+   "state": "insufficient_data",
+   "hint": "Record cash received and monthly costs",
+   "tone": null,
+   "trend": {
+    "points": []
+   }
+  },
+  {
+   "key": "planned_costs",
+   "widget_id": "planned_costs",
+   "label": "Planned Costs",
+   "client_trend": null,
+   "to": "/launch",
+   "good_when_up": true,
+   "value": null,
+   "state": "insufficient_data",
+   "hint": "Add planned costs to your plan",
+   "tone": null,
+   "trend": {
+    "points": []
+   }
+  },
+  {
+   "key": "funding_secured",
+   "widget_id": "funding_secured",
+   "label": "Funding Secured",
+   "client_trend": null,
+   "to": "/funding",
+   "good_when_up": true,
+   "value": null,
+   "state": "insufficient_data",
+   "hint": "Add funding or starting cash to your plan",
+   "tone": null,
+   "trend": {
+    "points": []
+   }
+  },
+  {
+   "key": "launch_risks",
+   "widget_id": "launch_risks",
+   "label": "Active Risks",
+   "client_trend": null,
+   "to": "/launch",
+   "good_when_up": false,
+   "value": null,
+   "state": "insufficient_data",
+   "tone": null,
+   "hint": "Appears once a launch or funding check has been done",
+   "trend": {
+    "points": []
+   }
+  }
+ ],
+ "kpis_empty": null,
+ "financial_summary": {
+  "currency": "GBP",
+  "cash": 0.0,
+  "monthly_burn": 0.0,
+  "runway_months": null,
+  "receivables": 0.0,
+  "overdue_count": 0,
+  "overdue_total": 0.0,
+  "has_records": false
+ },
+ "launch_readiness": {
+  "items": [
+   {
+    "key": "business_name",
+    "label": "Business name",
+    "to": "/account?section=workspace",
+    "done": true
+   },
+   {
+    "key": "business_email",
+    "label": "Business email address",
+    "to": "/account?section=workspace",
+    "done": true
+   },
+   {
+    "key": "idea_validated",
+    "label": "A validated business idea",
+    "to": "/validation",
+    "done": false
+   },
+   {
+    "key": "offer",
+    "label": "At least one product or service with a price",
+    "to": "/catalogue",
+    "done": true
+   },
+   {
+    "key": "business_plan",
+    "label": "A business plan",
+    "to": "/blueprint?tab=business-plans",
+    "done": false
+   },
+   {
+    "key": "registered",
+    "label": "Business registration",
+    "to": "/registration",
+    "done": false
+   },
+   {
+    "key": "costs_and_funding",
+    "label": "Planned costs and funding figures",
+    "to": "/launch",
+    "done": false
+   }
+  ],
+  "done": 3,
+  "total": 7,
+  "percent": 43
+ },
+ "funding_readiness": null,
+ "launch_check": null,
+ "readiness_features": {
+  "funding": true,
+  "launch": true
+ },
+ "registration_status": {
+  "registered": false,
+  "number": null,
+  "steps_done": 2,
+  "steps_total": 12,
+  "label": "Not registered",
+  "progress": "2 of 12 steps",
+  "subject": "Altmosphere Consulting"
+ },
+ "insights": [
+  {
+   "positive": false,
+   "note": null,
+   "key": "blocker",
+   "widget_id": "blocker",
+   "widget_version": 1,
+   "title": "Launch / Funding Blocker",
+   "tone": "rose",
+   "text": "4 things are still missing before launch: A validated business idea; a business plan; business registration…",
+   "state": "available",
+   "severity": "high",
+   "priority_class": 1,
+   "detail": null,
+   "cta": {
+    "label": "Add a validated business idea",
+    "to": "/validation"
+   },
+   "more": {
+    "to": "/validation"
+   },
+   "agent_action": null,
+   "items": [
+    {
+     "label": "A validated business idea",
+     "to": "/validation"
+    },
+    {
+     "label": "A business plan",
+     "to": "/blueprint?tab=business-plans"
+    },
+    {
+     "label": "Business registration",
+     "to": "/registration"
+    },
+    {
+     "label": "Planned costs and funding figures",
+     "to": "/simulation"
+    }
+   ],
+   "why": {
+    "summary": "These are required before launch and aren't on your business's records yet.",
+    "evidence": [
+     {
+      "label": "A validated business idea",
+      "value": "Missing"
+     },
+     {
+      "label": "A business plan",
+      "value": "Missing"
+     },
+     {
+      "label": "Business registration",
+      "value": "Missing"
+     },
+     {
+      "label": "Planned costs and funding figures",
+      "value": "Missing"
+     }
+    ],
+    "source": "Your business profile, catalogue and records",
+    "missing": [
+     "A validated business idea",
+     "A business plan",
+     "Business registration",
+     "Planned costs and funding figures"
+    ],
+    "as_of": null
+   },
+   "goal_match": false
+  },
+  {
+   "positive": false,
+   "note": null,
+   "key": "scenario",
+   "widget_id": "scenario",
+   "widget_version": 1,
+   "title": "Suggested Scenario",
+   "tone": "indigo",
+   "text": "I need your planned monthly costs in a launch plan before I can work out what a cost rise does to your runway.",
+   "state": "available",
+   "severity": null,
+   "priority_class": 3,
+   "detail": null,
+   "cta": {
+    "label": "See the scenario",
+    "to": "/simulation?template=tmpl_cost_increase"
+   },
+   "more": null,
+   "agent_action": null,
+   "items": [],
+   "why": {
+    "summary": "Before the first sale, runway depends only on funding and planned costs, so a rise in costs shortens it directly.",
+    "evidence": [],
+    "source": "Scenario engine",
+    "missing": [],
+    "as_of": null
+   },
+   "goal_match": false
+  },
+  {
+   "positive": false,
+   "note": null,
+   "key": "next_step",
+   "widget_id": "next_step",
+   "widget_version": 1,
+   "title": "Recommended Next Step",
+   "tone": "brand",
+   "text": "3 of 7 launch items in place. I need from you: a validated business idea.",
+   "state": "available",
+   "severity": "medium",
+   "priority_class": 4,
+   "detail": "3 of 7 launch items in place",
+   "cta": {
+    "label": "Add it",
+    "to": "/validation"
+   },
+   "more": null,
+   "agent_action": null,
+   "items": [],
+   "why": {
+    "summary": "The first item on your launch checklist that isn't done yet.",
+    "evidence": [
+     {
+      "label": "Business name",
+      "value": "Done"
+     },
+     {
+      "label": "Business email address",
+      "value": "Done"
+     },
+     {
+      "label": "A validated business idea",
+      "value": "Missing"
+     },
+     {
+      "label": "At least one product or service with a price",
+      "value": "Done"
+     },
+     {
+      "label": "A business plan",
+      "value": "Missing"
+     },
+     {
+      "label": "Business registration",
+      "value": "Missing"
+     },
+     {
+      "label": "Planned costs and funding figures",
+      "value": "Missing"
+     }
+    ],
+    "source": "Your launch checklist",
+    "missing": [],
+    "as_of": null
+   },
+   "goal_match": false
+  },
+  {
+   "positive": false,
+   "note": null,
+   "key": "funding_gaps",
+   "widget_id": "funding_gaps",
+   "widget_version": 1,
+   "title": "Funding Readiness Gaps",
+   "tone": "indigo",
+   "text": "4 things a funder will ask for are not on record yet: A business plan; planned costs; how much funding you need…",
+   "state": "available",
+   "severity": null,
+   "priority_class": 5,
+   "detail": null,
+   "cta": {
+    "label": "Add a business plan",
+    "to": "/blueprint?tab=business-plans"
+   },
+   "more": null,
+   "agent_action": null,
+   "items": [
+    {
+     "label": "A business plan",
+     "to": "/blueprint?tab=business-plans"
+    },
+    {
+     "label": "Planned costs",
+     "to": "/simulation"
+    },
+    {
+     "label": "How much funding you need",
+     "to": "/simulation"
+    },
+    {
+     "label": "Funding or starting cash already secured",
+     "to": "/simulation"
+    }
+   ],
+   "why": {
+    "summary": "A funder expects a plan and the figures behind it.",
+    "evidence": [
+     {
+      "label": "A business plan",
+      "value": "Missing"
+     },
+     {
+      "label": "Planned costs",
+      "value": "Missing"
+     },
+     {
+      "label": "How much funding you need",
+      "value": "Missing"
+     },
+     {
+      "label": "Funding or starting cash already secured",
+      "value": "Missing"
+     }
+    ],
+    "source": "Your plan and its figures",
+    "missing": [
+     "A business plan",
+     "Planned costs",
+     "How much funding you need",
+     "Funding or starting cash already secured"
+    ],
+    "as_of": null
+   },
+   "goal_match": false
+  }
+ ],
+ "composition_key": "f5c641e6b16f3fe6",
+ "max_priority_cards": 4,
+ "agent": {
+  "business_id": "A",
+  "entitlement": {
+   "plan": "starter_insight",
+   "is_paid": true,
+   "max_autonomy": "A3",
+   "agent_tasks": true,
+   "capabilities": [
+    "add_catalogue_item",
+    "add_customer",
+    "add_vendor",
+    "business_plan_draft",
+    "capacity_check",
+    "credit_note",
+    "enquiry_to_quote",
+    "expansion_scenario",
+    "funding_pack_draft",
+    "idea_validation",
+    "launch_evidence_gaps",
+    "market_size",
+    "marketplace_offering",
+    "marketplace_profile",
+    "new_contract",
+    "new_invoice",
+    "new_proposal",
+    "new_purchase_order",
+    "offer_review",
+    "payment_followup",
+    "price_test",
+    "quote_to_cash",
+    "readiness_refresh",
+    "receipt_send",
+    "record_expense",
+    "record_payment",
+    "registration_checklist",
+    "risk_concentration",
+    "sales_letter_draft",
+    "scenario_help",
+    "supplier_bill",
+    "update_record"
+   ],
+   "locked": {},
+   "quotas": {
+    "scenario_help": {
+     "limit": 4,
+     "used": 0
+    }
+   },
+   "allowance_counts": true,
+   "agent_tasks_from": "Explorer",
+   "monthly_runs": 50,
+   "monthly_runs_used": 0,
+   "credits": 100,
+   "can_prepare": true,
+   "can_approve": true,
+   "can_manage_policy": true
+  },
+  "suggestions": [
+   {
+    "key": "stage_blockers",
+    "icon": "bulb",
+    "tone": "indigo",
+    "text": "Your idea hasn't been scored yet. I can score it before you launch.",
+    "action": {
+     "to": "/validation"
+    },
+    "mood": "suggested"
+   },
+   {
+    "key": "stage_funding",
+    "icon": "chat",
+    "text": "I need a funding case before the funding pack can be drafted.",
+    "action": {
+     "to": "/funding"
+    },
+    "mood": "needs_you",
+    "tone": "amber"
+   },
+   {
+    "key": "stage_register",
+    "icon": "bulb",
+    "text": "Prepare my registration checklist",
+    "action": {
+     "to": "/registration"
+    },
+    "mood": "suggested",
+    "tone": "indigo"
+   }
+  ],
+  "needs_approval": [],
+  "needs_approval_count": 0,
+  "needs_attention_count": 0,
+  "active_runs": [],
+  "risks": [],
+  "insights": [
+   {
+    "key": "next_step",
+    "title": "Recommended Next Step",
+    "tone": "brand",
+    "text": "Record your first invoice or quotation so EnterprateAI can start tracking performance.",
+    "cta": {
+     "label": "Open Essentials",
+     "to": "/operations"
+    },
+    "more": {
+     "to": "/operations"
+    },
+    "detail": null
+   },
+   {
+    "key": "risk",
+    "title": "Fragility / Risk Alert",
+    "tone": "rose",
+    "text": "No revenue recorded yet, so there is nothing to measure customer concentration against.",
+    "cta": {
+     "label": "View risk details",
+     "capability": "risk_concentration"
+    },
+    "more": {
+     "capability": "risk_concentration"
+    }
+   },
+   {
+    "key": "scenario",
+    "title": "Suggested Scenario",
+    "tone": "indigo",
+    "text": "A 10% cost rise is the standard stress test for your margins.",
+    "cta": {
+     "label": "See the scenario",
+     "capability": "scenario_help",
+     "params": {
+      "scenario": "cost_increase",
+      "params": {
+       "pct": 10
+      }
+     }
+    },
+    "more": {
+     "to": "/simulation"
+    }
+   },
+   {
+    "key": "cash",
+    "title": "Cash Position",
+    "tone": "emerald",
+    "text": "Your cash position is £0.00. Record expenses to see your runway.",
+    "cta": {
+     "label": "View cash forecast",
+     "to": "/operations?tab=Reports"
+    },
+    "more": {
+     "to": "/operations?tab=Reports"
+    }
+   }
+  ],
+  "currency": "GBP",
+  "hidden_capabilities": [
+   "payment_followup",
+   "quote_to_cash",
+   "receipt_send",
+   "risk_concentration"
+  ],
+  "shortcuts": [
+   {
+    "key": "launch_checklist",
+    "label": "Setup Checklist",
+    "icon": "doc",
+    "action": {
+     "to": "/dashboard?report=open"
+    }
+   },
+   {
+    "key": "funding_pack",
+    "label": "Funding Pack",
+    "icon": "doc",
+    "action": {
+     "to": "/funding"
+    }
+   },
+   {
+    "key": "registration",
+    "label": "Registration",
+    "icon": "doc",
+    "action": {
+     "to": "/registration"
+    }
+   },
+   {
+    "key": "scenario_help",
+    "label": "Scenario Help",
+    "icon": "bars",
+    "action": {
+     "capability": "scenario_help",
+     "prompt": "What happens if my costs rise by 10%?"
+    }
+   }
+  ],
+  "placeholder": "Ask EnterprateAI to help with your launch, funding or registration…"
+ },
+ "needs_approval": [],
+ "report": {
+  "key": "launch_readiness_report",
+  "widget_id": "launch_readiness_report",
+  "title": "Setup checklist",
+  "description": "The basics your business has on record, and what is still to add.",
+  "cta": "View setup checklist",
+  "action": {
+   "panel": "launch_readiness"
+  },
+  "secondary": {
+   "label": "Launch readiness check",
+   "to": "/launch"
+  },
+  "has_result": true
+ },
+ "freshness": {
+  "generated_at": "2026-10-01T09:00:00+00:00",
+  "data_as_of": null,
+  "stale_after_days": 30,
+  "stale": false,
+  "stale_reason": null
+ },
+ "entitlement": {
+  "plan": "starter_insight",
+  "is_paid": true,
+  "max_autonomy": "A3",
+  "agent_tasks": true,
+  "capabilities": [
+   "add_catalogue_item",
+   "add_customer",
+   "add_vendor",
+   "business_plan_draft",
+   "capacity_check",
+   "credit_note",
+   "enquiry_to_quote",
+   "expansion_scenario",
+   "funding_pack_draft",
+   "idea_validation",
+   "launch_evidence_gaps",
+   "market_size",
+   "marketplace_offering",
+   "marketplace_profile",
+   "new_contract",
+   "new_invoice",
+   "new_proposal",
+   "new_purchase_order",
+   "offer_review",
+   "payment_followup",
+   "price_test",
+   "quote_to_cash",
+   "readiness_refresh",
+   "receipt_send",
+   "record_expense",
+   "record_payment",
+   "registration_checklist",
+   "risk_concentration",
+   "sales_letter_draft",
+   "scenario_help",
+   "supplier_bill",
+   "update_record"
+  ],
+  "locked": {},
+  "quotas": {
+   "scenario_help": {
+    "limit": 4,
+    "used": 0
+   }
+  },
+  "allowance_counts": true,
+  "agent_tasks_from": "Explorer",
+  "monthly_runs": 50,
+  "monthly_runs_used": 0,
+  "credits": 100,
+  "can_prepare": true,
+  "can_approve": true,
+  "can_manage_policy": true,
+  "credits_exhausted": false
+ },
+ "preferences": {
+  "current_goal": null,
+  "pinned_widget_ids": [],
+  "hidden_widget_ids": [],
+  "preferred_layout": "default",
+  "updated_at": null
+ },
+ "widgets": [
+  {
+   "widget_id": "blocker",
+   "version": 1,
+   "widget_type": "insight",
+   "title": "Launch / Funding Blocker",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "BusinessProfile",
+    "Assessment"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 1,
+   "supported_actions": [
+    "open_tool"
+   ],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "approval",
+   "version": 1,
+   "widget_type": "insight",
+   "title": "Approval Due Soon",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [
+    "Approval"
+   ],
+   "required_permissions": [
+    "send"
+   ],
+   "required_entitlements": [],
+   "priority_class": 2,
+   "supported_actions": [
+    "open_run"
+   ],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "next_step",
+   "version": 1,
+   "widget_type": "insight",
+   "title": "Recommended Next Step",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [
+    "Recommendation"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 4,
+   "supported_actions": [
+    "open_tool",
+    "agent"
+   ],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "scenario",
+   "version": 1,
+   "widget_type": "insight",
+   "title": "Suggested Scenario",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [
+    "Scenario"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [
+    "open_tool",
+    "agent"
+   ],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "funding_gaps",
+   "version": 1,
+   "widget_type": "insight",
+   "title": "Funding Readiness Gaps",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "Financial data",
+    "BusinessProfile"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [
+    "open_tool"
+   ],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "business_plan",
+   "version": 1,
+   "widget_type": "action_card",
+   "title": "Business Plan",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "description": "Draft and refine a structured plan for your business.",
+    "cta": "Open Business Plans",
+    "href": "/blueprint?tab=business-plans",
+    "icon": "book"
+   }
+  },
+  {
+   "widget_id": "scenarios",
+   "version": 1,
+   "widget_type": "action_card",
+   "title": "Scenarios",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "description": "Simulate decisions and forecast outcomes.",
+    "cta": "Open Simulator",
+    "href": "/simulation",
+    "icon": "bars"
+   }
+  },
+  {
+   "widget_id": "registration",
+   "version": 1,
+   "widget_type": "action_card",
+   "title": "Business Registration",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch"
+   ],
+   "required_sources": [],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "description": "Register the business and cover the legal steps.",
+    "cta": "Open Registration",
+    "href": "/registration",
+    "icon": "shield"
+   }
+  },
+  {
+   "widget_id": "funding_readiness",
+   "version": 1,
+   "widget_type": "action_card",
+   "title": "Funding Readiness",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "description": "Check how prepared you are to approach funders, and what is missing.",
+    "cta": "Check Funding Readiness",
+    "href": "/funding",
+    "icon": "cash"
+   }
+  },
+  {
+   "widget_id": "launch_readiness",
+   "version": 1,
+   "widget_type": "kpi",
+   "title": "Launch Readiness",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "BusinessProfile"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "to": "/launch"
+   }
+  },
+  {
+   "widget_id": "runway",
+   "version": 1,
+   "widget_type": "kpi",
+   "title": "Runway",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "Financial data"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "to": "/operations?tab=Reports"
+   }
+  },
+  {
+   "widget_id": "planned_costs",
+   "version": 1,
+   "widget_type": "kpi",
+   "title": "Planned Costs",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "Financial data"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "to": "/simulation"
+   }
+  },
+  {
+   "widget_id": "funding_secured",
+   "version": 1,
+   "widget_type": "kpi",
+   "title": "Funding Secured",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "Financial data"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "to": "/simulation"
+   }
+  },
+  {
+   "widget_id": "launch_risks",
+   "version": 1,
+   "widget_type": "kpi",
+   "title": "Active Risks",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "Assessment"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "to": "/launch",
+    "good_when_up": false
+   }
+  },
+  {
+   "widget_id": "launch_readiness_report",
+   "version": 1,
+   "widget_type": "report",
+   "title": "Setup checklist",
+   "supported_pathways": [
+    "startup"
+   ],
+   "eligible_business_stages": [
+    "pre_launch"
+   ],
+   "required_sources": [
+    "BusinessProfile"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {
+    "description": "The basics your business has on record, and what is still to add.",
+    "cta": "View setup checklist",
+    "action": {
+     "panel": "launch_readiness"
+    },
+    "secondary": {
+     "label": "Launch readiness check",
+     "to": "/launch"
+    }
+   }
+  },
+  {
+   "widget_id": "agent",
+   "version": 1,
+   "widget_type": "panel",
+   "title": "EnterprateAI Agent",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [
+    "WorkflowRun",
+    "Recommendation",
+    "AI Credits"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {}
+  },
+  {
+   "widget_id": "needs_approval",
+   "version": 1,
+   "widget_type": "panel",
+   "title": "Needs Approval",
+   "supported_pathways": [
+    "startup",
+    "small_business"
+   ],
+   "eligible_business_stages": [
+    "idea",
+    "pre_launch",
+    "startup",
+    "operating",
+    "growth"
+   ],
+   "required_sources": [
+    "Approval"
+   ],
+   "required_permissions": [
+    "view"
+   ],
+   "required_entitlements": [],
+   "priority_class": 5,
+   "supported_actions": [],
+   "active_flag": true,
+   "config": {}
+  }
+ ]
+}

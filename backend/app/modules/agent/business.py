@@ -25,6 +25,10 @@ class Business:
     async def mutate(self, business_id: str, fn: Callable[[dict], Any]) -> Any: raise NotImplementedError
     async def owner_id(self, business_id: str) -> str: raise NotImplementedError
 
+    async def load_many(self, business_ids: list[str]) -> dict[str, dict]:
+        """Load several business records in one backend operation where supported."""
+        return {business_id: await self.load(business_id) for business_id in dict.fromkeys(business_ids)}
+
     async def record(self, business_id: str) -> dict:
         """Owner and data together. Implementations should do this in one read."""
         return {"owner_id": await self.owner_id(business_id), "data": await self.load(business_id)}
@@ -39,6 +43,16 @@ class Business:
 
     async def owned_by(self, user_id: str) -> list[dict]:
         """The businesses this user owns: [{"id", "name", "data"}]."""
+        raise NotImplementedError
+
+    async def close(self, business_id: str) -> dict:
+        """Nobody can open it any more: no owner, no members, no open invitations. Returns what is needed to put it back."""
+        raise NotImplementedError
+
+    async def reopen(self, business_id: str, closed: dict) -> None:
+        raise NotImplementedError
+
+    async def purge(self, business_id: str) -> None:
         raise NotImplementedError
 
     async def create(self, user_id: str, name: str, data: dict, business_id: str | None = None) -> str:
@@ -94,8 +108,23 @@ class MemoryBusiness(Business):
         return build_actor(user_id=user_id, email=email, business_id=business_id, owner_id=b["owner"],
                            membership=(b.get("members") or {}).get(user_id), policy=policy)
 
+    async def close(self, business_id):
+        b = self.businesses[business_id]
+        closed = {"owner_id": b["owner"], "members": copy.deepcopy(b.get("members") or {})}
+        b["owner"], b["members"] = None, {}
+        return closed
+
+    async def reopen(self, business_id, closed):
+        self.businesses[business_id].update({"owner": closed["owner_id"], "members": copy.deepcopy(closed.get("members") or {})})
+
+    async def purge(self, business_id):
+        self.businesses.pop(business_id, None)
+
     async def load(self, business_id):
         return copy.deepcopy(self.businesses[business_id]["data"])
+
+    async def load_many(self, business_ids):
+        return {bid: copy.deepcopy(self.businesses[bid]["data"]) for bid in dict.fromkeys(business_ids) if bid in self.businesses}
 
     async def mutate(self, business_id, fn):
         data = self.businesses[business_id]["data"]
@@ -143,6 +172,14 @@ class SupabaseBusiness(Business):
     async def load(self, business_id):
         return (await self._row(business_id)).get("data") or {}
 
+    async def load_many(self, business_ids):
+        ids = list(dict.fromkeys(str(bid) for bid in business_ids if bid))
+        if not ids:
+            return {}
+        from app.core.supabase import sb_select
+        rows = await sb_select("workspaces", filters=[("id", "in", ids)], columns="id,data") or []
+        return {str(row["id"]): row.get("data") or {} for row in rows}
+
     async def context(self, user_id, business_id, email=None):
         from app.core.supabase import sb_select
         row = await self._row(business_id)      # one read serves both the authority check and the record
@@ -167,6 +204,25 @@ class SupabaseBusiness(Business):
                 found[str(r["id"])] = {"id": str(r["id"]), "name": ((r.get("data") or {}).get("workspace_profile") or {}).get("company_name") or r.get("name") or ""}
         return list(found.values())
 
+    async def close(self, business_id):
+        from app.core.supabase import sb_delete, sb_select, sb_update
+        row = await self._row(business_id)
+        members = await sb_select("workspace_members", filters=[("workspace_id", "eq", business_id)]) or []
+        await sb_update("workspaces", filters=[("id", "eq", business_id)], payload={"user_id": None})      # every look-up of a person's workspaces goes by this
+        await sb_delete("workspace_members", filters=[("workspace_id", "eq", business_id)])
+        await sb_delete("workspace_invitations", filters=[("workspace_id", "eq", business_id)])
+        return {"owner_id": str(row["user_id"]), "members": members}
+
+    async def reopen(self, business_id, closed):
+        from app.core.supabase import sb_insert, sb_update
+        await sb_update("workspaces", filters=[("id", "eq", business_id)], payload={"user_id": closed["owner_id"]})
+        for member in closed.get("members") or []:
+            await sb_insert("workspace_members", member)
+
+    async def purge(self, business_id):
+        from app.shared.auth.purge import purge_workspace
+        await purge_workspace(business_id)
+
     async def owned_by(self, user_id):
         from app.core.supabase import sb_select
         rows = await sb_select("workspaces", filters=[("user_id", "eq", user_id)], columns="id,name,data", order="updated_at", desc=True) or []
@@ -184,6 +240,8 @@ class SupabaseBusiness(Business):
         except Exception as e:      # noqa: BLE001 - a simultaneous retry created it first
             if "23505" not in f"{getattr(e, 'code', '')} {e}":
                 raise
+        from app.modules.agent.autostart import off_for_new_workspace
+        await off_for_new_workspace(bid, user_id)      # no unasked credit spending in a new workspace
         return bid
 
     async def mutate(self, business_id, fn):
@@ -199,7 +257,12 @@ class SupabaseBusiness(Business):
                     raise BusinessAccessDenied("Business not found.")
                 current = rows[0]
                 data = copy.deepcopy(current.get("data") or {})
+                before = copy.deepcopy(data.get("workspace_profile"))
                 result = fn(data)
+                if data.get("workspace_profile") != before:
+                    # The profile is master data: a change here gets a new revision, so a page holding an older copy can
+                    # never save that copy back over it (sb_update keeps the newer revision).
+                    data["workspace_profile_updated_at"] = datetime.now(timezone.utc).isoformat()
                 q = client.table("workspaces").update({"data": data, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", business_id)
                 if current.get("updated_at"):
                     q = q.eq("updated_at", current["updated_at"])
@@ -296,10 +359,38 @@ def parse_day(value: Any) -> date | None:
             return None
 
 
+# C5: a business with no time zone of its own keeps its country's (the main one where a country has several), never the
+# zone of whoever's browser opened the settings.
+COUNTRY_ZONES = {
+    "united kingdom": "Europe/London", "uk": "Europe/London", "gb": "Europe/London", "great britain": "Europe/London", "england": "Europe/London",
+    "scotland": "Europe/London", "wales": "Europe/London", "northern ireland": "Europe/London", "ireland": "Europe/Dublin", "ie": "Europe/Dublin",
+    "nigeria": "Africa/Lagos", "ng": "Africa/Lagos", "ghana": "Africa/Accra", "gh": "Africa/Accra", "kenya": "Africa/Nairobi", "ke": "Africa/Nairobi",
+    "south africa": "Africa/Johannesburg", "za": "Africa/Johannesburg", "egypt": "Africa/Cairo", "uganda": "Africa/Kampala", "rwanda": "Africa/Kigali",
+    "tanzania": "Africa/Dar_es_Salaam", "united states": "America/New_York", "usa": "America/New_York", "us": "America/New_York",
+    "canada": "America/Toronto", "ca": "America/Toronto", "australia": "Australia/Sydney", "au": "Australia/Sydney", "new zealand": "Pacific/Auckland",
+    "india": "Asia/Kolkata", "in": "Asia/Kolkata", "pakistan": "Asia/Karachi", "united arab emirates": "Asia/Dubai", "uae": "Asia/Dubai",
+    "singapore": "Asia/Singapore", "germany": "Europe/Berlin", "de": "Europe/Berlin", "france": "Europe/Paris", "fr": "Europe/Paris",
+    "spain": "Europe/Madrid", "es": "Europe/Madrid", "italy": "Europe/Rome", "netherlands": "Europe/Amsterdam", "nl": "Europe/Amsterdam",
+    "belgium": "Europe/Brussels", "portugal": "Europe/Lisbon", "poland": "Europe/Warsaw", "sweden": "Europe/Stockholm", "jamaica": "America/Jamaica",
+}
+
+
+def zone_of_country(country: str | None) -> str | None:
+    key = " ".join(str(country or "").lower().replace(".", "").split())
+    return COUNTRY_ZONES.get(key)
+
+
+def zone_name(data: dict) -> str:
+    """The business's time zone by name: its own, else its country's, else UTC."""
+    profile = (data or {}).get("workspace_profile") or {}
+    own = str(profile.get("timezone") or "").strip()
+    return own if own and valid_timezone(own) else (zone_of_country(profile.get("country")) or "UTC")
+
+
 def business_timezone(data: dict):
-    """The business's own time zone (workspace_profile.timezone, an IANA name), or UTC."""
-    name = str(((data or {}).get("workspace_profile") or {}).get("timezone") or "").strip()
-    if name:
+    """The business's own time zone (workspace_profile.timezone, an IANA name), else its country's (C5), else UTC."""
+    name = zone_name(data)
+    if name and name != "UTC":
         try:
             from zoneinfo import ZoneInfo
             return ZoneInfo(name)
@@ -439,10 +530,150 @@ def overdue_invoices(data: dict, today: date) -> list[dict]:
 
 
 def currency_of(data: dict) -> str:
-    cur = str((data.get("settings") or {}).get("currency") or "GBP")
+    """The workspace currency: the saved one; with none saved, its country's ("Nigeria": NGN, the owner's QA, 16 Oct),
+    never GBP for a business that says it is elsewhere; GBP only when nothing is known."""
     import re
-    m = re.search(r"\(([A-Z]{3})\)", cur) or re.match(r"^([A-Z]{3})$", cur.strip().upper())
-    return m.group(1) if m else "GBP"
+    saved = str((data.get("settings") or {}).get("currency") or "")
+    m = re.search(r"\(([A-Z]{3})\)", saved) or re.match(r"^([A-Z]{3})$", saved.strip().upper())
+    if m:
+        return m.group(1)
+    return country_currency(data) or "GBP"
+
+
+def known_currency(data: dict) -> str | None:
+    """The workspace currency when one is known (saved, or its country's); None when only the GBP fallback would say."""
+    import re
+    saved = str(((data or {}).get("settings") or {}).get("currency") or "")
+    m = re.search(r"\(([A-Z]{3})\)", saved) or re.match(r"^([A-Z]{3})$", saved.strip().upper())
+    return m.group(1) if m else country_currency(data)
+
+
+def country_currency(data: dict) -> str | None:
+    """The currency of the country on the workspace profile, or None."""
+    country = ((data or {}).get("workspace_profile") or {}).get("country")
+    if not country:
+        return None
+    try:
+        from app.modules.agent.credibility import currency_of_country
+        return currency_of_country(country)
+    except Exception:      # noqa: BLE001
+        return None
+
+
+def save_country_currency(data: dict) -> str | None:
+    """With no currency saved and a country on the profile: that country's currency, saved (documents already made keep
+    the one they were made in). Returns the code saved, or None."""
+    if str((data.get("settings") or {}).get("currency") or "").strip():
+        return None
+    code = country_currency(data)
+    if not code:
+        return None
+    stamp_document_currencies(data, "GBP")      # made before any currency was saved: GBP, the default they showed in
+    data.setdefault("settings", {})["currency"] = code
+    return code
+
+
+DOCUMENT_LISTS = ("invoices", "quotes", "quotations", "receipts", "contracts", "credit_notes", "purchase_orders", "proposals")
+
+
+def doc_currency(doc: dict | None, default: str | None = None) -> str:
+    """A document's own currency, kept for ever (the owner's QA, 16 Oct): what it was created in, never the workspace's
+    current one. Only a document that never had one falls back to the default."""
+    import re
+    cur = str((doc or {}).get("currency") or "").strip().upper()
+    m = re.match(r"^([A-Z]{3})$", cur) or re.search(r"\(([A-Z]{3})\)", cur)
+    return m.group(1) if m else (default or "GBP")
+
+
+def fx_rate(data: dict, code: str) -> float | None:
+    """The stored rate from one currency to the workspace's (data["fx_rates"], refreshed daily by fx.ensure); 1 for the same
+    currency; None when no rate is stored yet."""
+    base = currency_of(data)
+    if not code or code == base:
+        return 1.0
+    snap = data.get("fx_rates") or {}
+    if snap.get("base") != base:
+        return None
+    r = (snap.get("rates") or {}).get(code)
+    return float(r) if r else None
+
+
+def convert(data: dict, amount: float | None, frm: str | None, to: str | None) -> float | None:
+    """An amount from one currency into another at the stored rates (through the workspace currency); None when a rate
+    isn't known yet, never the same figure under another sign (the owner's QA, 21 Oct: £600 shown as ₦600)."""
+    if amount is None:
+        return None
+    frm, to = str(frm or currency_of(data)).upper(), str(to or currency_of(data)).upper()
+    if frm == to:
+        return float(amount)
+    a = float(amount) * r if (r := fx_rate(data, frm)) is not None else None
+    if a is None:
+        return None
+    back = fx_rate(data, to)
+    return money(a / back) if back else None
+
+
+def in_base(data: dict, doc: dict, amount: float) -> float | None:
+    """A document's amount in the workspace currency: at the rate pinned on it when it was first converted, else the stored
+    rate; None when no rate is known yet."""
+    base = currency_of(data)
+    pinned = (doc or {}).get("fx") or {}
+    if doc_currency(doc, base) != base and pinned.get("to") == base and pinned.get("rate"):
+        return money(float(amount or 0) * float(pinned["rate"]))
+    r = fx_rate(data, doc_currency(doc, base))
+    return money(float(amount or 0) * r) if r is not None else None
+
+
+def total_of(data: dict, docs: list[dict], amount) -> dict:
+    """A total across documents in the workspace currency (the owner's QA, 16 Oct): each converted at the stored rate and
+    date, marked converted when any was; one whose rate is not known is left out and named, never added as if it were."""
+    base = currency_of(data)
+    value, converted, missing = 0.0, False, {}
+    for d in docs:
+        a = float(amount(d) or 0)
+        if not a:
+            continue
+        cur = doc_currency(d, base)
+        v = in_base(data, d, a)
+        if v is None:
+            missing[cur] = money(missing.get(cur, 0) + a)
+            continue
+        value += v
+        converted = converted or cur != base
+    snap = data.get("fx_rates") or {}
+    used = sorted({(snap.get("dates") or {}).get(doc_currency(d, base)) or snap.get("date") for d in docs if doc_currency(d, base) != base} - {None})
+    return {"value": money(value), "converted": converted, "missing": missing, "rate_date": (used[0] if used else snap.get("date")) if converted else None}
+
+
+def rate_words(day: str | None, today: date | None = None) -> str:
+    """" at 16 Oct rate", or " at 12 Oct rate, which may be out of date" when the rate is more than 2 days old."""
+    d = parse_day(day)
+    if not d:
+        return ""
+    today = today or datetime.now(timezone.utc).date()
+    label = f"{d.day} {d.strftime('%b')}"
+    return f" at {label} rate" + (", which may be out of date" if (today - d).days > 2 else "")
+
+
+def fmt_total(t: dict, currency: str) -> str:
+    """"£3,045.00", or "≈ ₦6,420,000" when other currencies were converted into it, with what could not be converted."""
+    from app.modules.agent.documents import fmt_money as _fmt
+    shown = ("≈ " if t.get("converted") else "") + _fmt(t["value"], currency) + rate_words(t.get("rate_date") if t.get("converted") else None)
+    left = [_fmt(v, c) for c, v in (t.get("missing") or {}).items()]
+    return shown + (f" (plus {' and '.join(left)} not converted yet)" if left else "")
+
+
+def stamp_document_currencies(data: dict, currency: str) -> int:
+    """Before the workspace currency changes: every document with no currency of its own gets the one it was made in (the
+    workspace's until now), so the change never relabels it. Returns how many were stamped."""
+    f = data.get("financials") if isinstance(data.get("financials"), dict) else {}
+    n = 0
+    for key in DOCUMENT_LISTS:
+        for d in f.get(key) or []:
+            if isinstance(d, dict) and not str(d.get("currency") or "").strip():
+                d["currency"] = currency
+                n += 1
+    return n
 
 
 def company_of(data: dict) -> dict:
@@ -482,7 +713,9 @@ def revenue_by_customer(data: dict, since: date | None = None) -> dict[str, floa
         if since and d and d < since:
             continue
         name = str(inv.get("customer_name") or inv.get("recipient") or "Unknown").strip() or "Unknown"
-        out[name] = money(out.get(name, 0) + invoice_total(inv))
+        v = in_base(data, inv, invoice_total(inv))      # in the workspace currency; a document with no rate yet is left out
+        if v is not None:
+            out[name] = money(out.get(name, 0) + v)
     return out
 
 
@@ -509,14 +742,14 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
     f = data.get("financials") or {}
     invs = [i for i in f.get("invoices") or [] if not i.get("archived")]
     exps = [e for e in f.get("expenses") or [] if not e.get("archived")]
-    cash_in = sum(invoice_received(i) for i in invs if status_of(i) == "paid")
+    cash_in = sum(in_base(data, i, invoice_received(i)) or 0 for i in invs if status_of(i) == "paid")
     paid_exps = [e for e in exps if status_of(e) == "paid"]
     cash_out = sum(money(e.get("price") or e.get("total_amount")) for e in paid_exps)
     cos = 0.0
     for i in invs:
         if status_of(i) == "paid":
             total = invoice_total(i)
-            cos += money(i.get("cost_of_sales")) * (invoice_received(i) / total if total else 1)
+            cos += (in_base(data, i, money(i.get("cost_of_sales"))) or 0) * (invoice_received(i) / total if total else 1)
     cash = money(cash_in - cash_out - cos)
     # Burn = average monthly paid expenses over the last 3 months with any activity.
     since = today - timedelta(days=92)
@@ -524,12 +757,18 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
               if (parse_day(e.get("date") or e.get("expense_date") or e.get("created_at")) or today) >= since]
     burn = money(sum(recent) / 3) if recent else 0.0
     runway = round(cash / burn, 1) if burn > 0 and cash > 0 else None
-    return {"cash": cash, "monthly_burn": burn, "runway_months": runway}
+    # `recorded`: whether any money in or out is on record at all. Without it, 0 is not a cash position (QA P2-5).
+    paid_in = any(status_of(i) == "paid" for i in invs)
+    return {"cash": cash, "monthly_burn": burn, "runway_months": runway, "recorded": bool(paid_in or paid_exps)}
 
 
 def simulate(data: dict, scenario: str, params: dict, today: date) -> dict[str, Any]:
-    """Deterministic what-if on authoritative records. No LLM involvement."""
+    """Deterministic what-if on authoritative records. No LLM involvement. Cash and monthly costs are the shared figures
+    (R-4, agent/figures.py): the same the risk check and the dashboard show, the owner's own answers included."""
+    from app.modules.agent import figures
     cp = cash_position(data, today)
+    f = figures.of(data, today)
+    cp = {**cp, "cash": f["cash"] if f["cash"] is not None else cp["cash"], "monthly_burn": money(f["costs_monthly"] or 0)}
     by = revenue_by_customer(data, since=today - timedelta(days=92))
     monthly_rev = money(sum(by.values()) / 3)
     if scenario == "client_loss":

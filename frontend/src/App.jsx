@@ -1,5 +1,5 @@
 import DialogHost from "./components/DialogHost";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Suspense, lazy, useEffect } from "react";
 import { DemoTourProvider } from "./context/DemoTourContext";
 import DemoTour from "./components/DemoTour";
@@ -22,6 +22,8 @@ import EssentialsPage from "./pages/EssentialsPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import AgentCentrePage from "./pages/AgentCentrePage";
 import ToolLibraryPage from "./pages/ToolLibraryPage";
+import QuickCheckPage from "./pages/QuickCheckPage";
+import { ArticlesRedirect, FeaturePage, FeaturesPage, HowItWorksPage, NotFound, TestimonialsPage, UseCasesPage } from "./pages/public/SitePages";
 import ReadinessPage from "./pages/ReadinessPage";
 import StartPage from "./pages/StartPage";
 import AgentRunPage from "./pages/AgentRunPage";
@@ -36,6 +38,7 @@ import RegistrationPage from "./pages/RegistrationPage";
 import CataloguePage from "./pages/CataloguePage";
 import InvoicePublicPage from "./pages/InvoicePublicPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import AdsPage from "./pages/AdsPage";
 import SharedBlueprintPage from "./pages/SharedBlueprintPage";
 import TeamPage from "./pages/TeamPage";
 import JoinPage from "./pages/JoinPage";
@@ -43,7 +46,9 @@ import AdminPage from "./pages/AdminPage";
 import PricingPage from "./pages/PricingPage";
 import PricingSuccessPage from "./pages/PricingSuccessPage";
 import MarketplacePage from "./pages/MarketplacePage";
+import SupplierSourcing from "./components/marketplace/SupplierSourcing";
 import DirectoryProfilePage from "./pages/DirectoryProfilePage";
+import ClaimEmailsOptOutPage from "./pages/ClaimEmailsOptOutPage";
 import ClaimFlowPage from "./pages/ClaimFlowPage";
 import MarketplaceProfilePage, { ProfileSkeleton } from "./pages/MarketplaceProfilePage";
 import { MarketplaceShell } from "./components/marketplace/MarketplaceHeader";
@@ -57,7 +62,10 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
 import IntegrationsCallbackPage from "./pages/IntegrationsCallbackPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
+import MarketplaceClaimLinkPage from "./pages/MarketplaceClaimLinkPage";
+import MarketplaceTeamInvitePage from "./pages/MarketplaceTeamInvitePage";
 import EmailPreferencesPage, { UnsubscribePage } from "./pages/EmailPreferencesPage";
+import EmailOptOutPage from "./pages/EmailOptOutPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsOfServicePage from "./pages/TermsOfServicePage";
 import DisclaimerPage from "./pages/DisclaimerPage";
@@ -95,6 +103,24 @@ function Protected({ children }) {
     return <Navigate to={`/login${next}`} replace />;
   }
   return <>{children}</>;
+}
+
+function MarketplaceSourcingPage() {
+  const { state, search: sourcingSearch } = useLocation();
+  const fromProcurement = new URLSearchParams(sourcingSearch).get("from") === "procurement";
+  const search = typeof state?.marketplaceSearch === "string" && state.marketplaceSearch.startsWith("?")
+    ? state.marketplaceSearch : "";
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 sm:py-10 dark:bg-slate-950">
+      <div className="mx-auto max-w-6xl">
+        <Link to={fromProcurement ? "/operations?tab=Procurement&sub=Proposal%20Requests" : { pathname: "/marketplace", search }}
+          className="mb-4 inline-flex items-center gap-2 rounded-md text-sm font-semibold text-slate-600 hover:text-brand-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 dark:text-slate-300 dark:hover:text-brand-300">
+          <span aria-hidden="true">&#8592;</span> {fromProcurement ? "Back to Proposal Requests" : "Back to Marketplace"}
+        </Link>
+        <SupplierSourcing />
+      </div>
+    </main>
+  );
 }
 
 function PublicRoot() {
@@ -144,16 +170,28 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      {/* QA F: a page for every item in the homepage's navigation, and for each Features and Articles menu item. */}
+      <Route path="/features" element={<FeaturesPage />} />
+      <Route path="/features/:slug" element={<FeaturePage />} />
+      <Route path="/how-it-works" element={<HowItWorksPage />} />
+      <Route path="/use-cases" element={<UseCasesPage />} />
+      <Route path="/testimonials" element={<TestimonialsPage />} />
+      <Route path="/articles" element={<ArticlesRedirect />} />
+      <Route path="/articles/:slug" element={<ArticlesRedirect />} />
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/pricing/success" element={<PricingSuccessPage />} />
       <Route path="/integrations/callback" element={<IntegrationsCallbackPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/marketplace/team-invite" element={<MarketplaceTeamInvitePage />} />
+      <Route path="/marketplace/claim-link" element={<MarketplaceClaimLinkPage />} />
       <Route path="/email/unsubscribe" element={<UnsubscribePage />} />
       <Route path="/email/preferences" element={<EmailPreferencesPage />} />
+      <Route path="/email/opt-out" element={<EmailOptOutPage />} />
       <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/legal/terms" element={<TermsOfServicePage />} />
       <Route path="/legal/disclaimer" element={<DisclaimerPage />} />
       <Route path="/r/:code" element={<ReferralClickPage />} />
+      <Route path="/ads" element={<AdsPage />} />
       <Route path="/book-demo" element={<BookDemoPage />} />
       <Route path="/blog" element={<BlogPage />} />
       <Route path="/blog/:slug" element={<BlogArticlePage />} />
@@ -176,6 +214,7 @@ export default function App() {
         <Route path="funding/:subjectId" element={<RequireWorkspace><ErrorBoundary label="Funding Readiness"><ReadinessPage feature="funding" /></ErrorBoundary></RequireWorkspace>} />
         <Route path="launch" element={<RequireWorkspace><ErrorBoundary label="Launch Readiness"><ReadinessPage feature="launch" /></ErrorBoundary></RequireWorkspace>} />
         <Route path="launch/:subjectId" element={<RequireWorkspace><ErrorBoundary label="Launch Readiness"><ReadinessPage feature="launch" /></ErrorBoundary></RequireWorkspace>} />
+        <Route path="check/:goal" element={<RequireWorkspace><QuickCheckPage /></RequireWorkspace>} />
         <Route path="agent" element={<RequireWorkspace><AgentCentrePage /></RequireWorkspace>} />
         <Route path="agent/runs/:runId" element={<RequireWorkspace><AgentRunPage /></RequireWorkspace>} />
         <Route path="validation" element={<ValidationWizardPage />} />
@@ -203,13 +242,15 @@ export default function App() {
         }
       />
       <Route path="/marketplace" element={<MarketplacePage />} />
+      <Route path="/marketplace/sourcing" element={<Protected><RequireWorkspace><MarketplaceSourcingPage /></RequireWorkspace></Protected>} />
       <Route path="/marketplace/request/:requestId" element={<Suspense fallback={<div className="p-6"><ContentSkeleton label="this request" /></div>}><ProposalRequestDetailPage /></Suspense>} />
       {/* A business's own Marketplace settings live in the Marketplace, under its header, not in the dashboard. */}
       <Route path="/marketplace/profile" element={<Protected><MarketplaceShell><RequireWorkspace fallback={<ProfileSkeleton />}><ErrorBoundary label="Marketplace profile"><MarketplaceProfilePage /></ErrorBoundary></RequireWorkspace></MarketplaceShell></Protected>} />
       <Route path="/marketplace-profile" element={<OldMarketplaceProfile />} />
       <Route path="/marketplace/business/:slug" element={<ErrorBoundary label="Business profile"><DirectoryProfilePage /></ErrorBoundary>} />
+      <Route path="/marketplace/invitations/:token/opt-out" element={<ClaimEmailsOptOutPage />} />
       <Route path="/marketplace/claim/:slug" element={<ErrorBoundary label="Claim your business"><ClaimFlowPage /></ErrorBoundary>} />
-      <Route path="*" element={<NotFoundPage />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
     <DemoTour />
     <CookieBanner />

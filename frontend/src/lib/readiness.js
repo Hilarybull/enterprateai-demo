@@ -9,14 +9,14 @@ export const FEATURES = {
     newLabel: "New funding case", nameField: "title", namePlaceholder: "For example: Seed round",
     intro: "See how prepared you are to approach funders, what evidence is missing and what to do next.",
     caveat: "Readiness measures preparation against the checklist. It is not the likelihood of securing investment.",
-    gatesTitle: "Gates", documentsTitle: "Materials",
+    gatesTitle: "Must-haves", documentsTitle: "Materials",
   },
   launch: {
     key: "launch", segment: "launch-initiatives", base: "/launch", title: "Launch Readiness", noun: "launch", nounPlural: "launches",
     newLabel: "New launch", nameField: "name", namePlaceholder: "For example: Bookkeeping service launch",
     intro: "Work out what must be in place before you launch, what is blocking you and what to do next.",
     caveat: "Readiness measures preparation for the launch you define. It does not guarantee demand, profit or compliance, and nothing launches automatically.",
-    gatesTitle: "Blockers", documentsTitle: "Report and checklist",
+    gatesTitle: "Must-haves", documentsTitle: "Report and checklist",
   },
 };
 
@@ -29,7 +29,7 @@ export const CLASSIFICATION = {
 export const CHECK_STATE = {
   passed: { label: "In place", mark: "✓", tone: "emerald" },
   failed: { label: "Not in place", mark: "✕", tone: "rose" },
-  unknown: { label: "Not known yet", mark: "?", tone: "slate" },
+  unknown: { label: "Need from you", mark: "?", tone: "slate" },      // the shared words (lib/vocab.js)
 };
 export const ACTION_STATE = { open: "Open", in_progress: "In progress", awaiting_evidence: "Awaiting evidence", completed: "Completed", dismissed: "Dismissed" };
 export const LIFECYCLE = { draft: "Draft", active: "Active", preparing: "Preparing", launched: "Launched", cancelled: "Cancelled", archived: "Archived" };
@@ -49,13 +49,14 @@ export const createSubject = (businessId, feature, data) => apiRequest(root(busi
 export const getSubject = (businessId, feature, id) => apiRequest(`${root(businessId, feature)}/${id}`, "GET");
 export const updateSubject = (businessId, feature, id, revision, changes, confirm = []) =>
   apiRequest(`${root(businessId, feature)}/${id}`, "PATCH", { revision, changes, confirm });
+export const keepPrevious = (businessId, id, item, keep, need = 0) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/previous-need`, "POST", { item, keep, need });
 export const setSubjectStatus = (businessId, feature, id, action, reason) => apiRequest(`${root(businessId, feature)}/${id}/status`, "POST", { action, reason: reason || null });
 export const saveForecast = (businessId, feature, id, forecast, revision) => apiRequest(`${root(businessId, feature)}/${id}/forecast`, "PUT", { forecast, revision: revision ?? null });
 export const linkForecast = (businessId, feature, id, forecastId) => apiRequest(`${root(businessId, feature)}/${id}/forecast/link`, "POST", { forecast_id: forecastId });
 export const listForecasts = (businessId) => apiRequest(`/businesses/${businessId}/forecasts`, "GET");
 export const attest = (businessId, feature, id, body) => apiRequest(`${root(businessId, feature)}/${id}/attestations`, "POST", body);
-export const runAssessment = (businessId, feature, id, revision, key) =>
-  apiRequest(`${root(businessId, feature)}/${id}/assessments`, "POST", { revision, idempotency_key: key }, { timeoutMs: 60000 });
+export const runAssessment = (businessId, feature, id, revision, key, withDetail = false) =>
+  apiRequest(`${root(businessId, feature)}/${id}/assessments`, "POST", { revision, idempotency_key: key, ...(withDetail ? { with_detail: true } : {}) }, { timeoutMs: 60000 });
 export const getHistory = (businessId, feature, id) => apiRequest(`${root(businessId, feature)}/${id}/assessments`, "GET");
 export const getAssessment = (businessId, feature, id, assessmentId) => apiRequest(`${root(businessId, feature)}/${id}/assessments/${assessmentId}`, "GET");
 export const updateAction = (businessId, feature, id, actionId, changes) => apiRequest(`${root(businessId, feature)}/${id}/actions/${actionId}`, "PATCH", changes);
@@ -65,6 +66,8 @@ export const generateMaterial = (businessId, feature, id, kind, key) =>
   apiRequest(`${root(businessId, feature)}/${id}/materials`, "POST", { kind, idempotency_key: key }, { timeoutMs: 60000 });
 export const getMaterial = (businessId, feature, id, materialId) => apiRequest(`${root(businessId, feature)}/${id}/materials/${materialId}`, "GET");
 export const updateMaterial = (businessId, feature, id, materialId, body) => apiRequest(`${root(businessId, feature)}/${id}/materials/${materialId}`, "PATCH", body);
+// A new title naming a different need: the case becomes that need, the old one goes to History (23 Oct)
+export const startNewNeed = (businessId, id, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/new-need`, "POST", body);
 export const reviewDocument = (businessId, id, key, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/documents/${key}`, "POST", body);
 export const contradiction = (businessId, id, body) => apiRequest(`/businesses/${businessId}/funding-cases/${id}/contradictions`, "POST", body);
 export const recordDecision = (businessId, id, body) => apiRequest(`/businesses/${businessId}/launch-initiatives/${id}/decisions`, "POST", body);
@@ -115,6 +118,11 @@ export function readinessError(e, fallback = "Something went wrong. Please try a
   return { message: fallback, errors: {}, status: e?.status };
 }
 
+/** Ready as the owner reads it: the check's own verdict, or a score of 75 or more with no must-have failed (QA, 30 Oct:
+ *  95/100 beside "Not ready yet" while a check was still not known). */
+export const READY_AT = 75;
+export const isReady = (sm) => Boolean(sm) && (sm.classification === "ready"
+  || (typeof sm.score === "number" && sm.score >= READY_AT && !(sm.blocker_count > 0) && !(sm.blockers || []).length));
 export const getPath = (obj, path) => path.split(".").reduce((cur, k) => (cur && typeof cur === "object" ? cur[k] : undefined), obj);
 export function setPath(obj, path, value) {
   const keys = path.split(".");
@@ -134,12 +142,25 @@ export function monthLabel(key) {
 }
 export const dateLabel = shortDate;
 
+/** A milestone in words (the owner, 11 Nov: "Hilary (owner): 10 paying customers: Paying customers: ..."): what it is,
+ *  from where to what, by when, and whose it is. Null for a row that isn't a milestone. */
+export function milestoneWords(r) {
+  if (!r || typeof r !== "object" || !r.outcome) return null;
+  const said = (v) => String(v ?? "").trim();
+  const from = said(r.baseline), to = said(r.target), how = said(r.measure);
+  const move = from && to ? `from ${from} to ${to}` : to ? `target ${to}` : "";
+  const due = said(r.due_date) ? `by ${dateLabel(r.due_date) || r.due_date}` : "";
+  const owner = said(r.owner).replace(/\s*\(owner\)\s*$/i, "");
+  return [`${said(r.outcome).replace(/\.$/, "")}.`, [how && `Measured by ${how.charAt(0).toLowerCase()}${how.slice(1)}`, move, due].filter(Boolean).join(", "),
+    owner && `Owner: ${owner}.`].map((x) => x && !/[.]$/.test(x) ? `${x}.` : x).filter(Boolean).join(" ");
+}
+
 /** Why a result is out of date, without telling the person to run the check: it is re-run for them. */
 export const staleReason = (reason) => String(reason || "").replace(/\s*Run the check again[^.]*\./g, "").trim();
 export function moneyLabel(value, currency) {
   if (value === null || value === undefined || value === "") return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP", maximumFractionDigits: 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
+  try { return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: currency || "GBP", minimumFractionDigits: 0, maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 }).format(n); } catch { return `${currency || ""} ${n.toFixed(2)}`.trim(); }
 }
 export const newKey = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(16).slice(2)}`);

@@ -1,3 +1,4 @@
+import UkDateInput from "../../../components/UkDateInput";
 import SectionCard from "../../../components/SectionCard";
 import Input from "../../../components/Input";
 
@@ -83,11 +84,10 @@ export default function RegistrationStatusStep({
           />
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Registration date</div>
-            <input
-              type="date"
+            <UkDateInput
               className="ea-input mt-2"
               value={registrationDate}
-              onChange={(e) => setRegistrationDate(e.target.value)}
+              onChange={(v) => setRegistrationDate(v)}
             />
           </div>
         </div>

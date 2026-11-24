@@ -1,16 +1,22 @@
 import { useWorkspaceStore } from "../../store/workspace";
 import { useAuthStore } from "../../store/auth";
 import { briefingOf, firstNameOf, getGreeting, workspaceNameOf } from "../../lib/greeting";
+import FirstResultPanel, { UndoToast } from "../FirstResultPanel";
 import AgentShell, { AgentIdentity } from "./AgentShell";
 import { Collapse, WorkingSteps } from "../Motion";
 import { useListChanges } from "../../lib/motion";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "../../lib/toast";
 import { apiRequest } from "../../api/client";
-import { agentErrorMessage, cancelRun, clearConversation, getConversation, replyText, submitAgentRequest } from "../../lib/agent";
+import ProfileUpdates from "./ProfileUpdates";
+import { PostponeChoice, chatActions, said as sayDone } from "./ChatActions";
+import { agentErrorMessage, approveAction, cancelRun, caseChatPath, clearConversation, detailsOf, getConversation, getRun, offerFor, replyText, submitAgentRequest, toSidePanel } from "../../lib/agent";
 import { Icon, OUT_OF_CREDITS_TIP, OutOfCreditsNote } from "./AgentBits";
 import { WORKING_TEXT, useTaskFlow } from "./TaskFlow";
 import { DraftDrawer } from "./DraftEditor";
+import { AgentGoalChat } from "../GoalLauncher";
+import { NextLine } from "../WhatNext";
 
 // A button elsewhere on the dashboard (an insight card) hands its task to the Agent box, so its
 // question or result shows here and the owner stays on the page.
@@ -51,6 +57,9 @@ const TILE_TONE = {
 
 export const PAUSED_TIP = "Updating your dashboard. This will be available in a moment.";
 
+/** Asks Needs Approval to open one task's approval in its drawer: `{ detail: { runId } }`. */
+export const OPEN_APPROVAL_EVENT = "ea:approval:open";
+
 const LockMark = () => (
   <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
 );
@@ -58,29 +67,45 @@ const LockMark = () => (
 /**
  * A task the server would not start, as a reply. Outside the plan: a card in the brand colour with
  * the plan's name, what happened (nothing ran, nothing was charged), Upgrade and, where there is
- * one, something the plan does include. It is information, not an error. Out of credits: the
- * balance, the price and a way to top up.
+ * one, something the plan does include. It is information, not an error. Out of credits: the one
+ * sentence the Agent says about credits ("This needs 40 credits; you have 31. Top up.") and Top up.
  */
 export function blockedReply(res) {
   if (res.reason === "plan") {
     return { tone: "plan", card: "plan", text: res.message, actions: res.actions || [{ label: "Upgrade", to: "/pricing", upgrade: true }],
-      detail: `${res.plan_required_label ? `It is included from the ${res.plan_required_label} plan. ` : ""}Nothing was started and no credits were used.` };
+      detail: `${res.plan_required_label ? `It is included from the ${res.plan_required_label} plan. ` : ""}Nothing was started.` };
   }
   if (res.reason === "credits") {
     return { tone: "amber", card: "credits", text: res.message, actions: res.actions || [{ label: "Top up", to: "/pricing", upgrade: true }],
-      detail: `You have ${res.balance ?? 0} credit${res.balance === 1 ? "" : "s"}${res.cost ? `. This costs ${res.cost}` : ""}. Nothing was started.` };
+      detail: "Nothing was started." };
   }
   return { tone: "amber", text: res.message, upgrade: res.upgrade };
 }
 
-export default function AgentPanel({ businessId, summary, onChanged, paused = false }) {
+/** "₦5m loan": the case in two words, for the Agent card's next line. */
+function fundingWhat(result) {
+  const a = result?._edit?.answers || {};
+  const n = Number(a.amount);
+  const sign = result?.currency_sign || "";
+  const amt = Number.isFinite(n) && n > 0 ? `${sign}${n >= 1e6 ? `${Math.round(n / 1e5) / 10}m` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : n}` : "";
+  const route = { loan: "loan", grant: "grant", equity: "investment" }[String(a.route || "").toLowerCase()] || "funding case";
+  return `${amt} ${route}`.trim();
+}
+
+const ASK_KEY = "ea_agent_ask";      // a question handed over from another page, kept until answered (R-7)
+let sharedAsk = null;      // { text, businessId, promise }: the one request for a handed-over question, whichever copy shows it
+let lastAsk = null;        // { text, businessId, res, at }: its answer, shown again by a copy that appears after it came back
+
+export default function AgentPanel({ businessId, summary, onChanged, paused = false, firstResult = null, handoff = false }) {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
+  // One way to act on a button, clicked or typed
+  const pick = (o) => (o.dismiss ? setReply(null) : o.start ? send({ ...o.start, sourceChannel: "ui_action", confirmed: true }) : o.post ? postOffer(o.post) : o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }));
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState(null);      // { tone, text, runId, upgrade }
   // A task started here stays here: its questions open in a dialog on this page, what it prepares
   // is confirmed in the line under the box, and its own page opens only from "See details".
-  const flow = useTaskFlow({ say: (r) => setReply(r), onChanged: () => onChanged?.(), onDetails: (runId) => navigate(`/agent/runs/${runId}`) });
+  const flow = useTaskFlow({ say: (r) => setReply(r), onChanged: () => onChanged?.(), onDetails: (runId, to) => navigate(to || `/agent/runs/${runId}`) });
   const ent = summary?.entitlement;
   const runsLeft = ent ? Math.max(0, (ent.monthly_runs || 0) - (ent.monthly_runs_used || 0)) : null;
   const credits = typeof ent?.credits === "number" ? ent.credits : null;
@@ -91,11 +116,11 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const outOfCredits = credits === 0;
   const [creditNote, setCreditNote] = useState(false);
   const promptBox = useRef(null);
-  const [spent, setSpent] = useState(null);      // what the last task used, and what is left
+  const [answered, setAnswered] = useState(false);      // something was answered or started here (their name is asked after that)
   // What the Agent did since the owner was last here, for the line under the greeting. It belongs to the active workspace: switching
   // workspace clears it at once and asks again, so nothing from the last workspace is ever shown. Leaving the dashboard, or a minute
   // on it, is what "last here" means: a refresh does not reset it.
-  const workspace = workspaceNameOf(useWorkspaceStore((st) => st.workspaceName));
+  const workspace = workspaceNameOf(useWorkspaceStore((st) => st.workspaceCompanyName || st.workspaceName)) || String(useAuthStore((st) => st.name) || "").trim();
   const [briefing, setBriefing] = useState(summary?.briefing || null);
   useEffect(() => {
     setBriefing(summary?.briefing || null);
@@ -111,7 +136,30 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     window.addEventListener("pagehide", seen);
     return () => { clearTimeout(timer); window.removeEventListener("pagehide", seen); };
   }, [businessId]);
+  // F4: "I'm …" lasts only as long as the task: it is watched, and the line is read again once the task is finished.
+  const workingRun = briefing?.working_on?.run_id || null;
+  useEffect(() => {
+    if (!workingRun || !businessId) return undefined;
+    let live = true;
+    let tries = 0;
+    const check = async () => {
+      tries += 1;
+      try {
+        const res = await getRun(workingRun);
+        const status = (res?.run || res)?.status;
+        if (!live) return;
+        if (status && !["running", "created"].includes(status)) {
+          const b = await apiRequest(`/businesses/${businessId}/agent/briefing`, "GET");
+          if (live && b && typeof b === "object" && "done_since_last_visit" in b) setBriefing(b);
+          else if (live) setBriefing((was) => (was ? { ...was, working_on: null } : was));
+        }
+      } catch { /* checked again on the next tick */ }
+    };
+    const timer = setInterval(() => { if (tries < 120) check(); }, 5000);
+    return () => { live = false; clearInterval(timer); };
+  }, [workingRun, businessId]);
   const told = briefingOf(briefing);
+  const showResult = Boolean(firstResult?.result);
   // "By the way, what should I call you?": asked once, only when no name is known, and only after a first result has been
   // shown, so it never stands between someone and their task. Skipping it, or answering it, means it is not asked again.
   const accountName = useAuthStore((st) => st.name);
@@ -121,7 +169,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const [calling, setCalling] = useState("");
   const [nameProblem, setNameProblem] = useState("");
   const knownName = firstNameOf(accountName) || firstNameOf(briefing?.first_name);
-  const askName = Boolean(spent) && !knownName && !nameAsked && !reply?.working;
+  const askName = answered && !knownName && !nameAsked && !reply?.working;
   const doneAsking = () => { setNameAsked(true); try { localStorage.setItem(askedKey, "1"); } catch { /* asked again next time at worst */ } };
   async function saveName(e) {
     e.preventDefault();
@@ -139,7 +187,6 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   const startsTask = (action) => Boolean(action?.capability) && !action.to && !action.run_id;
   // From the plan map, by way of the summary: the plan a task is on when this one doesn't include it, and what a task costs to start.
   const lockedFor = (action) => (startsTask(action) && ent?.locked?.[action.capability]) || null;
-  const priceOf = (action) => (startsTask(action) && ent?.prices?.[action.capability]) || null;
 
   // Shortcuts and the prompt hint follow the business stage when the dashboard composes them
   // (summary.shortcuts / summary.placeholder); otherwise the standard set is used.
@@ -169,13 +216,84 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     return () => window.removeEventListener(AGENT_FOLLOW_EVENT, take);
   }, []);
 
-  async function send(req) {
-    if (!businessId || busy || paused) return;
+  const [asked, setAsked] = useState("");      // the owner's own words, shown above the answer
+  /** What the owner types: the landing page's conversation, the one pathway everywhere (22 Oct). */
+  function chat(text) {
+    if (!businessId || busy) return;
+    setAsked(text);
+    setReply({ tone: "plan", text: "", check: { goalKey: "", said: text, at: Date.now() } });
+    setPrompt("");
+  }
+
+  const handed = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    // A copy that appears after the handed-over question was answered shows that answer, never an empty card (R-7)
+    if (!lastAsk || lastAsk.businessId !== businessId || Date.now() - lastAsk.at > 120000 || handed.current) return;
+    handed.current = true;
+    setAsked(lastAsk.text);
+    handle(lastAsk.res, { text: lastAsk.text, sourceChannel: "text" });
+  }, [businessId]);      // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // Sent once the card can send (the owner's QA, 23 Oct: while the dashboard showed its saved copy the card was paused,
+    // the message was marked as handed over and dropped, and the landing page "just entered the dashboard"). Kept until a
+    // card that is still on screen has its answer (R-7, 24 Oct: the dashboard renders this card in two layouts; the first
+    // took the question and went, and it was lost).
+    if (handed.current || !businessId || busy) return;      // a question is answered while the dashboard updates (25 Oct)
+    const params = new URLSearchParams(window.location.search);
+    let ask = params.get("ask");
+    if (ask) {
+      try { sessionStorage.setItem(ASK_KEY, ask); } catch { /* sent from the address below */ }
+      params.delete("ask");
+      window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+    } else {
+      try { ask = sessionStorage.getItem(ASK_KEY); } catch { ask = null; }
+    }
+    if (!ask) return;
+    handed.current = true;
+    // One request for the question, shared by every copy of this card: asked once, answered by the copy still on screen
+    const req = { text: ask, sourceChannel: "text" };
+    if (!sharedAsk || sharedAsk.text !== ask || sharedAsk.businessId !== businessId) {
+      sharedAsk = { text: ask, businessId, promise: submitAgentRequest({ businessId, background: true, ...req }) };
+    }
+    const mine = sharedAsk;
     setBusy(true);
+    setAsked(ask);
+    setReply({ tone: "indigo", text: WORKING_TEXT, working: true });
+    mine.promise.then((res) => {
+      lastAsk = { text: ask, businessId, res, at: Date.now() };      // kept for a copy that replaces this one (a layout swap)
+      if (!alive.current) return;      // this copy went: the copy on screen shows it
+      handle(res, req);
+      setPrompt("");
+      try { sessionStorage.removeItem(ASK_KEY); } catch { /* answered either way */ }
+      if (sharedAsk === mine) sharedAsk = null;
+    }).catch((e) => {
+      if (alive.current) setReply({ tone: "rose", text: agentErrorMessage(e, "The Agent couldn't start that. Please try again.") });
+      if (sharedAsk === mine) sharedAsk = null;
+    }).finally(() => { if (alive.current) setBusy(false); });
+  }, [businessId, busy]);      // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function send(req) {
+    // What is typed is answered while the dashboard is "Updating…" (the owner's brief, 25 Oct); only a task started from a
+    // tile waits for the fresh dashboard
+    if (!businessId || busy || (paused && req?.capability && req?.sourceChannel !== "text")) return undefined;
+    // On the dashboard a message typed here goes to the Agent Centre, the one general chat (the owner, 28 Oct); a tile's
+    // task still starts here
+    if (handoff && req?.sourceChannel === "text" && String(req?.text || "").trim() && !req?.capability) {
+      setPrompt("");
+      navigate(`/agent?chat=${encodeURIComponent(String(req.text).trim().slice(0, 500))}`);
+      return undefined;
+    }
+    lastAsk = null;      // a new message: the handed-over answer is no longer the current one
+    setBusy(true);
+    if (req?.text && req.sourceChannel === "text") setAsked(req.text);
+    else if (req?.text === undefined || req?.text === null) setAsked("");
     setReply({ tone: "indigo", text: WORKING_TEXT, working: true });      // said at once, not only a spinner in the button
     try {
       const res = await submitAgentRequest({ businessId, background: true, ...req });
       handle(res, req);
+      if (req?.sourceChannel === "text") setPrompt("");      // answered, whatever the answer: the box is clear for the next message
     } catch (e) {
       setReply({ tone: "rose", text: agentErrorMessage(e, "The Agent couldn't start that. Please try again.") });
     } finally {
@@ -184,17 +302,21 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
   }
 
   async function handle(res, req) {
+    // What a reply cost is never said with it: the sidebar balance is refreshed, and the Credits page lists each charge.
+    if (res.kind === "workflow" || (res.kind === "answer" && res.conversational)) setAnswered(true);
     if (res.kind === "workflow") {
       const run = res.run;
       onChanged?.();
       window.dispatchEvent(new CustomEvent("ea:credits:refresh"));
-      if (res.credits_used > 0 && typeof res.credits_left === "number") setSpent({ used: res.credits_used, left: res.credits_left });
       if (res.runs?.length > 1) {
         setReply({ tone: "indigo", text: `I started ${res.runs.length} tasks. Each one needs your review before anything is sent.`, to: "/agent" });
       } else {
         flow.follow(run);      // a question, an approval, still working or a problem: all handled on this page
       }
       setPrompt("");
+    } else if (res.kind === "needs_confirmation" && res.price) {
+      // P0.5c: a paid task's price first ("Write your business plan. 40 credits. You have 90."), Start or Not now.
+      setReply({ tone: "slate", text: res.message, offers: [{ label: "Start", start: { capability: res.capability, params: res.params } }, { label: "Not now", dismiss: true }] });
     } else if (res.kind === "needs_input") {
       const base = req || {};
       flow.ask({ title: CHIPS.find((c) => c.key === res.capability)?.label, message: res.message, fields: res.fields,
@@ -204,8 +326,14 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
       setReply({ tone: "emerald", text: res.message });
       setPrompt("");
     } else if (res.kind === "answer") {
-      setReply({ tone: "slate", text: res.message, evidence: res.evidence, actions: res.actions, source: res.source });
-      if (res.conversational) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // a written answer uses credits
+      // E2: asked for something no task does yet: the closest tasks are offered as buttons, never done by the chat.
+      setReply({ tone: "slate", text: res.message, evidence: res.evidence, actions: res.actions, offers: res.offers, source: res.source });
+      if (res.conversational) window.dispatchEvent(new CustomEvent("ea:credits:refresh"));      // the sidebar balance
+      setPrompt("");
+    } else if (res.kind === "check") {
+      // Funding or launch readiness, customer growth: the Agent runs the check here, in the card (never a dead end).
+      // The landing page's conversation, here (22 Oct): one line, then its questions in the chat
+      setReply({ tone: "plan", text: "", check: { goalKey: res.goal_key, said: res.said || req?.text || "", at: Date.now() } });
       setPrompt("");
     } else if (res.kind === "unavailable") {
       setReply({ tone: "amber", text: res.message, offers: res.offers });
@@ -222,12 +350,24 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     }
   }
 
+  /** A confirmed change the reply offered ("Yes, update" on a funding case edit): sent, and its own reply shown. */
+  async function postOffer(post) {
+    setBusy(true);
+    try {
+      const res = await apiRequest(post.url, "POST", post.body || {}, { timeoutMs: 60000 });
+      setReply({ tone: "slate", text: res.message, actions: res.actions });
+      onChanged?.();
+    } catch (e) {
+      setReply({ tone: "rose", text: agentErrorMessage(e, "That didn't go through. Try again.") });
+    } finally { setBusy(false); }
+  }
+
   /** Cancel a task that is held for its plan: it is closed, nothing was charged, and the tile goes. */
   async function cancelHeld(runId) {
     setBusy(true);
     try {
       await cancelRun(runId);
-      setReply({ tone: "slate", text: "That task is cancelled. Nothing was sent and no credits were used." });
+      setReply({ tone: "slate", text: "That task is cancelled. Nothing was sent." });
       onChanged?.();
     } catch (e) {
       setReply({ tone: "rose", text: agentErrorMessage(e, "That couldn't be cancelled just now. Please try again.") });
@@ -246,11 +386,11 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     if (task) return flow.followId(task);      // its question, problem or result shows here
     if (action.to) return navigate(action.to);
     // A shortcut with a question writes it into the box for the user to read, change and send.
-    // Nothing runs, and no AI Credits are used, until they press send.
+    // Nothing runs until they press send.
     if (action.prompt) {
       setPrompt(action.prompt);
-      setReply({ tone: "slate", text: "Your question is in the box below. Press send to run it: it uses AI Credits." });
-      promptBox.current?.focus();
+      setReply({ tone: "slate", text: "Your question is in the box below. Press send to run it." });
+      promptBox.current?.focus({ preventScroll: true });
       return;
     }
     // Starting a task needs credits. With none left, say so here; nothing is started.
@@ -263,23 +403,25 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
     <AgentShell as="section" data-agent-card aria-label="EnterprateAI Agent" bodyClassName="p-5" className="h-full">
       {/* The title row is the mark and the name. While a task runs the mark gets a soft ring. What the plan allows sits on its own line below. */}
       <div data-agent-title>
-        <AgentIdentity as="h2" working={Boolean(busy || reply?.working || briefing?.working_on)} />
+        <AgentIdentity as="h2" working={Boolean(busy || reply?.working || briefing?.working_on)} link={{ to: "/agent", onGo: navigate }} />
       </div>
       {/* The greeting addresses the active workspace, by the time of day: one line, cut short with the full name in its tooltip.
           Under it, one line on what the Agent did or is doing. Both follow the workspace the moment it is switched. */}
       <p data-m="fadeUp" data-agent-greeting title={getGreeting({ subject: workspace, tz: briefing?.timezone })}
         className="mt-3 flex min-w-0 items-baseline gap-2 text-lg font-semibold text-white sm:text-xl">
         <span className="min-w-0 truncate">{getGreeting({ subject: workspace, tz: briefing?.timezone })}</span>
-        {!workspace && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("ea:workspace:profile"))} data-name-business className="shrink-0 text-[12px] font-semibold text-indigo-100 underline underline-offset-2 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Name your business</button>}
       </p>
       <p data-m="fadeUp" style={{ "--m-delay": "60ms" }} data-agent-briefing data-briefing-kind={told.kind} title={told.text}
-        className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{told.text}</p>
+        className="mt-0.5 line-clamp-2 min-h-[1.25rem] text-sm text-white/75 lg:line-clamp-1">{showResult ? "Your first result is below." : told.text}</p>
+      {firstResult?.result?.assessment_type === "funding_readiness_initial" && firstResult.result.research?.state === "adopted" && (firstResult.result._session || firstResult.sessionId) && (
+        <div className="mt-1.5"><NextLine sessionId={firstResult.result._session || firstResult.sessionId} what={fundingWhat(firstResult.result)} /></div>
+      )}
       {ent && (
         <div className="mt-2 flex min-w-0 flex-wrap gap-2 empty:hidden" data-agent-notices>
           {counted && ent.is_paid && ent.agent_tasks !== false && (
             <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 2xl:text-[12px]"
               title={`Your access includes ${ent.monthly_runs} Agent tasks a month (${ent.monthly_runs_used} used).`}>
-              {runsLeft} of {ent.monthly_runs} tasks left this month{credits != null ? ` · ${credits} credits` : ""}
+              {runsLeft} of {ent.monthly_runs} tasks left this month
             </span>
           )}
           {freePlan && ent.agent_tasks === false && (
@@ -291,38 +433,44 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           {counted && freePlan && ent.agent_tasks !== false && !freeLimitReached && (
             <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 2xl:text-[12px]"
               title="Free plan allowance for the Agent this month">
-              {runsLeft} of {ent.monthly_runs} tasks left{credits != null ? ` · ${credits} credits` : ""}
+              {runsLeft} of {ent.monthly_runs} tasks left
             </span>
           )}
           {freeLimitReached && ent.agent_tasks !== false && (
             <button type="button" onClick={() => navigate("/pricing")}
               className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-amber-400/15 px-2.5 py-1 text-left text-[11px] font-semibold text-amber-200 hover:bg-amber-400/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white 2xl:text-[12px]">
-              <Icon name="crown" className="h-3 w-3 shrink-0" /> {runsLeft === 0 ? "Monthly Agent tasks used" : "Out of AI Credits"} · Upgrade
+              <Icon name="crown" className="h-3 w-3 shrink-0" /> {runsLeft === 0 ? "Monthly Agent tasks used · Upgrade" : "No credits left · Top up"}
             </button>
           )}
         </div>
       )}
 
+      {/* The first result sits above the Agent's four action cards. Dismissed, it is kept in Agent
+          Centre > Results, with Undo for 5 seconds. */}
+      <ProfileUpdates businessId={businessId} />
+      <UndoToast open={Boolean(firstResult?.dismissed)} text="Result dismissed. It stays in Agent Centre, under Results."
+        onUndo={() => firstResult.undo()} onDone={() => firstResult.forgetDismissed()} />
       {/* Below 1280px: auto-fit with a 260px minimum (never more than two per row), so the tiles drop
           to one column when two won't fit. From 1280px the desktop layout keeps its two columns. */}
-      <div className="mt-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,max(260px,calc(50%_-_0.375rem))),1fr))] xl:grid-cols-2">
+      {/* Hidden while a conversation is on screen, so the chat reads cleanly (the owner, 22 Oct); back when it is dismissed. */}
+      <div className={`mt-4 grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,max(260px,calc(50%_-_0.375rem))),1fr))] xl:grid-cols-2 ${reply ? "hidden" : ""}`} data-agent-tiles>
         {cards.slice(0, 4).map((c) => (
           <button key={c.key} type="button" disabled={busy || (paused && startsTask(c.action))} title={paused && startsTask(c.action) ? PAUSED_TIP : c.text}
             data-mood={c.mood || undefined}
             onClick={() => (c.held ? setReply(blockedReply({ reason: "plan", message: c.text.replace(/\s*Upgrade or cancel\.?$/, ""), plan_required_label: c.held.plan_required_label,
-              actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Cancel this task", cancel: c.held.run_id }] })) : lockedFor(c.action) ? setReply(blockedReply({ reason: "plan", message: `${c.label || "This"} is on the ${lockedFor(c.action)} plan.`, plan_required_label: lockedFor(c.action),
+              actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }, { label: "Cancel this task", cancel: c.held.run_id }] })) : lockedFor(c.action) ? setReply(blockedReply({ reason: "plan", message: `Unlock “${c.label || "This"}” and I'll do it for you: you just approve.`, plan_required_label: lockedFor(c.action),
               actions: [{ label: "Upgrade", to: "/pricing", upgrade: true }] })) : c.question ? flow.openQuestion(c.question) : act(c.action))}
             data-locked={c.held?.plan_required_label || lockedFor(c.action) || undefined}
-            className="group flex h-[4.5rem] items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3.5 text-left transition hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60">
+            className="group flex min-h-[4.5rem] items-center gap-3 overflow-hidden rounded-xl border border-white/15 bg-white/10 px-3.5 py-2 text-left transition hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:opacity-60">
             <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 ${TILE_TONE[c.tone] || TILE_TONE.indigo}`}>
               <Icon name={c.icon} />
             </span>
-            <span className="min-w-0 flex-1">
-              <span className={`block break-normal text-sm leading-snug text-white ${c.detail ? "line-clamp-1" : "line-clamp-2"}`}>{c.text}</span>
+            <span className="min-w-0 flex-1 overflow-hidden">
+              {/* No "block" here: it comes after line-clamp in the stylesheet and would undo the clamp, letting long text spill over the next tile. */}
+              <span title={c.text} className={`break-normal text-sm leading-snug text-white ${c.detail ? "line-clamp-1" : "line-clamp-2"}`}>{c.text}</span>
               {c.detail && <span data-tile-detail className="block truncate text-[12px] text-white/60" title={c.detail}>{c.detail}</span>}
-              {/* What it costs to start, or the plan it is on: said before anything is pressed. */}
-              {lockedFor(c.action) ? <span data-tile-plan className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-200"><LockMark />{lockedFor(c.action)} plan</span>
-                : priceOf(c.action) ? <span data-tile-price className="mt-0.5 block text-[11px] font-medium text-white/70">{priceOf(c.action)} credits</span> : null}
+              {/* The plan it is on, said before anything is pressed. What it costs is on the Agent settings page, never on the tile. */}
+              {lockedFor(c.action) ? <span data-tile-plan className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-200"><LockMark />{lockedFor(c.action)} plan</span> : null}
             </span>
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/25 text-white/70 transition group-hover:border-white/60 group-hover:text-white">
               <Icon name="chevron" className="h-3.5 w-3.5" />
@@ -338,7 +486,18 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
 
       {/* The send button sits flush at the right end of the box at every width. */}
       <form data-agent-field className="mt-3 flex items-center gap-2 rounded-xl border-2 border-white bg-white py-1.5 pl-3.5 pr-1.5 shadow-lg shadow-indigo-950/30 focus-within:ring-4 focus-within:ring-white/40"
-        onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) send({ text: prompt.trim(), sourceChannel: "text" }); }}>
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!prompt.trim()) return;
+          // Typed at the Agent's buttons ("yes, go ahead", "open it"): that button, never a click insisted on (the owner, 27 Oct)
+          const chosen = reply && offerFor(prompt, [...(reply.actions || []), ...(reply.offers || [])]);
+          if (chosen) { setPrompt(""); pick(chosen); return; }
+          // Funding or a launch: on its case's Assistant tab (the owner's mockups, 27 Oct); anything else, by the side
+          const there = await caseChatPath(businessId, prompt);
+          if (there) { setPrompt(""); setReply(null); navigate(there); return; }
+          if (toSidePanel(prompt.trim())) { setPrompt(""); setReply(null); return; }      // the conversation, by the side
+          send({ text: prompt.trim(), sourceChannel: "text" });
+        }}>
         <span className="text-brand-500"><Icon name="sparkle" className="h-4 w-4" /></span>
         <input ref={promptBox} value={prompt} onChange={(e) => setPrompt(e.target.value)} maxLength={2000} disabled={busy}
           aria-label="Ask the EnterprateAI Agent"
@@ -346,15 +505,12 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
           className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-500" />
         {/* Space reserved here for a future microphone control (voice uses the same request). */}
         {/* Always solid indigo; dimmed only while a request is in progress. An empty prompt is ignored on submit. */}
-        <button type="submit" disabled={busy || paused} aria-label="Send" title={paused ? PAUSED_TIP : undefined}
+        <button type="submit" disabled={busy} aria-label="Send"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white transition hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:opacity-60">
           {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <Icon name="send" className="h-4 w-4" />}
         </button>
       </form>
 
-      {spent && !reply?.working && (
-        <p role="status" data-credits-used className="mt-2 text-[12px] font-medium text-indigo-100">Used {spent.used} credit{spent.used === 1 ? "" : "s"} · {spent.left} left</p>
-      )}
       {askName && (
         <form onSubmit={saveName} data-ask-name className="mt-3 rounded-xl border border-white/15 bg-white/10 p-3">
           <label htmlFor="agent-call-me" className="block text-[13px] font-semibold text-white">By the way, what should I call you?</label>
@@ -372,6 +528,9 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
         <OutOfCreditsNote className="mt-3" onPlans={() => navigate("/pricing")} onClose={() => setCreditNote(false)} />
       )}
 
+      {reply && asked && (
+        <p className="mt-3 ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-1.5 text-[13px] font-medium text-white" data-you-asked>{asked}</p>
+      )}
       {reply && (
         <div role="status" className={`mt-3 rounded-xl border px-3.5 py-3 text-sm ${
           reply.tone === "emerald" ? "border-emerald-200 bg-emerald-50 text-emerald-900"
@@ -386,6 +545,11 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             {reply.text}
           </p>
           {reply.detail && <p className="mt-1 text-[13px]" data-blocked-detail>{reply.detail}</p>}
+          {reply.check && businessId && (
+            <div className="mt-3 text-left" data-agent-check={reply.check.goalKey}>
+              <AgentGoalChat key={`${reply.check.goalKey}:${reply.check.at}`} text={reply.check.said} />
+            </div>
+          )}
           {reply.working && <div className="mt-2"><WorkingSteps /></div>}
           {reply.next && <p className="mt-1 text-[13px] opacity-80">{reply.next}</p>}
           {reply.evidence?.length > 0 && (
@@ -403,7 +567,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             <div className="mt-2 flex flex-wrap gap-2">
               {[...(reply.actions || []), ...(reply.offers || [])].map((o) => (
                 <button key={o.label} type="button" disabled={busy}
-                  onClick={() => (o.cancel ? cancelHeld(o.cancel) : o.kind === "explain" ? explain(o.prompt) : o.to ? navigate(o.to) : act({ capability: o.capability, params: o.params }))}
+                  onClick={() => pick(o)}
                   className={o.upgrade ? "rounded-lg bg-brand-600 px-3.5 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
                     : "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold hover:bg-slate-50 disabled:opacity-60 dark:bg-slate-900"}>
                   {o.label}
@@ -412,7 +576,7 @@ export default function AgentPanel({ businessId, summary, onChanged, paused = fa
             </div>
           )}
           <div className="mt-2 flex flex-wrap gap-3 text-[13px] font-semibold">
-            {reply.runId && <button type="button" className="underline" onClick={() => navigate(`/agent/runs/${reply.runId}`)}>See details</button>}
+            {reply.runId && <button type="button" className="underline" onClick={async () => navigate(await detailsOf(reply.runId))}>See details</button>}
             {reply.to && <button type="button" className="underline" onClick={() => navigate(reply.to)}>Open Agent Centre</button>}
             {getConversation(businessId).length > 0 && (
               <button type="button" className="underline" onClick={() => { clearConversation(businessId); setReply(null); }}>New conversation</button>
@@ -447,6 +611,18 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
   const navigate = useNavigate();
   const items = summary?.needs_approval || [];
   const [editing, setEditing] = useState(null);      // the task whose approval is open in the drawer
+  const [wanted, setWanted] = useState(null);         // asked to open (a homepage draft); opened once it is listed
+  useEffect(() => {
+    const open = (e) => setWanted(e.detail?.runId || null);
+    window.addEventListener(OPEN_APPROVAL_EVENT, open);
+    return () => window.removeEventListener(OPEN_APPROVAL_EVENT, open);
+  }, []);
+  useEffect(() => {
+    if (!wanted) return undefined;
+    if (items.some((item) => item.run_id === wanted)) { setEditing(wanted); setWanted(null); return undefined; }
+    const timer = setTimeout(() => onChanged?.(), 1500);      // still being prepared: look again shortly
+    return () => clearTimeout(timer);
+  }, [wanted, items, onChanged]);
   const rows = useListChanges(items, (item) => item.approval_id || item.run_id || item.title);
   const count = summary?.needs_approval_count ?? 0;
   // Something new is waiting: say so, top right, once the Agent has finished preparing it.
@@ -464,11 +640,59 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
 
   // Only real pending approvals are listed (risk alerts live under suggestions and risks). A row
   // opens its approval in the drawer: the owner reviews, edits, approves or declines without leaving.
+  // An Agent draft's review id, from its link (?review=…)
+  const draftReview = (to) => { try { return new URLSearchParams(String(to || "").split("?")[1] || "").get("review"); } catch { return null; } };
+  // Said the moment it is pressed (the owner, 25 Oct: "there was no toast to let me know it's processing"): a pending toast
+  // and the button's own words, turning into the result in place
+  const [deciding, setDeciding] = useState({});      // draft id: "accept" | "reject"
+  const [later, setLater] = useState(null);      // the row asking "Remind me when?"
+  const keyOf = (item) => item.approval_id || item.draft_id || draftReview(item.to) || item.run_id || item.title;
+  // Approve and Postpone as Agent Centre has them (the owner's QA, 27 Oct: the same labels on the dashboard), said once in a toast
+  const approve = async (item) => {
+    const k = keyOf(item);
+    if (deciding[k]) return;
+    setDeciding((d) => ({ ...d, [k]: "accept" }));
+    const t = toast({ kind: "pending", title: `Approving ${item.title || "it"}…` });      // said the moment it is pressed (the owner, 25 Oct)
+    try {
+      if (item.approval_id) await approveAction(item.run_id, item.approval_id);
+      else await apiRequest(`/businesses/${businessId}/agent-drafts/${item.draft_id || draftReview(item.to)}/decide`, "POST", { decision: "accept" });
+      toast({ id: t, kind: "success", title: `${item.title || "It"} approved` });      // the same toast, its result: once
+      onChanged?.();
+    } catch (e) {
+      toast({ id: t, kind: "error", title: agentErrorMessage(e, "That couldn't be approved just now."), detail: "Nothing was sent or changed." });
+    } finally { setDeciding((d) => { const n = { ...d }; delete n[k]; return n; }); }
+  };
+  const postpone = async (item, when) => {
+    setLater(null);
+    const act = chatActions(businessId);
+    const k = keyOf(item);
+    try {
+      const got = await act.postpone(k, when);
+      sayDone(`${item.title} postponed to ${got.day}`, async () => { await act.postpone(k, "undo"); onChanged?.(); });
+      onChanged?.();
+    } catch (e) { toast({ kind: "error", title: agentErrorMessage(e, "That couldn't be postponed just now.") }); }
+  };
+  const decideDraft = async (item, decision) => {
+    const id = item.draft_id || draftReview(item.to);
+    if (!id || !businessId || deciding[id]) return;
+    setDeciding((d) => ({ ...d, [id]: decision }));
+    const t = toast({ kind: "pending", title: decision === "accept" ? `Accepting ${item.title || "the draft"}…` : `Rejecting ${item.title || "the draft"}…` });
+    try {
+      await apiRequest(`/businesses/${businessId}/agent-drafts/${id}/decide`, "POST", { decision });
+      toast({ id: t, kind: "success", title: decision === "accept" ? "Accepted." : "Rejected.", detail: decision === "accept" ? "It's now yours to use."
+        : ["idea_validation", "business_plan"].includes(item.kind) ? "It's been deleted." : "Nothing else was changed." });      // deleted on reject (26 Oct)
+      onChanged?.();
+    } catch {
+      toast({ id: t, kind: "error", title: "That couldn't be saved.", detail: "Nothing was changed.", actions: [{ label: "Try again", onClick: () => decideDraft(item, decision) }] });
+    } finally {
+      setDeciding((d) => { const next = { ...d }; delete next[id]; return next; });
+    }
+  };
   const amountOf = (p) => {
     const value = p?.total ?? p?.amount ?? p?.total_amount ?? p?.outstanding;
     if (typeof value !== "number") return "";
     try {
-      return new Intl.NumberFormat("en-GB", { style: "currency", currency: p.currency || "GBP" }).format(value);
+      return new Intl.NumberFormat("en-GB", { style: "currency", currencyDisplay: "narrowSymbol", currency: p.currency || "GBP" }).format(value);
     } catch {
       return String(value);
     }
@@ -487,15 +711,17 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
         </button>
       </div>
       {/* On a wide screen the list takes the Agent card's height and scrolls inside it; it never makes the row taller. */}
-      <div className="mt-3 min-h-0 flex-1 space-y-2.5 overflow-y-auto max-xl:max-h-[22rem]" data-testid="needs-approval-list">
+      {/* On a phone: the first three, in the page's own scroll (no list scrolling inside it), and "View all" (the owner's test, 27 Oct) */}
+      <div className="mt-3 min-h-0 flex-1 space-y-2.5 overflow-y-auto max-xl:max-h-[22rem] max-sm:max-h-none max-sm:overflow-visible" data-testid="needs-approval-list">
         {rows.length === 0 ? (
           <div data-m="fadeIn" className="flex h-full min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 px-4 text-center dark:border-slate-700">
             <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Nothing needs your approval.</p>
             <p className="mt-1 text-[12px] text-slate-400">Anything the Agent prepares to send will wait here for you.</p>
           </div>
-        ) : rows.map(({ key, item, entering, leaving }) => (
-          <Collapse key={key} leaving={leaving}>
-          <button type="button" data-approval-row disabled={paused || leaving} title={paused ? PAUSED_TIP : undefined} onClick={() => setEditing(item.run_id)}
+        ) : rows.map(({ key, item, entering, leaving }, index) => (
+          <div key={key} className={index >= 3 ? "max-sm:hidden" : undefined}>
+          <Collapse leaving={leaving}>
+          <button type="button" data-approval-row disabled={paused || leaving} title={paused ? PAUSED_TIP : undefined} onClick={() => (item.type === "draft" && item.to ? navigate(item.to) : setEditing(item.run_id))}
             {...(entering ? { "data-m": "slideDown" } : {})}
             className={`flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2.5 text-left transition hover:border-brand-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 ${entering ? "m-flash" : ""}`}>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-slate-800">
@@ -504,18 +730,35 @@ export function NeedsApprovalPanel({ businessId, summary, onChanged, paused = fa
             <span className="min-w-0 flex-1">
               <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-slate-900 dark:text-slate-100" title={item.title}>{item.title}</span>
               <span className="mt-0.5 block truncate text-[11px] leading-tight text-slate-500" title={item.subtitle}>
-                {item.subtitle}{amountOf(item.payload) ? ` · ${amountOf(item.payload)}` : ""}
+                {item.email_needed ? (item.payload?.customer_name || "") : item.subtitle}{amountOf(item.payload) ? ` · ${amountOf(item.payload)}` : ""}
               </span>
+              {item.email_needed && <span className="mt-1 inline-flex rounded-full bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 ring-1 ring-amber-200" data-email-needed-chip>Email needed</span>}
+              {item.type === "draft" && <span className="mt-1 inline-flex rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-indigo-700 ring-1 ring-indigo-200" data-draft-chip>Draft</span>}
             </span>
             <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400">{item.age}</span>
             <span className="shrink-0 text-slate-400"><Icon name="chevron" className="h-3 w-3" /></span>
           </button>
+          {/* Review, Approve, Edit and Postpone: the Agent Centre's own words for the same items (the owner's QA, 27 Oct) */}
+          <div className="-mt-1 flex flex-wrap items-center gap-3 rounded-b-xl border border-t-0 border-slate-200 px-3 py-1.5 dark:border-slate-700" data-draft-actions>
+            <button type="button" disabled={paused || leaving} onClick={() => (item.type === "draft" && item.to ? navigate(item.to) : setEditing(item.run_id))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Review</button>
+            <button type="button" disabled={paused || leaving || Boolean(deciding[keyOf(item)])} aria-busy={Boolean(deciding[keyOf(item)])} onClick={() => approve(item)} className="text-[12px] font-semibold text-blue-700 hover:underline disabled:opacity-60">{deciding[keyOf(item)] ? "Approving…" : "Approve"}</button>
+            <button type="button" disabled={paused || leaving} onClick={() => (item.type === "draft" && item.to ? navigate(`${item.to}${item.to.includes("?") ? "&" : "?"}edit=1`) : setEditing(item.run_id))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Edit</button>
+            <button type="button" disabled={paused || leaving} onClick={() => setLater(later === keyOf(item) ? null : keyOf(item))} className="text-[12px] font-semibold text-slate-700 hover:underline disabled:opacity-60 dark:text-slate-200">Postpone</button>
+          </div>
+          {later === keyOf(item) && <PostponeChoice onPick={(when) => postpone(item, when)} onClose={() => setLater(null)} />}
           </Collapse>
+          </div>
         ))}
       </div>
+      {rows.length > 3 && (
+        <button type="button" onClick={() => navigate("/agent?tab=needs_approval")} data-approvals-view-all
+          className="mt-2 self-start text-[13px] font-semibold text-brand-700 hover:underline sm:hidden dark:text-brand-300">View all ({rows.length})</button>
+      )}
       {editing && (
         <DraftDrawer runId={editing} startEditing={false} onClose={() => setEditing(null)} onSaved={() => onChanged?.()} onOpenTask={(id) => { setEditing(null); navigate(`/agent/runs/${id}`); }} />
       )}
     </section>
   );
 }
+
+

@@ -22,7 +22,11 @@ ADDON_FULFILMENT: dict[str, tuple[str, int]] = {
     "addon_rfq_20": ("rfq_credits", 20),
     "addon_rfq_50": ("rfq_credits", 50),
     "addon_rfq_100": ("rfq_credits", 100),
+    "addon_seat": ("extra_seat", 1),      # one more seat on Decision Engine, billed monthly
 }
+# Each extra seat brings 250 AI credits a month (the pricing PDF, 19 Oct 2026).
+SEAT_CREDITS = 250
+SEAT_MIN_PLAN = "decision_engine"
 
 
 def _now_iso() -> str:
@@ -62,6 +66,30 @@ async def fulfil_addon(
         "p_period_end": period_end,
     })
     return result if isinstance(result, dict) else {"ok": True}
+
+
+async def grant_seat_credits(user_id: str, quantity: int, key: str) -> bool:
+    """250 AI credits for each extra seat, once per payment (a webhook sent twice grants once)."""
+    from app.modules.credits.service import grant_credits
+    reason = f"Extra seat credits [{key}]"
+    try:
+        # The ledger keeps the reason in `description` (grant_credits writes it there).
+        done = await sb_select("credit_transactions", filters=[("user_id", "eq", user_id), ("description", "eq", reason)], columns="id")
+    except Exception:      # noqa: BLE001 - can't tell: never granted twice, so not granted now; the next event tries again
+        return False
+    if done:
+        return False
+    await grant_credits(user_id, SEAT_CREDITS * max(1, int(quantity or 1)), grant_type="allocation", reason=reason)
+    return True
+
+
+async def extra_seats(user_id: str) -> int:
+    """Extra seats the owner pays for now (active, in their period)."""
+    try:
+        rows = await sb_select("user_addons", filters=_active_addon_filters(user_id, "extra_seat"), columns="quantity,current_period_end,status")
+    except Exception:      # noqa: BLE001
+        return 0
+    return sum(int(r.get("quantity") or 0) for r in (rows or []) if _period_open(r))
 
 
 async def renew_addon_subscription(subscription_id: str, period_start: str | None, period_end: str | None) -> bool:

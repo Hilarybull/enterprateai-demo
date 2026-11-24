@@ -40,7 +40,7 @@ def print_engine_output(engine_name: str, output: dict):
         print(f"  Recommendations: {output['recommendations'][:2]}")  # Show first 2
 
 
-async def test_full_engine_suite():
+async def _full_engine_suite():
     """Test all engines running on a single business state."""
     print_header("TEST 1: Full Engine Suite (Baseline)")
     
@@ -108,7 +108,7 @@ async def test_full_engine_suite():
         return False, None
 
 
-async def test_scenario_orchestration():
+async def _scenario_orchestration():
     """Test full scenario orchestration with all engines."""
     print_header("TEST 2: Multi-Engine Scenario Orchestration")
     
@@ -146,9 +146,9 @@ async def test_scenario_orchestration():
             scenario_id="test_scenario_001",
             business_id="test_business",
             tenant_id="test_tenant",
-            business_state=baseline_state,
+            baseline_end_state=baseline_state.model_copy(update={"starting_cash": 110000.0}),
+            scenario_end_state=baseline_state.model_copy(update={"revenue_monthly": 57500.0, "starting_cash": 155000.0}),
             scenario_type="price_change",
-            parameters=scenario_params,
             timeline_months=6,
         )
         
@@ -184,13 +184,31 @@ async def test_scenario_orchestration():
         return False, None
 
 
+def test_full_engine_suite():
+    passed, result = asyncio.run(_full_engine_suite())
+    assert passed, "The diagnostic engine suite failed"
+    assert result["survival"]["assessed"] is True
+    for engine in ("viability", "stability", "growth", "fragility", "master"):
+        assert result[engine]["assessed"] is False
+        assert result[engine]["reason"]
+        assert result[engine]["scores"] is None
+
+
+def test_scenario_orchestration():
+    passed, result = asyncio.run(_scenario_orchestration())
+    assert passed, "Scenario engine comparison failed"
+    assert result["baseline"]["survival"]["assessed"] is True
+    assert "survival" in result["scenario"]["engine_deltas"]
+    assert result["scenario"]["not_assessed"]["growth"]
+
+
 async def main():
     """Run all end-to-end tests."""
     print_header("MULTI-ENGINE E2E TEST SUITE")
     print("Testing: Viability, Survival, Stability, Growth, Fragility Engines")
     
-    test1_passed, test1_output = await test_full_engine_suite()
-    test2_passed, test2_output = await test_scenario_orchestration()
+    test1_passed, test1_output = await _full_engine_suite()
+    test2_passed, test2_output = await _scenario_orchestration()
     
     # Summary
     print_header("TEST SUMMARY")

@@ -4,6 +4,7 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import os
 import urllib3.util.retry
 
 # GLOBAL MONKEYPATCH: pytrends uses 'method_whitelist' which was renamed to 'allowed_methods' 
@@ -43,6 +44,7 @@ from app.modules.agent.router import router as agent_router, start_scheduler as 
 from app.modules.readiness.router import router as readiness_router
 from app.modules.agent.goal_router import router as goal_router
 from app.modules.marketplace.directory_router import router as marketplace_directory_router
+from app.modules.tenders.router import router as tenders_router, start_scheduler as start_tender_scheduler, stop_scheduler as stop_tender_scheduler
 from app.modules.activation.router import router as activation_router, start_scheduler as start_activation_scheduler, stop_scheduler as stop_activation_scheduler
 from app.modules.support.router import router as support_router
 from app.modules.reports.router import router as reports_router
@@ -62,9 +64,35 @@ from app.shared.utils.errors import CatchAllErrors
 logger = logging.getLogger(__name__)
 
 
+_WEAK_SECRETS = {"", "CHANGE_ME", "changeme", "secret"}
+
+
+def _check_signing_secret(settings) -> None:
+    """With the default signing secret anyone can forge a sign-in for any account. Production refuses to start on it;
+    a hosted deployment not marked as production says so loudly, as it may be one that's simply missing the setting."""
+    weak = settings.jwt_secret_key in _WEAK_SECRETS or len(settings.jwt_secret_key) < 16
+    if weak and settings.environment == "production":
+        raise RuntimeError("JWT_SECRET_KEY must be set to a long random value before production can start.")
+    if weak and any(os.environ.get(k) for k in ("RENDER", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID")):
+        logger.critical("JWT_SECRET_KEY is not set on this deployment: anyone can forge a sign-in. Set it now.")
+
+
+def _start_error_reporting(settings) -> None:
+    if not settings.sentry_dsn:
+        return
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(dsn=settings.sentry_dsn, environment=settings.environment, send_default_pii=False, traces_sample_rate=0)
+    except Exception:      # noqa: BLE001 - never a reason not to start
+        logger.warning("Error reporting could not start", exc_info=True)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.environment)
+    _check_signing_secret(settings)
+    _start_error_reporting(settings)
     if settings.environment == "development":
         logger.info(
             "Config loaded env=%s cors_origins=%s supabase_enabled=%s",
@@ -100,13 +128,24 @@ def create_app() -> FastAPI:
         # Allow any localhost port in dev and Render preview domains as a safe fallback.
         cors_kwargs["allow_origin_regex"] = r"(^https?://(localhost|127\.0\.0\.1)(:\d+)?$)|(^https?://.*\.onrender\.com$)"
     else:
-        # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains.
+        # Production: allow any origin (no cookies), to avoid blocked auth/signup across Render domains,
+        # until CORS_STRICT says CORS_ORIGINS is the full list of this deployment's sites.
         cors_kwargs = dict(
-            allow_origins=["*"],
+            allow_origins=settings.cors_origins if settings.cors_strict and settings.cors_origins else ["*"],
             allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    @app.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        if settings.environment == "production":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return response
+
     @app.middleware("http")
     async def one_read_per_request(request, call_next):
         # A page load asks for the same rows several times over; each is fetched once.
@@ -142,6 +181,7 @@ def create_app() -> FastAPI:
     app.include_router(goal_router)
     app.include_router(marketplace_directory_router)
     app.include_router(activation_router)
+    app.include_router(tenders_router)
     app.include_router(support_router)
     app.include_router(reports_router)
     app.include_router(credits_router)
@@ -162,10 +202,16 @@ def create_app() -> FastAPI:
         # Open database connections now and keep them open, so requests don't each pay
         # for a new one.
         if settings.supabase_url and settings.supabase_service_role_key:
+            from app.shared.telemetry_outbox import start as start_telemetry
+            start_telemetry()
             app.state.supabase_warm_task = asyncio.create_task(keep_pool_warm())
         # Agent workflows wait on due dates and payments; this wakes the ones that are due.
         start_agent_scheduler()
-        start_activation_scheduler()      # does nothing each run unless ACTIVATION_EMAILS_ENABLED is set
+        start_tender_scheduler()
+        start_activation_scheduler()      # welcome events and activation campaigns have independent switches
+        if settings.supabase_url and settings.supabase_service_role_key:
+            from app.modules.marketplace.directory_router import start_workspace_sweep
+            start_workspace_sweep()
         # Flag receipts that were sent but are missing from the books (logged, never blocking).
         if settings.supabase_url and settings.supabase_service_role_key:
             from app.modules.agent.integrity import check_all_at_startup
@@ -174,8 +220,15 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown():
+        from app.modules.agent.reply_jobs import drain as drain_replies
+        await drain_replies()
+        from app.shared.telemetry_outbox import stop as stop_telemetry
+        await stop_telemetry()
         stop_agent_scheduler()
+        stop_tender_scheduler()
         stop_activation_scheduler()
+        from app.modules.marketplace.directory_router import stop_workspace_sweep
+        stop_workspace_sweep()
         warm_task = getattr(app.state, "supabase_warm_task", None)
         if warm_task:
             warm_task.cancel()
@@ -184,6 +237,13 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/health/research")
+    async def health_research() -> dict:
+        """QA R9-1: can the premium research run here? {search, model}: "ok", "missing" (not configured) or "failing"
+        (its last live call failed). No keys or values are shown."""
+        from app.modules.agent import research
+        return research.health()
 
     @app.get("/")
     async def root() -> dict:

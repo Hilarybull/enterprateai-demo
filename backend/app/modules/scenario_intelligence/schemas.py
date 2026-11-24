@@ -16,6 +16,10 @@ ScenarioType = Literal[
     "service_launch",
     "reduce_fixed_cost",
     "delay_hiring",
+    "take_loan",
+    "raise_investment",
+    "buy_equipment",
+    "combined",
     "do_nothing_projection",
 ]
 
@@ -45,6 +49,48 @@ class BusinessStateSnapshot(BaseModel):
     pending_receivables_schedule: List[float] = Field(default_factory=list)
     pending_payables_schedule: List[float] = Field(default_factory=list)
     opening_accrual_balance: float | None = Field(default=0, ge=0)
+
+    # ── Simulation audit, Phase 1 (17 Nov 2026) ────────────────────────────────────────────────────────────────────
+    # Monthly history {"YYYY-MM": amount}, already built by the page (financialIntelligence.js). The baseline uses
+    # complete months only, with trend and seasonality when the data supports them (projection baseline, audit F8).
+    revenue_by_month: Dict[str, float] = Field(default_factory=dict)
+    cost_of_sales_by_month: Dict[str, float] = Field(default_factory=dict)
+    expenses_by_month: Dict[str, float] = Field(default_factory=dict)
+    # Where each monthly figure came from, in words, when it is the shared figure (set by the server from
+    # agent/figures.py, the figures the dashboard, risk check and Agent use). Keys: revenue_monthly, expenses_monthly...
+    figure_sources: Dict[str, str] = Field(default_factory=dict)
+    # Items left out of the figures because their currency had no exchange rate (audit F8: used to be silent)
+    excluded_fx_items: int | None = Field(default=0, ge=0)
+    # Money owed by week for the 13-week cash view: index 0 = due in the next 7 days or already overdue
+    pending_receivables_weekly: List[float] = Field(default_factory=list)
+    pending_payables_weekly: List[float] = Field(default_factory=list)
+    # Business settings for projections. Each is optional; when not given it is left out and the run says so.
+    profit_tax_rate_pct: float | None = Field(default=None, ge=0, le=100)
+    tax_payment_month: int | None = Field(default=None, ge=1, le=24)
+    sales_tax_rate_pct: float | None = Field(default=None, ge=0, le=100)      # VAT/GST, when registered
+    sales_tax_period_months: int | None = Field(default=None, ge=1, le=12)
+    sales_tax_on_costs_pct: float | None = Field(default=None, ge=0, le=100)  # share of costs that carry reclaimable tax
+    existing_loan_balance: float | None = Field(default=None, ge=0)
+    existing_loan_annual_rate_pct: float | None = Field(default=None, ge=0, le=100)
+    existing_loan_monthly_repayment: float | None = Field(default=None, ge=0)
+    cost_inflation_pct: float | None = Field(default=None, ge=-50, le=100)  # a year, applied to costs with no trend
+    # Simulation audit, Phase 5 (model 1.4): the further factors of a standard forecast. All optional; blank = not modelled.
+    tax_country: str | None = Field(default=None, max_length=60)            # GB / NG / US (or a country name): payroll rules
+    profit_tax_regime: Literal["flat", "uk_corporation_tax"] | None = None   # UK bands and marginal relief, or the flat rate
+    tax_losses_brought_forward: float | None = Field(default=None, ge=0)    # earlier losses that reduce taxable profit
+    funding_events: List[Dict[str, Any]] = Field(default_factory=list)     # [{type: equity|owner_capital|grant, amount, month}]
+    owner_drawings_monthly: float | None = Field(default=None, ge=0)        # cash the owners take out each month (not a cost)
+    dividends: List[Dict[str, Any]] = Field(default_factory=list)          # [{amount, month}] (cash out, not a cost)
+    capital_purchases: List[Dict[str, Any]] = Field(default_factory=list)  # [{amount, month, life_months}] equipment
+    bad_debt_pct: float | None = Field(default=None, ge=0, le=50)          # share of sales never collected
+    payroll_staff_count: int | None = Field(default=None, ge=0, le=10000)
+    payroll_gross_monthly_per_person: float | None = Field(default=None, ge=0)
+    payroll_in_recorded_expenses: bool | None = None                        # True: salaries are already in the expenses
+    employer_pension_pct: float | None = Field(default=None, ge=0, le=50)   # overrides the country's minimum
+    # Phase 6 (model 1.5): from the business's records (records.py), set by the server
+    current_month_recorded: Dict[str, Any] | None = None     # this month so far: {month, revenue, cost_of_sales, expenses, ...}
+    figure_notes: List[str] = Field(default_factory=list)    # why a figure differs from the dashboard's, in words
+    record_checks: Dict[str, Any] | None = None              # Phase 6 (1.6): duplicates, uncategorised, undated records
 
 
 class RiskDetectionRequest(BaseModel):
@@ -136,6 +182,8 @@ class ScenarioRunResult(BaseModel):
     timeline_summary: Dict[str, str]
     risk_signals: List[RiskSignal] = Field(default_factory=list)
     recommendations: List[Dict[str, Any]]
+    # What the run was asked with: {"basis": "estimate", "estimate_basis": "£70 × 25 a month, ..."} when it ran from an estimate (QA PF4).
+    parameters: Dict[str, Any] = Field(default_factory=dict)
     # Multi-engine outputs (baseline + scenario + deltas for all 5 engines)
     multi_engine: Dict[str, Any] | None = Field(default=None, description="Multi-engine orchestration output (viability, survival, growth, fragility, stability)")
     survival_delta: Dict[str, Any] | None = Field(default=None, description="Survival engine delta (baseline -> scenario)")
@@ -159,10 +207,14 @@ class ScenarioTimelineEntry(BaseModel):
     stability_score: float
     state_label: Literal["stable", "tight", "at_risk", "stress", "critical"]
     
-    # Risk Enhancement Ratios
-    cash_conversion_ratio: float = 0.0
-    receivable_exposure_ratio: float = 0.0
-    delayed_revenue_pct: float = 0.0
+    # Risk Enhancement Ratios. None with a state saying why (QA PF4): "unavailable" (nothing to compare with) or
+    # "unbounded" (money owed and no cash against it), never a figure made from zeros.
+    cash_conversion_ratio: Optional[float] = None
+    cash_conversion_state: Literal["ok", "unavailable", "unbounded"] = "ok"
+    receivable_exposure_ratio: Optional[float] = 0.0
+    receivable_exposure_state: Literal["ok", "unavailable", "unbounded"] = "ok"
+    delayed_revenue_pct: Optional[float] = 0.0
+    delayed_revenue_state: Literal["ok", "unavailable", "unbounded"] = "ok"
 
 
 class ScenarioTimelineResponse(BaseModel):
@@ -174,14 +226,18 @@ class DoNothingRequest(BaseModel):
     tenant_id: str
     business_id: str
     state_version: str
-    timeline_months: int = Field(default=3, ge=1, le=12)
+    timeline_months: int = Field(default=3, ge=1, le=24)
     state: BusinessStateSnapshot
+    parameters: Dict[str, Any] = Field(default_factory=dict)      # {"use_estimate": True}: from the owner's own pricing answers (QA PF4)
 
 
 class DoNothingResponse(BaseModel):
     projection_id: str
     timeline_months: int
     forecast: List[Dict[str, Any]]
+    starting_cash: Optional[float] = None      # the cash the projection starts from, so the table opens on it
+    # Horizon totals, closing cash, reconciliation checks and the assumptions used (simulation audit, Phase 0)
+    summary: Optional[Dict[str, Any]] = None
 
 
 class ScenarioDecisionRequest(BaseModel):
@@ -203,6 +259,8 @@ class ScenarioHistoryItem(BaseModel):
     executed_at: str
     decision_status: Optional[str]
     state_result: Optional[str]
+    model_version: Optional[str] = None      # Phase 6: the model that made it
+    outcome: Optional[str] = None
 
 
 class ScenarioHistoryResponse(BaseModel):

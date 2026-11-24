@@ -20,24 +20,24 @@ const PLANS = [
     creditsCaption: "£0 forever",
     desc: "Start simple. For new businesses getting organised",
     ctaLabel: "Get started free",
-    features: ["50 welcome AI credits (valid 60 days)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
+    features: ["50 welcome AI credits (one-off, no expiry)", "AI Agent access (credit-based)", "1 user seat", "Invoices, Quotes, Receipts & Contracts", "Expense, Customer & Product Records", "1 Marketplace Listing", "Basic Idea Validation"],
     highlight: false,
   },
   {
     name: "Starter", monthly: 19, annual: 15.83, annualSaving: 38, free: false,
     desc: "Plan, launch and grow. For founders and solo businesses",
     ctaLabel: "Choose Starter",
-    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "Scenario Simulations", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
+    features: ["Everything in Explorer", "500 AI credits each month", "AI Agent access (credit-based)", "1 user seat", "AI Business Plan Generator", "Product/Service Launch Readiness", "AI-Powered Funding Readiness", "Proposals & Sales Letters Generator", "Pricing & Customer Growth Insights", "Up to 10 Marketplace Listings*", "4 Scenario Simulations a month", "Request for Proposal", "RFQ-to-Quote Workflow", "AI-Powered Decision Recommendations"],
     highlight: false,
   },
   {
-    name: "Decision Engine",
+    name: "Pro (Decision Engine)",
     monthly: 59,
     annual: 49.17,
     annualSaving: 118,
     free: false,
     desc: "Decide with confidence. For growing businesses and teams",
-    ctaLabel: "Choose Decision Engine",
+    ctaLabel: "Choose Pro (Decision Engine)",
     features: ["Everything in Starter", "2,000 pooled AI credits / month", "AI Agent access (credit-based)", "3 user seats included", "Extra seat: £15/mo (+250 AI credits)", "Live & Adaptive Business Plan Intelligence", "Access to RFP Leads", "Third-Party Integrations", "Unlimited Marketplace Listings", "AI-Powered Decision Recommendations"],
     highlight: true, badge: "Most Popular",
   },
@@ -162,6 +162,17 @@ function RecentActivity({ running }) {
 
 export default function LandingPage() {
   const goalFlow = useGoalFlow();      // the goal started in the hero: the launcher on the left, its task card on the right
+  const [annualBilling, setAnnualBilling] = useState(false);      // the plans' billing period (restored, 23 Oct)
+  // One task card on the page (the owner's QA, 21 Oct: a hidden second copy showed the recap twice): under the launcher
+  // from 768 to 1023px, in the right column (or a sheet) otherwise.
+  const [midWidth, setMidWidth] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 768px) and (max-width: 1023px)").matches);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const m = window.matchMedia("(min-width: 768px) and (max-width: 1023px)");
+    const on = () => setMidWidth(m.matches);
+    m.addEventListener?.("change", on);
+    return () => m.removeEventListener?.("change", on);
+  }, []);
   // From 1024px the preview's box (and so the task card that takes its place) starts level with the Agent card's top.
   const heroRight = useRef(null);
   const heroStage = useRef(null);
@@ -387,7 +398,8 @@ export default function LandingPage() {
               ))}
             </ul>
             <button type="button" onClick={() => goToApp()} className="mt-5 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition">Get Started Free →</button>
-            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
+            <button type="button" onClick={() => { setShowExitPopup(false); setExitDismissed(true); }} className="mt-2 w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition">Maybe later</button>
+
           </div>
         </div>
       )}
@@ -406,15 +418,14 @@ export default function LandingPage() {
           {/* Two columns from 1024px: the way in on the left, the product on the right. Below that, one column. */}
           <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,60fr)_minmax(0,40fr)] xl:grid-cols-[minmax(0,55fr)_minmax(0,45fr)]" data-hero-grid>
             <div className="min-w-0 text-center lg:text-left" data-hero-copy>
-              <span {...enter("fadeUp", 0)} className="inline-block text-xs font-bold uppercase tracking-widest text-brand-600">AI-Native Business Decision Intelligence</span>
-              <h1 {...enter("fadeUp", 1)} className="mt-3 text-3xl font-extrabold leading-tight tracking-tight text-slate-900 md:text-4xl lg:text-[2.35rem]">
+              <h1 {...enter("fadeUp", 1)} className="text-3xl font-extrabold leading-tight tracking-tight text-slate-900 md:text-4xl lg:text-[2.35rem]">
                 Build a More Resilient<br />Business with <span className="bg-gradient-to-r from-accent-500 to-purple-600 bg-clip-text text-transparent">Intelligence.</span>
               </h1>
               <p {...enter("fadeUp", 2)} className="mt-2 text-base font-bold text-slate-800 sm:text-lg">Plan, operate, sell and grow from one intelligent business workspace.</p>
               {/* The way in: say what you want done, pick a business goal, or start a task (PRD-GO-001). The card is as wide as the text column. */}
               <div {...enter("fadeUp", 3)}><GoalLauncherView className="mt-6 w-full md:mt-7 lg:mt-8" flow={goalFlow} onTouch={demo ? () => closeDemo(false) : null} /></div>
               {/* 768 to 1023px: the goal opens right here, under the launcher. (Wider, it is in the right column; narrower, a sheet.) */}
-              {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
+              {goalFlow.session && midWidth && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} placement="below" />}
             </div>
 
             {/* The right column. It always holds the product preview's space, so opening a goal never changes the hero's height:
@@ -424,7 +435,7 @@ export default function LandingPage() {
                 same top and the same height as the preview, so nothing moves when it opens or closes; the two crossfade. */}
             <div className="relative" ref={heroStage} style={stageTop ? { marginTop: stageTop } : undefined} data-hero-stage>
             {/* Keyed by the task: a new or resumed task never shows another one's thread. */}
-            {goalFlow.session && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
+            {goalFlow.session && !midWidth && <GoalTaskCard key={goalFlow.session.id} flow={goalFlow} />}
             {/* While the first question is on its way (or a saved task is fetched on reload): the card's own shell, with the
                 Agent typing in its first bubble. */}
             {(goalFlow.busy || goalFlow.resuming) && !goalFlow.session && (
@@ -759,6 +770,12 @@ export default function LandingPage() {
             <p className="mx-auto mt-3 max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base">
               From getting started to making smarter decisions and supporting more businesses.
             </p>
+            <div className="mt-6 inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Billing period" data-billing-toggle>
+              <button type="button" aria-pressed={!annualBilling} onClick={() => setAnnualBilling(false)} className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${!annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>Monthly</button>
+              <button type="button" aria-pressed={annualBilling} onClick={() => setAnnualBilling(true)} className={`flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-semibold transition ${annualBilling ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}>
+                Annual <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Save 17%</span>
+              </button>
+            </div>
           </div>
           <div className="mx-auto grid max-w-5xl gap-5 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch [&>*:last-child]:sm:col-span-2 [&>*:last-child]:sm:mx-auto [&>*:last-child]:sm:w-full [&>*:last-child]:sm:max-w-sm [&>*:last-child]:lg:col-span-1 [&>*:last-child]:lg:mx-0 [&>*:last-child]:lg:max-w-none">
             {PLANS.map(plan => (
@@ -771,10 +788,10 @@ export default function LandingPage() {
                   {plan.free ? (
                     <><span className="text-4xl font-extrabold text-slate-900">£0</span></>
                   ) : (
-                    <><span className="text-4xl font-extrabold text-slate-900">£{plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
+                    <><span className="text-4xl font-extrabold text-slate-900">£{annualBilling ? plan.annual : plan.monthly}</span><span className="text-sm text-slate-400">/mo</span></>
                   )}
                 </div>
-                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : "Billed monthly"}</p>
+                <p className="mt-1 text-center text-xs text-slate-400">{plan.free ? plan.creditsCaption : annualBilling ? `Billed annually (save £${plan.annualSaving}/yr)` : "Billed monthly"}</p>
                 {plan.desc && <p className="mt-3 text-center text-xs text-slate-500">{plan.desc}</p>}
                 <button type="button" onClick={() => goToApp()} className={`mt-5 w-full rounded-xl px-4 py-3 text-[11px] font-bold uppercase tracking-widest transition ${plan.free ? "border border-slate-200 bg-white text-slate-800 hover:bg-slate-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
                   {plan.ctaLabel}

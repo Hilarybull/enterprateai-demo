@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
 
+import stripe
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
+from app.core.config import get_settings
 from app.core.supabase import sb_delete, sb_insert, sb_select, sb_update, sb_upsert
 from app.shared.auth.deps import get_current_user
 
@@ -52,20 +56,122 @@ async def _select_users_with_block(columns: str = "id,email,name,phone,company,c
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
 
-async def _select_ai_usage_events() -> list:
-    try:
-        return await sb_select(
-            "ai_usage_events",
-            columns="id,user_id,feature,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at",
-            order="created_at",
-            desc=True,
-            limit=1000,
-        )
-    except Exception:
-        return []
+AI_WINDOW_DAYS = 30
+_PAGE = 1000
+_MAX_PAGES = 50      # 50,000 rows a window; past that the totals say they are partial
+
+
+async def _select_window(table: str, columns: str, since: str, filters: list | None = None) -> tuple[list, bool]:
+    """Every row since `since`, newest first, read a page at a time. (rows, complete). [] when the table is missing."""
+    rows: list = []
+    before = None
+    for _ in range(_MAX_PAGES):
+        page_filters = [("created_at", "gte", since), *(filters or [])]
+        if before:
+            page_filters.append(("created_at", "lt", before))
+        try:
+            page = await sb_select(table, columns=columns, filters=page_filters, order="created_at", desc=True, limit=_PAGE)
+        except Exception:
+            return rows, not rows
+        rows.extend(page or [])
+        if len(page or []) < _PAGE:
+            return rows, True
+        last = page[-1].get("created_at")
+        if not last or last == before:
+            return rows, False
+        before = last
+    return rows, False
+
+
+async def _select_ai_usage_events(since: str) -> tuple[list, bool]:
+    return await _select_window(
+        "ai_usage_events",
+        "id,user_id,feature,provider,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,metadata,created_at",
+        since,
+    )
+
+
+async def _select_agent_charges(since: str) -> tuple[list, bool]:
+    """Credits the Agent took (committed charges on agent_* features)."""
+    rows, complete = await _select_window(
+        "credit_transactions",
+        "id,user_id,feature_code,credits,transaction_type,status,created_at",
+        since,
+        filters=[("feature_code", "like", "agent%"), ("transaction_type", "eq", "deduction")],
+    )
+    return [r for r in rows if is_agent_feature(r.get("feature_code"))], complete
+
+
+def is_agent_feature(feature) -> bool:
+    return str(feature or "").startswith("agent_")
+
+
+SEARCH_PROVIDERS = {"serpapi", "serper"}
+
+
+def _rollup_agent(rows: list, charges: list, user_email_map: dict[str, str]) -> dict:
+    """What the Agent cost to run (its model and search calls) and what it charged in credits, side by side."""
+    def amount(value) -> float:
+        try:
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    calls = [r for r in rows if is_agent_feature(r.get("feature"))]
+    searches = [r for r in calls if r.get("provider") in SEARCH_PROVIDERS]
+
+    def search_count(r) -> int:
+        meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+        return int(meta.get("searches") or 1)
+
+    features: dict[str, dict] = {}
+    people: dict[str, dict] = {}
+
+    def feature(name) -> dict:
+        return features.setdefault(name, {"label": name, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "credits": 0})
+
+    def person(user_id: str) -> dict:
+        label = user_email_map.get(user_id, user_id or "unknown")
+        return people.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "estimated_cost_usd": 0.0, "credits": 0})
+
+    for r in calls:
+        f = feature(str(r.get("feature") or "unknown"))
+        f["calls"] += 1
+        f["tokens"] += int(r.get("total_tokens") or 0)
+        f["estimated_cost_usd"] += amount(r.get("estimated_cost_usd"))
+        p = person(str(r.get("user_id") or ""))
+        p["calls"] += 1
+        p["estimated_cost_usd"] += amount(r.get("estimated_cost_usd"))
+    for c in charges:
+        credits = abs(int(amount(c.get("credits"))))
+        feature(str(c.get("feature_code") or "unknown"))["credits"] += credits
+        person(str(c.get("user_id") or ""))["credits"] += credits
+
+    def ranked(items) -> list[dict]:
+        out = sorted(items, key=lambda x: (x["estimated_cost_usd"], x["credits"], x["calls"]), reverse=True)
+        for item in out:
+            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+        return out
+
+    return {
+        "calls": len(calls) - len(searches),
+        "searches": sum(search_count(r) for r in searches),
+        "tokens": sum(int(r.get("total_tokens") or 0) for r in calls),
+        "model_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in calls if r.get("provider") not in SEARCH_PROVIDERS), 6),
+        "search_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in searches), 6),
+        "estimated_cost_usd": round(sum(amount(r.get("estimated_cost_usd")) for r in calls), 6),
+        "credits_charged": sum(abs(int(amount(c.get("credits")))) for c in charges),
+        "charges": len(charges),
+        "by_feature": ranked(features.values())[:12],
+        "by_user": ranked(people.values())[:8],
+    }
 
 
 def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
+    from app.shared.llm.usage import estimate_cost_usd
+    rows = [{**row, "estimated_cost_usd": estimate_cost_usd(str(row.get("provider") or ""), str(row.get("model") or ""),
+              int(row.get("input_tokens") or 0), int(row.get("output_tokens") or 0))}
+            if row.get("estimated_cost_usd") is None else row for row in rows]
     def amount(value) -> float:
         try:
             return float(value or 0)
@@ -83,26 +189,28 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
             label = str(row.get(key) or "unknown")
             if label_key:
                 label = f"{row.get(key) or 'unknown'} / {row.get(label_key) or 'unknown'}"
-            item = acc.setdefault(label, {"label": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+            item = acc.setdefault(label, {"label": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "unpriced_calls": 0})
             item["calls"] += 1
             item["tokens"] += int(row.get("total_tokens") or 0)
             item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+            item["unpriced_calls"] += int(row.get("estimated_cost_usd") is None)
         out = sorted(acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)
         for item in out:
-            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+            item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6) if item["unpriced_calls"] < item["calls"] else None
         return out[:limit]
 
     user_acc: dict[str, dict] = {}
     for row in rows:
         user_id = str(row.get("user_id") or "")
         label = user_email_map.get(user_id, user_id or "unknown")
-        item = user_acc.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0})
+        item = user_acc.setdefault(label, {"user_id": user_id, "email": label, "calls": 0, "tokens": 0, "estimated_cost_usd": 0.0, "unpriced_calls": 0})
         item["calls"] += 1
         item["tokens"] += int(row.get("total_tokens") or 0)
         item["estimated_cost_usd"] += amount(row.get("estimated_cost_usd"))
+        item["unpriced_calls"] += int(row.get("estimated_cost_usd") is None)
     top_users = sorted(user_acc.values(), key=lambda x: (x["estimated_cost_usd"], x["tokens"], x["calls"]), reverse=True)[:8]
     for item in top_users:
-        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6) if item["unpriced_calls"] < item["calls"] else None
 
     recent = []
     for row in rows[:25]:
@@ -117,7 +225,7 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
             "input_tokens": int(row.get("input_tokens") or 0),
             "output_tokens": int(row.get("output_tokens") or 0),
             "total_tokens": int(row.get("total_tokens") or 0),
-            "estimated_cost_usd": round(amount(row.get("estimated_cost_usd")), 6),
+            "estimated_cost_usd": round(amount(row.get("estimated_cost_usd")), 6) if row.get("estimated_cost_usd") is not None else None,
             "created_at": row.get("created_at"),
         })
 
@@ -126,7 +234,8 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
         "total_tokens": total_tokens,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "estimated_cost_usd": round(total_cost, 6),
+        "estimated_cost_usd": round(total_cost, 6) if any(r.get("estimated_cost_usd") is not None for r in rows) else None,
+        "unpriced_calls": sum(r.get("estimated_cost_usd") is None for r in rows),
         "by_feature": grouped("feature"),
         "by_model": grouped("provider", "model"),
         "by_user": top_users,
@@ -134,20 +243,35 @@ def _rollup_ai_usage(rows: list, user_email_map: dict[str, str]) -> dict:
     }
 
 
+def _listing_views(data) -> dict:
+    """How many visits a workspace's Marketplace listing had: in all, and in the last 30 days."""
+    views = ((data or {}).get("marketplace") or {}).get("profile_views") if isinstance(data, dict) else None
+    views = [v for v in views or [] if isinstance(v, dict)]
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    return {"views": len(views), "views_30": sum(1 for v in views if str(v.get("viewed_at") or "") >= since)}
+
+
 @router.get("/stats")
-async def get_system_stats(user=Depends(require_admin)) -> dict:
-    (workspaces, users, members, invitations, upgrade_clicks, ai_usage_events) = await asyncio.gather(
+async def get_system_stats(days: int = AI_WINDOW_DAYS, user=Depends(require_admin)) -> dict:
+    days = max(1, min(int(days or AI_WINDOW_DAYS), 365))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    (workspaces, users, members, invitations, upgrade_clicks, (ai_usage_events, ai_complete),
+     (agent_charges, charges_complete)) = await asyncio.gather(
         sb_select("workspaces", columns="id,name,user_id,created_at,data"),
         _select_users_with_block(),
         sb_select("workspace_members", columns="id,workspace_id,user_id,permission_type,created_at"),
         sb_select("workspace_invitations", columns="id,workspace_id,email,status,created_at"),
         sb_select("upgrade_clicks", columns="id"),
-        _select_ai_usage_events(),
+        _select_ai_usage_events(since),
+        _select_agent_charges(since),
     )
 
     user_email_map = {u["id"]: u["email"] for u in users}
     workspace_name_map = {ws["id"]: (ws.get("name") or "Unnamed") for ws in workspaces}
     ai_usage = _rollup_ai_usage(ai_usage_events, user_email_map)
+    ai_usage["agent"] = _rollup_agent(ai_usage_events, agent_charges, user_email_map)
+    ai_usage["window_days"] = days
+    ai_usage["complete"] = ai_complete and charges_complete
 
     sim_count = 0
     blueprint_count = 0
@@ -184,6 +308,11 @@ async def get_system_stats(user=Depends(require_admin)) -> dict:
                 "owner_id": ws.get("user_id"),
                 "owner_email": user_email_map.get(ws.get("user_id") or "", ""),
                 "created_at": ws.get("created_at"),
+                # "Open for proposals", and whether the Marketplace listing is live (proposals reach only a live listing)
+                "proposals_open": bool(((ws.get("data") or {}).get("proposal_preferences") or {}).get("enabled")) if isinstance(ws.get("data"), dict) else False,
+                "listing_live": bool(((ws.get("data") or {}).get("marketplace") or {}).get("is_active")) if isinstance(ws.get("data"), dict) else False,
+                # Visits to its Marketplace listing, as recorded for its owner (one per visitor a day, the owner's own never counted)
+                **_listing_views(ws.get("data")),
             }
             for ws in workspaces
         ],
@@ -302,10 +431,12 @@ async def _contacts() -> list[dict]:
         rows = await sb_select("users", columns=CONTACT_COLUMNS, order="created_at", desc=True)
     except Exception:      # before migration 040: the name and email are still listed
         rows = await sb_select("users", columns="id,email,name,created_at", order="created_at", desc=True)
+    from app.modules.plans.access import _lapsed
+
     plans: dict[str, str] = {}
     try:
-        for sub in await sb_select("user_subscriptions", columns="user_id,plan_key,status") or []:
-            if str(sub.get("status") or "active") in ("active", "trialing"):
+        for sub in await sb_select("user_subscriptions", columns="user_id,plan_key,status,current_period_end") or []:
+            if str(sub.get("status") or "active") in ("active", "trial", "trialing") and not _lapsed(sub):
                 plans[str(sub.get("user_id"))] = sub.get("plan_key") or "explorer"
     except Exception:
         pass
@@ -319,6 +450,197 @@ async def _audit(actor: dict, action: str, detail: dict) -> None:
     except Exception:
         import logging
         logging.getLogger(__name__).warning("admin audit: %s by %s %s", action, actor.get("email"), detail)
+
+
+class DiscountCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    code: str = Field(min_length=3, max_length=50)
+    percent_off: float = Field(gt=0, le=100)
+    duration: str = "repeating"
+    duration_in_months: Optional[int] = Field(default=None, ge=1, le=36)
+    max_redemptions: Optional[int] = Field(default=None, ge=1)
+    redeem_by: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_duration(self):
+        if self.duration not in {"once", "repeating", "forever"}:
+            raise ValueError("Duration must be once, repeating or forever.")
+        if self.duration == "repeating" and self.duration_in_months is None:
+            raise ValueError("Repeating discounts need a duration in months.")
+        return self
+
+
+class DiscountStatusPayload(BaseModel):
+    active: bool
+
+
+def _stripe_admin_client():
+    settings = get_settings()
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=503, detail="Stripe is not configured for this environment.")
+    client_class = getattr(stripe, "StripeClient", None) or getattr(stripe, "Stripe", None)
+    if client_class is None:
+        raise HTTPException(status_code=503, detail="The configured Stripe SDK is not supported.")
+    return client_class(settings.stripe_secret_key)
+
+
+def _stripe_attr(value, key, default=None):
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _discount_response(promotion, coupon, livemode: bool) -> dict:
+    metadata = _stripe_attr(promotion, "metadata", {})
+    return {
+        "id": _stripe_attr(promotion, "id"),
+        "code": _stripe_attr(promotion, "code"),
+        "name": _stripe_attr(metadata, "offer_name") or _stripe_attr(coupon, "name"),
+        "coupon_name": _stripe_attr(coupon, "name"),
+        "percent_off": _stripe_attr(coupon, "percent_off"),
+        "amount_off": _stripe_attr(coupon, "amount_off"),
+        "currency": _stripe_attr(coupon, "currency"),
+        "duration": _stripe_attr(coupon, "duration"),
+        "duration_in_months": _stripe_attr(coupon, "duration_in_months"),
+        "active": bool(_stripe_attr(promotion, "active", False)) and bool(_stripe_attr(coupon, "valid", True)),
+        "times_redeemed": _stripe_attr(promotion, "times_redeemed", 0),
+        "max_redemptions": _stripe_attr(promotion, "max_redemptions"),
+        "expires_at": _stripe_attr(promotion, "expires_at"),
+        "redeem_by": _stripe_attr(coupon, "redeem_by"),
+        "products": _stripe_attr(_stripe_attr(coupon, "applies_to", {}), "products", []) or [],
+        "livemode": livemode,
+    }
+
+
+def _configured_plan_products(client) -> list[str]:
+    """Resolve the configured plan prices to products so a plan offer cannot discount unrelated products."""
+    from app.modules.plans.router import _PRICE_ATTR
+
+    settings = get_settings()
+    products = set()
+    for attr in set(_PRICE_ATTR.values()):
+        price_id = getattr(settings, attr, None)
+        if not price_id:
+            continue
+        price = client.prices.retrieve(price_id)
+        product = _stripe_attr(price, "product")
+        product_id = _stripe_attr(product, "id") if not isinstance(product, str) else product
+        if product_id:
+            products.add(str(product_id))
+    if not products:
+        raise HTTPException(status_code=503, detail="No paid plan prices are configured in Stripe for this environment.")
+    return sorted(products)
+
+
+@router.get("/discounts")
+async def list_discounts(user=Depends(require_admin)) -> dict:
+    """List Stripe promotion codes and their coupon terms for the active environment."""
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    try:
+        response = client.promotion_codes.list({"limit": 100, "expand": ["data.coupon"]})
+        rows = []
+        pages = 0
+        while response and pages < 20:
+            for promotion in response.data:
+                coupon = _stripe_attr(promotion, "coupon")
+                if isinstance(coupon, str):
+                    coupon = client.coupons.retrieve(coupon)
+                rows.append(_discount_response(promotion, coupon, livemode))
+            if not response.has_more or not response.data:
+                break
+            response = client.promotion_codes.list({
+                "limit": 100,
+                "starting_after": response.data[-1].id,
+                "expand": ["data.coupon"],
+            })
+            pages += 1
+        return {"items": rows, "livemode": livemode, "partial": pages >= 20}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe promotion codes could not be listed")
+        raise HTTPException(status_code=502, detail="Discounts could not be loaded from Stripe.") from exc
+
+
+@router.post("/discounts")
+async def create_discount(payload: DiscountCreatePayload, user=Depends(require_admin)) -> dict:
+    """Create a repeating percent-off coupon and customer-entered promotion code."""
+    code = payload.code.strip()
+    if not code.isascii() or not code.isalnum():
+        raise HTTPException(status_code=400, detail="Use letters and numbers only for a discount code.")
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    name = payload.name.strip() or code
+    expiry = None
+    if payload.redeem_by:
+        try:
+            expiry = datetime.strptime(payload.redeem_by, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Choose a valid last redemption date.") from exc
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="The last redemption date must be in the future.")
+    try:
+        existing = client.promotion_codes.list({"code": code, "active": True, "limit": 100})
+        if any(str(_stripe_attr(item, "code", "")).casefold() == code.casefold() for item in existing.data):
+            raise HTTPException(status_code=409, detail="An active discount already uses this code.")
+
+        plan_products = _configured_plan_products(client)
+        coupon_params = {
+            "name": name,
+            "percent_off": payload.percent_off,
+            "duration": payload.duration,
+            "applies_to": {"products": plan_products},
+            "metadata": {"created_by": "enterprateai_superadmin", "offer_name": name},
+        }
+        if payload.duration == "repeating":
+            coupon_params["duration_in_months"] = payload.duration_in_months
+        coupon = client.coupons.create(coupon_params)
+        promo_params = {
+            "coupon": coupon.id,
+            "code": code,
+            "metadata": {"created_by": "enterprateai_superadmin", "offer_name": name},
+        }
+        if payload.max_redemptions is not None:
+            promo_params["max_redemptions"] = payload.max_redemptions
+        if expiry:
+            promo_params["expires_at"] = int(expiry.timestamp())
+        promotion = client.promotion_codes.create(promo_params)
+        await _audit(user, "discount_created", {
+            "code": code, "coupon_id": coupon.id, "promotion_code_id": promotion.id,
+            "percent_off": payload.percent_off, "duration": payload.duration,
+            "duration_in_months": payload.duration_in_months,
+            "plan_products": plan_products, "livemode": livemode,
+        })
+        return _discount_response(promotion, coupon, livemode)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe discount could not be created")
+        raise HTTPException(status_code=502, detail="Discount could not be created in Stripe.") from exc
+
+
+@router.patch("/discounts/{promotion_code_id}")
+async def update_discount(promotion_code_id: str, payload: DiscountStatusPayload, user=Depends(require_admin)) -> dict:
+    """Activate or deactivate a promotion code without deleting its redemption history."""
+    client = _stripe_admin_client()
+    settings = get_settings()
+    livemode = str(settings.stripe_secret_key).startswith(("sk_live_", "rk_live_"))
+    try:
+        promotion = client.promotion_codes.update(promotion_code_id, {"active": payload.active})
+        coupon = _stripe_attr(promotion, "coupon")
+        if isinstance(coupon, str):
+            coupon = client.coupons.retrieve(coupon)
+        await _audit(user, "discount_status_changed", {
+            "code": _stripe_attr(promotion, "code"), "promotion_code_id": promotion_code_id,
+            "active": payload.active, "livemode": livemode,
+        })
+        return _discount_response(promotion, coupon, livemode)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Stripe promotion code could not be updated")
+        raise HTTPException(status_code=502, detail="Discount status could not be changed in Stripe.") from exc
 
 
 @router.get("/contacts")
@@ -808,15 +1130,17 @@ async def remove_user_grant(
 async def delete_user(user_id: str, user=Depends(require_admin)) -> Response:
     if user_id == user.get("id"):
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
-    # Clear non-cascading FK reference before deleting the user
-    try:
-        await sb_update(
-            "workspace_invitations",
-            payload={"accepted_by_user_id": None},
-            filters=[("accepted_by_user_id", "eq", user_id)],
-        )
-    except Exception:
-        pass
+    # Everything the user owns goes with them: workspaces and their data, credits, plan, documents (the owner, 31 Oct:
+    # "I'm deleting users... it should clear everything he owns")
+    from app.shared.auth.purge import purge_account
+    target = await sb_select("users", filters=[("id", "eq", user_id)], columns="id,email", single=True)
+    try:      # Release Marketplace control before the workspaces are removed; self-service deletion does the same.
+        from app.modules.marketplace.directory_router import get_service
+        for ws in await sb_select("workspaces", filters=[("user_id", "eq", user_id)], columns="id") or []:
+            await get_service().release_workspace(str(ws["id"]), actor=user_id)
+    except Exception:      # noqa: BLE001 - account removal must finish even if the directory is unavailable
+        logger.warning("admin account delete: Marketplace profiles not released for %s", user_id, exc_info=True)
+    await purge_account(user_id, (target or {}).get("email"))
     await sb_delete("users", filters=[("id", "eq", user_id)])
     return Response(status_code=204)
 
@@ -1009,6 +1333,32 @@ async def restore_workspace_snapshot(
     return {"restored": True, "ws_name": restored_name, "saved_at": snap.get("created_at")}
 
 
+class WorkspaceProposalsIn(BaseModel):
+    enabled: bool
+
+
+def open_for_proposals(data: dict, enabled: bool, now: str) -> dict:
+    """The owner's own "Open for proposals" setting, switched by the superadmin. The listing is never published by this:
+    a business that isn't live stays as its owner left it (the owner, 9 Nov)."""
+    from app.modules.proposals.service import apply_proposal_preferences
+    apply_proposal_preferences(data, {"enabled": enabled}, now, auto_publish=False)
+    return {"enabled": enabled, "listing_live": bool((data.get("marketplace") or {}).get("is_active"))}
+
+
+@router.patch("/workspaces/{workspace_id}/proposals")
+async def set_workspace_proposals(workspace_id: str, body: WorkspaceProposalsIn, user=Depends(require_admin)) -> dict:
+    from app.modules.agent.business import BusinessAccessDenied
+    from app.modules.agent.router import get_orchestrator
+    out: dict = {}
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        await get_orchestrator().rt.business.mutate(workspace_id, lambda data: out.update(open_for_proposals(data, body.enabled, now)))
+    except BusinessAccessDenied:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    await _audit(user, "workspace_proposals_changed", {"workspace_id": workspace_id, "enabled": body.enabled})
+    return out
+
+
 @router.delete("/workspaces/{workspace_id}", status_code=204, response_class=Response)
 async def delete_workspace(workspace_id: str, user=Depends(require_admin)) -> Response:
     await sb_delete("workspaces", filters=[("id", "eq", workspace_id)])
@@ -1067,7 +1417,10 @@ async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> di
     except Exception:
         sub = None
     if sub:
-        return sub
+        from app.modules.plans.access import resolve_subscription
+
+        resolved = await resolve_subscription(user_id)
+        return {**sub, **resolved.model_dump()}
     # Fall back to deriving from account creation date
     user_row = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
     if not user_row:
@@ -1092,9 +1445,10 @@ async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> di
 @router.get("/users/{user_id}/credits")
 async def get_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
     from app.modules.credits import service as credit_svc
-    wallet = await credit_svc.get_wallet(user_id)
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-    plan_code = (sub or {}).get("plan_key") or "explorer"
+    from app.modules.plans.access import resolve_subscription
+
+    wallet, sub = await asyncio.gather(credit_svc.get_wallet(user_id), resolve_subscription(user_id))
+    plan_code = sub.plan_key
     return {
         "available_credits": (wallet or {}).get("available_credits", 0),
         "held_credits": (wallet or {}).get("held_credits", 0),
@@ -1157,8 +1511,9 @@ async def admin_deduct_user_credits(user_id: str, payload: CreditDeductPayload, 
 async def admin_provision_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
     """Re-issue the plan's full credit allocation for this user (admin-only renewal)."""
     from app.modules.credits import service as credit_svc
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-    plan_code = (sub or {}).get("plan_key") or "explorer"
+    from app.modules.plans.access import resolve_subscription
+
+    plan_code = (await resolve_subscription(user_id)).plan_key
     result = await credit_svc.provision_plan_credits(
         user_id, plan_code,
         reason=f"Admin-initiated {plan_code} credit renewal",
@@ -1191,3 +1546,622 @@ async def renew_user_trial(user_id: str, user=Depends(require_admin)) -> dict:
         on_conflict="user_id",
     )
     return {"renewed": True, "trial_end": trial_end.isoformat()}
+
+
+@router.get("/research-runs/{business_id}")
+async def research_diagnostics(business_id: str, limit: int = 10, user=Depends(require_admin)) -> dict:
+    """Research diagnostics: a business's latest research runs, topic by topic (the queries sent, results, pages loaded,
+    sources kept and dropped with why, the model's calls) and why a topic ended with no sources."""
+    from app.modules.agent import research
+    from app.modules.agent.router import get_orchestrator
+    data = await get_orchestrator().rt.business.load(business_id) or {}
+    runs = sorted((data.get("research_runs") or {}).values(), key=lambda r: r.get("created_at") or "", reverse=True)[:max(1, min(limit, 50))]
+    return {"business_id": business_id, "health": research.health(),
+            "runs": [{k: r.get(k) for k in ("id", "goal", "status", "created_at", "seconds", "error", "unavailable", "charged", "counts", "context", "diagnostics")}
+                     for r in runs]}
+
+
+# ── Emails: what was sent, which kinds are on, their wording, and one-off emails ───────────────
+
+_EMAIL_SAMPLES = {
+    "email_verification": {"greeting": "Hi Ada,", "app_name": "EnterprateAI", "link": "https://example.com/verify"},
+    "password_reset": {"app_name": "EnterprateAI", "email": "ada@example.com", "minutes": 60, "link": "https://example.com/reset"},
+    "password_otp": {"app_name": "EnterprateAI", "code": "482913"},
+    "task_code": {"app_name": "EnterprateAI", "code": "482913", "saving": " and carry on with: your business plan"},
+    "workspace_invitation": {"inviter_email": "owner@example.com", "app_name": "EnterprateAI", "access_level": "module access", "expires": "7 days", "link": "https://example.com/invite"},
+    "proposal_invite": {"sender_name": "Apex Consulting Ltd", "request_title": "Office fit-out", "request_description": "A 2,000 sq ft office in Leeds.",
+                        "requirements": "What you'll need to provide:\nRequired: Insurance certificate", "link": "https://example.com/request"},
+    "document_share": {"sender_label": "Apex Consulting Ltd", "article": "a", "doc_label": "business plan", "app_name": "EnterprateAI", "expires": "7 days", "link": "https://example.com/doc"},
+    "invoice_share": {"business_name": "Apex Consulting Ltd", "article": "an", "doc_type": "Invoice", "link": "https://example.com/invoice"},
+    "quote_sent": {"customer_name": "Ada Lovelace", "business_name": "Apex Consulting Ltd", "reference": "Q-1A2B3C4D", "total": "\u00a31,500.00", "valid_days": 30},
+    "quote_question": {"customer_name": "Ada Lovelace", "reference": "Q-1A2B3C4D", "question": "Does the price include delivery?", "business_name": "Apex Consulting Ltd",
+                       "link": "https://example.com/operations"},
+    "quote_customer_action": {"customer_name": "Ada Lovelace", "outcome": "accepted", "reference": "Q-1A2B3C4D", "detail": "Signed by Ada Lovelace.",
+                              "business_name": "Apex Consulting Ltd", "link": "https://example.com/operations"},
+    "claim_code": {"app_name": "EnterprateAI", "business_name": "Apex Consulting Ltd", "code": "482913"},
+    "claim_invitation": {"headline": "Apex Consulting Ltd is now listed on the EnterprateAI Marketplace", "business_name": "Apex Consulting Ltd", "waiting": "2 requests are waiting for you.",
+                         "message": "Apex Consulting Ltd is now listed on the EnterprateAI Marketplace, based on public information. 2 requests are waiting for you. Claim it for free to correct the details, reply to customers and choose the work you want.",
+                         "link": "https://example.com/claim", "opt_out": "https://example.com/stop"},
+    "claim_decision": {"headline": "You now manage Apex Consulting Ltd on EnterprateAI", "business_name": "Apex Consulting Ltd",
+                       "message": "We've reviewed your claim and you now manage Apex Consulting Ltd on the EnterprateAI Marketplace.", "reason": "",
+                       "waiting": "", "next_step": "Next step: check what the public sees and choose the opportunities you want.",
+                       "action": "Finish setting up your profile", "link": "https://example.com/profile"},
+    "marketplace_team_invite": {"app_name": "EnterprateAI", "email": "reviewer@example.com", "link": "https://example.com/team-invite"},
+    "demo_request": {"name": "Ada Lovelace", "email": "ada@example.com", "company": "Apex Consulting Ltd", "phone": "Not given", "role": "Founder",
+                     "message": "We'd like to see the Agent."},
+}
+
+
+class EmailKindIn(BaseModel):
+    enabled: Optional[bool] = None
+    subject: Optional[str] = Field(default=None, max_length=300)
+    body: Optional[str] = Field(default=None, max_length=60000)      # plain lines, or HTML from the formatting editor
+    button_label: Optional[str] = Field(default=None, max_length=80)
+
+
+class EmailPreviewIn(BaseModel):
+    subject: str = Field(default="", max_length=300)
+    body: str = Field(default="", max_length=60000)
+    button_label: str = Field(default="", max_length=80)
+
+
+class EmailAttachment(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=14_000_000)      # base64, the way Resend takes it
+
+
+class EmailSendIn(BaseModel):
+    to: str = Field(max_length=4000)                 # addresses, separated by commas, spaces or new lines
+    subject: str = Field(min_length=3, max_length=300)
+    body: str = Field(min_length=5, max_length=8000)      # the message as plain words (mail apps without formatting)
+    reply_to: Optional[str] = Field(default=None, max_length=200)
+    html: Optional[str] = Field(default=None, max_length=200_000)      # the same message with its formatting, from the editor
+    attachments: list[EmailAttachment] = Field(default_factory=list, max_length=10)
+
+
+# ── Writing an email in the superadmin (the owner, 12 Nov): formatting, links, attachments and variables ──────────────
+
+EMAIL_VARIABLES = {"name": "Their name", "first_name": "Their first name", "email": "Their email address", "login_link": "The sign in page",
+                   "business": "Their business or workspace name", "profile_link": "Their Marketplace profile page",
+                   "claim_link": "The page to claim their unclaimed profile"}
+_GREETING = {"name", "first_name"}      # "there" when the name isn't known, so "Hi {name}" still reads well
+_VARIABLE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_ATTACHMENT_BYTES = 10 * 1024 * 1024
+_TAGS = {"p", "br", "div", "b", "strong", "i", "em", "u", "s", "strike", "h2", "h3", "ul", "ol", "li", "blockquote", "a"}
+_STYLE = {"p": "margin:0 0 14px;", "div": "margin:0 0 6px;", "h2": "margin:18px 0 10px;font-size:20px;line-height:1.3;",
+          "h3": "margin:16px 0 8px;font-size:17px;", "ul": "margin:0 0 14px;padding-left:22px;", "ol": "margin:0 0 14px;padding-left:22px;",
+          "li": "margin:0 0 4px;", "blockquote": "margin:0 0 14px;padding:4px 0 4px 12px;border-left:3px solid #cbd5e1;color:#475569;",
+          "a": "color:#4f46e5;text-decoration:underline;"}
+_BUTTON_STYLE = ("display:inline-block;background:#4f46e5;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;"
+                 "font-weight:600;font-size:15px;line-height:1.2;")
+
+
+def _clean_email_html(raw: str, hrefs: str = r"\{[a-z_]*_link\}") -> str:
+    """Only plain formatting goes out: the tags the editor makes, links to web or email addresses, nothing else
+    (no scripts, styles, images or event handlers). Each tag gets the inline style mail apps need. `hrefs` is which
+    variables may stand for a link's address: the *_link ones here, any of an email kind's own in its wording."""
+    from html import escape as _escape
+    from html.parser import HTMLParser
+
+    class _Clean(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.out, self.open, self.skip = [], [], 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style", "head", "title"):
+                self.skip += 1
+                return
+            if self.skip or tag not in _TAGS:
+                return
+            if tag == "br":
+                self.out.append("<br/>")
+                return
+            extra = ""
+            if tag == "a":
+                href = (dict(attrs).get("href") or "").strip()
+                # A web or email address, or one of our link variables ({claim_link}), filled in with our own address later
+                if not re.match(r"^(https?://|mailto:)", href, re.I) and not re.fullmatch(hrefs, href):
+                    return
+                extra = f' href="{_escape(href, quote=True)}" target="_blank" rel="noopener"'
+            self.open.append(tag)
+            style = _BUTTON_STYLE if tag == "a" and dict(attrs).get("data-button") else _STYLE.get(tag, "")      # a button from the editor
+            if tag in ("p", "div", "h2", "h3", "li", "blockquote"):      # alignment from the editor is the one style kept
+                given = dict(attrs)
+                found = re.search(r"text-align\s*:\s*(left|center|right|justify)", given.get("style") or "", re.I)
+                align = (found.group(1) if found else str(given.get("align") or "")).lower()
+                if align in ("left", "center", "right", "justify"):
+                    style += f"text-align:{align};"
+            self.out.append(f'<{tag}{extra} style="{style}">' if style else f"<{tag}{extra}>")
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style", "head", "title"):
+                self.skip = max(0, self.skip - 1)
+                return
+            if tag in self.open:
+                while self.open:
+                    t = self.open.pop()
+                    self.out.append(f"</{t}>")
+                    if t == tag:
+                        break
+
+        def handle_data(self, data):
+            if not self.skip:      # a non-breaking space from the editor goes out as &nbsp;, which every mail app shows
+                self.out.append(_escape(data, quote=False).replace(" ", "&nbsp;"))
+
+    c = _Clean()
+    c.feed(raw or "")
+    c.close()
+    return "".join(c.out) + "".join(f"</{t}>" for t in reversed(c.open))
+
+
+def _unknown_variables(*parts: str | None) -> list[str]:
+    return sorted({"{" + m + "}" for p in parts for m in _VARIABLE.findall(p or "") if m not in EMAIL_VARIABLES})
+
+
+def _check_message(subject: str, body: str, html: str | None, attachments: list) -> list[dict]:
+    """What can't go out, said plainly; otherwise the attachments as Resend takes them."""
+    import base64
+    unknown = _unknown_variables(subject, body, html)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"These can't be filled in: {', '.join(unknown)}. Use "
+                                                    + ", ".join("{" + k + "}" for k in EMAIL_VARIABLES) + ", or take them out.")
+    files, total = [], 0
+    for a in attachments:
+        try:
+            size = len(base64.b64decode(a.content, validate=True))
+        except Exception:      # noqa: BLE001
+            raise HTTPException(status_code=422, detail=f"{a.filename} couldn't be read. Attach it again.")
+        total += size
+        files.append({"filename": a.filename.strip()[:200], "content": a.content})
+    if total > _ATTACHMENT_BYTES:
+        raise HTTPException(status_code=422, detail="Attachments can add up to 10 MB at most.")
+    return files
+
+
+def _site() -> str:
+    return str(getattr(get_settings(), "frontend_url", "") or "").split(",")[0].strip().rstrip("/")
+
+
+def _person_values(*, name: str = "", email: str = "", business: str = "", slug: str = "", claimed: bool | None = None) -> dict:
+    """Every variable for one person. A link they don't have is left out, so a message that needs it is stopped."""
+    who = " ".join((name or "").split()) or " ".join((business or "").split())
+    site = _site()
+    values = {"name": who, "first_name": who.split(" ")[0] if who else "", "email": email, "login_link": f"{site}/login" if site else "",
+              "business": " ".join((business or "").split())}
+    if slug and site:
+        values["profile_link"] = f"{site}/marketplace/business/{slug}"
+        if claimed is False:
+            values["claim_link"] = f"{site}/marketplace/claim/{slug}"
+    return {k: v for k, v in values.items() if v}
+
+
+def _missing_for(people: list[dict], subject: str, body: str, html: str | None) -> str | None:
+    """Plain words for the variables some picked people have no value for (names fall back to "there")."""
+    used = {m for p in (subject, body, html) for m in _VARIABLE.findall(p or "")} - _GREETING
+    gaps = []
+    for var in sorted(used):
+        short = [p["email"] for p in people if not p["values"].get(var)]
+        if short:
+            gaps.append(f"{{{var}}} is empty for {len(short)} of {len(people)} ({', '.join(short[:3])}{'…' if len(short) > 3 else ''})")
+    return "; ".join(gaps) + ". Take those people out or the variable." if gaps else None
+
+
+def _compose(subject: str, body: str, html: str | None, values: dict | None = None) -> tuple[str, str, str]:
+    """The email one person gets: variables filled with their details. With formatting from the editor it goes out as
+    written (cleaned); without, each paragraph of the plain words becomes one."""
+    from html import escape as _escape
+    from app.shared.email.resend import WRITTEN_FOOTER_HTML, WRITTEN_FOOTER_TEXT
+    values = {**{k: "there" for k in _GREETING}, **(values or {})}
+    fill = lambda s, esc=False: _VARIABLE.sub(lambda m: (_escape(values[m.group(1)]) if esc else values[m.group(1)]) if m.group(1) in values else m.group(0), s or "")      # noqa: E731
+    text = fill(body.strip())
+    if (html or "").strip():
+        inner = fill(_clean_email_html(html), esc=True)
+    else:
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        inner = "".join("<p style=\"margin:0 0 14px;\">" + "<br/>".join(_escape(line) for line in p.split("\n")) + "</p>" for p in paragraphs)
+    page = ("<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:24px 16px;\">"
+            + inner + WRITTEN_FOOTER_HTML + "</div>")
+    return " ".join(fill(subject).split()), text + WRITTEN_FOOTER_TEXT, page
+
+
+def _email_tables_missing() -> HTTPException:
+    return HTTPException(status_code=503, detail="The Emails area isn't set up yet: run migration 047_email_admin.sql in Supabase.")
+
+
+@router.get("/emails/kinds")
+async def email_kinds(user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    try:
+        rows = {r["kind"]: r for r in (await sb_select("email_settings") or [])}
+        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        try:
+            recent = await sb_select("email_log", columns="kind,status,opened_at,clicked_at", filters=[("created_at", "gte", since)], limit=20000) or []
+        except Exception:      # before migration 048: no tracking columns yet
+            recent = await sb_select("email_log", columns="kind,status", filters=[("created_at", "gte", since)], limit=20000) or []
+        set_up = True
+    except Exception:
+        rows, recent, set_up = {}, [], False
+    counts: dict[str, dict[str, int]] = {}
+    for r in recent:
+        c = counts.setdefault(r.get("kind") or "other", {})
+        c[r.get("status") or "sent"] = c.get(r.get("status") or "sent", 0) + 1
+        for seen in ("opened", "clicked"):
+            if r.get(f"{seen}_at"):
+                c[seen] = c.get(seen, 0) + 1
+    items = []
+    for key, k in catalog.KINDS.items():
+        row = rows.get(key) or {}
+        t = catalog.TEMPLATES.get(key)
+        items.append({
+            "key": key, "label": k["label"], "description": k["description"], "essential": k["essential"], "editable": bool(t), "written": catalog.WRITTEN_ELSEWHERE.get(key),
+            "enabled": row.get("enabled", True) is not False, "edited": bool(row.get("subject") or row.get("body")),
+            "subject": row.get("subject") or (t or {}).get("subject"), "body": row.get("body") or (t or {}).get("body"),
+            "button_label": row.get("button_label") or (t or {}).get("button"),
+            "default": {"subject": t["subject"], "body": t["body"], "button_label": t["button"]} if t else None,
+            "variables": (t or {}).get("variables", []), "required": (t or {}).get("required", []),
+            "updated_by": row.get("updated_by"), "updated_at": row.get("updated_at"), "last_30_days": counts.get(key, {}),
+        })
+    return {"set_up": set_up, "items": items}
+
+
+@router.put("/emails/kinds/{kind}")
+async def save_email_kind(kind: str, body: EmailKindIn, user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    if kind not in catalog.KINDS:
+        raise HTTPException(status_code=404, detail="No such email.")
+    try:
+        current = await sb_select("email_settings", filters=[("kind", "eq", kind)], single=True) or {}
+    except Exception:
+        raise _email_tables_missing()
+    row = {"kind": kind, "enabled": current.get("enabled", True), "subject": current.get("subject"), "body": current.get("body"),
+           "button_label": current.get("button_label")}
+    if body.enabled is not None:
+        if body.enabled is False and catalog.KINDS[kind]["essential"]:
+            raise HTTPException(status_code=400, detail="This email can't be switched off: people need it to get into their account, or asked for it themselves.")
+        row["enabled"] = body.enabled
+    if body.subject is not None or body.body is not None or body.button_label is not None:
+        t = catalog.TEMPLATES.get(kind)
+        subject = body.subject if body.subject is not None else (row["subject"] or (t or {}).get("subject", ""))
+        text = body.body if body.body is not None else (row["body"] or (t or {}).get("body", ""))
+        button = body.button_label if body.button_label is not None else (row["button_label"] or (t or {}).get("button", ""))
+        errors = catalog.problems(kind, subject, text, button)
+        if errors:
+            raise HTTPException(status_code=422, detail={"errors": errors, "message": " ".join(errors.values())})
+        row.update({"subject": subject.strip(), "body": text.strip(), "button_label": button.strip()})
+    row.update({"updated_by": user.get("email"), "updated_at": datetime.now(timezone.utc).isoformat()})
+    try:
+        await sb_upsert("email_settings", payload=row, on_conflict="kind")
+    except Exception:
+        raise _email_tables_missing()
+    catalog.forget(kind)
+    await _audit(user, "email_setting_changed", {"kind": kind, "enabled": row["enabled"], "wording_edited": bool(row.get("body"))})
+    return {"kind": kind, "enabled": row["enabled"], "edited": bool(row.get("subject") or row.get("body"))}
+
+
+@router.delete("/emails/kinds/{kind}/wording")
+async def reset_email_wording(kind: str, user=Depends(require_admin)) -> dict:
+    """Back to the wording written in the product. Whether it is switched on is kept."""
+    from app.shared.email import catalog
+    if kind not in catalog.KINDS:
+        raise HTTPException(status_code=404, detail="No such email.")
+    try:
+        await sb_update("email_settings", filters=[("kind", "eq", kind)],
+                        payload={"subject": None, "body": None, "button_label": None, "updated_by": user.get("email"), "updated_at": datetime.now(timezone.utc).isoformat()})
+    except Exception:
+        raise _email_tables_missing()
+    catalog.forget(kind)
+    await _audit(user, "email_wording_reset", {"kind": kind})
+    return {"kind": kind, "edited": False}
+
+
+@router.post("/emails/kinds/{kind}/preview")
+async def preview_email(kind: str, body: EmailPreviewIn, user=Depends(require_admin)) -> dict:
+    from app.shared.email import catalog
+    from app.shared.email.resend import _FOOTER_HTML, _FOOTER_TEXT
+    if kind not in catalog.TEMPLATES:
+        raise HTTPException(status_code=404, detail="This email's wording can't be edited here.")
+    errors = catalog.problems(kind, body.subject, body.body, body.button_label)
+    subject, text, html = catalog.render(kind, {"subject": body.subject, "body": body.body, "button_label": body.button_label},
+                                         _EMAIL_SAMPLES.get(kind, {}), footer_html=_FOOTER_HTML, footer_text=_FOOTER_TEXT)
+    return {"subject": subject, "text": text, "html": html, "errors": errors}
+
+
+@router.get("/emails/log")
+async def email_log(kind: Optional[str] = None, status_is: Optional[str] = None, q: Optional[str] = None, tracked: Optional[str] = None,
+                    limit: int = 300, user=Depends(require_admin)) -> dict:
+    filters = []
+    if kind:
+        filters.append(("kind", "eq", kind))
+    if status_is:
+        filters.append(("status", "eq", status_is))
+    cap = max(1, min(limit, 1000))
+    try:
+        rows = await sb_select("email_log", filters=filters, order="created_at", desc=True, limit=3000 if (q or tracked) else cap) or []
+    except Exception:
+        raise _email_tables_missing()
+    if q:
+        needle = q.strip().lower()
+        rows = [r for r in rows if needle in str(r.get("to_email") or "").lower() or needle in str(r.get("subject") or "").lower()]
+    if tracked in ("opened", "clicked", "bounced", "delivered", "complained"):
+        rows = [r for r in rows if r.get(f"{tracked}_at")]
+    elif tracked == "not_opened":
+        rows = [r for r in rows if r.get("status") == "sent" and not r.get("opened_at")]
+    return {"items": rows[:cap]}
+
+
+@router.post("/emails/send")
+async def send_one_off_email(body: EmailSendIn, user=Depends(require_admin)) -> dict:
+    """A one-off email to named addresses, each sent on its own so nobody sees the others. Not for the mailing list:
+    a bulk email needs an unsubscribe link first."""
+    import re as _re
+    from app.shared.email.resend import send_email_via_resend
+    addresses: list[str] = []
+    for a in _re.split(r"[\s,;]+", body.to.strip()):
+        a = a.strip().lower()
+        if a and a not in addresses:
+            addresses.append(a)
+    bad = [a for a in addresses if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", a)]
+    if not addresses or bad:
+        raise HTTPException(status_code=422, detail=f"Check these addresses: {', '.join(bad)}." if bad else "Add at least one address.")
+    if len(addresses) > 20:
+        raise HTTPException(status_code=422, detail="Up to 20 addresses at a time.")
+    files = _check_message(body.subject, body.body, body.html, body.attachments)
+    people = [{"email": a, "name": "", "key": ""} for a in addresses]
+    await _values_for(people)
+    gaps = _missing_for(people, body.subject, body.body, body.html)
+    if gaps:
+        raise HTTPException(status_code=422, detail=gaps)
+    results = []
+    for p in people:
+        s, t, h = _compose(body.subject, body.body, body.html, p["values"])
+        r = await send_email_via_resend(to_email=p["email"], subject=s, text_content=t, html_content=h, attachments=files or None,
+                                        reply_to_email=(body.reply_to or "").strip() or None, kind="manual", sent_by=user.get("email"))
+        results.append({"to": p["email"], "sent": r.sent, "error": None if r.sent else r.error})
+    await _audit(user, "email_sent_from_admin", {"to": addresses, "subject": body.subject.strip(), "sent": sum(1 for r in results if r["sent"])})
+    return {"results": results, "sent": sum(1 for r in results if r["sent"]), "failed": sum(1 for r in results if not r["sent"])}
+
+
+@router.get("/emails/optouts")
+async def email_optouts(user=Depends(require_admin)) -> dict:
+    try:
+        rows = await sb_select("email_optouts", order="created_at", desc=True, limit=2000) or []
+    except Exception:
+        raise _email_tables_missing()
+    return {"items": rows}
+
+
+@router.delete("/emails/optouts")
+async def remove_email_optout(email: str, kind: str, user=Depends(require_admin)) -> dict:
+    """Undo an opt-out, for example when someone asks by phone to get these emails again. Kept in the audit log."""
+    try:
+        await sb_delete("email_optouts", filters=[("email", "eq", email.strip().lower()), ("kind", "eq", kind)])
+    except Exception:
+        raise _email_tables_missing()
+    await _audit(user, "email_optout_removed", {"email": email.strip().lower(), "kind": kind})
+    return {"ok": True}
+
+
+
+# ── Bulk email (the owner, 11 Nov): many people at once, picked from users, workspaces and Marketplace profiles,
+# or typed in. Each person gets their own copy with an unsubscribe link; opt-outs and marketing unsubscribes are skipped.
+
+_BULK_JOBS: dict[str, dict] = {}
+_BULK_CAP = 2000
+_BULK_GAP_SECONDS = 0.6      # our email provider takes about two a second
+
+
+def _marketing_state(c: dict | None) -> str:
+    if not c:
+        return "unknown"
+    if c.get("unsubscribed"):
+        return "unsubscribed"
+    return "agreed" if may_be_sent_marketing(c) else "not_agreed"
+
+
+async def _profile_slugs() -> dict[str, str]:
+    """Each workspace's own Marketplace profile (the one it claimed), by workspace: its page's address name."""
+    try:
+        from app.modules.marketplace.directory import SCOPE
+        from app.modules.marketplace.directory_router import get_service
+        rows = await get_service().store.list("profiles", SCOPE, limit=5000)
+    except Exception:      # noqa: BLE001 - no Marketplace: no profile links, everything else still works
+        logging.getLogger(__name__).info("Marketplace profiles not read for email links", exc_info=True)
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:
+        d = r.get("data") or {}
+        if d.get("linked_business_id") and d.get("slug") and d.get("publication") != "merged":
+            out.setdefault(str(d["linked_business_id"]), str(d["slug"]))
+    return out
+
+
+async def _bulk_audience(source: str) -> list[dict]:
+    """Everyone in one source, with what the filters need. Rows without an email are listed but can't be picked."""
+    if source == "users":
+        # A user's business and profile link come from their workspace (the first one that has a profile, else the first)
+        slugs = await _profile_slugs()
+        theirs: dict[str, dict] = {}
+        for w in await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at") or []:
+            uid = str(w.get("user_id") or "")
+            if uid and (uid not in theirs or (not slugs.get(str(theirs[uid]["id"])) and slugs.get(str(w["id"])))):
+                theirs[uid] = w
+        out = []
+        for c in await _contacts():
+            email = c["email"] if "@" in str(c.get("email") or "") else ""
+            w = theirs.get(str(c["id"])) or {}
+            out.append({"key": f"user:{c['id']}", "email": email, "name": c["name"], "plan": c["plan"], "marketing": _marketing_state(c),
+                        "since": str(c.get("created_at") or "")[:10],
+                        "values": _person_values(name=c.get("name") or "", email=email, business=w.get("name") or "",
+                                                 slug=slugs.get(str(w.get("id") or ""), ""), claimed=True)})
+        return out
+    if source == "workspaces":
+        people = {str(c["id"]): c for c in await _contacts()}
+        slugs = await _profile_slugs()
+        rows = await sb_select("workspaces", columns="id,name,user_id,created_at", order="created_at", desc=True) or []
+        out = []
+        for w in rows:
+            c = people.get(str(w.get("user_id")))
+            email = str((c or {}).get("email") or "")
+            out.append({"key": f"workspace:{w['id']}", "email": email if "@" in email else "", "name": w.get("name") or "Unnamed workspace",
+                        "owner": (c or {}).get("name") or "", "plan": (c or {}).get("plan") or "explorer", "marketing": _marketing_state(c),
+                        "since": str(w.get("created_at") or "")[:10],
+                        "values": _person_values(name=(c or {}).get("name") or "", email=email if "@" in email else "", business=w.get("name") or "",
+                                                 slug=slugs.get(str(w["id"]), ""), claimed=True)})
+        return out
+    if source in ("claimed", "unclaimed"):
+        from app.modules.marketplace.directory import SCOPE
+        from app.modules.marketplace.directory_router import get_service
+        rows = [r for r in await get_service().store.list("profiles", SCOPE, limit=5000) if (r.get("data") or {}).get("publication") != "merged"]
+        owners: dict[str, str] = {}
+        if source == "claimed":
+            people = {str(c["id"]): c.get("email") for c in await _contacts()}
+            for w in await sb_select("workspaces", columns="id,user_id") or []:
+                owners[str(w["id"])] = str(people.get(str(w.get("user_id"))) or "")
+        out = []
+        for r in rows:
+            d = r.get("data") or {}
+            linked = d.get("linked_business_id")
+            if bool(linked) != (source == "claimed"):
+                continue
+            email = str((owners.get(str(linked)) if linked else "") or d.get("contact_email") or "")
+            out.append({"key": f"profile:{r['id']}", "email": email if "@" in email else "", "name": d.get("name") or "Unnamed business",
+                        "category": d.get("category") or "", "location": d.get("location") or "", "since": str(r.get("created_at") or "")[:10],
+                        "values": _person_values(email=email if "@" in email else "", business=d.get("name") or "", slug=d.get("slug") or "",
+                                                 claimed=bool(linked))})
+        return out
+    raise HTTPException(status_code=422, detail="Choose users, workspaces, claimed or unclaimed profiles.")
+
+
+@router.get("/emails/audience")
+async def email_audience(source: str = "users", user=Depends(require_admin)) -> dict:
+    items = await _bulk_audience(source)
+    return {"items": items, "total": len(items)}
+
+
+class BulkRecipient(BaseModel):
+    email: str = Field(max_length=320)
+    name: str = Field(default="", max_length=200)
+    key: str = Field(default="", max_length=120)      # where they were picked from ("user:…", "workspace:…", "profile:…"); empty when typed in
+
+
+async def _values_for(people: list[dict]) -> None:
+    """Each person's variables, from the list they were picked from; someone typed in is matched to an account by email."""
+    keys = {p["key"] for p in people if p.get("key")}
+    sources = {"user": ["users"], "workspace": ["workspaces"], "profile": ["claimed", "unclaimed"]}
+    known: dict[str, dict] = {}
+    for prefix, names in sources.items():
+        if any(k.startswith(prefix + ":") for k in keys):
+            for source in names:
+                known.update({r["key"]: r.get("values") or {} for r in await _bulk_audience(source)})
+    accounts = None
+    for p in people:
+        if p.get("key") in known:
+            p["values"] = {**known[p["key"]], "email": p["email"]}
+            continue
+        if accounts is None:      # typed in: an account's own details and links, when the address has one
+            try:
+                accounts = {str(r.get("email") or "").lower(): r.get("values") or {} for r in await _bulk_audience("users")}
+            except Exception:      # noqa: BLE001 - names fall back to "there"; the email still goes
+                logging.getLogger(__name__).info("Details for typed-in addresses not looked up", exc_info=True)
+                accounts = {}
+        found = accounts.get(p["email"])
+        p["values"] = {**found, "email": p["email"]} if found else _person_values(name=p.get("name") or "", email=p["email"])
+
+
+class BulkEmailIn(BaseModel):
+    recipients: list[BulkRecipient] = Field(default_factory=list, max_length=5000)
+    subject: str = Field(min_length=3, max_length=300)
+    body: str = Field(min_length=5, max_length=8000)
+    reply_to: Optional[str] = Field(default=None, max_length=200)
+    test: bool = False      # one copy to the superadmin, filled with the first person's details
+    html: Optional[str] = Field(default=None, max_length=200_000)
+    attachments: list[EmailAttachment] = Field(default_factory=list, max_length=10)
+
+
+async def _one_click_claim(profile_id: str, email: str, sent_by: str | None) -> str | None:
+    """Sent to the address an unclaimed profile lists: its own one-click claim link (the owner, 14 Nov). Otherwise None,
+    and the claim page link stays."""
+    try:
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.marketplace.directory import service_for
+        path = await service_for(get_orchestrator()).email_claim_link(profile_id, email, actor=f"superadmin:{sent_by or ''}")
+        return f"{_site()}{path}" if path and _site() else None
+    except Exception:      # noqa: BLE001 - the ordinary claim link still works
+        logging.getLogger(__name__).warning("A one-click claim link could not be made", exc_info=True)
+        return None
+
+
+async def _send_bulk(job_id: str, people: list[dict], subject: str, body: str, html: str | None, files: list[dict], reply_to: str | None,
+                     sent_by: str | None) -> None:
+    from app.shared.email.resend import MSG_OPTED_OUT, send_email_via_resend
+    job = _BULK_JOBS[job_id]
+    uses_claim = any("{claim_link}" in (x or "") for x in (subject, body, html))
+    for p in people:
+        try:
+            if uses_claim and str(p.get("key") or "").startswith("profile:") and p["values"].get("claim_link"):
+                p["values"] = {**p["values"], "claim_link": await _one_click_claim(p["key"].split(":", 1)[1], p["email"], sent_by) or p["values"]["claim_link"]}
+            s, t, h = _compose(subject, body, html, p["values"])
+            r = await send_email_via_resend(kind="bulk", to_email=p["email"], subject=s, text_content=t, html_content=h, reply_to_email=reply_to,
+                                            attachments=files or None, sent_by=sent_by, idempotency_key=f"bulk/{job_id}/{p['email']}")
+            job["sent" if r.sent else "opted_out" if r.error == MSG_OPTED_OUT else "failed"] += 1
+        except Exception:      # noqa: BLE001 - one bad address never stops the rest
+            logging.getLogger(__name__).warning("Bulk email to one address failed", exc_info=True)
+            job["failed"] += 1
+        job["done"] += 1
+        await asyncio.sleep(_BULK_GAP_SECONDS)
+    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/emails/bulk")
+async def send_bulk_email(body: BulkEmailIn, user=Depends(require_admin)) -> dict:
+    from app.shared.email.resend import send_email_via_resend
+    files = _check_message(body.subject, body.body, body.html, body.attachments)
+    people, seen, invalid = [], set(), []
+    for r in body.recipients:
+        email = r.email.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            invalid.append(r.email)
+            continue
+        if email in seen:
+            continue
+        seen.add(email)
+        people.append({"email": email, "name": r.name.strip(), "key": r.key.strip()})
+    duplicates = len(body.recipients) - len(people) - len(invalid)
+    if not people:
+        raise HTTPException(status_code=422, detail="Pick or add at least one person with an email address.")
+    await _values_for(people)
+    reply_to = (body.reply_to or "").strip() or None
+    if body.test:
+        s, t, h = _compose(body.subject, body.body, body.html, people[0]["values"])
+        r = await send_email_via_resend(kind="manual", to_email=user.get("email"), subject=f"[Test] {s}", text_content=t, html_content=h,
+                                        reply_to_email=reply_to, attachments=files or None, sent_by=user.get("email"))
+        return {"test": True, "to": user.get("email"), "sent": bool(r.sent), "error": None if r.sent else r.error}
+    if len(people) > _BULK_CAP:
+        raise HTTPException(status_code=422, detail=f"Up to {_BULK_CAP:,} people at a time. Narrow the filters and send in parts.")
+    # Account holders who unsubscribed from our marketing are left out; Unsubscribe-link opt-outs are skipped as each one is sent.
+    unsubscribed = {str(c["email"]).lower() for c in await _contacts() if c.get("unsubscribed")}
+    kept = [p for p in people if p["email"] not in unsubscribed]
+    gaps = _missing_for(kept, body.subject, body.body, body.html)
+    if gaps:
+        raise HTTPException(status_code=422, detail=gaps)
+    job_id = uuid4().hex[:12]
+    _BULK_JOBS[job_id] = {"id": job_id, "total": len(kept), "done": 0, "sent": 0, "failed": 0, "opted_out": 0, "subject": body.subject.strip(),
+                          "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None if kept else datetime.now(timezone.utc).isoformat()}
+    if kept:
+        _BULK_JOBS[job_id]["_task"] = asyncio.create_task(_send_bulk(job_id, kept, body.subject, body.body, body.html, files, reply_to, user.get("email")))
+    await _audit(user, "bulk_email_started", {"job": job_id, "subject": body.subject.strip(), "people": len(kept), "attachments": len(files),
+                                              "unsubscribed_left_out": len(people) - len(kept)})
+    return {**_bulk_status(job_id), "left_out": {"invalid": invalid, "duplicates": duplicates, "unsubscribed": len(people) - len(kept)}}
+
+
+def _bulk_status(job_id: str) -> dict:
+    job = _BULK_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="That send isn't running on this server any more. The Sent tab shows every email it sent.")
+    return {k: v for k, v in job.items() if not k.startswith("_")}
+
+
+@router.get("/emails/bulk/{job_id}")
+async def bulk_email_status(job_id: str, user=Depends(require_admin)) -> dict:
+    return _bulk_status(job_id)

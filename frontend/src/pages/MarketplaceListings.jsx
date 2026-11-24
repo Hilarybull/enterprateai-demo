@@ -1,6 +1,8 @@
 import { SkeletonCard, SkeletonRegion } from "../components/Skeleton";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { alertDialog } from "../lib/dialog";
+import { searchBusinesses } from "../lib/directory";
+import Pagination, { pageSlice } from "../components/Pagination";
 import { hasPaidAccess } from "../lib/plans";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -9,6 +11,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import { useProposalStore } from "../store/proposal";
 import Spinner from "../components/Spinner";
+import RequestText from "../components/marketplace/RequestText";
 import { useDemoTour } from "../context/DemoTourContext";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -1595,7 +1598,8 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
     }
 
     const res = await submitProposal({
-      recipient_workspace_id: listing.workspace_id,
+      recipient_workspace_id: listing.workspace_id || null,
+      ...(listing.directory_slug ? { directory_slug: listing.directory_slug } : {}),      // kept until the business claims its profile
       request_id: request?.id || null,
       title: title.trim(),
       summary: summary.trim() || null,
@@ -1781,7 +1785,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
                 if (!isPaid) { setStep("upgrade"); return; }
                 try {
                   sessionStorage.setItem("ea_proposal_ctx", JSON.stringify({
-                    listing: { workspace_id: listing.workspace_id, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
+                    listing: { workspace_id: listing.workspace_id, directory_slug: listing.directory_slug || null, company_name: listing.company_name, logo_data_url: listing.logo_data_url },
                     request: request ? { id: request.id, title: request.title, description: request.description, requirements: request.requirements } : null,
                     proposal_title: defaultTitle,
                     request_title: request?.title || null,
@@ -1824,7 +1828,7 @@ export function ApplyModal({ listing, request, onClose, onSuccess }) {
               </button>
             </div>
             <div className="border-t border-slate-100 px-6 py-4 text-[11px] text-slate-400 dark:border-slate-800 dark:text-slate-500">
-              Your proposal will be reviewed by {listing.company_name}. AI may analyse submissions but humans make all decisions.
+              Your proposal will be reviewed by {listing.company_name}.
             </div>
           </>
 
@@ -2123,7 +2127,7 @@ function ProposalRequestDetailModal({ req, isOwn, onApply, onClose }) {
 
           {/* Description */}
           {req.description && (
-            <p className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+            <RequestText text={req.description} className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-400" />
           )}
 
           {/* Meta row */}
@@ -2406,7 +2410,63 @@ function ProposalRequestCard({ req, isLoggedIn, isOwn, isApplied, onApply, onCom
   );
 }
 
-// ─── main page ─────────────────────────────────────────���──────────────────────
+function ProposalStartModal({ listing, onChoose, onClose }) {
+  const [state, setState] = useState({ loading: true, requests: [] });
+  useEffect(() => {
+    let alive = true;
+    apiRequest("/marketplace/proposal-requests?page=1&page_size=100", "GET")
+      .then((res) => {
+        if (!alive) return;
+        setState({ loading: false, requests: (res?.items || []).filter((r) => String(r.workspace_id) === String(listing.workspace_id)) });
+      })
+      .catch(() => { if (alive) setState({ loading: false, requests: [], error: "Open proposal requests couldn't be loaded. You can still send an unsolicited proposal." }); });
+    return () => { alive = false; };
+  }, [listing.workspace_id]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[85] flex items-end justify-center p-0 sm:items-center sm:p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <section role="dialog" aria-modal="true" aria-labelledby="proposal-start-title" className="ea-dialog relative z-10 w-full max-w-lg rounded-t-3xl p-5 sm:rounded-2xl sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="proposal-start-title" className="text-[17px] font-bold text-slate-900 dark:text-slate-100">Send a proposal to {listing.company_name}</h2>
+            <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">Choose what your proposal is responding to. Both options use the same proposal form.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">×</button>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+            <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-200">Open proposal</h3>
+            {state.loading ? <p className="mt-2 text-[12px] text-slate-500">Loading this business's open requests…</p>
+              : state.requests.length ? <div className="mt-2 space-y-2">
+                {state.requests.map((request) => (
+                  <button key={request.id} type="button" onClick={() => onChoose(request)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-left text-[13px] font-medium text-brand-700 hover:border-brand-300 hover:bg-brand-50 dark:border-slate-700 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                    <span className="min-w-0 truncate">{request.title || "Untitled request"}</span><span className="shrink-0 text-[11px]">Respond →</span>
+                  </button>
+                ))}
+              </div> : <p className="mt-2 text-[12px] text-slate-500">There are no open proposal requests from this business right now.</p>}
+          </div>
+          <button type="button" onClick={() => onChoose(null)} className="w-full rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-brand-300 hover:bg-brand-50 dark:border-slate-700 dark:hover:bg-brand-900/20">
+            <span className="block text-[13px] font-semibold text-slate-800 dark:text-slate-200">Other (unsolicited)</span>
+            <span className="mt-0.5 block text-[12px] text-slate-500 dark:text-slate-400">Send a proposal that isn't tied to an open request.</span>
+          </button>
+          {state.error && <p role="status" className="text-[12px] text-amber-700 dark:text-amber-300">{state.error}</p>}
+        </div>
+        <button type="button" onClick={onClose} className="mt-4 w-full rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+export function MarketplaceProposalFlow({ listing, onClose, onSuccess }) {
+  const [request, setRequest] = useState(undefined); // undefined: choose open request or unsolicited; null: unsolicited
+  if (request === undefined) return <ProposalStartModal listing={listing} onClose={onClose} onChoose={setRequest} />;
+  return <ApplyModal listing={listing} request={request} onClose={onClose} onSuccess={onSuccess} />;
+}
+
+// ─── main page ──────────────────────────────────────────────────────────────────
 
 // The Products & Services and Proposal Requests tabs of the Marketplace. The page shell
 // (MarketplacePage) owns the header, the search box and the tabs, and loads this on demand.
@@ -2421,6 +2481,8 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
 
   const activeTab = tab;
   const [listings, setListings] = useState([]);
+  const [productPaging, setProductPaging] = useState({ page: 1, more: 1 });
+  const [publicListings, setPublicListings] = useState([]);      // profiles nobody has claimed yet: their services are open to requests too
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -2550,6 +2612,23 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
   }, [debouncedSearch, filterIndustry, filterType, page, refreshKey]);
 
   useEffect(() => {
+    if (activeTab !== "products") return undefined;
+    let alive = true;
+    (async () => {      // every page of them, one request at a time: the tab's own pager shows them
+      const all = [];
+      for (let p = 1; p <= 50 && alive; p += 1) {
+        const res = await searchBusinesses({ trust: "unclaimed", q: debouncedSearch, page: p, page_size: 60 });
+        all.push(...(res.items || []));
+        if (!res.items?.length || all.length >= (res.total || 0)) break;
+      }
+      return all;
+    })()
+      .then((items) => { if (alive) setPublicListings(items); })
+      .catch(() => { if (alive) setPublicListings([]); });      // the rest of the tab is still worth showing
+    return () => { alive = false; };
+  }, [activeTab, debouncedSearch, refreshKey]);
+
+  useEffect(() => {
     if (!isLoggedIn || !workspaceId) return;
     let alive = true;
     apiRequest("/marketplace/status", "GET").then((res) => { if (alive) setMyStatus(res); }).catch(() => {}).finally(() => { alive = false; });
@@ -2617,6 +2696,20 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
           });
       }
     }
+    // Services on a profile nobody has claimed: a request is kept for whoever claims it, on the profile's own page.
+    for (const b of publicListings) {
+      if (!b.held_requests_open) continue;
+      const category = String(b.category || "");
+      if (filterType || (filterIndustry && !category.toLowerCase().replace(/\s+/g, "_").includes(filterIndustry))) continue;
+      const listing = { workspace_id: `profile:${b.id}`, company_name: b.name || "", logo_data_url: b.logo_data_url, city: b.location, country: b.country, directorySlug: b.slug };
+      for (const name of (b.service_tags || [])) {
+        const description = b.description || "";
+        const matchesSearch = !q || name.toLowerCase().includes(q) || description.toLowerCase().includes(q) || listing.company_name.toLowerCase().includes(q);
+        const matchesCategory = !filterCategory || category.toLowerCase().includes(filterCategory.toLowerCase());
+        if (matchesSearch && matchesCategory)
+          products.push({ service: { service_name: name, service_description: description, service_category: category }, listing, _key: `svc-${listing.workspace_id}-${name}` });
+      }
+    }
     // Deduplicate: if a catalogue product and a profile service share the same name for the same workspace,
     // keep the catalogue product (richer data) and drop the service duplicate.
     // Build a lookup of profile service descriptions so catalogue products can fall back to them.
@@ -2649,7 +2742,9 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
     // Featured listings always lead; order within each group is kept.
     deduped.sort((a, b) => Number(!!b.listing.is_featured) - Number(!!a.listing.is_featured));
     return deduped;
-  }, [listings, debouncedSearch, filterCategory, sortBy]);
+  }, [listings, publicListings, debouncedSearch, filterCategory, filterIndustry, filterType, sortBy]);
+  useEffect(() => { setProductPaging({ page: 1, more: 1 }); }, [debouncedSearch, filterCategory, filterIndustry, filterType, sortBy]);
+  const productsAt = pageSlice(allProducts.length, productPaging.page, productPaging.more, PAGE_SIZE);
 
   function clearFilters() { setFilterIndustry(""); setFilterType(""); setFilterCategory(""); setSearch(""); onQuery?.(""); setPage(1); }
   const hasFilters = filterIndustry || filterType || filterCategory || debouncedSearch;
@@ -2855,8 +2950,8 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
                   isLoggedIn={isLoggedIn}
                   isOwn={isLoggedIn && req.workspace_id === workspaceId}
                   isApplied={appliedWorkspaceIds.has(req.workspace_id)}
-                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
-                  onCompanyClick={() => apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {})}
+                  onApply={() => setApplyTarget({ workspace_id: req.workspace_id, directory_slug: req.directory_slug || null, company_name: req.company_name, logo_data_url: req.company_logo, _request: req })}
+                  onCompanyClick={() => (req.directory_slug ? navigate(`/marketplace/business/${req.directory_slug}`) : apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET").then(setSelected).catch(() => {}))}
                   onViewDetail={() => navigate(`/marketplace/request/${req.id}`)}
                 />
               ))}
@@ -2886,9 +2981,24 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
               {hasFilters && <button onClick={clearFilters} className="mt-4 text-[13px] font-semibold text-brand-600 hover:underline dark:text-brand-400">Clear filters</button>}
             </div>
           ) : (
+            <>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {allProducts.map((product) => {
+              {allProducts.slice(productsAt.offset, productsAt.offset + productsAt.limit).map((product) => {
                 const isOwn = isLoggedIn && (myStatus?.workspace_id || workspaceId) === product.listing.workspace_id;
+                const slug = product.listing.directorySlug;
+                if (slug) {
+                  const openProfile = () => navigate(`/marketplace/business/${slug}`);
+                  return (
+                    <ProductCard
+                      key={product._key}
+                      product={product}
+                      onOpen={openProfile}
+                      onCompanyClick={openProfile}
+                      onRequestQuote={(_listing, productName) => navigate(`/marketplace/business/${slug}?request=quote&service=${encodeURIComponent(productName)}`)}
+                      isOwn={false}
+                    />
+                  );
+                }
                 return (
                   <ProductCard
                     key={product._key}
@@ -2901,6 +3011,9 @@ export default function MarketplaceListings({ tab = "products", query = "", onTa
                 );
               })}
             </div>
+            <Pagination total={allProducts.length} page={productPaging.page} more={productPaging.more} size={PAGE_SIZE} noun="products" className="!px-0 mt-4"
+              onPage={(page) => { setProductPaging({ page, more: 1 }); window.scrollTo?.({ top: 0 }); }} onMore={(more) => setProductPaging((p) => ({ ...p, more }))} />
+            </>
           )
         ) : (
           /* ── Profiles tab ── */

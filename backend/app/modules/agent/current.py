@@ -109,6 +109,19 @@ async def recheck_against_profile(orch, run: dict, data: dict) -> dict:
         except Exception:      # noqa: BLE001
             logger.warning("could not re-ask task %s", run.get("id"), exc_info=True)
             return run
+    if asked and {f.get("key") for f in asked.get("fields") or []} and {f.get("key") for f in asked.get("fields") or []} <= {"business_name", "business_email"}:
+        # "Before this goes to the customer I need your business email": asked before the workspace form had it (the
+        # owner's QA, 16 Oct). Once the profile has the name and email, the task carries on and asks nothing.
+        from app.modules.agent import business as bz
+        company = bz.company_of(data)
+        keys = {f.get("key") for f in asked.get("fields") or []}
+        if ("business_name" not in keys or company.get("name")) and ("business_email" not in keys or company.get("email")):
+            try:
+                return await orch.advance(run["id"]) or run
+            except Exception:      # noqa: BLE001
+                logger.warning("could not carry on task %s with the profile's details", run.get("id"), exc_info=True)
+                return run
+        return run
     q = asked if run.get("workflow_key") in _ASKS_ABOUT_THE_BUSINESS else None
     if q and "_launch" not in data:
         from app.modules.agent import modules

@@ -4,6 +4,7 @@ import logoUrl from "../../enterprate-logo.png";
 import { useAuthStore } from "../../store/auth";
 import { useWorkspaceStore } from "../../store/workspace";
 import { getMarketplaceProfile } from "../../lib/directory";
+import BackToChat from "../BackToChat";
 
 // The one header for the public Marketplace: the directory and listings, a business's public
 // profile and the claim journey. Signed in: "List My Business" and "Dashboard". Otherwise
@@ -72,6 +73,7 @@ export default function MarketplaceHeader({ onList, managing = false }) {
           )}
         </div>
       </div>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6"><BackToChat /></div>
     </header>
   );
 }
@@ -87,6 +89,12 @@ export function MarketplaceShell({ children }) {
 }
 
 /** The business's initials in a circle: the same mark on cards, the profile and the claim bar. */
+/** A business's own logo where it has one, otherwise its initials. */
+export function BusinessMark({ name, logo, size = 56 }) {
+  if (!String(logo || "").startsWith("data:image/")) return <Initials name={name} size={size} />;
+  return <img src={logo} alt="" style={{ width: size, height: size }} className="shrink-0 rounded-full border border-slate-200 bg-white object-contain dark:border-slate-700" />;
+}
+
 export function Initials({ name, size = 56, className = "" }) {
   const letters = String(name || "").replace(/\b(ltd|limited|llp|plc|inc)\b\.?/gi, " ").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
   return (

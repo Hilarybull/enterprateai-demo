@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
 import logoUrl from "../enterprate-logo.png";
 import Spinner from "../components/Spinner";
+import RequestText from "../components/marketplace/RequestText";
 import { ApplyModal, BusinessProfileModal } from "./MarketplaceListings";
 
 function fmt(str) {
@@ -181,6 +182,10 @@ export default function ProposalRequestDetailPage() {
 
   async function handleApply() {
     if (!req) return;
+    if (req.directory_slug) {      // the same proposal, kept for the business until it claims its profile
+      setApplyTarget({ listing: { workspace_id: null, directory_slug: req.directory_slug, company_name: req.company_name, logo_data_url: req.company_logo }, request: req });
+      return;
+    }
     setApplyLoading(true);
     try {
       const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
@@ -194,6 +199,7 @@ export default function ProposalRequestDetailPage() {
 
   async function handleViewCompany() {
     if (!req) return;
+    if (req.directory_slug) { window.open(`/marketplace/business/${req.directory_slug}`, "_blank", "noopener"); return; }
     setProfileLoading(true);
     try {
       const listing = await apiRequest(`/marketplace/listings/${req.workspace_id}`, "GET");
@@ -320,7 +326,7 @@ export default function ProposalRequestDetailPage() {
                 </div>
 
                 {req.description && (
-                  <p className="mt-5 text-[14px] leading-relaxed text-slate-600 dark:text-slate-400">{req.description}</p>
+                  <RequestText text={req.description} className="mt-5 text-[14px] leading-relaxed text-slate-600 dark:text-slate-400" />
                 )}
 
                 {/* Meta */}
@@ -415,8 +421,8 @@ export default function ProposalRequestDetailPage() {
               )}
             </div>
 
-            {/* Sidebar */}
-            <div className="space-y-4">
+            {/* Sidebar: stays beside a long request on wide screens, below it on phones */}
+            <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
               {/* CTA */}
               {isOwn ? (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center dark:border-slate-700 dark:bg-slate-800">

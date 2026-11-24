@@ -17,7 +17,7 @@ from app.modules.agent.models import A3_EXECUTE_WITH_APPROVAL, Done, Next, StepD
 from app.modules.agent.newdocs import (
     _EMAIL, _TRIGGERS, _amount_in, _customer, _customer_fields, _invoice_named, _new_customer, _prefill, _record, _said,
 )
-from app.modules.agent.tools import _currency, _customers, _products, product_cost, product_price, valid_email
+from app.modules.agent.tools import _asked_currency, _currency, _customers, _products, product_cost, product_price, valid_email
 
 
 def _doc(key: str, title: str, noun: str, details, kind: str, send_tool: str, id_key: str, after: str) -> WorkflowDefinition:
@@ -29,7 +29,9 @@ def _doc(key: str, title: str, noun: str, details, kind: str, send_tool: str, id
         made = await ctx.call("create_document", kind=kind, party={"id": party.get("id"), "name": party["name"], "email": party.get("email") or ""},
                               fields=ctx.state["fields"])
         ctx.state["document_id"], ctx.state["document_reference"] = made["document_id"], made.get("reference")
-        ctx.note(f"Prepared {noun} {made.get('reference')}.")
+        ctx.note(f"Prepared {noun} {made.get('reference')}." + (" The full proposal is in Business Blueprints." if made.get("full_proposal") else ""))
+        if made.get("note"):
+            ctx.note(made["note"])
         return Next()
 
     async def send(ctx):
@@ -53,7 +55,9 @@ async def proposal_details(ctx):
     data = await ctx.rt.business.load(ctx.run["business_id"])
     customer = await _customer(ctx, text)
     solution = str(a.get("solution") or "").strip()
-    price = float(a.get("total") or 0) or (_amount_in(text) or 0)
+    from app.modules.agent.newdocs import priced, recurring_price, term_words
+    pricing = recurring_price(text, {**a, "term": a.get("timeline") or ""})      # B1: "£450 a month for 12 months" is £5,400, said as such
+    price = float(a.get("total") or 0) or (pricing or {}).get("total") or (0 if pricing else (_amount_in(text) or 0))
     if not customer or not valid_email(customer.get("email")) or not solution or price <= 0:
         solution = solution or str(_prefill(ctx).get("solution") or "")      # said when this was started from the homepage: shown, to confirm
         price = price or float(_prefill(ctx).get("amount") or 0)
@@ -66,16 +70,18 @@ async def proposal_details(ctx):
         until = (bz.local_now(data, ctx.now()).date() + timedelta(days=validity)).isoformat()
         return WaitForInput("What should this proposal say?", [
             *(await _customer_fields(ctx, customer)),
-            {"key": "problem", "label": "What the customer needs", "type": "textarea", "default": str(a.get("problem") or known.get("problem") or ""),
+            {"key": "problem", "label": "What the customer needs", "question": "What does the customer need?", "type": "textarea", "default": str(a.get("problem") or known.get("problem") or ""),
              **({"hint": "From what you've said your business solves. Change it to fit this customer."} if known.get("problem") and not a.get("problem") else {})},
-            {"key": "solution", "label": "What you propose", "type": "textarea", "required": True, "default": solution},
-            {"key": "total", "label": "Price", "type": "number", "required": True, "default": price or ""},
-            {"key": "timeline", "label": "Timeline", "type": "text", "default": str(a.get("timeline") or ""), "hint": "For example: 6 weeks from kick-off."},
+            {"key": "solution", "label": "What you propose", "question": "What are you proposing?", "type": "textarea", "required": True, "default": solution},
+            {"key": "total", "label": "Total price", "type": "number", "required": True, "default": price or "",
+             **({"hint": priced(pricing, price, bz.currency_of(data))["text"]} if pricing else {})},
+            {"key": "timeline", "label": "Timeline", "type": "text", "default": str(a.get("timeline") or term_words(pricing)), "hint": "For example: 6 weeks from kick-off."},
             {"key": "valid_until", "label": "Valid until", "type": "date", "default": str(a.get("valid_until") or until)}])
     customer = await _new_customer(ctx, customer)
     ctx.state.update({"party": customer, "fields": {
         "problem": str(a.get("problem") or "").strip()[:4000], "solution": solution[:6000], "total_amount": price,
-        "timeline": str(a.get("timeline") or "").strip()[:200], "valid_until": str(a.get("valid_until") or "")[:10]}})
+        "timeline": (str(a.get("timeline") or "").strip() or term_words(pricing))[:200], "valid_until": str(a.get("valid_until") or "")[:10],
+        **({"pricing": priced(pricing, price, bz.currency_of(data))} if pricing else {})}})
     return Next()
 
 
@@ -126,7 +132,11 @@ def _vendor_fields(data: dict, vendor: dict | None) -> list[dict]:
 
 def _lines(answers: dict) -> list[dict]:
     out = []
-    for it in answers.get("items") or []:
+    given = answers.get("items") or []
+    if isinstance(given, str):      # typed as words: read into lines; one with no price is left to be asked
+        from app.modules.agent.intent import lines_in_text
+        given = [r for r in lines_in_text(given, []) if r["unit_price"] != ""]
+    for it in given:
         qty, name = float(it.get("quantity") or 0), str(it.get("name") or "").strip()
         price = float(it.get("unit_price") or 0) if it.get("unit_price") not in (None, "") else -1
         if qty > 0 and price >= 0 and name:
@@ -184,7 +194,19 @@ async def credit_note_details(ctx):
     text, a = _said(ctx), ctx.answers
     data = await ctx.rt.business.load(ctx.run["business_id"])
     invoices = _creditable(data)
+    from app.modules.agent.newdocs import draft_invoices, drafts_said
+    drafts = draft_invoices(data)
+    from app.modules.agent.newdocs import _message
+    named_draft = (bz.find(drafts, str(a.get("invoice_id") or "")) or _invoice_named(_message(ctx), drafts)) if drafts else None
+    if named_draft and not _invoice_named(_message(ctx), invoices) and not bz.find(invoices, str(a.get("invoice_id") or "")):
+        # B8: the invoice named is a draft: said as it is. A draft is changed or withdrawn, never credited.
+        return Done(f"{drafts_said([named_draft])} There's nothing to credit on a draft: change it or decline it in Needs Approval instead.",
+                    next_action="Open it in Needs Approval to change the amount, or decline it.", skipped=True,
+                    outcome={"reason": "named_draft", "invoice_id": named_draft["id"], "links": [{"label": "Needs Approval", "to": "/agent?bucket=needs_approval"}]})
     if not invoices:
+        if drafts:
+            return Done(f"No invoice has been sent yet, so there is nothing to credit. {drafts_said(drafts)}",
+                        next_action="Change or decline the draft in Needs Approval instead.", skipped=True, outcome={"reason": "only_drafts"})
         return Done("No invoice has been sent yet, so there is nothing to credit.", next_action="Ask me for a new invoice and I'll prepare it.",
                     skipped=True, outcome={"reason": "no_invoices"})
     inv = bz.find(invoices, str(a.get("invoice_id") or "")) or (None if a.get("invoice_id") else _invoice_named(text, invoices))
@@ -234,15 +256,16 @@ async def supplier_bill_step(ctx):
         return WaitForInput("What is on the supplier's bill?", [
             {"key": "vendor_name", "label": "Supplier", "type": "text", "required": True, "default": vendor or (known or {}).get("name") or (m.group(1) if m else "")},
             {"key": "reference", "label": "Their bill number", "type": "text", "default": str(a.get("reference") or "")},
-            {"key": "items", "label": "What they billed for", "type": "line_items", "required": True, "catalogue": [],
+            {"key": "items", "label": "What they billed for", "question": "What did they bill you for?", "type": "line_items", "required": True, "catalogue": [],
              "suggested": [{"product_id": None, "name": "", "quantity": 1, "unit_price": typed}] if typed else []},
             {"key": "date", "label": "Bill date", "type": "date", "required": True, "default": str(a.get("date") or today.isoformat())},
             {"key": "due_date", "label": "Due date", "type": "date", "default": str(a.get("due_date") or (today + timedelta(days=30)).isoformat())}])
     now = ctx.now()
+    cur = _asked_currency(ctx, data)      # the bill's own currency, as given (QA, 20 Oct)
     total = bz.money(sum(float(i["quantity"]) * float(i["unit_price"]) for i in lines))
     if total <= 0:
         return WaitForInput("The bill must come to more than 0. What did they bill for?", [
-            {"key": "items", "label": "What they billed for", "type": "line_items", "required": True, "catalogue": [], "suggested": []}])
+            {"key": "items", "label": "What they billed for", "question": "What did they bill you for?", "type": "line_items", "required": True, "catalogue": [], "suggested": []}])
 
     def _apply(d: dict) -> str:
         expenses = bz.records(d, "expenses")
@@ -251,10 +274,10 @@ async def supplier_bill_step(ctx):
                          "description": ", ".join(i["name"] for i in lines), "amount": total, "total_amount": total,
                          "line_items": [{"id": new_id()[:8], "description": i["name"], "qty": str(i["quantity"]), "unit_price": str(bz.money(i["unit_price"]))} for i in lines],
                          "date": str(a.get("date") or today.isoformat())[:10], "due_date": str(a.get("due_date") or "")[:10] or None, "status": "pending",
-                         "currency": bz.currency_of(d), "source": "EnterprateAI Agent", "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
+                         "currency": cur, "source": "EnterprateAI Agent", "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
         return ref
     ref = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    return Done(f"Saved: supplier bill {ref} from {vendor} for {fmt_money(total, bz.currency_of(data))}, to pay"
+    return Done(f"Saved: supplier bill {ref} from {vendor} for {fmt_money(total, cur)}, to pay"
                 + (f" by {a['due_date']}." if a.get("due_date") else "."),
                 next_action="When you've paid it, mark it as paid in Business Operations.",
                 outcome={"reference": ref, "amount": total, "links": [{"label": "Supplier bills", "to": "/operations?tab=Procurement"}]})
@@ -304,6 +327,28 @@ def _all_records(data: dict) -> dict[str, list[dict]]:
     return {"customer": _customers(data), "vendor": _vendors(data), "item": _products(data)}
 
 
+_RENAME = re.compile(r"\b(?:rename|re-name)\b.*\bto\s+(.+)$|\b(?:change|update|correct)\s+the\s+name\s+of\b.*\bto\s+(.+)$|\bcall\s+it\s+(.+)$", re.I | re.S)
+# A quoted new name is taken as quoted, whatever words it holds ("rename X to "Go to market pack"").
+_QUOTED_TO = re.compile(r"\bto\s+[\"“‘'](.+?)[\"”’']\s*[.!]?\s*$", re.I | re.S)
+
+
+def _norm_name(value) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def renamed_to(text: str) -> str:
+    """The new name in "rename X to Y" (quotes and a closing full stop dropped). Empty when the request doesn't say one."""
+    said = str(text or "").strip()
+    m = _RENAME.search(said)
+    if not m:
+        return ""
+    quoted = _QUOTED_TO.search(said)
+    if quoted:
+        return quoted.group(1).strip()[:120]
+    name = next(g for g in m.groups() if g).strip().rstrip(".!").strip()
+    return name.strip("\"'“”‘’ ").strip()[:120]
+
+
 async def update_record_step(ctx):
     """Pick one and edit it: the record named in the request (or chosen), then its details, filled in, to change."""
     text, a = _said(ctx), ctx.answers
@@ -327,6 +372,10 @@ async def update_record_step(ctx):
                         skipped=True, outcome={"reason": "nothing_on_record"})
         return WaitForInput("Which one should I change?", [{"key": "record", "label": "Record", "type": "choice", "required": True, "options": options}])
     collection, label, spec = _EDITABLE[kind]
+    # "Rename X to Y", "change the name of X to Y": the new name is the change, said in full, so it is saved as said.
+    new_name = renamed_to(text)
+    if new_name and not any(f in a for f, _l, _t in spec) and _norm_name(new_name) != _norm_name(rec.get("name")):
+        a = {**a, "name": new_name}
     current = {"name": rec.get("name"), "email": rec.get("email") or "", "phone_number": rec.get("phone_number") or "", "payment_terms": rec.get("payment_terms") or "",
                "base_price": product_price(rec) if kind == "item" else "", "cost_of_sales": product_cost(rec) if kind == "item" else ""}
     if not any(f in a for f, _l, _t in spec):
@@ -340,7 +389,8 @@ async def update_record_step(ctx):
             {"key": f, "label": lab, "type": typ, "required": f == "name", "default": current.get(f) if current.get(f) is not None else ""} for f, lab, typ in spec])
     name = str(a.get("name") or rec.get("name") or "").strip()
     email = str(a.get("email") or "").strip()
-    if len(name) < 2 or (email and not valid_email(email)) or (kind == "item" and float(a.get("base_price") or 0) <= 0):
+    price = a.get("base_price", current.get("base_price"))      # a rename leaves the price as it is
+    if len(name) < 2 or (email and not valid_email(email)) or (kind == "item" and float(price or 0) <= 0):
         return WaitForInput("That can't be saved: it needs a name" + (", and a price above 0." if kind == "item" else ", and a valid email address if you give one."), [
             {"key": f, "label": lab, "type": typ, "required": f == "name", "default": a.get(f, current.get(f)) or ""} for f, lab, typ in spec])
     now = ctx.now().isoformat()
@@ -361,7 +411,7 @@ async def update_record_step(ctx):
             target["updated_at"] = now
     await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
     if not changed:
-        return Done(f"Nothing changed on {rec['name']}: it already says that.", outcome={"record": rec["id"]})
+        return Done(f"Nothing changed on {rec['name']}: it already says that.", outcome={"record": rec["id"]}, skipped=True)
     return Done(f"Saved: {name}'s {' and '.join(changed) if len(changed) < 3 else ', '.join(changed[:-1]) + ' and ' + changed[-1]} "
                 f"{'is' if len(changed) == 1 else 'are'} updated.", outcome={"record": rec["id"], "changed": changed, "links": [{"label": "Catalogue", "to": "/catalogue"}]})
 

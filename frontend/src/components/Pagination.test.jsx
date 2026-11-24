@@ -99,60 +99,68 @@ describe("the Agent Centre, a page at a time", () => {
   const last = (pattern) => [...calls].reverse().find((c) => pattern.test(c.path));
   const tabNumber = (name) => within(screen.getByRole("tab", { name: new RegExp(`^${name}`) })).getByText(/^\d+$/).textContent;
 
-  it("asks the server for one page of documents, and the tab and type numbers are totals", async () => {
+  const header = (c) => c.querySelector("[data-task-header]")?.textContent;
+  const openTabs = async () => {      // back to the tab list, where every tab says its total
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Back to all tasks" })); });
+  };
+
+  // The owner, 27 Oct: one tab opens its own list ("← Documents · 50"), ten at a time with "Show more", never numbered pages
+  it("asks the server for the first ten documents, says the total in the header and shows more on Show more", async () => {
     const { container } = mount("/agent?tab=documents");
     await waitFor(() => expect(container.querySelectorAll("[data-document]").length).toBe(10));
-    expect(last(/agent\/documents$/).q).toEqual({ limit: "10", offset: "0" });      // not everything: the first 10
-    expect(container.querySelector("[data-showing]").textContent).toBe("Showing 1–10 of 50");
-    expect(tabNumber("Documents")).toBe("50");                              // the total, not the 10 on the page
+    expect(last(/agent\/documents$/).q).toEqual({ limit: "10", offset: "0" });
+    expect(header(container)).toBe("Documents · 50");
+    expect(container.querySelector("[data-showing]")).toBeNull();      // no "Showing 1-10 of 50", no page numbers
+    await act(async () => { fireEvent.click(container.querySelector("[data-show-more]")); });
+    await waitFor(() => expect(last(/agent\/documents$/).q).toEqual({ limit: "20", offset: "0" }));
+    await waitFor(() => expect(container.querySelectorAll("[data-document]").length).toBe(20));
+    await openTabs();
+    expect(tabNumber("Documents")).toBe("50");
     expect(tabNumber("Recently Completed")).toBe("42");
     expect(tabNumber("History")).toBe("48");
-    expect(screen.getByRole("option", { name: "All documents (50)" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Invoices (45)" })).toBeTruthy();
-    // Next page: in the address, and asked of the server.
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Page 2" })); });
-    await waitFor(() => expect(container.querySelector("[data-showing]").textContent).toBe("Showing 11–20 of 50"));
-    expect(screen.getByTestId("where").textContent).toBe("/agent?tab=documents&page=2");
-    expect(last(/agent\/documents$/).q).toEqual({ limit: "10", offset: "10" });
-    expect(tabNumber("Documents")).toBe("50");
   });
 
-  it("keeps the type, search, order and page in the address, so a refresh lands in the same place", async () => {
-    const { container } = mount("/agent?tab=documents&type=invoice&page=2");
-    await waitFor(() => expect(container.querySelector("[data-showing]")?.textContent).toBe("Showing 11–20 of 45"));
-    expect(last(/agent\/documents$/).q).toEqual({ kind: "invoice", limit: "10", offset: "10" });
-    expect(screen.getByLabelText("Document type").value).toBe("invoice");
-    expect(screen.getByRole("button", { name: "Page 2" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("option", { name: "All documents (50)" })).toBeTruthy();      // totals, whatever the filter
-    // Changing what is looked for starts again from page 1.
-    await act(async () => { fireEvent.change(screen.getByLabelText("Search documents"), { target: { value: "frank" } }); });
+  it("searches documents from one box, with type and order in one filter menu, kept in the address", async () => {
+    const { container } = mount("/agent?tab=documents&type=invoice");
+    await waitFor(() => expect(last(/agent\/documents$/).q).toEqual({ kind: "invoice", limit: "10", offset: "0" }));
+    expect(screen.queryByLabelText("Document type")).toBeNull();      // no stacked dropdowns
+    await act(async () => { fireEvent.change(screen.getByPlaceholderText("Search documents"), { target: { value: "frank" } }); });
     await waitFor(() => expect(last(/agent\/documents$/).q).toEqual({ kind: "invoice", q: "frank", limit: "10", offset: "0" }));
     expect(screen.getByTestId("where").textContent).toBe("/agent?tab=documents&type=invoice&q=frank");
-    await waitFor(() => expect(container.querySelector("[data-showing]")?.textContent).toBe("Showing 1–10 of 15"));      // the count is of what matches
-    expect(container.querySelectorAll("[data-document]").length).toBe(10);
-    await act(async () => { fireEvent.change(screen.getByLabelText("Order by date"), { target: { value: "oldest" } }); });
+    await act(async () => { fireEvent.click(container.querySelector("[data-doc-filter]")); });
+    expect(screen.getByRole("menuitemradio", { name: /Invoice/ }).getAttribute("aria-checked")).toBe("true");
+    await act(async () => { fireEvent.click(screen.getByRole("menuitemradio", { name: "Oldest first" })); });
     await waitFor(() => expect(last(/agent\/documents$/).q).toEqual({ kind: "invoice", q: "frank", order: "oldest", limit: "10", offset: "0" }));
     expect(screen.getByTestId("where").textContent).toBe("/agent?tab=documents&type=invoice&q=frank&sort=oldest");
+    // The document's own name, a short badge, a short date: never the type twice, never "2026-10-01"
+    const first = container.querySelector("[data-document]");
+    expect(first.textContent).toContain("INV-");
+    expect(first.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(first.textContent).toContain("Sent");
   });
 
-  it("the task tabs page the same way, with History's filters in the address", async () => {
+  it("each task tab lists its own bucket, ten at a time, and History is searched, not filtered by a long list", async () => {
     const { container } = mount("/agent?tab=completed");
-    await waitFor(() => expect(container.querySelector("[data-showing]")?.textContent).toBe("Showing 1–10 of 42"));
+    await waitFor(() => expect(header(container)).toBe("Recently Completed · 42"));
     expect(last(/workflow-runs$/).q).toEqual({ bucket: "completed", limit: "10", offset: "0" });
-    expect(screen.getAllByText(/^Task \d+$/).length).toBe(10);
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
-    await waitFor(() => expect(last(/workflow-runs$/).q).toEqual({ bucket: "completed", limit: "10", offset: "10" }));
-    expect(screen.getByTestId("where").textContent).toBe("/agent?tab=completed&page=2");
-    // "Load more" (phone) asks for the next 10 as well, from the same starting point.
+    await waitFor(() => expect(screen.getAllByText(/^Task \d+$/).length).toBe(10));
+    await act(async () => { fireEvent.click(container.querySelector("[data-show-more]")); });
+    await waitFor(() => expect(last(/workflow-runs$/).q).toEqual({ bucket: "completed", limit: "20", offset: "0" }));
+    await openTabs();
     await act(async () => { fireEvent.click(screen.getByRole("tab", { name: /^History/ })); });
-    await waitFor(() => expect(container.querySelector("[data-showing]")?.textContent).toBe("Showing 1–10 of 48"));
-    await act(async () => { fireEvent.click(container.querySelector("[data-load-more]")); });
-    await waitFor(() => expect(last(/workflow-runs$/).q).toEqual({ bucket: "history", limit: "20", offset: "0" }));
-    await waitFor(() => expect(container.querySelector("[data-showing]").textContent).toBe("Showing 1–20 of 48"));
-    await act(async () => { fireEvent.change(screen.getByLabelText("Status"), { target: { value: "succeeded" } }); });
-    await waitFor(() => expect(last(/workflow-runs$/).q).toEqual({ bucket: "history", status: "succeeded", limit: "10", offset: "0" }));
-    expect(screen.getByTestId("where").textContent).toBe("/agent?tab=history&status=succeeded");
+    await waitFor(() => expect(header(container)).toBe("History · 48"));
+    expect(last(/workflow-runs$/).q).toEqual({ bucket: "history", limit: "10", offset: "0" });      // back to the first ten
+    expect(screen.queryByLabelText("Capability")).toBeNull();      // no 24-option internal filter
+    await act(async () => { fireEvent.change(screen.getByPlaceholderText("Search tasks"), { target: { value: "Task 3" } }); });
+    expect(screen.getAllByText(/^Task \d+$/).map((n) => n.textContent)).toEqual(["Task 3"]);
+    await openTabs();
     expect(tabNumber("Needs You")).toBe("3");
+  });
+
+  it("an empty tab says so, never another tab's list", async () => {
+    const { container } = mount("/agent?tab=active");
+    await waitFor(() => expect(header(container)).toBe("Active · 2"));
+    expect(container.querySelector("[data-documents]")).toBeNull();
   });
 });
 

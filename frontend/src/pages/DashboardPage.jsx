@@ -1,3 +1,6 @@
+import { foreignOf, isoOf as fxIsoOf, pinnedRate, useFxRates } from "../lib/fx";
+import { reviewInChat } from "../components/BusinessAssistant";
+import { latestOf, openOf, useFirstResult } from "../components/FirstValueCard";
 import { compactFigure, isFigure } from "../lib/figures";
 import { CountText } from "../components/Motion";
 import { enter } from "../lib/motion";
@@ -6,19 +9,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import InlineAlert from "../components/InlineAlert";
 import { apiRequest, apiRequestCached } from "../api/client";
-import { useWorkspaceStore, workspaceStatusOf } from "../store/workspace";
+import { useWorkspaceStore, workspaceCurrencyOf, workspaceStatusOf } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
-import { formatCurrency, formatNumber } from "../lib/format";
+import { formatCurrency, formatNumber, invoiceNumbers } from "../lib/format";
 import { buildFinancialIntelligence } from "../lib/financialIntelligence";
 import { getAcceptedWorkspaceValidation } from "../lib/acceptedValidation";
 import ReportDownloadPanel from "../components/ReportDownloadPanel";
 import { assembleOutput } from "../lib/contracts/index";
-import { planRank } from "../lib/plans";
+import { hasPaidAccess, planRank } from "../lib/plans";
+import FirstResultPanel from "../components/FirstResultPanel";
+import PinnedCards, { stripStatus, usePinned } from "../components/dashboard/PinnedCards";
+import TenderRecommendations from "../components/dashboard/TenderRecommendations";
+import { stepsOf } from "../components/ResultSummary";
 import AgentPanel, { NeedsApprovalPanel, followInAgentBox, taskIn } from "../components/agent/AgentPanel";
 import { Icon } from "../components/agent/AgentBits";
 import { agentErrorMessage, getAgentSummary, submitAgentRequest } from "../lib/agent";
 import { alertDialog } from "../lib/dialog";
-import { RANGES, buildKpiTrends } from "../lib/dashboardTrends";
+import { RANGES, buildKpiTrends, kpiBreakdown } from "../lib/dashboardTrends";
+import KpiDetails from "../components/dashboard/KpiDetails";
 import AdaptiveInsights, { DashboardContext, DashboardSkeleton, LaunchReadiness, ValueTile } from "../components/dashboard/AdaptiveInsights";
 import { actionCardsFor } from "../lib/dashboardLayout";
 import { recallDashboard, rememberDashboard } from "../lib/dashboard";
@@ -86,7 +94,7 @@ export default function DashboardPage() {
   const workspaceId = useWorkspaceStore((s) => s.workspaceId);
   const workspaceStatus = useWorkspaceStore(workspaceStatusOf);
   const workspaceLogo = useWorkspaceStore((s) => s.workspaceLogo);
-  const currency = useWorkspaceStore((s) => s.currency);
+  const storeCurrency = useWorkspaceStore((s) => s.currency);
   const inputs = useWorkspaceStore((s) => s.inputs);
   const ideaValidation = useWorkspaceStore((s) => s.ideaValidation);
   const workspaceDataRefreshTrigger = useWorkspaceStore((s) => s.workspaceDataRefreshTrigger);
@@ -97,13 +105,34 @@ export default function DashboardPage() {
   // fetch or render it for lower-plan accounts.
   const hasLivePlanAccess = subscription?.status === "grandfathered"
     || planRank(subscription?.plan_key) >= planRank("decision_engine");
+  // What makes up each dashboard figure is a paid feature: a free plan sees the figures only.
+  const kpiDetailsOpen = hasPaidAccess(subscription?.plan_key, subscription?.status);
+  const isExplorerPlan = subscription?.status !== "grandfathered" && planRank(subscription?.plan_key) <= planRank("explorer");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [comingSoonFeature, setComingSoonFeature] = useState(null);
   const [livePlanSummary, setLivePlanSummary] = useState(null);
-  const [fxRates, setFxRates] = useState({});
   const [agentSummary, setAgentSummary] = useState(() => (ADAPTIVE_DASHBOARD ? recallDashboard(workspaceId)?.agent || null : null));
+  // The first result sits inside the Agent card (never a card of its own above it), until it is dismissed or saved for later.
+  const firstResult = useFirstResult();
+  const pinned = usePinned(workspaceId);
+  const resultAssessment = firstResult?.result?.assessment || {};
+  const resultCase = resultAssessment.case_id || resultAssessment.initiative_id || null;      // the case the result card is about
+  const resultPinned = pinned.isPinned(resultCase);
+  // A case's result (funding, launch): the full card only right after a fresh run, then a strip. Any other result stays a card until dismissed.
+  const resultCard = Boolean(firstResult?.result) && (firstResult.fresh || !resultCase);
+  const resultStrip = useMemo(() => {
+    const r = firstResult?.result;
+    if (!r || resultCard || resultPinned) return null;
+    const latest = latestOf(r);
+    const named = latest.full || latest.unscoredCheck;
+    const open = openOf(r)?.to?.replace(/\?tab=results$/, "");
+    if (!open || !named?.title) return null;
+    const n = typeof latest.score === "string" ? Number(String(latest.score).split("/")[0]) : NaN;
+    return { item: { id: resultCase || "result", kind: named.kind || "funding", title: named.title, status: stripStatus(Number.isFinite(n) ? n : null, stepsOf(r).length),
+      open, again: `${open}?check=again`, answers: `${open}?tab=answers` }, onRemove: firstResult.dismiss };
+  }, [firstResult, resultCard, resultPinned, resultCase]);
   const [rangeKey, setRangeKey] = useState("3m");
   const [rangeOpen, setRangeOpen] = useState(false);
   const [showReports, setShowReports] = useState(false);
@@ -132,11 +161,16 @@ export default function DashboardPage() {
 
   const loadAgentSummary = useCallback(() => {
     if (!workspaceId) return;
-    const legacy = () => getAgentSummary(workspaceId).then(setAgentSummary).catch(() => {
+    const legacy = () => getAgentSummary(workspaceId).then((summary) => {
+      if (!Array.isArray(summary?.suggestions)) throw new Error("Invalid Agent summary");
+      setAgentSummary(summary);
+    }).catch(() => {
       // Never leave the page waiting: keep what we have, or fall back to an empty summary.
       setAgentSummary((prev) => prev || { suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [], risks: null, unavailable: true });
     });
     if (!ADAPTIVE_DASHBOARD) return legacy();
+    // The composed dashboard already contains the Agent summary. Requesting both
+    // endpoints together doubles the same business, task and billing reads.
     return getDashboard(workspaceId, { stage: previewStage, pathway: previewPathway }).then((d) => {
       if (!d?.enabled) { setAdaptiveOff(true); setDashboard(null); return legacy(); }
       setAdaptiveOff(false);
@@ -152,7 +186,8 @@ export default function DashboardPage() {
       return d;
     }).catch(() => {
       setDashFailed(true);
-      return legacy();      // the Agent panel and approvals still load from their own source
+      // Load the independent panel without delaying the retry control.
+      legacy();
     }).finally(() => setDashLoading(false));
   }, [workspaceId, previewPathway, previewStage]);
 
@@ -216,8 +251,17 @@ export default function DashboardPage() {
     // Marked and sent in one go. (It used to wait on a timer that the dashboard's own refresh
     // cancelled, after the task had already been marked as handed over: so it never opened.)
     handedOff.current = task;
+    let ready = null;
+    try { ready = JSON.parse(sessionStorage.getItem("ea_goal_ready") || "null"); } catch { ready = null; }
     setTimeout(() => {
-      followInAgentBox({ runId: task });
+      if (ready?.run_id === task) {
+        // A document asked for on the homepage: it is ready, so it is read and decided in the Agent's chat, never a pop-up
+        // (the owner, 30 Oct: "we agreed that all these should be on the chat")
+        try { sessionStorage.removeItem("ea_goal_ready"); } catch { /* said once at most */ }
+        reviewInChat({ runId: task, message: `${ready.message} Read it below, then approve, edit or reject it here.` });
+      } else {
+        followInAgentBox({ runId: task });
+      }
       navigate("/dashboard", { replace: true });
     }, 0);
   }, [searchParams, agentSummary, navigate]);
@@ -262,6 +306,13 @@ export default function DashboardPage() {
     catalogue: { products: [], customers: [], vendors: [] }
   });
   const [acceptedValidation, setAcceptedValidation] = useState(null);
+  const [docCurrency, setDocCurrency] = useState(null);      // the workspace's own, once loaded (never the app's GBP start)
+  // Totals, labels and conversions all in the workspace's own currency, the same as Business Operations (the owner, 30 Oct:
+  // a Naira car wash shown in £, its Naira invoices "not counted yet", while Business Operations converted the £ to ₦)
+  const currency = docCurrency || storeCurrency;
+  const fxIso = fxIsoOf(docCurrency || currency) || "GBP";
+  // The same rates as Business Operations, from the one conversion service (lib/fx): never two answers for one figure.
+  const { rates: fxRates, dates: fxDates } = useFxRates(foreignOf([...(snapshot?.invoices || []), ...(snapshot?.expenses || [])], fxIso), docCurrency ? fxIso : "");
 
 
   useEffect(() => {
@@ -286,26 +337,7 @@ export default function DashboardPage() {
           catalogue: data?.catalogue || { products: [], customers: [], vendors: [] }
         });
         setAcceptedValidation(getAcceptedWorkspaceValidation(data));
-
-        // Fetch FX rates for any foreign-currency invoices/expenses
-        try {
-          const wsIso = (String(ws?.data?.settings?.currency || currency || "GBP").match(/\(([A-Z]{3})\)/)?.[1] || String(currency || "GBP")).toUpperCase().slice(0, 3);
-          const allRecs = [...(data?.financials?.invoices || []), ...(data?.financials?.expenses || [])];
-          const foreign = [...new Set(allRecs.map(r => {
-            const c = String(r.currency || r.source_currency || "").trim();
-            return (c.match(/\(([A-Z]{3})\)/)?.[1] || c.match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
-          }).filter(iso => iso && iso !== wsIso && iso.length === 3))];
-          if (foreign.length && alive) {
-            const rates = {};
-            await Promise.all(foreign.map(async from => {
-              try {
-                const d = await apiRequest(`/integrations/currency-rate?from_currency=${from}&to_currency=${wsIso}`, "GET");
-                if (d?.rate != null) rates[from] = d.rate;
-              } catch {}
-            }));
-            if (alive) setFxRates(rates);
-          }
-        } catch {}
+        setDocCurrency(workspaceCurrencyOf(data) || null);
 
         // Live plan assumptions arrive quietly — Decision Engine+ only. Not awaited here,
         // so the figures above show as soon as they are ready.
@@ -342,14 +374,19 @@ export default function DashboardPage() {
     [acceptedValidation, snapshot]
   );
 
+  const wsCurrencyCode = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
+  // The other currencies the documents are in (each keeps its own): the totals convert them, and say so.
+  const otherCurrencies = useMemo(() => [...new Set([...(snapshot?.invoices || []), ...(snapshot?.expenses || [])]
+    .map((d) => (String(d?.currency || "").match(/\(([A-Z]{3})\)/)?.[1] || String(d?.currency || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase())
+    .filter((c) => c && c !== wsCurrencyCode))], [snapshot, wsCurrencyCode]);
   const snapshotKpis = useMemo(() => {
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     const rawAmt = r => Number(r?.total_amount || r?.subtotal_amount || 0);
 
@@ -364,23 +401,23 @@ export default function DashboardPage() {
       return rawAmt(inv);
     };
 
-    const paidRevenue = paidInvs.reduce((s, i) => s + toWs(actualReceived(i), i.currency), 0);
+    const paidRevenue = paidInvs.reduce((s, i) => s + toWs(actualReceived(i), i.currency, i), 0);
     const paidCoS = paidInvs.reduce((s, i) => {
       const total = rawAmt(i); const received = actualReceived(i);
       const lineItemCos = Array.isArray(i.line_items) ? i.line_items.reduce((ls, li) => ls + (Number(li.qty) || 1) * Number(li.cost_of_sales || 0), 0) : 0;
       const cos = Number(i.cost_of_sales != null ? i.cost_of_sales : lineItemCos);
-      return s + toWs(cos * (total > 0 ? received / total : 1), i.currency);
+      return s + toWs(cos * (total > 0 ? received / total : 1), i.currency, i);
     }, 0);
-    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency), 0);
+    const paidExpTotal = paidExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency, e), 0);
     const cashBalance = paidRevenue - paidExpTotal - paidCoS;
     const partialRemaining = paidInvs
       .filter(i => actualReceived(i) < rawAmt(i))
-      .reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - actualReceived(i)), i.currency), 0);
-    const deliveredTotal = deliveredInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+      .reduce((s, i) => s + toWs(Math.max(0, rawAmt(i) - actualReceived(i)), i.currency, i), 0);
+    const deliveredTotal = deliveredInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
     const receivables = deliveredTotal + partialRemaining;
-    const paidFullTotal = paidInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency), 0);
+    const paidFullTotal = paidInvs.reduce((s, i) => s + toWs(rawAmt(i), i.currency, i), 0);
     const totalRevenue = paidFullTotal + deliveredTotal;
-    const totalCosts = allExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency), 0) + paidCoS;
+    const totalCosts = allExps.reduce((s, e) => s + toWs(Number(e.price || e.total_amount || 0), e.currency, e), 0) + paidCoS;
 
     return { totalRevenue, cashBalance, receivables, totalCosts };
   }, [snapshot, fxRates, currency]);
@@ -400,12 +437,12 @@ export default function DashboardPage() {
     const curYear = now.getFullYear(); const curMonth = now.getMonth();
     const isThisMonth = (dateStr) => { if (!dateStr) return false; const d = new Date(dateStr); return d.getFullYear() === curYear && d.getMonth() === curMonth; };
     const wsIso2 = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs2 = (amount, cur) => {
+    const toWs2 = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso2) return num;
-      const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     // Use stable status-stamp dates — updated_at is refreshed by server on every fetch
     // Paid: payments[last].paid_at → direct paid_at stamp → issue_date fallback
@@ -428,11 +465,11 @@ export default function DashboardPage() {
     };
     const monthlyCoS = monthlyPaidInvs.reduce((s, i) => {
       const total = rawAmt2(i); const rcvd = getReceived(i);
-      return s + toWs2(Number(i.cost_of_sales || 0) * (total > 0 ? rcvd / total : 1), i.currency);
+      return s + toWs2(Number(i.cost_of_sales || 0) * (total > 0 ? rcvd / total : 1), i.currency, i);
     }, 0);
-    const actualRev = monthlyPaidInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency), 0)
-                    + monthlyDeliveredInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency), 0);
-    const actualCost = monthlyExps.reduce((s, e) => s + toWs2(Number(e.price || e.total_amount || 0), e.currency), 0) + monthlyCoS;
+    const actualRev = monthlyPaidInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency, i), 0)
+                    + monthlyDeliveredInvs.reduce((s, i) => s + toWs2(rawAmt2(i), i.currency, i), 0);
+    const actualCost = monthlyExps.reduce((s, e) => s + toWs2(Number(e.price || e.total_amount || 0), e.currency, e), 0) + monthlyCoS;
     const actualMargin = actualRev > 0 ? ((actualRev - actualCost) / actualRev) * 100 : 0;
     const revPct = planRev > 0 ? (actualRev / planRev) * 100 : null;
     const costPct = planCost > 0 ? (actualCost / planCost) * 100 : null;
@@ -447,26 +484,42 @@ export default function DashboardPage() {
 
   const trends = useMemo(() => {
     const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
-    const toWs = (amount, cur) => {
+    const toWs = (amount, cur, doc = null) => {
       const num = Number(amount || 0);
       const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
       if (!iso || iso === wsIso) return num;
-      const rate = fxRates[iso];
-      return rate != null ? Math.round(num * rate * 100) / 100 : num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
     };
     return buildKpiTrends({ invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey });
   }, [snapshot, fxRates, currency, rangeKey]);
 
   // `goodWhenUp` decides the colour: more revenue is good, more cost or risk is not.
   const financialHealthCards = [
-    { label: "Total Revenue", value: formatCurrency(trends.revenue.value, currency, "en-GB"), trend: trends.revenue, goodWhenUp: true },
-    { label: "Cash", value: formatCurrency(trends.cash.value, currency, "en-GB"), trend: trends.cash, goodWhenUp: true },
-    { label: "Expenses & CoS", value: formatCurrency(trends.costs.value, currency, "en-GB"), trend: trends.costs, goodWhenUp: false },
-    { label: "Receivables", trend: trends.receivables, goodWhenUp: true,
+    { kind: "revenue", label: "Total Revenue", value: formatCurrency(trends.revenue.value, currency, "en-GB"), trend: trends.revenue, goodWhenUp: true },
+    { kind: "cash", label: "Cash", value: formatCurrency(trends.cash.value, currency, "en-GB"), trend: trends.cash, goodWhenUp: true },
+    { kind: "costs", label: "Expenses & CoS", value: formatCurrency(trends.costs.value, currency, "en-GB"), trend: trends.costs, goodWhenUp: false },
+    { kind: "receivables", label: "Receivables", trend: trends.receivables, goodWhenUp: true,
       value: formatCurrency(adaptive && typeof dashboard?.financial_summary?.receivables === "number"
         ? dashboard.financial_summary.receivables : trends.receivables.value, currency, "en-GB") },
-    { label: "Active Risks", value: formatNumber(Array.isArray(agentSummary?.risks) ? agentSummary.risks.length : trends.risks.value), trend: trends.risks, goodWhenUp: false },
+    { kind: "risks", label: "Active Risks", value: formatNumber(Array.isArray(agentSummary?.risks) ? agentSummary.risks.length : trends.risks.value), trend: trends.risks, goodWhenUp: false },
   ];
+
+  // Clicking a tile opens the records behind its figure, worked out by the same rules.
+  const [openKpi, setOpenKpi] = useState(null);
+  const kpiDetail = useMemo(() => {
+    if (!openKpi || !kpiDetailsOpen) return null;
+    const wsIso = String(currency || "GBP").replace(/.*\(([A-Z]{3})\).*/, "$1").toUpperCase().slice(0, 3);
+    const toWs = (amount, cur, doc = null) => {
+      const num = Number(amount || 0);
+      const iso = (String(cur || "").match(/\(([A-Z]{3})\)/)?.[1] || String(cur || "").match(/^([A-Z]{3})$/i)?.[1] || "").toUpperCase();
+      if (!iso || iso === wsIso) return num;
+      const rate = pinnedRate(doc, wsIso) ?? fxRates[iso];
+      return rate != null ? Math.round(num * rate * 100) / 100 : 0;      // no rate yet: left out, never added as if it were the workspace currency
+    };
+    return kpiBreakdown({ kind: openKpi.kind, invoices: snapshot.invoices, expenses: snapshot.expenses, toWs, rangeKey,
+      refs: invoiceNumbers(snapshot.invoices), risks: Array.isArray(agentSummary?.risks) ? agentSummary.risks : null });
+  }, [openKpi, kpiDetailsOpen, snapshot, fxRates, currency, rangeKey, agentSummary]);
 
   const trendTile = { revenue: financialHealthCards[0], cash: financialHealthCards[1], costs: financialHealthCards[2],
     receivables: financialHealthCards[3], risks: financialHealthCards[4] };
@@ -497,14 +550,14 @@ export default function DashboardPage() {
 
   const financialHealthSection = (
     <section>
-      {/* Mobile: two columns, the fifth card spans both. From 640px the cards flex from a 180px
-          base and grow to fill their row, so there is never an empty slot. From 1280px: five equal columns. */}
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr))]" data-kpi-grid>
+      {/* Explicit columns, never a lone card: one on a phone; two from 640px (the content is under 760px wide up to 1280px),
+          the last of an odd number spanning both; five from 1280px. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5" data-kpi-grid>
         {loading && [0, 1, 2, 3, 4].map((i) => (
-          <div key={i} role="status" aria-busy="true" aria-label="Loading" className={i === 4 ? "min-[380px]:col-span-2 xl:col-span-1" : ""}><SkeletonKpi /></div>
+          <div key={i} role="status" aria-busy="true" aria-label="Loading" className={i === 4 ? "sm:col-span-2 xl:col-span-1" : ""}><SkeletonKpi /></div>
         ))}
         {!loading && kpiTiles.map((card, index) => {
-          if (card.simple) return <ValueTile key={card.key} kpi={card} wide={index === 4} onOpen={(k) => navigate(k.to)} />;
+          if (card.simple) return <ValueTile key={card.key} kpi={card} wide={index === kpiTiles.length - 1 && kpiTiles.length % 2 === 1} onOpen={(k) => navigate(k.to)} />;
           const pct = card.trend.changePct;
           const up = pct != null && pct > 0.05;
           const down = pct != null && pct < -0.05;
@@ -528,7 +581,10 @@ export default function DashboardPage() {
           const direction = pct != null && (up || down) ? Math.sign(pct) : Math.sign(avg(raw.slice(half)) - avg(raw.slice(0, half)));
           const lineTone = !hasData ? "text-slate-300" : direction === 0 || (direction > 0) === card.goodWhenUp ? "text-emerald-600" : "text-rose-600";
           return (
-            <div key={card.label} title={card.hint || undefined} data-kpi={card.key || card.label} {...enter("fadeUp", index, 120)} className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900`}>
+            <div key={card.label} title={card.hint || (card.kind ? `See what makes up ${card.label}` : undefined)} data-kpi={card.key || card.label} {...enter("fadeUp", index, 120)}
+              {...(card.kind ? { role: "button", tabIndex: 0, "aria-haspopup": "dialog", onClick: () => setOpenKpi(card),
+                onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenKpi(card); } } } : {})}
+              className={`flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-slate-800 dark:bg-slate-900 ${index === kpiTiles.length - 1 && kpiTiles.length % 2 ? "sm:col-span-2 xl:col-span-1" : ""} ${card.kind ? "cursor-pointer transition hover:border-brand-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" : ""}`}>
               <div className="text-[15px] font-medium text-slate-500">{card.label}</div>
               {/* Never cut off: a long amount is shown short (£1.25M), with the full amount in the tooltip and the accessible name. */}
               <div className="mt-1 min-w-0">
@@ -566,6 +622,9 @@ export default function DashboardPage() {
           );
         })}
       </div>
+      {openKpi && (kpiDetail || !kpiDetailsOpen) && (
+        <KpiDetails title={openKpi.label} value={openKpi.value} detail={kpiDetail} locked={!kpiDetailsOpen} currency={currency} onClose={() => setOpenKpi(null)} />
+      )}
     </section>
   );
 
@@ -609,7 +668,7 @@ export default function DashboardPage() {
   // Three action cards per stage (lib/dashboardLayout). A Funding or Launch Readiness card shows
   // the selected case's or launch's status in place of its description once one exists.
   const actionCards = (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3" data-stage-cards>
       {actionCardsFor(adaptive ? dashboard : null).map((card, n) => (
         <div key={card.key} {...enter("fadeUp", 1 + n)}
           className="flex min-w-0 flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
@@ -619,9 +678,13 @@ export default function DashboardPage() {
                 {ACTION_ICON[card.icon] || ACTION_ICON.doc}
               </svg>
             </div>
-            <div title={card.title} className="flex min-h-[2.75rem] min-w-0 flex-1 items-center text-base font-bold leading-snug text-slate-900 dark:text-slate-100"><span className="line-clamp-2 break-words">{card.title}</span></div>
+            <div className="min-w-0 flex-1">
+              <div title={card.title} className="flex min-h-[2.75rem] min-w-0 items-center text-base font-bold leading-snug text-slate-900 dark:text-slate-100"><span className="line-clamp-2 break-words">{card.title}</span></div>
+              {/* One column (under 1280px): the description in the same row as the icon and title. */}
+              {!card.status && <p title={card.description} data-stage-description className="break-normal text-[14px] leading-relaxed text-slate-500 xl:hidden dark:text-slate-400">{card.description}</p>}
+            </div>
             <button type="button" onClick={() => navigate(card.href)} aria-label={card.cta}
-              className="mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 md:hidden xl:flex dark:border-slate-700">
+              className="mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700">
               <Icon name="chevron" className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -638,7 +701,7 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="mt-3 min-h-[3rem] flex-1 text-[15px] leading-relaxed text-slate-500 line-clamp-2 dark:text-slate-400">{card.description}</div>
+            <div title={card.description} data-stage-description className="mt-3 hidden min-h-[3rem] flex-1 break-normal text-[15px] leading-relaxed text-slate-500 xl:block dark:text-slate-400">{card.description}</div>
           )}
           <button type="button" onClick={() => navigate(card.href)}
             className="mt-4 w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
@@ -674,6 +737,7 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         {launchpadHero}
+        <TenderRecommendations workspaceId={workspaceId} />
         {workspaceStatus === "checking" ? <DashboardSkeleton /> : (
           <div role="status" aria-label="No business yet" className="rounded-2xl border border-slate-200/70 bg-white px-6 py-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="text-base font-bold text-slate-900 dark:text-slate-100">Set up your business to see your dashboard</p>
@@ -689,6 +753,14 @@ export default function DashboardPage() {
     return (
       <div className="space-y-6">
         {launchpadHero}
+        {/* The Agent row as soon as its summary is here; the figures and insights below load after it. */}
+        {agentSummary && !agentSummary.unavailable && (
+          <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]" data-agent-row-early>
+            <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
+            <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
+          </div>
+        )}
+        <TenderRecommendations workspaceId={workspaceId} />
         {dashFailed ? (
           <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800">
             <p className="font-semibold">Your dashboard couldn't be loaded.</p>
@@ -715,9 +787,16 @@ export default function DashboardPage() {
       {/* Needs Approval always sits beside the Agent card (below it on narrow screens), also when it is empty. */}
       <div {...enter("fadeUp", 0)} className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
         {/* A remembered copy is showing while the fresh one loads: approvals and anything that starts a task wait for it. */}
-        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
+        <AgentPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} firstResult={firstResult} handoff />
         <NeedsApprovalPanel businessId={workspaceId} summary={agentSummary} onChanged={loadAgentSummary} paused={fromMemory} />
       </div>
+      <TenderRecommendations workspaceId={workspaceId} />
+
+      {/* The first result: the full card only right after a fresh run (the owner's brief, 20 Oct). Dismissed, or on the next
+          visit, it is a strip like every pinned item: never a full card once pinned. */}
+      {resultCard && <div data-first-result-card><FirstResultPanel firstResult={resultCase ? { ...firstResult, dismiss: firstResult.collapse } : firstResult} /></div>}
+      {/* Pinned, directly under it: never the same case twice. */}
+      <PinnedCards pinned={pinned} excludeId={resultCard ? resultCase : null} lead={resultStrip} />
 
       {actionCards}
 
@@ -731,6 +810,20 @@ export default function DashboardPage() {
           <h2 className="text-[15px] font-semibold text-slate-700 dark:text-slate-200">
             {stageFigures ? "Key Figures for Your Stage" : <>Current Financial Performance &amp; Health</>}
           </h2>
+          {otherCurrencies.length > 0 && (
+            // Documents keep their own currency; these totals include them converted at today's rate (the owner's QA, 16 Oct).
+            // Said the same way as Business Operations (the owner's QA, 21 Oct): converted ones with their rate's date; any
+            // with no rate yet said apart, as not counted. Never both in one phrase.
+            <p className="w-full text-[12px] text-slate-500 sm:order-last" data-converted-note>
+              {(() => {
+                const day = (c) => { const d = fxDates[c] ? new Date(`${fxDates[c]}T00:00:00`) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
+                const done = otherCurrencies.filter((c) => fxRates[c] != null);
+                const missing = otherCurrencies.filter((c) => fxRates[c] == null);
+                const at = done.map((c) => { const d = day(c); return d ? `${c} at ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} rate${(Date.now() - d.getTime()) / 86400000 > 3 ? " (may be out of date)" : ""}` : c; });
+                return `${at.length ? `≈ Includes ${at.join(", ")} amounts converted to ${wsCurrencyCode}. ` : ""}${missing.length ? `Not counted yet: ${missing.join(", ")} amounts (no rate yet). ` : ""}Each document keeps its own currency.`;
+              })()}
+            </p>
+          )}
           <div className={`relative ${hasTrendTiles ? "" : "hidden"}`}>
             <button type="button" onClick={() => setRangeOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={rangeOpen}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
@@ -758,7 +851,7 @@ export default function DashboardPage() {
 
       {adaptive ? (
         <AdaptiveInsights dashboard={dashboard} loading={dashLoading && !dashboard} failed={dashFailed && !dashboard}
-          fullSimulation={subscription?.status === "grandfathered" || isPlatformModuleGranted("simulation", platformGrants)} paused={fromMemory}
+          fullSimulation={subscription?.status === "grandfathered" || isPlatformModuleGranted("simulation", platformGrants)} previewOnly={isExplorerPlan} paused={fromMemory}
           busyKey={insightBusy} onRetry={() => { setDashLoading(true); loadAgentSummary(); }}
           onAction={(card, action) => {
             trackDashboard(workspaceId, action?.upgrade ? "upgrade_clicked" : "insight_action", card.key,
@@ -812,9 +905,10 @@ export default function DashboardPage() {
           <div className="min-w-0 flex-[1_1_200px]">
             <div className="text-base font-bold text-slate-900 dark:text-slate-100">Business Health Report</div>
             <p className="text-[15px] text-slate-500 dark:text-slate-400">
+              {stageReport?.has_result === false ? <span data-report-empty>{stageReport.empty_text}</span> : <>
               Updated {new Date(dashboard?.freshness?.generated_at || Date.now()).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
               {" · "}{stageReport?.action?.panel === "launch_readiness" ? "Includes your setup checklist and launch readiness."
-                : stageReport?.description || "A full assessment of your business performance, risks and recommendations."}
+                : stageReport?.description || "A full assessment of your business performance, risks and recommendations."}</>}
             </p>
           </div>
           <button type="button" aria-expanded={showReports}

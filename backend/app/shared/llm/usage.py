@@ -15,6 +15,8 @@ OPENAI_PRICING_USD_PER_1M = {
 }
 
 ANTHROPIC_PRICING_USD_PER_1M = {
+    # Anthropic's published standard API rates, checked 21 November 2026.
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00},
     "claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
@@ -70,7 +72,54 @@ async def record_ai_usage(
         "metadata": metadata or {},
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    from app.shared.telemetry_outbox import enqueue
+    await enqueue("ai_usage_events", payload, _insert)
+
+
+_warned: set[str] = set()
+
+
+async def _insert(payload: dict) -> bool:
     try:
         await sb_insert("ai_usage_events", payload)
+        return True
     except Exception as exc:
-        logger.debug("AI usage event not recorded; migration may be missing: %s", exc)
+        if "23505" in str(exc):
+            return True  # A timed-out acknowledgement retried the same event ID.
+        # Loud once per kind of failure (a missing table shows up in the logs), quiet after that.
+        kind = type(exc).__name__ + ":" + str(exc)[:80]
+        if kind in _warned:
+            logger.debug("AI usage event queued for retry: %s", exc)
+        else:
+            _warned.add(kind)
+            logger.warning("AI usage event not recorded (is migration 041_ai_usage_events applied?): %s", exc)
+        return False
+
+
+def search_cost_usd(provider: str, searches: int) -> float | None:
+    from app.core.config import get_settings
+    s = get_settings()
+    each = {"serpapi": s.serpapi_cost_per_search_usd, "serper": s.serper_cost_per_search_usd}.get(provider)
+    return None if each is None else round(each * max(int(searches), 0), 8)
+
+
+async def record_search_usage(*, user_id: str | None, feature: str, provider: str, searches: int,
+                              metadata: dict[str, Any] | None = None) -> None:
+    """A web search call, billed per search: recorded with no tokens and the per-search cost."""
+    if searches <= 0:
+        return
+    from app.shared.telemetry_outbox import enqueue
+    await enqueue("ai_usage_events", {
+        "id": str(uuid4()),
+        "user_id": user_id,
+        "feature": feature or "unknown",
+        "provider": provider,
+        "model": "web_search",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost_usd": search_cost_usd(provider, searches),
+        "request_id": None,
+        "metadata": {"searches": int(searches), **(metadata or {})},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }, _insert)

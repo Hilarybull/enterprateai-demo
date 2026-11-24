@@ -46,3 +46,9 @@ class SubscriptionOut(BaseModel):
     current_period_end: Optional[str] = None
     trial_started_at: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
+    # QA E8: one answer to "what can this account use": the subscription plus admin grants (plans.access.effective_access).
+    effective_plan_key: Optional[str] = None
+    access_source: Optional[str] = None
+    # A paid plan whose period ended without a renewal: what it was and when it ended, to say so (31 Oct)
+    lapsed_plan_key: Optional[str] = None
+    lapsed_at: Optional[str] = None

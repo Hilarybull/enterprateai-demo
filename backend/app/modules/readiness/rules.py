@@ -22,7 +22,7 @@ EXECUTION_STATES = ("queued", "running", "succeeded", "failed", "cancelled")
 ACTION_STATES = ("open", "in_progress", "awaiting_evidence", "completed", "dismissed")
 UNRESOLVED_ACTION_STATES = ("open", "in_progress", "awaiting_evidence")
 DATA_BASES = ("actual", "forecast", "estimate")
-SUPPORTED_CURRENCIES = ("GBP", "USD", "EUR")
+SUPPORTED_CURRENCIES = ("GBP", "USD", "EUR", "NGN", "GHS", "KES", "ZAR", "CAD", "AUD", "INR")
 
 FUNDING_STATUSES = ("draft", "active", "archived")
 LAUNCH_STATUSES = ("draft", "preparing", "launched", "cancelled", "archived")
@@ -71,7 +71,7 @@ FUNDING_EQUITY_V1 = {
     "forecast_months": 12,
     "criteria": [
         _c("C1", "Funding purpose", 10,
-           ("Positive target, currency and intended receipt date confirmed", "Enter the amount you want to raise, its currency and when you expect to receive it, then confirm them."),
+           ("The amount, its currency and the date you expect the money are confirmed", "Enter the amount you want to raise, its currency and when you expect to receive it, then confirm them."),
            ("Purpose links to a measurable milestone", "Say what the funding is for and link it to a milestone with a measure and a target."),
            tool={"label": "Funding goal", "section": "goal"}, section="goal"),
         _c("C2", "Use of funds", 15,
@@ -104,7 +104,7 @@ FUNDING_EQUITY_V1 = {
            tool={"label": "Documents and risks", "section": "documents"}, section="documents"),
     ],
     "gates": [
-        {"code": "G1", "label": "A confirmed positive funding target and explicit timing", "criterion": "C1",
+        {"code": "G1", "label": "The amount and date are confirmed", "criterion": "C1",
          "remedy": "Enter a funding target above zero and the date you expect to receive it, then confirm them."},
         {"code": "G2", "label": "Allocations reconcile to the target", "criterion": "C2",
          "remedy": "Change the allocations or the target so they are equal. The target is never changed for you."},
@@ -121,11 +121,13 @@ FUNDING_EQUITY_V1 = {
     ],
     "sections": [
         {"key": "goal", "title": "Funding goal", "fields": [
+            _f("title", "Case title", help="The name of this funding case. Its amount should match the target below."),
             _f("target_amount", "How much do you want to raise?", "money", help="Leave blank if you don't know yet. The forecast can help you work it out."),
             _f("currency", "Currency", "select", options=list(SUPPORTED_CURRENCIES)),
             _f("receipt_date", "When do you expect to receive it?", "date"),
-            _f("timing_confirmed", "I confirm this amount and date", "boolean"),
             _f("purpose", "What is the funding for?", "textarea"),
+            _f("route_preference", "Route you're considering", "select", options=["equity", "loan", "grant", "unsure"],
+               labels={"equity": "Equity", "loan": "Loan", "grant": "Grant", "unsure": "Not sure yet"}),
             _f("milestones", "Milestones", "list", item="milestone", fields=[
                 _f("outcome", "Outcome"), _f("measure", "How it is measured"), _f("baseline", "Where it is now"),
                 _f("target", "Target"), _f("due_date", "Due", "date"), _f("owner", "Owner")]),
@@ -135,6 +137,7 @@ FUNDING_EQUITY_V1 = {
             _f("business_model", "Business model", "select", options=["service", "software"]),
             _f("stage", "Trading so far", "select", options=["pre_revenue", "trading"], labels={"pre_revenue": "Not trading yet", "trading": "Trading"}),
             _f("market.target_segment", "Who is your target customer?", "textarea"),
+            _f("market.location", "Where the business trades"),
             _f("market.differentiation", "What sets you apart?", "textarea"),
             _f("market.acquisition_approach", "How will you win customers?", "textarea"),
             _f("market.acquisition_owner", "Who owns customer acquisition?"),
@@ -144,6 +147,8 @@ FUNDING_EQUITY_V1 = {
         {"key": "traction", "title": "Traction", "fields": [
             _f("traction.summary", "What demand have you seen so far?", "textarea",
                help="Research, enquiries, pilots or sales. If you have no sales yet, say so: nothing is filled in for you."),
+            _f("traction.customers", "Paying customers now", "number"),
+            _f("traction.monthly_revenue", "Revenue each month", "money"),
             _f("traction.results_through", "Trading results are recorded up to", "date", when={"stage": "trading"}),
         ], "evidence": ["C4.A"], "attest": ["C4.B"]},
         {"key": "finances", "title": "Finances and use of funds", "fields": [
@@ -196,7 +201,7 @@ LAUNCH_COMMERCIAL_V1 = {
            attested=("B",), tool={"label": "Customers and offer", "section": "customers"}, section="customers"),
         _c("C2", "Offer and pricing", 15,
            ("Launch scope, price, delivery terms and customer promise are confirmed", "Fill in what you are launching, the price, delivery terms and your promise to the customer, then confirm them."),
-           ("Cost and margin inputs are validated and their implications reviewed", "Enter price and costs, then confirm you have reviewed what the margin means."),
+           ("Cost and margin figures are entered and what the margin means is confirmed", "Enter price and costs, then confirm you have reviewed what the margin means."),
            attested=("B",), tool={"label": "Pricing and economics", "section": "economics"}, section="economics"),
         _c("C3", "Cash preparation", 20,
            ("The required cash projection is complete and reconciled", "Complete the cash projection for every month it must cover."),
@@ -211,7 +216,7 @@ LAUNCH_COMMERCIAL_V1 = {
            ("A representative end-to-end dry run has recorded results and resolved critical failures", "Record an end-to-end test run and what happened."),
            tool={"label": "Operational prerequisites", "section": "operations"}, section="operations"),
         _c("C6", "Applicable prerequisites", 10,
-           ("Applicable launch obligations and prerequisites are identified and reviewed", "List what you must have in place to launch, then confirm you have reviewed which apply."),
+           ("What must be in place to launch is listed, with which items apply confirmed", "List what you must have in place to launch, then confirm you have reviewed which apply."),
            ("Required permissions or prerequisites are evidenced as completed by launch", "Mark each prerequisite completed, with its evidence, before launch."),
            attested=("A",), tool={"label": "Operational prerequisites", "section": "operations"}, section="operations"),
         _c("C7", "Route to market", 10,
@@ -267,7 +272,7 @@ LAUNCH_COMMERCIAL_V1 = {
             _f("delivery.dependencies", "Critical suppliers, people and systems", "list", item="dependency", fields=[
                 _f("name", "Name"), _f("kind", "Type", "select", options=["supplier", "person", "system"]),
                 _f("available", "Available by launch", "select", options=["yes", "no"], labels={"yes": "Yes", "no": "No"}),
-                _f("needs_contingency", "Needs a backup", "boolean"), _f("contingency", "Backup arrangement")]),
+                _f("needs_contingency", "Needs a backup", "boolean"), _f("contingency", "Backup arrangement", when={"needs_contingency": True})]),
             _f("delivery.no_dependencies", "The launch does not depend on any critical supplier, person or system", "boolean"),
         ]},
         {"key": "operations", "title": "Operational prerequisites", "fields": [
@@ -275,19 +280,20 @@ LAUNCH_COMMERCIAL_V1 = {
             _f("operations.process_version", "Process version", help="Change this when the process changes. A test run only counts for the version it tested."),
             _f("operations.dry_run.date", "Test run date", "date"),
             _f("operations.dry_run.outcome", "Test run result", "select", options=["passed", "failed"], labels={"passed": "Worked end to end", "failed": "A critical step failed"}),
-            _f("operations.dry_run.failures_resolved", "Every critical failure has been resolved", "boolean"),
+            # Only after a test run where a critical step failed (the owner, 25 Oct: ticked with no test run at all)
+            _f("operations.dry_run.failures_resolved", "Every critical failure has been resolved", "boolean", when={"operations.dry_run.outcome": "failed"}),
             _f("operations.dry_run.notes", "What happened", "textarea"),
             _f("prerequisites", "What must be in place to launch", "list", item="prerequisite", fields=[
                 _f("name", "Prerequisite"),
                 _f("applicable", "Applies to this launch", "select", options=["yes", "no"], labels={"yes": "Applies", "no": "Does not apply"}),
-                _f("rationale", "Why it does not apply"),
+                _f("rationale", "Why it does not apply", when={"applicable": "no"}),
                 _f("critical", "Required before launch", "boolean"),
                 _f("status", "Status", "select", options=["completed", "not_completed"], labels={"completed": "Completed", "not_completed": "Not completed"}),
                 _f("required_by", "Required by", "date"), _f("valid_until", "Valid until", "date"),
                 _f("source_reference", "Where the requirement comes from"),
                 _f("evidence_id", "Evidence", "evidence")]),
             _f("no_prerequisites", "Nothing has to be in place before this launch", "boolean"),
-            _f("no_prerequisites_rationale", "Why nothing is required"),
+            _f("no_prerequisites_rationale", "Why nothing is required", when={"no_prerequisites": True}),
         ], "attest": ["C6.A"]},
         {"key": "sales", "title": "Sales and launch plan", "fields": [
             _f("market.channel", "First acquisition channel"),
@@ -329,8 +335,18 @@ for _profile, _covers in ((FUNDING_EQUITY_V1, {"G1": "C1.A", "G2": "C2.A", "G3":
     for _gate in _profile["gates"]:
         _gate["covers"] = _covers.get(_gate["code"])
 
-PROFILES: dict[str, dict] = {f"{p['id']}@{p['version']}": p for p in (FUNDING_EQUITY_V1, LAUNCH_COMMERCIAL_V1)}
-CURRENT = {FUNDING: f"{FUNDING_EQUITY_V1['id']}@{FUNDING_EQUITY_V1['version']}", LAUNCH: f"{LAUNCH_COMMERCIAL_V1['id']}@{LAUNCH_COMMERCIAL_V1['version']}"}
+# 0.2 (22 Oct 2026, a product decision): ready is 75 or above, not 80. Everything else is as in 0.1. Results made under 0.1
+# keep 0.1 and its classification; the next check of each case uses 0.2 (an older version marks a result out of date).
+READY_CHANGE_NOTE = "Checklist updated: ready is now 75+"
+FUNDING_EQUITY_V2 = {**FUNDING_EQUITY_V1, "version": "0.2", "thresholds": {"conditionally_ready": 60, "ready": 75}}
+LAUNCH_COMMERCIAL_V2 = {**LAUNCH_COMMERCIAL_V1, "version": "0.2", "thresholds": {"conditionally_ready": 60, "ready": 75}}
+PROFILES: dict[str, dict] = {f"{p['id']}@{p['version']}": p for p in (FUNDING_EQUITY_V1, LAUNCH_COMMERCIAL_V1, FUNDING_EQUITY_V2, LAUNCH_COMMERCIAL_V2)}
+CURRENT = {FUNDING: f"{FUNDING_EQUITY_V2['id']}@{FUNDING_EQUITY_V2['version']}", LAUNCH: f"{LAUNCH_COMMERCIAL_V2['id']}@{LAUNCH_COMMERCIAL_V2['version']}"}
+
+
+def ready_at(subject_type: str = FUNDING) -> float:
+    """The one "ready" threshold: the current checklist's (the related-services panel and the quick results read it too)."""
+    return PROFILES[CURRENT[subject_type]]["thresholds"]["ready"]
 
 
 class UnsupportedProfile(ValueError):
@@ -356,7 +372,7 @@ def select_profile(subject_type: str, data: dict) -> dict:
         model = str(data.get("business_model") or "service").lower()
         if model not in FUNDING_EQUITY_V1["business_models"]:
             raise UnsupportedProfile("This check supports service and software businesses for now.")
-        return FUNDING_EQUITY_V1
+        return PROFILES[CURRENT[FUNDING]]
     if subject_type == LAUNCH:
         if str(data.get("scope") or "commercial").lower() != "commercial":
             raise UnsupportedProfile(UNAVAILABLE[2]["reason"])
@@ -366,7 +382,7 @@ def select_profile(subject_type: str, data: dict) -> dict:
         model = str(data.get("business_model") or "service").lower()
         if model not in LAUNCH_COMMERCIAL_V1["business_models"]:
             raise UnsupportedProfile(UNAVAILABLE[4]["reason"])
-        return LAUNCH_COMMERCIAL_V1
+        return PROFILES[CURRENT[LAUNCH]]
     raise UnsupportedProfile("Unknown subject.")
 
 

@@ -363,7 +363,7 @@ def test_on_the_free_plan_requests_stay_locked_and_no_task_reads_them(monkeypatc
     listed = run(mkt.list_rfqs(user_id=OWNER, workspace_id="A"))
     assert listed["locked"] is True
     asked = env.submit(capability="enquiry_to_quote", params={"rfq_id": rfq["id"]}, channel="ui_action")
-    assert asked["kind"] == "blocked" and asked["reason_codes"] == ["plan_capability"] and asked["upgrade"] is True and market.runs() == []
+    assert asked["kind"] == "blocked" and asked["reason_codes"] == ["rfq_upgrade_required"] and asked["upgrade"] is True and market.runs() == []
 
 
 def test_a_task_that_cant_start_never_fails_the_buyers_request(market):

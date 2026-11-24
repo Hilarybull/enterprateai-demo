@@ -146,7 +146,7 @@ def test_internal_accounts_are_never_held_out_however_the_list_is_typed():
     w.tick()
     w.at(minutes=15).tick()
     assert [m["to"] for m in w.outbox] == [u] and w.steps(u)["a1"] == "sent"      # sent, even with everyone else held out
-    w.config = Config(enabled=True, dry_run=False, cohort="all", holdout_percent=100, internal_emails=frozenset({u}))
+    w.config = Config(enabled=True, dry_run=False, cohort="all", holdout_percent=100, internal_emails=frozenset({u}), lifecycle_emails=False)
     w.tick()
     w.at(minutes=15).tick()
     assert w.steps(other)["a1"] == "holdout" and len(w.outbox) == 1

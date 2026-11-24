@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-USER_COLUMNS = ("id,email,name,auth_provider,email_verified,verified_at,created_at,timezone,marketing_email_status,marketing_permission_source,marketing_permission_at,"
+USER_COLUMNS = ("id,email,name,auth_provider,email_verified,verified_at,created_at,last_seen_at,timezone,marketing_email_status,marketing_permission_source,marketing_permission_at,"
                 "marketing_unsubscribed_at,marketing_suppression_reason,marketing_permission_wording,marketing_last_change_source,marketing_prompt_answered_at")
 LEDGER, EVENTS = "activation_ledger", "activation_events"
 
@@ -36,6 +36,7 @@ class Store:
     async def update_user(self, user_id: str, patch: dict) -> None: raise NotImplementedError
     async def workspace_index(self) -> dict[str, list[dict]]: raise NotImplementedError      # user_id -> [{id, created_at, updated_at}], no content
     async def workspaces_of(self, user_id: str) -> list[dict]: raise NotImplementedError     # with data, for reading what has been done
+    async def subscriptions(self) -> dict[str, dict]: raise NotImplementedError      # user_id -> their plan's dates and status
     async def ledger(self, user_id: str | None = None) -> list[dict]: raise NotImplementedError
     async def ledger_by_message(self, message_id: str) -> dict | None: raise NotImplementedError
     async def insert_ledger(self, row: dict) -> dict: raise NotImplementedError
@@ -48,8 +49,12 @@ class MemoryStore(Store):
     def __init__(self, users: dict[str, dict] | None = None, workspaces: dict[str, dict] | None = None):
         self.users = users if users is not None else {}
         self.workspaces = workspaces if workspaces is not None else {}      # id -> {user_id, created_at, updated_at, data}
+        self.subs: dict[str, dict] = {}
         self.ledger_rows: dict[str, dict] = {}
         self.event_rows: list[dict] = []
+
+    async def subscriptions(self):
+        return copy.deepcopy(self.subs)
 
     async def list_users(self):
         return [copy.deepcopy(u) for u in self.users.values()]
@@ -118,6 +123,11 @@ class SupabaseStore(Store):
             if _missing(e):
                 raise NotSetUp() from e
             raise
+
+    async def subscriptions(self):
+        from app.core.supabase import sb_select
+        rows = await self._call(sb_select, "user_subscriptions", columns="user_id,plan_key,status,stripe_subscription_id,current_period_start,current_period_end,cancelled_at", limit=20000) or []
+        return {str(r["user_id"]): r for r in rows}
 
     async def list_users(self):
         from app.core.supabase import sb_select

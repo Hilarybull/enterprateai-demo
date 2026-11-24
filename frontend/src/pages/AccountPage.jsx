@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+import { UndoToast } from "../components/FirstResultPanel";
 import { useProposalStore } from "../store/proposal";
-import { apiRequest } from "../api/client";
+import { apiRequest, invalidateWorkspaceCache } from "../api/client";
 import { SavedBusinessMatch } from "../components/marketplace/MatchPrompt";
+import { myClaims } from "../lib/directory";
 import AccountSettings from "./AccountSettings";
 
 function initialsFromName(name, email) {
@@ -342,6 +344,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const p = initialData || {};
 
   const [saving, setSaving] = useState(false);
+  const [fillBusy, setFillBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
   const [companyName, setCompanyName] = useState(p.company_name || "");
@@ -380,7 +383,9 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const [customCity, setCustomCity] = useState(_initCity === "Other" ? (p.city || "") : "");
   const cityOptions = country && country !== "Other" ? (COUNTRY_CITIES[country] || []) : [];
   const [stateOrRegion, setStateOrRegion] = useState(p.state_or_region || "");
-  const [contactEmail, setContactEmail] = useState(p.email || "");
+  // The sign-up email is the default contact email (the owner's QA, 16 Oct): shown here when the profile has none, saved with the form.
+  const signedUpWith = useAuthStore((st) => st.email);
+  const [contactEmail, setContactEmail] = useState(p.email || (signedUpWith && signedUpWith !== "demo" ? signedUpWith : ""));
   const [phone, setPhone] = useState(p.phone_number || "");
   const [website, setWebsite] = useState(p.website || "");
   const [regNumber, setRegNumber] = useState(p.registration_number || "");
@@ -404,6 +409,42 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
   function updateService(index, key, value) {
     setServices((prev) => prev.map((s, i) => (i === index ? { ...s, [key]: value } : s)));
+  }
+
+  const missingCopy = [
+    ...(!tagline.trim() ? [{ field: "tagline", apply: setTagline }] : []),
+    ...(!aboutCompany.trim() ? [{ field: "about_company", apply: setAboutCompany }] : []),
+    ...services.flatMap((service, index) => service.service_name.trim() && !service.service_description.trim()
+      ? [{ field: "service_description", serviceName: service.service_name.trim(), apply: (value) => updateService(index, "service_description", value) }]
+      : []),
+  ];
+
+  async function fillMissingCopy() {
+    if (!missingCopy.length || fillBusy) return;
+    setFillBusy(true);
+    setMsg(null);
+    let filled = 0;
+    let failed = 0;
+    for (const item of missingCopy) {
+      try {
+        const response = await apiRequest("/blueprint/suggest-field", "POST", {
+          field: item.field,
+          company_name: companyName,
+          industry: primaryIndustry === "other" ? customIndustry : primaryIndustry,
+          value_proposition: aboutCompany,
+          selected_services: item.serviceName ? [item.serviceName] : services.map((service) => service.service_name).filter(Boolean),
+        });
+        const value = String(response?.value || "").trim();
+        if (!value) { failed += 1; continue; }
+        item.apply(value);
+        filled += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setFillBusy(false);
+    if (filled) setMsg({ type: failed ? "error" : "success", text: `${filled} field${filled === 1 ? "" : "s"} drafted${failed ? `; ${failed} couldn't be filled` : ""}. Review the suggestions, then save. ${filled * 2} credits used.` });
+    else setMsg({ type: "error", text: "The missing text couldn't be drafted. No fields were filled." });
   }
 
   async function handleSave(e) {
@@ -460,8 +501,8 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
     setSaving(true);
     try {
-      const resp = await apiRequest("/workspace/profile", "POST", { workspace_id: workspaceId, profile });
-      onSaved(resp.profile);
+      const resp = await apiRequest("/workspace/profile", "POST", { workspace_id: workspaceId, profile, seen: p });
+      onSaved(resp.profile, resp);
     } catch (err) {
       setMsg({ type: "error", text: err?.message || "Failed to save workspace profile." });
     } finally {
@@ -471,6 +512,16 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
   return (
     <form onSubmit={handleSave} className="space-y-5">
+
+      {missingCopy.length > 0 && <section className="flex flex-col gap-3 rounded-2xl border border-brand-200 bg-brand-50/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-brand-900 dark:bg-brand-900/15" data-ai-fill-missing>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Draft missing profile text with AI</p>
+          <p className="mt-1 text-[12px] leading-5 text-slate-600 dark:text-slate-300">2 credits per field. Suggestions stay here for you to review. Business type, company size and founding year need confirmed facts.</p>
+        </div>
+        <button type="button" onClick={fillMissingCopy} disabled={fillBusy} className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+          {fillBusy ? "Drafting…" : `Fill ${missingCopy.length} field${missingCopy.length === 1 ? "" : "s"} · ${missingCopy.length * 2} credits`}
+        </button>
+      </section>}
 
       <FormSection title="Company identity">
         {/* Logo */}
@@ -733,6 +784,81 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   );
 }
 
+const CLAIM_WORDS = { verified: "Yours", revoked: "Removed after a review", rejected: "Not approved", disputed: "Under review", verification_pending: "Waiting for review", claim_started: "Not finished" };
+
+/** Every business this person has claimed, and where each stands, so one that has gone doesn't just vanish. */
+export function ClaimedBusinesses() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let live = true;
+    myClaims().then((r) => { if (live) setItems(r?.items || []); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!items.length) return null;
+  return (
+    <Card>
+      <div className="px-6 py-5">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Claimed businesses</p>
+        <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800" data-claimed-businesses>
+          {items.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
+              <span className="min-w-0 break-words font-medium text-slate-800 dark:text-slate-200">{c.profile?.name || "A business"}</span>
+              <span className="flex items-center gap-3 text-[13px] text-slate-500">
+                {CLAIM_WORDS[c.status] || c.status}
+                {c.status === "verified" && c.business_id
+                  ? <Link className="font-semibold text-brand-600 hover:underline" to={`/marketplace/profile?business=${c.business_id}`} onClick={() => useWorkspaceStore.getState().setWorkspaceId(c.business_id)}>Open</Link>
+                  : c.profile?.slug && <Link className="font-semibold text-brand-600 hover:underline" to={`/marketplace/claim/${c.profile.slug}`}>View</Link>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Card>
+  );
+}
+
+/** Delete this one workspace. The person types its name; anything else they have stays. */
+export function DeleteWorkspaceCard({ workspaceId, name }) {
+  const navigate = useNavigate();
+  const isMemberMode = useWorkspaceStore((s) => s.isMemberMode);
+  const [typed, setTyped] = useState("");
+  const [state, setState] = useState({});
+  if (isMemberMode || !workspaceId || !name) return null;
+  const matches = typed.trim().toLowerCase() === String(name).trim().toLowerCase();
+  async function remove(e) {
+    e.preventDefault();
+    setState({ busy: true });
+    try {
+      await apiRequest(`/validation/${workspaceId}/delete`, "POST", { confirm: typed });
+      invalidateWorkspaceCache();
+      const store = useWorkspaceStore.getState();
+      store.setWorkspaceId(null);
+      store.setWorkspaceName(null);
+      store.setWorkspaceLogo(null);
+      window.dispatchEvent(new CustomEvent("ea:toast", { detail: { kind: "info", title: "Workspace deleted", message: `${name} has been deleted.` } }));
+      navigate("/dashboard", { replace: true });
+      window.dispatchEvent(new CustomEvent("ea:workspace:refresh"));      // opens another workspace, or asks them to create one
+    } catch (err) {
+      setState({ problem: (err instanceof Error ? err.message : "").replace(/^HTTP \d+:\s*/, "") || "The workspace couldn't be deleted. Nothing was changed." });
+    }
+  }
+  return (
+    <Card className="!border-rose-200 dark:!border-rose-900">
+      <div className="px-6 py-5">
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Delete workspace</p>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">This deletes {name} and everything in it: customers, documents, requests and its Marketplace listing. Anyone you invited loses access. Your account, plan and credits stay, and so do your other workspaces. It can't be undone.</p>
+        <form onSubmit={remove} className="mt-4 max-w-md space-y-3" aria-label="Delete workspace">
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">Type {name} to confirm
+            <input className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" value={typed} onChange={(e) => { setTyped(e.target.value); setState({}); }} autoComplete="off" />
+          </label>
+          <button type="submit" disabled={!matches || state.busy} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-slate-300">{state.busy ? "Deleting…" : "Delete this workspace"}</button>
+          {state.problem && <p role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</p>}
+        </form>
+      </div>
+    </Card>
+  );
+}
+
 function ProposalSettingsCard() {
   const { preferences, preferencesLoading, fetchPreferences, savePreferences } = useProposalStore();
   const [open, setOpen] = useState(null); // null = loading, true/false = loaded
@@ -801,6 +927,87 @@ function ProposalSettingsCard() {
   );
 }
 
+const FILLED_LABEL = { country: "Country", city: "City", state_or_region: "State", currency: "Currency", services: "Service 1", key_offering_focus: "Key offering",
+  tagline: "Tagline", vision: "Vision", mission: "Mission", core_values: "Core values", delivery_model: "Delivery model",
+  target_customer_type: "Target customer", operating_stage: "Operating stage", primary_revenue_model: "Revenue model", primary_industry: "Industry",
+  about_company: "About the company (a suggestion to edit)" };
+
+/** P0.4: the fields the Agent filled, each with where it came from: [Keep] accepts it, [Undo] empties it ("Removed. [Redo]");
+ *  [Keep all] or the X accepts everything. Gone for good once all are kept or undone; back only for new values. */
+function AgentFilled({ workspaceId, profile, onChanged }) {
+  const [prov, setProv] = useState(null);
+  const [removed, setRemoved] = useState(null);      // the field just undone, for Redo
+  const highlight = new Set((new URLSearchParams(window.location.search).get("highlight") || "").split(",").filter(Boolean));
+  const load = useCallback(() => {
+    apiRequest(`/businesses/${workspaceId}/profile/updates`, "GET").then((r) => setProv(r?.provenance || {})).catch(() => setProv({}));
+  }, [workspaceId]);
+  useEffect(() => { if (workspaceId) load(); }, [workspaceId, load]);
+  const show = (v) => (Array.isArray(v) ? (v[0]?.service_name || v.join(", ")) : String(v ?? "").replace(/_/g, " "));
+  // Still to keep: not kept, and not edited since (an edit counts as Keep).
+  const edited = (k, v) => k !== "currency" && profile && JSON.stringify(profile[k] ?? null) !== JSON.stringify(v.value ?? null);
+  const fields = Object.entries(prov || {}).filter(([k, v]) => FILLED_LABEL[k] && !v.kept && !edited(k, v));
+  const post = async (path) => { try { await apiRequest(`/businesses/${workspaceId}/profile/${path}`, "POST", {}); } finally { load(); onChanged?.(); } };
+  if (!fields.length && !removed) return null;
+  return (
+    <section className="relative mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-900 dark:bg-indigo-950/30" data-agent-filled>
+      {fields.length > 0 && <>
+        <button type="button" aria-label="Dismiss" onClick={() => post("keep/all")} className="absolute right-3 top-3 h-7 w-7 rounded-full text-slate-500 hover:bg-white">×</button>
+        <div className="flex flex-wrap items-center justify-between gap-2 pr-8">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Added by the Agent</p>
+          <button type="button" onClick={() => post("keep/all")} className="rounded-lg bg-brand-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:bg-brand-700" data-keep-all>Keep all</button>
+        </div>
+        <p className="text-[12.5px] text-slate-600 dark:text-slate-300">Only empty fields were filled. Keep what's right, undo what isn't, or edit any field below; your edit always wins.</p>
+        <ul className="mt-2 space-y-1.5">
+          {fields.map(([k, v]) => (
+            <li key={k} data-filled-field={k} className={`flex flex-wrap items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[13px] ${highlight.has(k) ? "bg-white ring-2 ring-brand-300 dark:bg-slate-900" : "bg-white/70 dark:bg-slate-900/60"}`}>
+              <span className="min-w-0"><span className="font-semibold">{FILLED_LABEL[k]}:</span> {show(v.value)} <span className="text-[12px] text-slate-500">· {v.source}</span></span>
+              <span className="flex gap-3">
+                <button type="button" onClick={() => post(`keep/${k}`)} className="text-[12.5px] font-semibold text-brand-700 hover:underline" data-keep>Keep</button>
+                <button type="button" onClick={async () => { await post(`undo/${k}`); setRemoved(k); }} className="text-[12.5px] font-semibold text-slate-600 hover:underline" data-undo>Undo</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </>}
+      <UndoToast open={Boolean(removed)} text="Removed." undoLabel="Redo" onUndo={() => { const k = removed; setRemoved(null); post(`redo/${k}`); }} onDone={() => setRemoved(null)} />
+    </section>
+  );
+}
+
+/** After a rename: "Update the sender on 3 unsent drafts?" Nothing changes until Update them; sent documents never do. */
+export function RenamedDrafts({ workspaceId, renamed, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState("");
+  const n = renamed.drafts.length;
+  const refs = renamed.drafts.map((d) => d.reference).filter(Boolean);
+  const update = async () => {
+    setBusy(true);
+    try {
+      const res = await apiRequest(`/businesses/${workspaceId}/drafts/refresh-sender`, "POST", { approval_ids: renamed.drafts.map((d) => d.id) });
+      setSaid(res?.message || "Updated.");
+    } catch { setSaid("That didn't go through. Nothing was changed. Try again."); }
+    finally { setBusy(false); }
+  };
+  if (said) {
+    return (
+      <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900" data-renamed-drafts>
+        <span>{said}</span>
+        <button type="button" onClick={onDone} className="text-[12.5px] font-semibold underline">Close</button>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950" data-renamed-drafts>
+      <p className="font-semibold">You renamed this workspace from {renamed.from} to {renamed.to}.</p>
+      <p className="mt-0.5">{n} unsent draft{n === 1 ? "" : "s"} still show{n === 1 ? "s" : ""} {renamed.from} as the sender{refs.length ? ` (${refs.join(", ")})` : ""}. Update {n === 1 ? "it" : "them"} to {renamed.to}? Sent documents are not changed.</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" disabled={busy} onClick={update} className="rounded-lg bg-brand-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{busy ? "Updating…" : `Update ${n === 1 ? "it" : "them"}`}</button>
+        <button type="button" disabled={busy} onClick={onDone} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-amber-900 hover:bg-amber-100">Leave {n === 1 ? "it" : "them"}</button>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceTab({ workspaceId }) {
   const setWorkspaceCompanyName = useWorkspaceStore((s) => s.setWorkspaceCompanyName);
   const setWorkspaceLogo = useWorkspaceStore((s) => s.setWorkspaceLogo);
@@ -808,6 +1015,7 @@ function WorkspaceTab({ workspaceId }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [renamed, setRenamed] = useState(null);      // {from, to, drafts}: the question after a rename
 
   useEffect(() => {
     if (!workspaceId) { setLoading(false); return; }
@@ -890,7 +1098,9 @@ function WorkspaceTab({ workspaceId }) {
       <WorkspaceEditForm
         workspaceId={workspaceId}
         initialData={p}
-        onSaved={(newProfile) => {
+        onSaved={(newProfile, resp) => {
+          // Renamed with drafts still showing the old name: asked about, never changed unasked (the owner's QA, 16 Oct).
+          if (resp?.unsent_drafts?.length) setRenamed({ from: resp.renamed_from, to: newProfile.company_name, drafts: resp.unsent_drafts });
           setWs((prev) => ({ ...(prev || {}), workspace_profile: newProfile }));
           setWorkspaceCompanyName(newProfile.company_name || null);
           setWorkspaceLogo(newProfile.logo_data_url || null);
@@ -904,6 +1114,8 @@ function WorkspaceTab({ workspaceId }) {
 
   return (
     <>
+    {renamed && <RenamedDrafts workspaceId={workspaceId} renamed={renamed} onDone={() => setRenamed(null)} />}
+    <AgentFilled workspaceId={workspaceId} profile={p} onChanged={() => window.dispatchEvent(new CustomEvent("ea:workspace:refresh"))} />
     {/* A Marketplace profile that may be this business: asked again whenever the company number or website changes. */}
     <SavedBusinessMatch businessId={workspaceId} companyNumber={p.registration_number || ""} website={p.website || ""} />
     <Card className="overflow-hidden">
@@ -1047,6 +1259,8 @@ function WorkspaceTab({ workspaceId }) {
       </div>
     </Card>
     <ProposalSettingsCard />
+    <ClaimedBusinesses />
+    <DeleteWorkspaceCard workspaceId={workspaceId} name={ws?.workspace_profile?.company_name || useWorkspaceStore.getState().workspaceName} />
     </>
   );
 }

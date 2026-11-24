@@ -89,7 +89,10 @@ function Intro({ profile, opportunity, signedIn, busy, onContinue, onSignIn }) {
         <div>
           <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">What happens next</h2>
           <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-200">
-            <li>Sign in or create an account</li><li>Show that you manage the business</li><li>Review your profile</li><li>Choose your opportunities</li>
+            {/* Signed in already: the first step is shown as done (QA P2-11). */}
+            {signedIn
+              ? <li data-step-done className="text-emerald-700 dark:text-emerald-400">Signed in <span className="sr-only">(done)</span><span aria-hidden="true"> ✓</span></li>
+              : <li>Sign in or create an account</li>}<li>Show that you manage the business</li><li>Review your profile</li><li>Choose your opportunities</li>
           </ol>
         </div>
       </div>
@@ -109,8 +112,10 @@ function Intro({ profile, opportunity, signedIn, busy, onContinue, onSignIn }) {
 
 // ── W05 ───────────────────────────────────────────────────────────────────────
 function Match({ claim, onDone, setProblem }) {
-  const likely = (claim.candidates || []).find((c) => c.likely_match && !c.already_linked);
-  const [choice, setChoice] = useState(likely ? likely.business_id : (claim.candidates || []).length ? "" : "new");
+  // A claimed business gets its own workspace (the owner, 5 Nov). A workspace is offered only when it looks like the same business.
+  const same = (claim.candidates || []).filter((c) => c.likely_match);
+  const likely = same.find((c) => !c.already_linked);
+  const [choice, setChoice] = useState(likely ? likely.business_id : "new");
   const [busy, setBusy] = useState(false);
   async function confirmBusiness() {
     setBusy(true);
@@ -120,20 +125,20 @@ function Match({ claim, onDone, setProblem }) {
     <Panel title="Which EnterprateAI business should this profile belong to?" description="One business has one profile. Choosing the right one now avoids a duplicate.">
       <fieldset className="space-y-2">
         <legend className="sr-only">Choose a business</legend>
-        {(claim.candidates || []).map((c) => (
+        {same.map((c) => (
           <label key={c.business_id} className={`flex items-start gap-3 rounded-xl border p-3 ${c.already_linked ? "border-slate-200 opacity-60 dark:border-slate-700" : "border-slate-200 dark:border-slate-700"}`}>
             <input type="radio" name="business" className="mt-1" disabled={c.already_linked} checked={choice === c.business_id} onChange={() => setChoice(c.business_id)} />
             <span>
-              <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{c.name}{c.likely_match ? " · likely the same business" : ""}</span>
-              <span className="block text-[12px] text-slate-500">{c.already_linked ? "Already has a Marketplace profile" : c.location || "One of your businesses"}</span>
+              <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{c.name} is this business</span>
+              <span className="block text-[12px] text-slate-500">{c.already_linked ? "Already has a Marketplace profile" : "Link this profile to it. Its records stay where they are."}</span>
             </span>
           </label>
         ))}
         <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
           <input type="radio" name="business" className="mt-1" checked={choice === "new"} onChange={() => setChoice("new")} />
           <span>
-            <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{(claim.candidates || []).length ? "None of these" : `Set up ${claim.profile.name} on EnterprateAI`}</span>
-            <span className="block text-[12px] text-slate-500">A business is created for {claim.profile.name} once you're verified, with what we already know filled in.</span>
+            <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{`Set up ${claim.profile.name} as its own business`}</span>
+            <span className="block text-[12px] text-slate-500">It gets its own workspace once you're verified, with what we already know filled in. Your other workspaces stay as they are.</span>
           </span>
         </label>
       </fieldset>
@@ -225,14 +230,23 @@ function Verification({ claim, onDone, setProblem }) {
   );
 }
 
+/** A reference a person can read out ("CLM-3F9A21C0"), not the record's UUID (QA P3). The full id stays on hover for support. */
+export const claimReference = (id) => `CLM-${String(id || "").replace(/[^a-z0-9]/gi, "").slice(0, 8).toUpperCase()}`;
+/** "11 Oct 2026 at 14:05": the date and time it was sent for review. */
+export function submittedAt(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} at ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 // ── W07 ───────────────────────────────────────────────────────────────────────
 function Pending({ claim }) {
   const navigate = useNavigate();
   return (
     <Panel title={claim.status === "disputed" ? "Your claim is being reviewed against the current holder" : "Claim under review"}>
       <dl className="grid gap-2 text-[13px] sm:grid-cols-2">
-        <div><dt className="font-semibold text-slate-700 dark:text-slate-200">Reference</dt><dd className="break-all text-slate-600 dark:text-slate-300">{claim.id}</dd></div>
-        <div><dt className="font-semibold text-slate-700 dark:text-slate-200">Submitted</dt><dd className="text-slate-600 dark:text-slate-300">{claim.verification?.method === "manual" ? "Evidence for review" : "Email code confirmed"} · {dateLabel(claim.verification?.submitted_at)}</dd></div>
+        <div><dt className="font-semibold text-slate-700 dark:text-slate-200">Reference</dt><dd className="text-slate-600 dark:text-slate-300" title={claim.id} data-claim-ref>{claimReference(claim.id)}</dd></div>
+        <div><dt className="font-semibold text-slate-700 dark:text-slate-200">Submitted</dt><dd className="text-slate-600 dark:text-slate-300">{claim.verification?.method === "manual" ? "Evidence for review" : "Email code confirmed"} · {submittedAt(claim.verification?.submitted_at || claim.updated_at)}</dd></div>
       </dl>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div><h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">What you can do</h3>
@@ -452,6 +466,7 @@ export default function ClaimFlowPage() {
         {claim?.notice && step !== "closed" && <Notice tone="amber">{claim.notice}</Notice>}
         {claim?.opportunity && step !== "closed" && <Teaser opportunity={claim.opportunity} />}
 
+        {manages && claim?.requests_delivered > 0 && <Notice tone="emerald" data-requests-delivered>{claim.requests_delivered === 1 ? "1 request" : `${claim.requests_delivered} requests`} sent to this business before you verified it {claim.requests_delivered === 1 ? "is" : "are"} now yours. You'll find {claim.requests_delivered === 1 ? "it" : "them"} with your quote requests in Business Operations.</Notice>}
         {manages && <Manages name={profile.name} businessId={claim?.business_id || profile.business_id}
           onDashboard={() => finished({ business_id: claim?.business_id || profile.business_id, to: "/dashboard" })} />}
         {heldByAnother && <AlreadyClaimed profile={profile} signedIn={Boolean(token)} busy={busy} onChallenge={begin} onSignIn={signIn} />}
@@ -469,6 +484,7 @@ export default function ClaimFlowPage() {
         {claim?.status === "verified" && !settings && <p role="status" className="text-sm text-slate-500">Loading your profile…</p>}
         {claim && step === "profile_review" && settings && (
           <Panel title={`You now manage ${profile.name} on EnterprateAI`} description="Check what the public will see. You can change any of this later.">
+            {claim.requests_delivered > 0 && <Notice tone="emerald" className="mb-3" data-requests-delivered>{claim.requests_delivered === 1 ? "1 request" : `${claim.requests_delivered} requests`} sent to this business before you claimed it {claim.requests_delivered === 1 ? "is" : "are"} now yours. You'll find {claim.requests_delivered === 1 ? "it" : "them"} with your quote requests in Business Operations.</Notice>}
             <ProfileSettings profile={settings} claimId={claim.id} saveLabel="Save & Set Opportunity Preferences" footerLeft={cancelLink || <span />}
               onSaved={async (saved) => { setSettings(saved); setClaim(await getClaim(claim.id)); }} />
           </Panel>

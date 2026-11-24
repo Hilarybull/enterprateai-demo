@@ -1,0 +1,87 @@
+"""QA round 5: what the owner's first message said is shown once and never asked (P5-1)."""
+from test_agent import OWNER
+from test_goal_onboarding import world  # noqa: F401  (the fixture)
+
+DOG = "thinking of opening a dog walking biz in Bristol around March, already got 3 mates who said they'd pay"
+
+
+def test_answers_from_the_first_message_stay_marked_as_said_after_they_are_confirmed(world):  # noqa: F811
+    _env, _store, client, _who = world
+    s = client.post("/task-sessions", json={"text": DOG, "entry_mode": "free_text"}).json()
+    said = {r["key"] for r in s["summary"] if r["from_message"]}
+    assert said == {"kind", "sell", "where", "target_date", "evidence"}
+    assert {q["key"] for q in s["questions"] if not q["proposed"] and not q.get("hidden")} == {"stage", "customer"}      # only these are asked
+    s = client.post(f"/task-sessions/{s['id']}/inputs", json={"answers": {**s["proposed"], "stage": "idea"}}).json()
+    assert s["proposed"] == {}                                                # confirmed: in the inputs now
+    rows = {r["key"]: r for r in s["summary"]}
+    assert all(rows[k]["from_message"] for k in said) and rows["stage"]["from_message"] is False      # still the "said" line, not replies
+    assert s["missing"] == ["customer"]
+
+
+def test_a_quick_check_started_from_a_sentence_marks_what_it_answered(world):  # noqa: F811
+    _env, _store, client, who = world
+    who["user"] = OWNER
+    qs = client.get("/businesses/A/quick-check/launch", params={"said": DOG}).json()["questions"]
+    said = {q["key"]: q for q in qs if q.get("said")}
+    assert set(said) >= {"sell", "where", "target_date", "evidence"}
+    assert said["sell"]["default"] == "dog walking" and said["sell"]["said_text"] == "dog walking"
+    assert said["where"]["said_text"] == "Bristol"
+    assert not {q["key"] for q in qs if q.get("said")} & {"stage", "customer"}      # still asked
+    plain = client.get("/businesses/A/quick-check/launch").json()["questions"]
+    assert not any(q.get("said") for q in plain)                              # with no sentence, nothing is "said"
+
+
+# ── P5-3: the business email is the business's, never assumed from the sign-in ──────────────────────────────────
+import pytest  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from app.modules.agent import tools  # noqa: E402
+
+SIGN_IN = "owner.personal@example.test"
+
+
+def _tc():
+    return SimpleNamespace(run={"state": {"answers": {}}, "requester_email": SIGN_IN}, actor=SimpleNamespace(email=SIGN_IN, user_id="u1"))
+
+
+def _asked(profile: dict) -> dict:
+    with pytest.raises(tools.NeedsInformation) as e:
+        tools._sender(_tc(), {"workspace_profile": {"company_name": "Sparkle Cleaning", **profile}})
+    return {f["key"]: f for f in e.value.fields}
+
+
+def test_a_profile_with_its_business_email_is_used_and_nothing_is_asked():
+    # As the restored Sparkle profile holds it (workspace_profile.email).
+    company = tools._sender(_tc(), {"workspace_profile": {"company_name": "Sparkle Cleaning", "email": "hello@sparkle.test"}})
+    assert company["email"] == "hello@sparkle.test"
+
+
+def test_the_default_contact_email_is_the_profiles_other_address_then_the_sign_up_email():
+    """The owner's rule (16 Oct, replacing QA P5-3): the sign-up email is the default contact email; an address the
+    business keeps on its profile comes first. Asked only when there is neither."""
+    sender = lambda profile, tc=None: tools._sender(tc or _tc(), {"workspace_profile": {"company_name": "Sparkle Cleaning", **profile}})      # noqa: E731
+    assert sender({"contact_email": "bookings@sparkle.test"})["email"] == "bookings@sparkle.test"
+    assert sender({})["email"] == SIGN_IN                                     # nothing on the profile: the sign-up email
+    nobody = SimpleNamespace(run={"state": {"answers": {}}, "requester_id": "system"}, actor=SimpleNamespace(email=None, user_id="system"))
+    with pytest.raises(tools.NeedsInformation) as e:
+        sender({}, nobody)
+    assert [f["key"] for f in e.value.fields] == ["business_email"]
+
+
+@pytest.mark.parametrize("said, goal", [("i need funding readiness", "need_funding"), ("check my launch readiness", "launch")])
+def test_the_agent_runs_funding_and_launch_readiness_in_place(said, goal):
+    """Asked in the Agent box, funding or launch readiness is run there (the check, in the card), never "not available"."""
+    from test_agent import Env
+    res = Env().submit(text=said)
+    assert res["kind"] == "check" and res["goal_key"] == goal and res["said"] == said
+    assert "isn't available" not in res["message"]
+
+
+def test_pricing_and_customers_without_records_open_their_check_like_the_homepage():
+    from test_agent import Env
+    env = Env(plan="strategic_business_os", credits=50)
+    for text, goal in (("Help me price my product/service", "price_offer"), ("I need more customers", "more_customers")):
+        r = env.submit(text=text)
+        assert r["kind"] == "check" and r["goal_key"] == goal and r["said"] == text
+        assert "instead" in r["message"] and "\u2014" not in r["message"] and "\u2013" not in r["message"]
+    assert env.meter.charges == []      # nothing was charged for the handover

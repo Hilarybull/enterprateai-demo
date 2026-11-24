@@ -84,7 +84,7 @@ def test_the_empty_dashboards_pass_too_and_the_check_catches_each_phrase():
                 "Would you like me to prepare a payment follow-up?"):
         assert chores([bad]) == [bad]
     for fine in ("I ran the check again.", "See the scenario", "Open Business Plans", "I'm testing a 5% and a 10% price change.",
-                 "Your idea hasn't been scored yet: I'm scoring it before you launch.", "My next attempt is on 2 Oct at 09:21 UTC."):
+                 "Your idea hasn't been scored yet. I can score it before you launch.", "My next attempt is on 2 Oct at 09:21 UTC."):
         assert chores([fine]) == []
 
 
@@ -105,26 +105,33 @@ def _described(env):
     env.businesses["A"]["data"]["workspace_profile"].update({"description": "Bookkeeping for independent cafés", "target_customer": "Independent cafés in Manchester",
                                                              "problem": "Owners lose evenings to paperwork", "primary_industry": "accounting", "location": "Manchester"})
     env.businesses["A"]["data"].pop("validation", None)
-    env.meter.costs.update({"idea_validation": 5, "business_plan": 8})
+    env.meter.costs.update({"idea_validation": 5, "business_plan_full": 8})
 
 
 def _tile(env, key):
     return next((s for s in build(env)["agent"]["suggestions"] if s["key"] == key), None)
 
 
-def test_an_idea_is_scored_sized_and_planned_without_being_asked():
+def test_an_idea_is_scored_sized_and_planned_when_the_owner_asks_never_by_itself():
     env = Env()
     _described(env)
     if build(env)["context"]["business_stage"] != "idea":
         pytest.skip("this business is past the idea stage in the test fixture")
-    done = {r["workflow_key"]: r for r in run(autostart.sweep(env.orch, "A"))}
-    assert {"idea_validation", "market_size", "business_plan_draft"} <= set(done)
+    assert not {"idea_validation", "market_size", "business_plan_draft"} & {r["workflow_key"] for r in run(autostart.sweep(env.orch, "A"))}      # §4
+    assert not [c for c in env.meter.charges if c[1] in ("idea_validation", "business_plan_full")]      # no research or generation charged
+    # The economics a score rests on are given (PRD 5.2: without them no score is shown, never a low one).
+    econ = {"answers": {"price": 30, "cost": 12, "monthly_sales": 40}}
+    done = {c: env.submit(capability=c, channel="ui_action", params=econ if c == "idea_validation" else None)["run"]
+            for c in ("idea_validation", "market_size", "business_plan_draft")}
     assert done["idea_validation"]["summary"].startswith("Idea scored 68/100: 3 risks, 4 next steps.")
-    assert done["market_size"]["summary"] == "Market sized: £180m serviceable (£2.4bn total, £1.2m obtainable), 3 assumptions listed."
-    assert done["business_plan_draft"]["summary"] == "Business plan draft ready for review: 9 sections. Nothing has been sent to anyone."
+    assert done["market_size"]["summary"].startswith("Market sized (estimated): TAM £2.4bn; SAM £180m; SOM £1.2m. 1 source, 3 assumptions.")
+    sizing = done["market_size"]["state"]["outcome"]["sizing"]      # §5: each level with its label, formula and inputs
+    assert [(s["level"], s["label"]) for s in sizing] == [("TAM", "Estimated"), ("SAM", "Estimated"), ("SOM", "Estimated")]
+    assert all(s["formula"] and s["inputs"] for s in sizing)      # C8: each figure named, with its sources
+    assert done["business_plan_draft"]["summary"] == "Your business plan is ready to review: 9 sections."
     assert [c[0] for c in env.orch.rt.studio.calls] == ["validate_idea", "size_market", "draft_plan"] or len(env.orch.rt.studio.calls) == 3
-    spent = {r["workflow_key"]: agent_router._public_run(r)["credits_used"] for r in run(env.store.list_runs("A"))}
-    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (5, 5, 8)      # the price list's prices, recorded on each task
+    spent = {r["workflow_key"]: agent_router.credits_of(r) for r in run(env.store.list_runs("A"))}
+    assert (spent["idea_validation"], spent["market_size"], spent["business_plan_draft"]) == (25, 25, 8)      # a paid plan's validation is Comprehensive, its price asked first (the owner, 26 Oct: "basic is for free plan")
     assert env.businesses["A"]["data"]["validation"]["overall_score"] == 68
     assert not [r for r in run(autostart.sweep(env.orch, "A")) if r["workflow_key"] in done]      # once
 
@@ -148,9 +155,11 @@ def test_missing_information_is_one_question_on_the_tile_and_the_work_carries_on
     r = run(env.orch.provide_input(r["id"], OWNER, {"customer": "Independent cafés"}))
     assert r["pending_question"]["question"] == "What problem does your business solve? (1 to 2 sentences)"
     r = run(env.orch.provide_input(r["id"], OWNER, {"problem": "Owners lose evenings to paperwork"}))
-    assert r["status"] == "succeeded" and r["summary"].startswith("Idea scored 68/100")
+    assert r["status"] == "succeeded" and r["summary"].startswith("Not enough evidence to score this idea yet")      # no price, cost or sales given: no score (PRD 5.2)
+    # Asked here about the owner's own business and answered by them: on the profile, with where it came from (PRD 6.1).
     kept = env.businesses["A"]["data"]["workspace_profile"]
     assert (kept["description"], kept["target_customer"], kept["problem"]) == ("Bookkeeping for independent cafés", "Independent cafés", "Owners lose evenings to paperwork")
+    assert kept["provenance"]["target_customer"]["source"]["answered_by_owner"] is True
     assert env.orch.rt.studio.calls[0][1]["problem"] == "Owners lose evenings to paperwork"      # asked once, used from then on
 
 
@@ -186,7 +195,7 @@ def test_the_three_growth_checks_report_results_from_the_records():
     assert offer["summary"].startswith("Your best seller is Strategy Workshop: £4,500.00 in three months")
     grow = env.submit(capability="expansion_scenario", channel="ui_action")["run"]
     assert grow["summary"].startswith("Growing revenue by 20% adds £") and "monthly net goes from £" in grow["summary"]
-    assert all(agent_router._public_run(r)["credits_used"] == 2 for r in (cap, offer, grow))      # each asked for by the owner: the task price
+    assert all(agent_router.credits_of(r) == 2 for r in (cap, offer, grow))      # each asked for by the owner: the task price
     texts = {s["key"]: s["text"] for s in build(env)["agent"]["suggestions"] if s["key"].startswith("stage_")}
     assert chores(texts.values()) == [] and not [t for t in texts.values() if t.startswith(("Check your", "Plan a", "Model an"))]
 
@@ -196,9 +205,10 @@ def test_every_capability_has_a_plan_a_cost_and_a_switch():
     assert set(agent_config.CAPABILITY_MIN_PLAN) == set(WORKFLOWS)
     from app.modules.agent import newdocs
     from app.modules.agent import moredocs
-    on_request = {"scenario_help"} | {w.workflow_key for w in newdocs.NEW_WORKFLOWS + moredocs.MORE_WORKFLOWS}      # only ever started by asking
+    on_request = {"scenario_help", "sales_letter_draft"} | {w.workflow_key for w in newdocs.NEW_WORKFLOWS + moredocs.MORE_WORKFLOWS}      # only ever started by asking
     assert automatic == set(WORKFLOWS) - on_request and automatic <= set(agent_config.AUTOMATIC_COST)
     assert all(agent_config.cost_of(c) for c in WORKFLOWS)                # and every one states what it costs
     env = Env()
     rows = [e for e in autostart.events(run(env.store.get_policy("A")), run(env.orch.entitlement("A"))) if e["key"]]
-    assert len(rows) == len(autostart.ITEMS) and all(e["credits"] and e["minimum_plan_label"] in ("Explorer", "Starter") and e["switchable"] for e in rows)
+    assert len(rows) == len(autostart.ITEMS) and all(e["credits"] and e["minimum_plan_label"] in ("Explorer", "Starter", "Decision Engine")
+                                                      and (e["switchable"] or e["capability"] in agent_config.SUGGEST_ONLY) for e in rows)

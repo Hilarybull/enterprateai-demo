@@ -77,16 +77,16 @@ describe("out of AI Credits", () => {
   it("locks the card's Agent action and explains on the card, with a way to plans and a way out", () => {
     const onAction = vi.fn();
     render(<AdaptiveInsights dashboard={dash(true)} onAction={onAction} onWhy={() => {}} onHide={() => {}} onRetry={() => {}} onShowHidden={() => {}} />);
-    const locked = screen.getByRole("button", { name: "Ask Agent to prepare a follow-up (out of AI Credits)" });
-    expect(locked.getAttribute("title")).toBe("Out of AI Credits · Upgrade");
+    const locked = screen.getByRole("button", { name: "Ask Agent to prepare a follow-up (no credits left)" });
+    expect(locked.getAttribute("title")).toBe("No credits left · Top up");
     fireEvent.click(locked);
     expect(onAction).not.toHaveBeenCalled();                                 // nothing started, no navigation
     const article = screen.getByRole("article");
-    expect(article.textContent).toContain("You're out of AI Credits. Your records are safe. Top up or upgrade to let the Agent do this.");
+    expect(article.textContent).toContain("You have no credits left. Top up. Your records are safe.");
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(article.textContent).not.toContain("Your records are safe");
     fireEvent.click(locked);
-    fireEvent.click(article.querySelector("button.bg-amber-600"));           // "See plans and credits" on the card
+    fireEvent.click(article.querySelector("button.bg-amber-600"));           // "Top up" on the card
     expect(onAction).toHaveBeenCalledWith(card, { to: "/pricing", upgrade: true });
     fireEvent.click(screen.getByRole("button", { name: "Run scenario" }));   // the ordinary button still works
     expect(onAction).toHaveBeenLastCalledWith(card, card.cta);
@@ -118,13 +118,13 @@ describe("out of AI Credits", () => {
       mount(0);
       expect(screen.queryByRole("button", { name: /Scenario Help|Quote to Invoice|Validate Idea/ })).toBeNull();      // no shortcut chips under the field
       fireEvent.click(screen.getByText("Would you like me to prepare a payment follow-up?"));      // a suggestion that starts a task
-      expect(screen.getByRole("status").textContent).toContain("out of AI Credits");
+      expect(screen.getByRole("status").textContent).toContain("You have no credits left. Top up.");
       expect(globalThis.fetch.mock.calls.filter(([, init]) => init?.method === "POST").length).toBe(0);      // nothing was started (the card only reads its briefing)
     });
 
     it("locks nothing when there are credits", () => {
       mount(12);
-      expect(screen.queryByRole("button", { name: /out of AI Credits/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /no credits left/ })).toBeNull();
       expect(screen.queryByRole("button", { name: "Scenario Help" })).toBeNull();      // no shortcut chips
     });
   });

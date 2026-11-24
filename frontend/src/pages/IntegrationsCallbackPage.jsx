@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import logoUrl from "../enterprate-logo.png";
+import BackToChat from "../components/BackToChat";
+import { cameFrom } from "../lib/cameFrom";
 
 const PROVIDER_META = {
   quickbooks: { label: "QuickBooks", dest: "/financials" },
@@ -18,18 +20,20 @@ export default function IntegrationsCallbackPage() {
   const detail   = params.get("detail") || "";
   const meta     = PROVIDER_META[provider] || { label: provider, dest: "/dashboard" };
   const isError  = status === "error";
+  const destination = cameFrom()?.opens === "/integrations" ? `/integrations?connected=${encodeURIComponent(provider)}` : meta.dest;
 
   useEffect(() => {
     if (isError) return;
     const t = setTimeout(() => {
       setDone(true);
-      window.location.assign(meta.dest);
+      window.location.assign(destination);
     }, 2500);
     return () => clearTimeout(t);
-  }, [isError, meta.dest]);
+  }, [isError, destination]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
+      <BackToChat />
       <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <img src={logoUrl} alt="EnterprateAI" className="mx-auto mb-6 h-7 w-auto object-contain" />
 
@@ -69,7 +73,7 @@ export default function IntegrationsCallbackPage() {
 
         <button
           type="button"
-          onClick={() => window.location.assign(meta.dest)}
+          onClick={() => window.location.assign(destination)}
           className="mt-6 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition"
         >
           {isError ? "Back" : "Continue"}

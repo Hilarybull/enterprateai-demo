@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { welcomeWords } from "../lib/creditCopy";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, getApiBaseUrl } from "../api/client";
-import { planLabel } from "../lib/plans";
+import { accessLabel } from "../lib/plans";
 import { useAuthStore } from "../store/auth";
 import { Switch, TipsSwitch } from "./EmailPreferencesPage";
+import { resetCookieConsent } from "../lib/cookieConsent";
 
 // Account settings, in the dashboard's design: a header, a section list on the left and one
 // section at a time in a column up to 880px. On a phone the list is the page, and each section
@@ -103,6 +105,7 @@ export function ProfileSection() {
           {state.problem && <span role="alert" className="text-[13px] font-medium text-rose-600">{state.problem}</span>}
         </div>
       </form>
+      <p className="mt-5 border-t border-slate-100 pt-4 text-[13px] text-slate-500 dark:border-slate-800">Want to close your account? <Link to="/account?section=privacy" className="font-semibold text-rose-600 hover:underline">Delete account</Link></p>
     </Section>
   );
 }
@@ -126,7 +129,7 @@ export function SecuritySection() {
   async function savePassword(e) {
     e.preventDefault();
     if (pw.next !== pw.again) return setState({ problem: "The two passwords don't match." });
-    if (pw.next.length < 8) return setState({ problem: "Use at least 8 characters." });
+    if (pw.next.length < 10) return setState({ problem: "Use at least 10 characters. A short phrase works well." });
     setState({ busy: true });
     try {
       await apiRequest("/auth/me/change-password-otp", "POST", { otp_code: otp, new_password: pw.next });
@@ -246,7 +249,7 @@ export function PrivacySection() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-700 dark:text-slate-200">Cookie consent{" "}
             <span className={`${chip} ml-1 ${consent ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{consent ? "Given" : "Not given yet"}</span></p>
-          <button type="button" className={outline} onClick={() => { try { localStorage.removeItem("ea_cookie_consent"); } catch { /* asked again anyway */ } window.location.reload(); }}>Change</button>
+          <button type="button" className={outline} onClick={() => { resetCookieConsent(); window.location.reload(); }}>Change</button>
         </div>
         <p className="mt-2 text-[13px] text-slate-500">Choosing Change asks you again, so you can accept or refuse.</p>
       </Section>
@@ -275,18 +278,30 @@ export function PlanSection() {
   const navigate = useNavigate();
   useEffect(() => { if (!info) apiRequest("/credits/balance", "GET").then((d) => d && setCreditInfo(d)).catch(() => {}); }, [info, setCreditInfo]);
   const free = (subscription.plan_key || "explorer") === "explorer";
+  const [opening, setOpening] = useState(false);
+  const [problem, setProblem] = useState("");
+  const manage = async () => {
+    setOpening(true);
+    setProblem("");
+    try { window.location.assign((await apiRequest("/plans/billing-portal", "POST")).url); }
+    catch (e) { setOpening(false); setProblem(e?.status === 404 ? "There's no paid subscription to manage on this account." : "That couldn't open just now. Please try again."); }
+  };
   const renews = subscription.current_period_end || subscription.renews_at || info?.next_reset_at || info?.resets_at;
   const when = renews ? new Date(renews).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null;
   return (
     <Section heading="Plan & credits">
       <dl className="grid gap-4 sm:grid-cols-3">
-        <div><dt className="text-[13px] text-slate-500">Current plan</dt><dd className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{planLabel(subscription.plan_key, subscription.status)}</dd></div>
+        <div><dt className="text-[13px] text-slate-500">Current plan</dt><dd className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">{accessLabel(subscription)}</dd></div>
         <div><dt className="text-[13px] text-slate-500">AI credits remaining</dt><dd className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{typeof info?.available_credits === "number" ? info.available_credits.toLocaleString() : "—"}</dd></div>
-        <div><dt className="text-[13px] text-slate-500">{free ? "Allocation" : "Renews"}</dt><dd className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-200">{free ? "Free trial allocation" : when || "See billing"}</dd></div>
+        <div><dt className="text-[13px] text-slate-500">{free ? "Allocation" : "Renews"}</dt><dd className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-200">{free ? welcomeWords(info) : when || "See billing"}</dd></div>
       </dl>
       <div className="mt-5 flex flex-wrap gap-2">
         <button type="button" className={primary} onClick={() => navigate("/pricing")}>{free ? "Upgrade" : "Change plan"}</button>
+        {(subscription.subscribed_plan_key || subscription.plan_key || "explorer") !== "explorer" && (
+          <button type="button" className={outline} disabled={opening} onClick={manage} data-manage-subscription>{opening ? "Opening…" : "Manage or cancel subscription"}</button>
+        )}
         <button type="button" className={outline} onClick={() => navigate("/credits")}>Credit history</button>
+        {problem && <p role="alert" className="w-full text-[13px] font-semibold text-rose-600">{problem}</p>}
       </div>
     </Section>
   );

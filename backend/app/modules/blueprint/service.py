@@ -33,6 +33,11 @@ from app.modules.idea_validation.service import get_workspace as get_validation_
 from app.modules.idea_validation.schemas import IdeaValidationPayload
 from app.core.config import get_settings
 from app.shared.llm.openai_client import AutoLLMClient, LLMClient, NoopLLMClient, pick_llm_for_user
+import logging
+
+logger = logging.getLogger(__name__)
+# What the owner reads when no AI provider answered: never provider, model or credential words (QA, 30 Oct)
+AI_UNAVAILABLE = "I couldn't write this just now because the AI service isn't available. Nothing was charged; please try again in a few minutes."
 
 
 def _safe_text(s: str | None) -> str:
@@ -58,6 +63,30 @@ def _strip_digits(s: str | None) -> str:
 def _today_string() -> str:
     now = datetime.now()
     return f"{now.day} {now.strftime('%B')} {now.year}"
+
+
+# What the workspace profile and records say about the business. Left out for an idea that isn't this business's own.
+_PROFILE_INPUTS = ("known_figures", "registration_status", "registration_number", "legal_structure", "secondary_industries", "about_company",
+                   "tagline", "mission", "vision", "core_values", "services", "selected_services_focus", "target_customer_type",
+                   "primary_revenue_model", "key_offering_focus", "operating_stage", "delivery_model", "employee_count", "financial_snapshot",
+                   "company_profile")
+OWNER_SAID_KEY = "what_the_owner_said_in_the_chat_use_first_it_overrides_the_profile_where_they_differ"
+
+
+def _owner_first(raw_inputs: dict, payload) -> dict:
+    """The owner's own words from the Agent chat first, ahead of everything the profile says, and where it operates as
+    they said it. For a separate idea, nothing that describes the workspace's own business is given to the model."""
+    out = dict(raw_inputs)
+    if getattr(payload, "separate_idea", False):
+        for key in _PROFILE_INPUTS:
+            if key in out:
+                out[key] = ""
+        if not _safe_text(getattr(payload, "location", None)):
+            out["location"] = ""
+    if _safe_text(getattr(payload, "location", None)):
+        out["location"] = _safe_text(payload.location)
+    said = _safe_text(getattr(payload, "owner_said", None))
+    return {OWNER_SAID_KEY: said, **out} if said else out
 
 
 def _expand_note(*, field: str, text: str, company: str, industry: str, target_market: str, pricing_model: str) -> str:
@@ -1205,11 +1234,11 @@ async def _generate_section(
         res = await llm.generate_text(system=SYSTEM_POLICY, prompt=prompt, feature=feature or f"blueprint.{label}")
         text = res.text.strip()
         if not text:
-            warnings.append(f"AI returned empty text for: {label}")
+            warnings.append(f"The {label} section came back empty.")
         return text, res.provider, res.model
-    except Exception as e:
-        detail = str(e).strip() or "Unknown error"
-        warnings.append(f"AI generation failed for {label}: {type(e).__name__}: {detail}")
+    except Exception as e:      # noqa: BLE001 - logged for the superadmin; the owner sees a plain sentence
+        logger.warning("blueprint section %s could not be written: %s: %s", label, type(e).__name__, str(e)[:500])
+        warnings.append(f"The {label} section couldn't be written just now.")
         return "", "noop", "none"
 
 
@@ -1224,10 +1253,9 @@ async def _generate_section_required(
 ) -> tuple[str, str, str]:
     text, provider, model = await _generate_section(llm, prompt=prompt, label=label, warnings=warnings, feature=feature)
     if not text:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI generation failed for {error_label}. Check provider credentials and try again.",
-        )
+        # The cause for us in the log; for the owner, plain words (QA, 30 Oct: "never show this technical text to users")
+        logger.warning("AI generation failed for %s: no text from any provider", error_label)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=AI_UNAVAILABLE)
     return text, provider, model
 
 
@@ -1245,6 +1273,37 @@ def _format_section_prompt(*, doc_type: str, section_title: str, inputs_text: st
         "- Avoid repetition and keep it specific to the inputs.\n\n"
         f"INPUTS:\n{inputs_text}"
     )
+
+
+# QA R7-5: streaming. While a document is generated for the stream endpoint, this holds a callback that receives each
+# section as soon as it is written (heading, text). The single full-document call is skipped then, and the sections are
+# written in parallel, each reported the moment it is ready, each with its own time limit.
+import contextvars as _contextvars
+
+SECTION_STREAM: "_contextvars.ContextVar[Any]" = _contextvars.ContextVar("blueprint_section_stream", default=None)
+SECTION_TIMEOUT_SECONDS = 90
+
+
+
+def _known_figures(ws_data: Any, offering: str | None = None) -> str:
+    """QA R9-5: the figures the workspace already holds (any check, any adopted review, the catalogue), each with where it
+    came from, for the document to use instead of inventing or asking again. Empty when there are none."""
+    if not isinstance(ws_data, dict):
+        return ""
+    try:
+        from app.modules.agent import research
+        i = research.inputs_of("price_offer", {"sell": offering} if offering else {}, ws_data)
+        cur = research.context_of(ws_data, i).get("currency")
+    except Exception:      # noqa: BLE001 - the document is written without them
+        return ""
+    src = i.get("_from") or {}
+    lines = []
+    for f in ("price", "cost", "monthly_sales", "fixed_costs", "team_size", "cash_in_bank"):
+        if i.get(f) is None:
+            continue
+        v = research.money(i[f], cur) if f in research.MONEY_FIELDS else f"{i[f]:g}"
+        lines.append(f"{research.INPUT_LABEL[f]}: {v} ({src.get(f) or 'on record'})")
+    return "; ".join(lines)
 
 
 async def _ensure_section_bodies(
@@ -1279,27 +1338,39 @@ async def _ensure_section_bodies(
         )
         missing.append((heading, title, prompt))
 
+    stream = SECTION_STREAM.get()
+    for heading in wanted_headings:      # what was already written (a full document) goes out at once
+        if stream and heading not in {m[0] for m in missing} and (section_map.get(heading) or "").strip():
+            await stream(heading, section_map[heading])
     if missing:
         async def gen_one(heading: str, title: str, prompt: str):
-            text, _, _ = await _generate_section_required(
+            text, _, _ = await asyncio.wait_for(_generate_section_required(
                 llm,
                 prompt=prompt,
                 label=f"{doc_type}_{title}",
                 warnings=warnings,
                 error_label=f"{doc_type} section '{title}'",
                 feature=f"blueprint.{doc_type.lower().replace(' ', '_')}.section",
-            )
+            ), timeout=SECTION_TIMEOUT_SECONDS)
             return heading, text.strip()
 
-        results = await asyncio.gather(
-            *[gen_one(h, t, p) for h, t, p in missing],
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                continue  # warning already added in _generate_section_required
-            heading, text = result
-            section_map[heading] = text
+        if stream:
+            # Each section is sent the moment it is written. One that fails or times out fails the document: it is
+            # not delivered half-written, and nothing is charged (the guard releases the hold).
+            for done in asyncio.as_completed([gen_one(h, t, p) for h, t, p in missing]):
+                heading, text = await done
+                section_map[heading] = text
+                await stream(heading, text)
+        else:
+            results = await asyncio.gather(
+                *[gen_one(h, t, p) for h, t, p in missing],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    continue  # warning already added in _generate_section_required
+                heading, text = result
+                section_map[heading] = text
 
     return _rebuild_with_headings(preamble=preamble, headings=wanted_headings, primary=section_map, fallback={})
 
@@ -1373,6 +1444,17 @@ def _fmt_months(val: Any) -> str:
     if n < 0:
         n = 0.0
     return f"{n:.2f} months"
+
+
+def _fmt_margin_of_safety(val: Any) -> str:
+    """Simulation audit F9: break-even is shown as a margin of safety, never as months."""
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return "Not reachable at current prices and costs"
+    if n >= 0:
+        return f"{n:.1f}% (sales can fall this far before costs are not covered)"
+    return f"{n:.1f}% (sales must rise {abs(n):.1f}% to break even)"
 
 
 def _extract_currency_from_workspace_data(data: dict) -> str | None:
@@ -1470,7 +1552,7 @@ def _validation_from_workspace_financials(data: dict) -> dict | None:
             "costs_monthly": costs,
             "net_monthly": net,
             "margin": margin,
-            "break_even_months": None,
+            "margin_of_safety_pct": None,
             "runway_months": None,
         }
     }
@@ -1487,7 +1569,7 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
     costs      = metrics.get("costs_monthly", 0.0)
     net        = metrics.get("net_monthly", 0.0)
     margin     = metrics.get("margin", 0.0)
-    break_even = metrics.get("break_even_months")
+    safety     = metrics.get("margin_of_safety_pct")
     runway     = metrics.get("runway_months")
 
     rows = [
@@ -1495,7 +1577,7 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
         ("Monthly costs", _fmt_money(float(costs or 0.0), currency)),
         ("Monthly net", _fmt_money(float(net or 0.0), currency)),
         ("Contribution margin", _fmt_pct(float(margin or 0.0))),
-        ("Break-even", _fmt_months(break_even)),
+        ("Margin of safety", _fmt_margin_of_safety(safety)),
         ("Runway", _fmt_months(runway)),
     ]
     return "\n".join([f"- {label}: {value}" for label, value in rows]).strip()
@@ -1624,7 +1706,7 @@ def _render_financial_projection(*, currency: str, validation: dict | None, star
     costs      = float(metrics.get("costs_monthly") or 0.0)
     net        = float(metrics.get("net_monthly") or 0.0)
     margin     = float(metrics.get("margin") or 0.0)
-    break_even = metrics.get("break_even_months")
+    safety     = metrics.get("margin_of_safety_pct")
     runway     = metrics.get("runway_months")
     parts: list[str] = []
     parts.append("## Baseline Snapshot")
@@ -1632,7 +1714,7 @@ def _render_financial_projection(*, currency: str, validation: dict | None, star
     parts.append(f"- Monthly costs: {_fmt_money(costs, currency)}")
     parts.append(f"- Monthly net: {_fmt_money(net, currency)}")
     parts.append(f"- Contribution margin: {_fmt_pct(margin)}")
-    parts.append(f"- Break-even: {_fmt_months(break_even)}")
+    parts.append(f"- Margin of safety: {_fmt_margin_of_safety(safety)}")
     parts.append(f"- Runway: {_fmt_months(runway)}")
     parts.append("")
     parts.append("## 12-Month Projection (Constant-assumption)")
@@ -1813,6 +1895,9 @@ async def generate_blueprint(
                 enriched[key] = fallback_fn(key) if fill_missing else ""
 
         doc_prompt    = build_prompt_fn(enriched)
+        if SECTION_STREAM.get() and not allow_fallback:
+            # Streaming: no single full-document call; every section is written on its own, and sent when ready.
+            return "", "sections", "sections"
         doc, prov, mdl = await _generate_section(
             llm,
             prompt=doc_prompt,
@@ -1828,15 +1913,8 @@ async def generate_blueprint(
                     (w for w in reversed(warnings) if w.startswith(f"AI generation failed for {doc_type}_full:")),
                     None,
                 )
-                if failure_detail:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=f"{failure_detail}. Check provider credentials, model access, and try again.",
-                    )
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"LLM returned empty output for {doc_type}. Check provider credentials and try again.",
-                )
+                logger.warning("document generation for %s returned nothing: %s", doc_type, failure_detail or "empty output from every provider")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=AI_UNAVAILABLE)
             warnings.append(f"Document generation returned empty for {doc_type} — using enriched fallback.")
             for key in set(_TEMPLATE_FIELD_RE.findall(fallback_template)):
                 if not str(enriched.get(key) or "").strip():
@@ -1927,6 +2005,7 @@ async def generate_blueprint(
         registration_status = "Registered" if registration_number else "Registration details not provided"
 
         raw_inputs = {
+            "known_figures": _known_figures(ws.data if ws else None),      # QA R9-5
             "company_name": company,
             "registration_status": registration_status,
             "registration_number": registration_number,
@@ -1962,6 +2041,7 @@ async def generate_blueprint(
             "financial_snapshot": snapshot_text,
         }
 
+        raw_inputs = _owner_first(raw_inputs, payload)
         # Handle financial snapshot logic
         if payload.include_validation_snapshot and not snapshot_text:
             raw_inputs["financial_snapshot"] = "Financial data has not been provided for this section."
@@ -2129,6 +2209,7 @@ async def generate_blueprint(
         ).strip()
 
         raw_inputs = {
+            "known_figures": _known_figures(ws.data if ws else None),      # QA R9-5
             "company_name": company,
             "client_name": client_name,
             "proposal_title": proposal_title,
@@ -2396,6 +2477,7 @@ async def generate_blueprint(
             "website":              _safe_text(getattr(payload, "sender_website", None)) or "",
             "followup_sequence":    followup_sequence,
         }
+        raw_inputs = _owner_first(raw_inputs, payload)
 
         doc, provider, model = await _enrich_and_generate(
             "Sales Letter",

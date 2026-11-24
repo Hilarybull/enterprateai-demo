@@ -154,7 +154,7 @@ def test_saving_shows_the_quality_result_and_a_link_and_the_contact_stays_privat
     assert row["has_contact"] is True and row["public_state"] == "Ready · hidden (invite only)" and row["trading_name"] == "Bright Ledger"
     page = run(s.public_profile(made["slug"], ADMIN))
     assert "hello@brightledger.example" not in str(page) and page["sources"] == ["Company website"]
-    thin = run(s.add_business(ADMIN, {**FORM, "name": "Thin Co", "company_number": "", "website": "", "description": "", "service_tags": [], "contact_email": ""}))
+    thin = run(s.add_business(ADMIN, {**FORM, "name": "Thin Co", "company_number": "", "website": "", "contact_email": ""}))
     assert thin["publication"] in ("noindex", "unpublished") and "No website." in thin["reasons"]      # the same quality result as an import
     dormant = run(s.add_business(ADMIN, {**FORM, "name": "Dormant Co", "company_number": "11112222", "website": "dormant.example", "business_status": "dissolved"}))
     assert dormant["result"] == "excluded"

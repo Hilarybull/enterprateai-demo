@@ -63,7 +63,7 @@ def test_ac01_ac02_an_indexed_profile_is_a_public_projection_and_nothing_else():
     assert set(env.businesses) == before                                  # no business, no account, no membership
     s = svc_of(env)
     p = run(s.public_profile(out["slug"]))
-    assert p["trust"] == d.TRUST["unclaimed"] and p["trust"]["label"] == "Not yet claimed" and p["claimed"] is False
+    assert p["trust"] == d.TRUST["unclaimed"] and p["trust"]["label"] == "Public listing" and p["claimed"] is False
     assert p["source_basis"].startswith("This profile is based on public sources") and p["sources"] == ["Companies House"]
     assert p["legal_identifier"] == "12345678" and p["claim"] == {"eligible": True, "cta": "Claim this Business for Free"}
     assert p["opportunity_note"] == "Claim to set opportunity preferences" and not any(p["opportunities"].values())
@@ -109,7 +109,7 @@ def test_search_filters_and_treats_unclaimed_as_a_state_not_a_score():
     assert [i["name"] for i in run(s.search(q="pricing"))["items"]] == ["Northwind Advisory Ltd"]
     assert [i["name"] for i in run(s.search(category="legal"))["items"]] == ["Harbour Legal LLP"]
     assert [i["name"] for i in run(s.search(location="leeds"))["items"]] == ["Northwind Advisory Ltd"]
-    assert run(s.search(trust="claimed"))["total"] == 0 and run(s.search(open_for="enquiries"))["total"] == 0
+    assert run(s.search(trust="claimed"))["total"] == 0 and run(s.search(open_for="partnerships"))["total"] == 0
     verified_claim(env)
     assert [i["name"] for i in run(s.search(trust="claimed"))["items"]] == ["Northwind Advisory Ltd"]
     assert [i["name"] for i in run(s.search(trust="unclaimed"))["items"]] == ["Harbour Legal LLP"]
@@ -234,6 +234,8 @@ def test_ac07_ac08_ac09_ac10_a_second_claimed_business_is_separate_and_uses_the_
     assert env.businesses["A"]["data"] == a_before                        # nothing merged into the existing business
     assert [b["id"] for b in run(env.orch.rt.business.owned_by(OWNER))] == ["A", one["business_id"], two["business_id"]]
     # The claimed business enters the ordinary dashboard, composed by the ordinary rules: nothing marks it "operating" or "multi-entity".
+    assert run(dash.build_dashboard(env.orch, OWNER, one["business_id"]))["context"]["business_stage"] == "pre_launch"      # the ordinary rule: its services are in its Catalogue from the claim
+    env.businesses[one["business_id"]]["data"].pop("catalogue")      # with nothing listed, it is exactly a business made on the homepage
     built = run(dash.build_dashboard(env.orch, OWNER, one["business_id"]))
     direct = Env()
     direct.businesses["A"]["data"] = {"settings": {"currency": "GBP"}, "workspace_profile": copy.deepcopy(env.businesses[one["business_id"]]["data"]["workspace_profile"])}
@@ -284,10 +286,11 @@ def test_ac12_ac13_ac14_profile_settings_publish_catalogue_offerings_and_reuse_t
     view = run(s.business_profile(U(OWNER), "A"))
     assert view["directory"]["trust"]["state"] == "verified" and view["directory"]["sourced"]["name"] == "Northwind Advisory Ltd"
     assert [(o["name"], o["published"]) for o in view["offerings"]] == [("Strategy Workshop", True), ("Financial Review", True), ("Unpriced Service", True)]
-    assert view["activation"]["ready"] is False and [i["key"] for i in view["activation"]["items"] if not i["done"]] == ["description", "service_area", "opportunity"]
+    assert view["preferences"]["rfqs"]["enabled"] is True  # opportunities default on for claimed profiles
+    assert view["activation"]["ready"] is False and [i["key"] for i in view["activation"]["items"] if not i["done"]] == ["description", "service_area"]
     with pytest.raises(Invalid) as e:
         run(s.activate(U(OWNER), "A"))
-    assert set(e.value.errors) == {"description", "service_area", "opportunity"}
+    assert set(e.value.errors) == {"description", "service_area"}
     with pytest.raises(Invalid) as e:
         run(s.update_profile(U(OWNER), "A", {"colour": "blue", "website": "not a site"}))
     assert set(e.value.errors) == {"colour", "website"}

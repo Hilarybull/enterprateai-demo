@@ -126,3 +126,108 @@ export function buildKpiTrends({ invoices = [], expenses = [], toWs, rangeKey = 
     risks: position(risksAt),
   };
 }
+
+// ── What a figure is made of ─────────────────────────────────────────────
+// The records behind each tile, worked out by the same rules as buildKpiTrends, so the rows add
+// up to the figure shown. Rows: { id, kind, party, ref, at, amount, note, overdue }.
+const INVOICES = "/operations?tab=Sales&sub=Invoices";
+const EXPENSES = "/operations?tab=Transactions&sub=Expenses";
+
+export function kpiBreakdown({ kind, invoices = [], expenses = [], toWs, rangeKey = "3m", now = Date.now(), alertPct = 40, refs = new Map(), risks = null }) {
+  const range = RANGES.find((r) => r.key === rangeKey) || RANGES[1];
+  const start = now - range.days * DAY;
+  const invs = invoices.filter((i) => !i.archived);
+  const exps = expenses.filter((e) => !e.archived);
+  const party = (r) => String(r.customer_name || r.recipient || r.vendor_name || r.party_name || "").trim() || "Unknown";
+  const ref = (i) => refs.get(i.id) || i.invoice_number || i.reference || "";
+  const expRef = (e) => String(e.description || e.item_name || e.category || e.reference || "").trim();
+  const sum = (rows) => rows.reduce((s, r) => s + r.amount, 0);
+  const newestFirst = (rows) => rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+  const isPaid = (i) => st(i.status) === "paid";
+  const outstanding = (i) => Math.max(0, total(i) - received(i, now));
+  const overdueOf = (i) => {
+    const due = ms(i.due_date);
+    return due != null && due < now && !["draft", "void", "voided", "cancelled", "canceled", "credited"].includes(st(i.status))
+      && !i.disputed && outstanding(i) > 0.005;
+  };
+
+  if (kind === "revenue") {
+    const rows = invs.filter((i) => ["paid", "delivered"].includes(st(i.status))).flatMap((i) => {
+      const at = isPaid(i) ? paidAt(i) : issuedAt(i);
+      return at > start && at <= now ? [{ id: i.id, kind: "invoice", party: party(i), ref: ref(i), at, amount: toWs(total(i), i.currency),
+        note: isPaid(i) ? "Paid" : "Delivered, not paid yet" }] : [];
+    });
+    return { rows: newestFirst(rows), total: sum(rows), range, link: { label: "Open invoices", to: INVOICES },
+      explain: `Invoices paid or delivered in the ${range.label.toLowerCase()}.` };
+  }
+  if (kind === "costs") {
+    const rows = [
+      ...exps.flatMap((e) => (expAt(e) > start && expAt(e) <= now ? [{ id: e.id, kind: "expense", party: party(e), ref: expRef(e), at: expAt(e),
+        amount: toWs(expAmt(e), e.currency), note: st(e.status) === "paid" ? "Expense, paid" : "Expense, not paid yet" }] : [])),
+      ...invs.flatMap((i) => {
+        if (!isPaid(i)) return [];
+        const at = paidAt(i); const tot = total(i);
+        const amount = toWs(cosOf(i) * (tot > 0 ? received(i) / tot : 1), i.currency);
+        return at > start && at <= now && Math.abs(amount) > 0.005
+          ? [{ id: `${i.id}-cos`, kind: "invoice", party: party(i), ref: ref(i), at, amount, note: "Cost of sales on a paid invoice" }] : [];
+      }),
+    ];
+    return { rows: newestFirst(rows), total: sum(rows), range, link: { label: "Open expenses", to: EXPENSES },
+      explain: `Expenses dated in the ${range.label.toLowerCase()}, plus the cost of sales on invoices paid in it.` };
+  }
+  if (kind === "cash") {
+    const rows = [
+      ...invs.flatMap((i) => {
+        const got = received(i, now); const tot = total(i);
+        if (got <= 0.005) return [];
+        const cos = cosOf(i) * (tot > 0 ? got / tot : 0);
+        return [{ id: i.id, kind: "invoice", party: party(i), ref: ref(i), at: paidAt(i), amount: toWs(got - cos, i.currency),
+          note: cos > 0.005 ? "Received, less its cost of sales" : got < tot - 0.005 ? "Part paid" : "Received" }];
+      }),
+      ...exps.filter((e) => st(e.status) === "paid" && expAt(e) <= now).map((e) => ({ id: e.id, kind: "expense", party: party(e), ref: expRef(e),
+        at: expAt(e), amount: -toWs(expAmt(e), e.currency), note: "Expense paid" })),
+    ];
+    return { rows: newestFirst(rows), total: sum(rows), range, link: { label: "Open invoices", to: INVOICES },
+      explain: "Money received on invoices, less their cost of sales and the expenses you have paid, to date." };
+  }
+  if (kind === "receivables") {
+    const rows = invs.flatMap((i) => {
+      if (NOT_RECEIVABLE.has(st(i.status)) || i.disputed || issuedAt(i) > now) return [];
+      const owed = outstanding(i);
+      if (owed <= 0.005) return [];
+      const due = ms(i.due_date);
+      return [{ id: i.id, kind: "invoice", party: party(i), ref: ref(i), at: due ?? issuedAt(i), amount: toWs(owed, i.currency), overdue: overdueOf(i),
+        note: overdueOf(i) ? "Overdue" : due != null ? "Due" : "Issued" }];
+    });
+    rows.sort((a, b) => (b.overdue - a.overdue) || ((a.at || 0) - (b.at || 0)));
+    return { rows, total: sum(rows), range, link: { label: "Open invoices", to: INVOICES },
+      explain: "What customers still owe on invoices sent, delivered or part paid. Overdue first, then by due date." };
+  }
+  if (kind === "risks") {
+    const by = {};
+    invs.filter((i) => ["paid", "delivered"].includes(st(i.status))).forEach((i) => {
+      if ((isPaid(i) ? paidAt(i) : issuedAt(i)) <= now) by[party(i)] = (by[party(i)] || 0) + toWs(total(i), i.currency);
+    });
+    const shares = Object.entries(by).sort((a, b) => b[1] - a[1]);
+    const all = shares.reduce((s, [, v]) => s + v, 0);
+    const pctOf = (v) => Math.round((v / all) * 100);
+    const top1 = all > 0 ? (shares[0][1] / all) * 100 : 0;
+    const top2 = all > 0 ? ((shares[0][1] + (shares[1]?.[1] || 0)) / all) * 100 : 0;
+    const overdue = invs.filter(overdueOf);
+    const detail = {
+      concentration: all > 0 ? shares.slice(0, 3).map(([name, v]) => `${name}: ${pctOf(v)}% of revenue`) : [],
+      overdue: overdue.map((i) => `${ref(i) || "Invoice"} from ${party(i)}, due ${new Date(ms(i.due_date)).toLocaleDateString("en-GB")}`),
+    };
+    const computed = [];
+    if (all > 0 && (top1 >= alertPct || (shares.length >= 2 && top2 >= Math.max(alertPct, 60))))
+      computed.push({ key: "concentration", label: "Customer concentration", severity: "high" });
+    if (overdue.length) computed.push({ key: "overdue", label: `${overdue.length} overdue invoice${overdue.length === 1 ? "" : "s"}`, severity: "medium" });
+    const cashRows = kpiBreakdown({ kind: "cash", invoices, expenses, toWs, rangeKey, now, refs });
+    if (cashRows.total < 0) computed.push({ key: "cash_negative", label: "Negative cash position", severity: "high" });
+    const list = (Array.isArray(risks) ? risks : computed).map((r) => (typeof r === "string" ? { label: r } : r))
+      .map((r) => ({ ...r, details: detail[r.key] || [] }));
+    return { risks: list, range, link: { label: "Open invoices", to: INVOICES },
+      explain: "Risks open now: customer concentration, overdue invoices, negative cash and short runway." };
+  }
+  return null;
+}

@@ -1,3 +1,4 @@
+import { pinnedRate } from "./fx";
 function toNumber(value) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? num : 0;
@@ -45,6 +46,18 @@ function monthOffsetFromCurrent(dateLike) {
 
 function emptySchedule(months = 12) {
   return Array.from({ length: months }, () => 0);
+}
+
+// 13-week cash view (simulation audit, Phase 1): money owed by the week it is due. Index 0 = due in the next 7 days or
+// already overdue; amounts due after week 13 are left out of this list (the monthly schedule still holds them).
+function addToWeeklySchedule(schedule, dateLike, amount, today = new Date()) {
+  const numeric = toNumber(amount);
+  const due = parseDate(dateLike);
+  if (!numeric || !due) return;
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const index = Math.max(0, Math.floor((due.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)));
+  if (index >= schedule.length) return;
+  schedule[index] = Number((schedule[index] + numeric).toFixed(2));
 }
 
 function addToSchedule(schedule, dateLike, amount) {
@@ -210,13 +223,18 @@ function toRiskRecommendation(risk) {
 
 export function buildFinancialIntelligence({ catalogue, financials, validation, inputs, fxRates = {}, displayCurrencyIso = "GBP" }) {
   // Convert an amount from itemCurrencyIso to the workspace display currency using fxRates
-  function toWs(amount, itemCurrencyRaw) {
+  // The document's own pinned rate first, as Business Operations and the dashboard convert it (the owner, 30 Oct: £560 was
+  // ₦993,776 there and ₦1,001,537 here); with no rate yet it is left out, never added as if it were the workspace currency
+  // Items left out for want of an exchange rate are counted, so the projection can say so (audit F8: it was silent)
+  const excludedFx = new Set();
+  function toWs(amount, itemCurrencyRaw, doc = null) {
     const num = Number(amount) || 0;
     if (!itemCurrencyRaw) return num;
     const iso = (String(itemCurrencyRaw).match(/\(([A-Z]{3})\)\s*$/) || String(itemCurrencyRaw).match(/^([A-Z]{3})$/i) || [])[1]?.toUpperCase() || String(itemCurrencyRaw).toUpperCase();
     if (!iso || iso === displayCurrencyIso) return num;
-    const rate = fxRates[iso];
-    return rate ? num * rate : num;
+    const rate = pinnedRate(doc, displayCurrencyIso) ?? fxRates[iso];
+    if (!rate && num) excludedFx.add(doc || `${iso}:${num}`);
+    return rate ? num * rate : 0;
   }
   const serviceValidation =
     validation?.serviceValidation ||
@@ -239,6 +257,8 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const productMap = new Map(products.map((item) => [item.id, item]));
   const pendingReceivablesSchedule = emptySchedule();
   const pendingPayablesSchedule = emptySchedule();
+  const pendingReceivablesWeekly = emptySchedule(13);
+  const pendingPayablesWeekly = emptySchedule(13);
 
   const paidInvoices = invoices.filter((item) => normaliseStatus(item.status) === "paid");
   const deliveredInvoices = invoices.filter((item) => normaliseStatus(item.status) === "delivered");
@@ -275,7 +295,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   });
 
   // Revenue = grand total from paid + delivered (accrual basis), converted to workspace currency
-  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toWs(toNumber(item.total_amount || item.subtotal_amount), item.currency || item.source_currency), 0);
+  const totalInvoiceRevenue = [...paidInvoices, ...deliveredInvoices].reduce((sum, item) => sum + toWs(toNumber(item.total_amount || item.subtotal_amount), item.currency || item.source_currency, item), 0);
   const totalInvoiceCostOfSales = paidInvoices.reduce((sum, item) => {
     if (item.cost_of_sales != null) return sum + toNumber(item.cost_of_sales);
     const lineItemCos = Array.isArray(item.line_items) ? item.line_items.reduce((s, li) => s + (Number(li.qty) || 1) * toNumber(li.cost_of_sales), 0) : 0;
@@ -288,7 +308,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     const perUnitCost = productIds.reduce((running, productId) => running + getProductCostOfSales(productMap.get(productId)), 0);
     return sum + perUnitCost * Math.max(1, toNumber(item.quantity || 1));
   }, 0);
-  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toWs(toNumber(item.price || item.amount || item.total_amount), item.currency || item.source_currency), 0);
+  const totalOperationalExpenses = paidExpenses.reduce((sum, item) => sum + toWs(toNumber(item.price || item.amount || item.total_amount), item.currency || item.source_currency, item), 0);
 
   function receivedAmt(inv) {
     if (inv.payments && inv.payments.length > 0) {
@@ -303,24 +323,40 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   function buildMonthlyBreakdown(items, field) {
     const byMonth = {};
     for (const item of items) {
-      const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.created_at || item?.updated_at;
+      // Simulation audit, Phase 6: expenses and invoices dated with `date` / `expense_date` / `issue_date` were skipped
+      const raw = item?.paid_at || item?.issued_at || item?.incurred_at || item?.date || item?.expense_date || item?.issue_date || item?.created_at || item?.updated_at;
       if (!raw) continue;
       const d = new Date(raw);
       if (!Number.isFinite(d.getTime())) continue;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const rawVal = typeof field === "function" ? field(item) : field ? toNumber(item[field]) : toNumber(item.total_amount || item.subtotal_amount);
-      const val = toWs(rawVal, item.currency || item.source_currency);
+      const val = toWs(rawVal, item.currency || item.source_currency, item);
       byMonth[key] = Number(((byMonth[key] || 0) + val).toFixed(2));
     }
     return byMonth;
   }
 
-  // Revenue for the month = most recent calendar month's grand total from paid + delivered
+  // A month's figure = the average of the last 3 complete calendar months (fewer while the business is younger), months
+  // with nothing recorded counting as zero; the month in progress only when no month is complete yet. The same rule as the
+  // server's projection baseline (simulation audit F8 / Phase 3, one source of truth: it used to be the latest calendar
+  // month alone, often a month still in progress).
   function mostRecentMonthTotal(items, field) {
     const byMonth = buildMonthlyBreakdown(items, field);
     const keys = Object.keys(byMonth).sort();
     if (!keys.length) return 0;
-    return byMonth[keys[keys.length - 1]] || 0;
+    const now = new Date();
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const complete = keys.filter((k) => k < currentKey);
+    if (!complete.length) return byMonth[keys[keys.length - 1]] || 0;
+    const [ly, lm] = complete[complete.length - 1].split("-").map(Number);
+    const window = [];
+    for (let i = 0; i < 3; i += 1) {
+      const d = new Date(ly, lm - 1 - i, 1);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (k < complete[0]) break;
+      window.push(byMonth[k] || 0);
+    }
+    return window.reduce((s, v) => s + v, 0) / window.length;
   }
 
   const earnedInvoices = [...paidInvoices, ...deliveredInvoices];
@@ -336,11 +372,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
 
   pendingInvoices.forEach((item) => {
     const customer = customerMap.get(item.customer_id);
-    addToSchedule(
-      pendingReceivablesSchedule,
-      effectiveDueDate(item, customer?.payment_terms || item.payment_terms || 30),
-      item.total_amount
-    );
+    const due = effectiveDueDate(item, customer?.payment_terms || item.payment_terms || 30);
+    addToSchedule(pendingReceivablesSchedule, due, item.total_amount);
+    addToWeeklySchedule(pendingReceivablesWeekly, due, item.total_amount);
   });
   salesContracts.forEach((item) => {
     const contractTotal = toNumber(item.price);
@@ -350,19 +384,15 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
     const uninvoiced = Math.max(0, contractTotal - linkedTotal);
     if (uninvoiced > 0) {
-      addToSchedule(
-        pendingReceivablesSchedule,
-        effectiveDueDate(item, item.payment_terms || 30),
-        uninvoiced
-      );
+      const due = effectiveDueDate(item, item.payment_terms || 30);
+      addToSchedule(pendingReceivablesSchedule, due, uninvoiced);
+      addToWeeklySchedule(pendingReceivablesWeekly, due, uninvoiced);
     }
   });
   pendingExpenses.forEach((item) => {
-    addToSchedule(
-      pendingPayablesSchedule,
-      effectiveDueDate(item, item.payment_terms || 30),
-      item.price
-    );
+    const due = effectiveDueDate(item, item.payment_terms || 30);
+    addToSchedule(pendingPayablesSchedule, due, item.price);
+    addToWeeklySchedule(pendingPayablesWeekly, due, item.price);
   });
   purchaseContracts.forEach((item) => {
     const contractTotal = toNumber(item.price);
@@ -371,11 +401,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       .reduce((sum, inv) => sum + toNumber(inv.total_amount), 0);
     const uninvoiced = Math.max(0, contractTotal - linkedTotal);
     if (uninvoiced > 0) {
-      addToSchedule(
-        pendingPayablesSchedule,
-        effectiveDueDate(item, item.payment_terms || 30),
-        uninvoiced
-      );
+      const due = effectiveDueDate(item, item.payment_terms || 30);
+      addToSchedule(pendingPayablesSchedule, due, uninvoiced);
+      addToWeeklySchedule(pendingPayablesWeekly, due, uninvoiced);
     }
   });
 
@@ -621,7 +649,7 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
     largestClient,
     recommendations,
     riskItems: dedupedRiskItems,
-    stateSnapshot: {
+    stateSnapshot: splitDirectCosts({
       revenue_monthly: Math.max(0, Number(simulationRevenue.toFixed(2))),
       expenses_monthly: Math.max(0, Number(simulationExpenses.toFixed(2))),
       cost_of_sales_monthly: Math.max(0, Number(simulationCostOfSales.toFixed(2))),
@@ -645,6 +673,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
       validation_total_costs_monthly: Math.max(0, Number(validationTotalCostsContribution.toFixed(2))),
       pending_receivables_schedule: pendingReceivablesSchedule,
       pending_payables_schedule: pendingPayablesSchedule,
+      pending_receivables_weekly: pendingReceivablesWeekly,
+      pending_payables_weekly: pendingPayablesWeekly,
+      excluded_fx_items: excludedFx.size,
       opening_accrual_balance: openingAccrualBalance,
       revenue_by_month: buildMonthlyBreakdown(earnedInvoices),
       cost_of_sales_by_month: buildMonthlyBreakdown(paidInvoices, (inv) => {
@@ -667,6 +698,35 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
         }
       ),
       expenses_by_month: buildMonthlyBreakdown(paidExpenses, (e) => toNumber(e.price || e.amount || e.total_amount)),
-    },
+    }, buildMonthlyBreakdown(paidExpenses.filter((e) => expenseKind(e) === "direct"), (e) => toNumber(e.price || e.amount || e.total_amount))),
   };
+}
+
+// ── Simulation audit, Phase 5 (model 1.4): direct costs are cost of sales ─────────────────────────────────────────────
+// The same words as the server (backend scenario_intelligence/factors.py), so the history and the level agree.
+export const DIRECT_COST_RX = /subcontract|contractor|freelanc|material|\bstock\b|inventory|cost of (goods|sales)|\bcogs\b|raw |parts\b|components?\b|packaging|merchandise|wholesale|resale|purchases? for/i;
+export const PAYROLL_RX = /salar|wage|payroll|\bpaye\b|national insurance|\bnic?s?\b|pension|staff cost/i;
+
+export function expenseKind(expense) {
+  if (expense?.expense_type === "staff_payments") return "payroll";
+  const text = `${expense?.category || ""} ${expense?.description || ""}`;
+  if (PAYROLL_RX.test(text)) return "payroll";
+  if (DIRECT_COST_RX.test(text)) return "direct";
+  return "other";
+}
+
+/** When invoices carry no product costs, move expenses in direct-cost categories (`directByMonth`, grouped the same way as
+ * the expenses history) from the expenses history to the cost of sales history. Returns a new snapshot; totals unchanged. */
+export function splitDirectCosts(snapshot, directByMonth) {
+  const cos = snapshot?.cost_of_sales_by_month || {};
+  if (Object.values(cos).some((v) => Number(v) > 0)) return snapshot;
+  const direct = directByMonth || {};
+  if (!Object.keys(direct).length) return snapshot;
+  const expenses = { ...(snapshot.expenses_by_month || {}) };
+  const costOfSales = { ...cos };
+  for (const [k, v] of Object.entries(direct)) {
+    expenses[k] = Math.max(0, Number(((expenses[k] || 0) - v).toFixed(2)));
+    costOfSales[k] = Number(((costOfSales[k] || 0) + v).toFixed(2));
+  }
+  return { ...snapshot, expenses_by_month: expenses, cost_of_sales_by_month: costOfSales };
 }

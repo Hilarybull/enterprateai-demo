@@ -1,16 +1,23 @@
+import { safeHtml } from "../lib/safeHtml";
+import ResearchDiagnostics from "../components/admin/ResearchDiagnostics";
 import { createPortal } from "react-dom";
 import { alertDialog } from "../lib/dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiRequest } from "../api/client";
 import { EXTRA_GRANTS, MODULES, FEATURES } from "../lib/permissions";
-import { getPlan, normalisePlanKey, planLabel } from "../lib/plans";
+import { normalisePlanKey, planLabel } from "../lib/plans";
 import logoUrl from "../enterprate-logo.png";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
+import TenderSyncAdmin from "../components/admin/TenderSyncAdmin";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
-import { ADMIN_NAV, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
+import SimulationAccuracyAdmin from "../components/admin/SimulationAccuracyAdmin";
+import EmailsAdmin from "../components/admin/EmailsAdmin";
+import DiscountsAdmin from "../components/admin/DiscountsAdmin";
+import AgentSpend from "../components/admin/AgentSpend";
+import { ADMIN_NAV, AdminDateFilter, AdminDrawer, AdminHeader, AdminInsight, AdminSidebar, AdminTable, KpiTile, weeklySeries } from "../components/admin/AdminUI";
 import { moderatorAccess } from "../lib/directory";
 
 function fmtAdminDate(iso) {
@@ -1428,7 +1435,7 @@ function UserDetailPanel({ user, stats, upgrades, onClose, onDeleteUser, onDelet
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Subscription</dt>
                   <dd className="text-slate-700 dark:text-slate-200">{planLabel(access.subscription_plan, access.subscription_status)}</dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Effective plan</dt>
-                  <dd className="text-slate-700 dark:text-slate-200">{getPlan(access.effective_plan)?.label || access.effective_plan} <span className="text-slate-500">({access.source})</span></dd>
+                  <dd className="text-slate-700 dark:text-slate-200">{planLabel(access.effective_plan)} <span className="text-slate-500">({access.source})</span></dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Agent tasks</dt>
                   <dd className={access.agent_tasks ? "font-semibold text-emerald-700" : "text-slate-500"}>{access.agent_tasks ? "Yes" : "No"}</dd>
                   <dt className="font-semibold text-slate-600 dark:text-slate-300">Marketplace RFQs</dt>
@@ -1666,6 +1673,8 @@ const STAT_CONFIG = [
 
 // Title (one brand-coloured word) and subtitle for each section's header.
 const PAGE_TITLE = {
+  "simulation-accuracy": ["Simulation", "Accuracy", "Forecasts against actual results, confidence and model versions."],
+  "tender-sync": ["Public tender", "sync", "Manage the Find a Tender import and automatic schedule."],
   overview: ["Platform", "Overview", "How the platform is doing, and what needs attention."],
   "ai-usage": ["AI", "Usage", "Calls, tokens and estimated cost."],
   workspaces: ["All", "Workspaces", "Every business on the platform."],
@@ -1673,6 +1682,7 @@ const PAGE_TITLE = {
   members: ["Team", "Members", "Who belongs to which workspace."],
   invitations: ["Team", "Invitations", "Invitations sent, accepted and revoked."],
   upgrades: ["Upgrade", "Clicks", "People who showed interest in a paid plan."],
+  discounts: ["Pricing", "Discounts", "Create and manage the codes customers can use at checkout."],
   "module-interest": ["Module", "Interest", "Tools people asked to hear about."],
   activation: ["Activation", "Emails", "Getting-started and education journeys: who gets what, and what it changes."],
   contacts: ["All", "Contacts", "Everyone's name and email, how they came, and their marketing choice."],
@@ -1735,8 +1745,8 @@ export function ContactsSection() {
         <select aria-label="Marketing consent" value={filters.consent} onChange={set("consent")} className={field}><option value="">Any consent</option><option value="yes">Can be sent marketing</option><option value="no">Cannot be sent marketing</option></select>
         <select aria-label="Plan" value={filters.plan} onChange={set("plan")} className={field}><option value="">Any plan</option><option value="explorer">Explorer</option><option value="starter_insight">Starter</option><option value="decision_engine">Decision Engine</option></select>
         <select aria-label="Sign-up source" value={filters.source} onChange={set("source")} className={field}><option value="">Any source</option>{Object.entries(CONTACT_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-        <input type="date" aria-label="Joined from" value={filters.since} onChange={set("since")} className={field} />
-        <input type="date" aria-label="Joined until" value={filters.until} onChange={set("until")} className={field} />
+        <AdminDateFilter label="Date joined" start={filters.since} end={filters.until}
+          onApply={(since, until) => setFilters((current) => ({ ...current, since, until }))} />
       </div>
       {state.problem && <p role="alert" className="mb-2 text-[13px] text-rose-600">{state.problem}</p>}
       {state.loading ? <p role="status" className="py-6 text-center text-[13px] text-slate-400">Loading contacts…</p> : (
@@ -1781,11 +1791,12 @@ export default function AdminPage() {
   const [tab, setTab] = useState(() => {
     const wanted = params.get("tab");
     if (ALL_KEYS.includes(wanted) || wanted === "marketplace-reports") return wanted;
-    return params.get("section") === "marketplace" ? "marketplace-queue" : "overview";
+    return params.get("section") === "marketplace" ? "marketplace-index" : "overview";
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [moderator, setModerator] = useState(null);      // a Marketplace moderator who isn't an administrator sees only that section
+  const [onTeam, setOnTeam] = useState(false);           // an internal team member: the same section, without the directory-wide settings
   const [search, setSearch] = useState("");
   const [invitationFilter, setInvitationFilter] = useState("all");
   const [aiModelFilter, setAiModelFilter] = useState("");
@@ -1835,10 +1846,10 @@ export default function AdminPage() {
   // Not an administrator: the server says whether this account moderates the Marketplace.
   useEffect(() => {
     if (isAdmin) return;
-    moderatorAccess().then((r) => setModerator(Boolean(r.moderator))).catch(() => setModerator(false));
+    moderatorAccess().then((r) => { setModerator(Boolean(r.moderator)); setOnTeam(Boolean(r.team)); }).catch(() => setModerator(false));
   }, [isAdmin]);
   const marketplaceOnly = !isAdmin && moderator === true;
-  useEffect(() => { if (marketplaceOnly && !tab.startsWith("marketplace-")) setTab("marketplace-queue"); }, [marketplaceOnly, tab]);
+  useEffect(() => { if (marketplaceOnly && !tab.startsWith("marketplace-")) setTab("marketplace-index"); }, [marketplaceOnly, tab]);
 
   const loadUpgrades = useCallback(() => {
     if (upgradesLoaded) return;
@@ -2266,6 +2277,43 @@ export default function AdminPage() {
     });
   }
 
+  // The business's own "Open for proposals" setting. Never publishes its Marketplace listing.
+  function switchProposals(ws) {
+    const name = ws.name || "Unnamed";
+    const opening = !ws.proposals_open;
+    askConfirm({
+      title: opening ? "Open for proposals?" : "Close to proposals?",
+      description: opening
+        ? `Businesses on the Marketplace will be able to send proposals to "${name}". Its Marketplace listing isn't changed${ws.listing_live ? "." : ": it isn't live, so proposals reach it only once the owner publishes it."}`
+        : `"${name}" will stop receiving new proposals. Proposals it already has are kept.`,
+      label: opening ? "Open for proposals" : "Close to proposals",
+      successMsg: opening ? `"${name}" is open for proposals.` : `"${name}" is closed to proposals.`,
+      action: () => apiRequest(`/admin/workspaces/${ws.id}/proposals`, "PATCH", { enabled: opening }),
+    });
+  }
+
+  // A user's proposals state in words, for sorting and filtering the Users table.
+  const userProposals = (u) => {
+    const owned = (stats?.workspaces || []).filter((w) => w.owner_id === u.id);
+    return !owned.length ? "No business" : owned.some((w) => w.proposals_open) ? "Open" : "Closed";
+  };
+
+  // The same switch for a user: every business they own opens or closes together.
+  function switchUserProposals(u, owned) {
+    const opening = !owned.some((w) => w.proposals_open);
+    const who = u.email || "this user";
+    const count = owned.length === 1 ? `"${owned[0].name || "Unnamed"}"` : `their ${owned.length} businesses`;
+    askConfirm({
+      title: opening ? "Open for proposals?" : "Close to proposals?",
+      description: opening
+        ? `${count} will be open for proposals. Marketplace listings aren't changed.`
+        : `${count} will stop receiving new proposals. Proposals already received are kept.`,
+      label: opening ? "Open for proposals" : "Close to proposals",
+      successMsg: opening ? `${who} is open for proposals.` : `${who} is closed to proposals.`,
+      action: () => Promise.all(owned.map((w) => apiRequest(`/admin/workspaces/${w.id}/proposals`, "PATCH", { enabled: opening }))),
+    });
+  }
+
   function deleteWorkspace(workspaceId, workspaceName) {
     askConfirm({
       title: "Delete workspace?",
@@ -2537,7 +2585,7 @@ export default function AdminPage() {
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-700 lg:hidden">
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
-          <img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" />
+          <Link to="/" aria-label="EnterprateAI home" className="shrink-0"><img src={logoUrl} alt="EnterprateAI" className="h-7 w-auto sm:h-8" /></Link>
           <div className="h-5 w-px bg-slate-200" />
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-sm font-semibold text-slate-800">{marketplaceOnly ? "Marketplace moderation" : "System Admin"}</span>
@@ -2546,8 +2594,9 @@ export default function AdminPage() {
             </span>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <Link to="/dashboard" className="whitespace-nowrap rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Dashboard</Link>
             <span className="hidden text-xs text-slate-400 sm:block">{email}</span>
-            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">{marketplaceOnly ? "Moderator" : "Admin"}</span>
+            <span className="hidden rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 sm:inline">{marketplaceOnly ? "Moderator" : "Admin"}</span>
           </div>
         </div>
       </header>
@@ -2572,7 +2621,7 @@ export default function AdminPage() {
           return <AdminHeader lead={lead} accent={accent} subtitle={subtitle} updatedAt={isAdmin ? updatedAt : null} onRefresh={isAdmin ? () => loadStats(true) : null} refreshing={refreshing} />;
         })()}
 
-        {tab.startsWith("marketplace-") && <AdminClaims section={tab.slice("marketplace-".length)} onSection={(key) => goToTab(`marketplace-${key}`)} />}
+        {tab.startsWith("marketplace-") && <AdminClaims section={tab.slice("marketplace-".length)} onSection={(key) => goToTab(`marketplace-${key}`)} superadmin={isAdmin} onTeam={onTeam} />}
 
         {tab === "overview" && isAdmin && (
           <div className="space-y-5">
@@ -2657,17 +2706,18 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-6 tabular-nums text-slate-500">
                           <span className="w-10 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-20 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-20 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
                 {!(stats.ai_usage.by_feature || []).length && (
-                  <p className="text-xs text-slate-400">No AI usage recorded yet. Create the <code className="font-mono text-[11px]">ai_usage_events</code> table to start tracking.</p>
+                  <p className="text-xs text-slate-400">No AI usage recorded yet. Apply migration <code className="font-mono text-[11px]">041_ai_usage_events</code> to start tracking.</p>
                 )}
               </section>
             )}
+            {stats?.ai_usage?.agent && <AgentSpend usage={stats.ai_usage} compact />}
 
             {/* 4 — Recent workspaces + users (compact reference) */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -2840,6 +2890,8 @@ export default function AdminPage() {
               )}
             </section>
 
+            <AgentSpend usage={stats?.ai_usage} />
+
             {/* By feature + By model side by side */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               <section className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -2860,7 +2912,7 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
                           <span className="w-8 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-16 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
@@ -2888,7 +2940,7 @@ export default function AdminPage() {
                         <span className="flex shrink-0 gap-5 tabular-nums text-slate-500">
                           <span className="w-8 text-right">{row.calls}</span>
                           <span className="w-16 text-right">{(row.tokens || 0).toLocaleString()}</span>
-                          <span className="w-16 text-right">${Number(row.estimated_cost_usd || 0).toFixed(5)}</span>
+                          <span className="w-16 text-right">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</span>
                         </span>
                       </div>
                     ))}
@@ -2919,7 +2971,7 @@ export default function AdminPage() {
                           <td className="py-2 pr-4 text-[12px] text-slate-700 font-mono">{row.email}</td>
                           <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{row.calls}</td>
                           <td className="py-2 pr-4 text-right text-[12px] tabular-nums text-slate-500">{(row.tokens || 0).toLocaleString()}</td>
-                          <td className="py-2 text-right text-[12px] tabular-nums text-slate-700 font-semibold">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                          <td className="py-2 text-right text-[12px] tabular-nums text-slate-700 font-semibold">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3057,7 +3109,7 @@ export default function AdminPage() {
                                   <td className="py-1.5 pr-3 text-slate-500">{row.provider} / {row.model}</td>
                                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.input_tokens || 0).toLocaleString()}</td>
                                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{(row.output_tokens || 0).toLocaleString()}</td>
-                                  <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">${Number(row.estimated_cost_usd || 0).toFixed(5)}</td>
+                                  <td className="py-1.5 text-right tabular-nums font-semibold text-slate-700">{row.estimated_cost_usd == null ? "Rate unavailable" : "$" + Number(row.estimated_cost_usd).toFixed(5)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -3126,7 +3178,19 @@ export default function AdminPage() {
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "member_count", label: "Members", render: (r) => <span className="text-xs tabular-nums">{r.member_count ?? 0}</span> },
+                { key: "views", label: "Listing visits", sortValue: (r) => r.views || 0, filterable: false, render: (r) => (
+                  <span className="block whitespace-nowrap"><span className="text-xs font-semibold tabular-nums text-slate-800">{(r.views || 0).toLocaleString()}</span>
+                    <span className="block text-[10px] text-slate-500">{r.views_30 || 0} in 30 days</span></span>) },
                 { key: "created_at", label: "Created", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "proposals", label: "Proposals", sortValue: (r) => (r.proposals_open ? "Open" : "Closed"), filterValue: (r) => (r.proposals_open ? "Open" : "Closed"), render: (r) => (
+                  <div className="flex flex-col items-start gap-0.5">
+                    <button type="button" onClick={() => switchProposals(r)} aria-pressed={Boolean(r.proposals_open)} aria-label={`${r.proposals_open ? "Close" : "Open"} ${r.name || "Unnamed"} for proposals`}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${r.proposals_open ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+                      {r.proposals_open ? "Open" : "Closed"}
+                    </button>
+                    {r.proposals_open && !r.listing_live && <span className="text-[10px] text-amber-700">Listing not live</span>}
+                  </div>
+                )},
                 { key: "actions", label: "", tdClass: "w-20", render: (r) => (
                   <div className="flex items-center gap-1">
                     <ActionBtn variant="view" title="View details" onClick={() => openDetail(r.id)} disabled={detailLoading} />
@@ -3181,6 +3245,17 @@ export default function AdminPage() {
                 )},
                 { key: "id", label: "ID", render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.id.slice(0, 12)}…</span> },
                 { key: "created_at", label: "Joined", render: (r) => <span className="text-xs">{formatDate(r.created_at)}</span> },
+                { key: "proposals", label: "Proposals", sortValue: (r) => userProposals(r), filterValue: (r) => userProposals(r), render: (r) => {
+                  const owned = (stats?.workspaces || []).filter((w) => w.owner_id === r.id);
+                  if (!owned.length) return <span className="text-[11px] text-slate-400">No business</span>;
+                  const open = owned.some((w) => w.proposals_open);
+                  return (
+                    <button type="button" onClick={() => switchUserProposals(r, owned)} aria-pressed={open} aria-label={`${open ? "Close" : "Open"} ${r.email} for proposals`}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${open ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+                      {open ? "Open" : "Closed"}
+                    </button>
+                  );
+                }},
                 { key: "actions", label: "", tdClass: "w-40", render: (r) => (
                   <div className="flex items-center gap-1.5">
                     <button
@@ -3430,7 +3505,11 @@ export default function AdminPage() {
           </div>
         )}
 
+        {tab === "tender-sync" && isAdmin && <TenderSyncAdmin />}
         {tab === "activation" && isAdmin && <ActivationAdmin />}
+        {tab === "simulation-accuracy" && isAdmin && <SimulationAccuracyAdmin />}
+        {tab === "emails" && isAdmin && <EmailsAdmin onOpenTab={setTab} />}
+        {tab === "discounts" && isAdmin && <DiscountsAdmin />}
 
         {tab === "contacts" && isAdmin && <ContactsSection />}
 
@@ -4082,6 +4161,8 @@ export default function AdminPage() {
           </div>
         )}
 
+        {tab === "research-diagnostics" && isAdmin && <ResearchDiagnostics />}
+
         {/* ── Research & Development ── */}
         {tab === "research" && isAdmin && (
           <div className="space-y-5">
@@ -4413,7 +4494,7 @@ function BlogArticleModal({ form, categories, tags, busy, onSave, onClose }) {
             {f.excerpt && <p className="mt-3 text-base text-slate-500 leading-relaxed">{f.excerpt}</p>}
             <div
               className="mt-6 text-sm text-slate-700 leading-relaxed [&_h2]:text-xl [&_h2]:font-bold [&_h2]:text-slate-900 [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-4 [&_li]:mb-1.5 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-brand-200 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-slate-500 [&_img]:rounded-xl [&_img]:max-w-full [&_strong]:font-semibold"
-              dangerouslySetInnerHTML={{ __html: f.content || "<p class='text-slate-400'>No content yet.</p>" }}
+              dangerouslySetInnerHTML={{ __html: safeHtml(f.content || "<p class='text-slate-400'>No content yet.</p>") }}
             />
           </div>
         )}

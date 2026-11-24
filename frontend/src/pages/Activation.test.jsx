@@ -350,7 +350,7 @@ describe("account settings", () => {
     mount("/", <PlanSection />);
     expect(screen.getByText("Explorer")).toBeTruthy();
     expect(screen.getByText("1,250")).toBeTruthy();
-    expect(screen.getByText("Free trial allocation")).toBeTruthy();
+    expect(screen.getByText("Welcome credits")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Upgrade" })).toBeTruthy();
     cleanup();
     useAuthStore.setState({ subscription: { plan_key: "growth", status: "active", current_period_end: "2026-11-05T00:00:00Z" } });

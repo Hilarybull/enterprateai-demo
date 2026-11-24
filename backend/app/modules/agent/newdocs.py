@@ -20,7 +20,7 @@ from app.modules.agent.models import (
     A1_ASSIST, A3_EXECUTE_WITH_APPROVAL, Done, Next, StepDefinition, WaitForInput, WorkflowDefinition, new_id,
 )
 from app.modules.agent import workflows as _wf      # the payment-monitoring steps are Quote to Cash's own
-from app.modules.agent.tools import _amounts, _currency, _customers, _products, product_cost, product_price, valid_email
+from app.modules.agent.tools import _amounts, _asked_currency, _currency, _customers, _products, product_cost, product_price, valid_email
 
 _TRIGGERS = ("text", "ui_action", "api", "voice")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
@@ -28,9 +28,17 @@ _MONEY = re.compile(r"(?:£|\$|€|₦|GBP\s*|USD\s*|EUR\s*)\s*(\d[\d,]*(?:\.\d{
 
 
 def _said(ctx) -> str:
-    """The owner's own words for this task (what they typed), if any."""
+    """The owner's own words for this task, for the earlier rules to read. Once the model has read the message
+    (extraction.py), its fields are the answers and nothing is sliced from the text: "" here."""
+    if ((ctx.run.get("state") or {}).get("understood") or {}).get("by") == "model":
+        return ""
     if ctx.run.get("source_channel") not in ("text", "voice"):
         return str(ctx.params.get("body") or "")
+    return str(ctx.params.get("body") or ctx.run.get("goal") or "")
+
+
+def _message(ctx) -> str:
+    """The request as written, whoever read it: for finding a record it names by its own reference ("INV-1131026")."""
     return str(ctx.params.get("body") or ctx.run.get("goal") or "")
 
 
@@ -74,20 +82,40 @@ async def _customer(ctx, text: str) -> dict | None:
     return None
 
 
+def _left_for_later(ctx, customer: dict | None) -> bool:
+    """The form answered with the email left empty (the owner's QA, 15 Oct): the draft is made now, and the task waits for the
+    address, in Needs You, when it is sent. Never a failure."""
+    return bool(customer) and bool(ctx.answers) and ("customer_name" in ctx.answers or "customer_id" in ctx.answers)         and not str(ctx.answers.get("customer_email") or "").strip()
+
+
 def _prefill(ctx) -> dict:
     """What the owner already said when they started this from the homepage (PRD-GO-001): shown filled in."""
     given = ctx.params.get("prefill")
     return given if isinstance(given, dict) else {}
 
 
+async def _said_customer(ctx, customer: dict) -> list[dict]:
+    """The customer already known, as a field that is shown and not asked: on record (choosable again with Edit), or new."""
+    if customer.get("id"):
+        everyone = (await ctx.call("search_customer", all=True))["all"]
+        return [{"key": "customer_id", "label": "Customer", "type": "customer", "required": True, "new_label": "+ New customer", "default": customer["id"],
+                 "said": True, "said_text": customer["name"],
+                 "options": [{"value": c["id"], "label": c["name"], "email": c.get("email") or ""} for c in everyone]}]
+    return [{"key": "customer_name", "label": "Customer name", "type": "text", "required": True, "default": customer["name"], "said": True,
+             "said_text": f"{customer['name']} (new)"}]
+
+
 async def _customer_fields(ctx, customer: dict | None, only_if: dict | None = None) -> list[dict]:
     """What to ask about the customer: nothing when known with an address; just the address when
     that is all that's missing; otherwise the picker of customers on record plus "+ New customer"."""
     cond = dict(only_if or {})
-    if customer and valid_email(customer.get("email")):
-        return []
     if customer:
-        return [{"key": "customer_email", "label": f"Email address for {customer['name']}", "type": "email", "required": True, **({"show_if": cond} if cond else {})}]
+        # C4: the customer the owner named is shown under "From what you said" (with Edit), never asked again.
+        said = await _said_customer(ctx, customer)
+        if valid_email(customer.get("email")):
+            return said
+        return said + [{"key": "customer_email", "label": f"Email address for {customer['name']}", "type": "email", "required": False, "hint": "You can add it later.",
+                        **({"show_if": cond} if cond else {})}]
     everyone = (await ctx.call("search_customer", all=True))["all"]
     said = str(_prefill(ctx).get("customer_name") or "")
     fields: list[dict] = []
@@ -97,7 +125,9 @@ async def _customer_fields(ctx, customer: dict | None, only_if: dict | None = No
                        **({"default": "new"} if said else {}), **({"show_if": cond} if cond else {})})
         cond = {**cond, "customer_id": "new"}
     return fields + [{"key": "customer_name", "label": "Customer name", "type": "text", "required": True, "default": said, **({"show_if": cond} if cond else {})},
-                     {"key": "customer_email", "label": "Customer email", "type": "email", "required": True, **({"show_if": cond} if cond else {})}]
+                     # Optional (the owner's QA, 15 Oct): left empty, the draft is still made and the task waits for the address.
+                     {"key": "customer_email", "label": "Customer email", "type": "email", "required": False, "hint": "You can add it later.",
+                      **({"show_if": cond} if cond else {})}]
 
 
 async def _items(ctx, text: str) -> tuple[list[dict], list[dict], list[dict]]:
@@ -107,12 +137,20 @@ async def _items(ctx, text: str) -> tuple[list[dict], list[dict], list[dict]]:
     by_id = {str(p["id"]): p for p in products}
     priced: list[dict] = []
     given = ctx.answers.get("items")
+    if isinstance(given, str) and given.strip():
+        # Typed as words ("3 x logo design at £300"): read into lines. One with no price is asked about, filled in.
+        read = intent.lines_in_text(given, products)
+        if any(r["unit_price"] == "" for r in read) or not read:
+            return [], read, products
+        given = read
     if isinstance(given, list) and given:
         for it in given:
             qty = float(it.get("quantity") or 0)
             p = by_id.get(str(it.get("product_id") or ""))
             name = str(it.get("name") or (p or {}).get("name") or "").strip()
             typed = it.get("unit_price")
+            if typed in (None, "") and not (p or {}).get("unit_price"):
+                return [], [dict(x) for x in given], products      # E1: a line without a price is asked about, never priced at 0
             price = float(typed) if typed not in (None, "") else float((p or {}).get("unit_price") or 0)
             if qty <= 0 or price < 0 or not name:
                 continue
@@ -175,7 +213,8 @@ async def invoice_details(ctx):
     customer = await _customer(ctx, text)
     priced, _suggested, _products_ = await _items(ctx, text)
     vat = _vat(ctx)
-    if not customer or not valid_email(customer.get("email")) or not priced or vat is None:
+    later = bool(ctx.answers.get("email_later")) or _left_for_later(ctx, customer)      # "I'll add it later": drafted now, the address is asked for when it is sent
+    if not customer or not (valid_email(customer.get("email")) or later) or not priced or vat is None:
         fields = await _invoice_form(ctx, text, quotes if not ctx.answers else [], data)
         return WaitForInput("What should this invoice include?" if any(f["key"] == "items" for f in fields) else "Who is this invoice for?", fields)
     extras: dict = {}
@@ -271,6 +310,39 @@ def _accepted_quotes(data: dict) -> list[dict]:
     return [q for q in bz.quotes_of(data) if bz.status_of(q) in ("accepted", "won") and q["id"] not in done and not q.get("archived")]
 
 
+def recurring_price(text: str, answers: dict) -> dict | None:
+    """B1: the recurring price in the request, completed by a term answered in the form ("12 months")."""
+    from app.modules.agent import said as _said_mod
+    if answers.get("price_amount") and answers.get("price_every"):
+        term = str(answers.get("term") or answers.get("timeline") or "").strip()
+        built = _said_mod.recurring_in(f"£{float(answers['price_amount'])} per {answers['price_every']}" + (f" for {term}" if term else ""))
+        if built:
+            return built
+    p = _said_mod.recurring_in(text)
+    if p and not p.get("count") and str(answers.get("term") or "").strip():
+        p = _said_mod.recurring_in(f"{p['amount']} per {p['every']} for {answers['term']}") or p
+    return p
+
+
+def term_words(p: dict | None) -> str:
+    if not p or not p.get("count"):
+        return ""
+    return f"{p['count']} {p['every']}{'s' if p['count'] != 1 else ''}"
+
+
+def priced(p: dict, total: float, currency: str) -> dict:
+    """The structured pricing model kept on the record: how much, how often, how many times, the total, and in words."""
+    from app.modules.agent import said as _said_mod
+    model = {"kind": "recurring", "amount": p["amount"], "every": p["every"], "count": p.get("count"), "total": total or p.get("total")}
+    return {**model, "text": _said_mod.pricing_text(model, currency)}
+
+
+def _same_name(a: str, b: str | None) -> bool:
+    import re as _re
+    norm = lambda v: " ".join(_re.findall(r"[a-z0-9]+", str(v or "").lower()))      # noqa: E731
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
 async def contract_details(ctx):
     text, a = _said(ctx), ctx.answers
     data = await ctx.rt.business.load(ctx.run["business_id"])
@@ -280,8 +352,15 @@ async def contract_details(ctx):
         ctx.state["quote_id"] = str(source)
         return Next()
     customer = await _customer(ctx, text)
-    scope = str(a.get("description") or "").strip()
-    value = float(a.get("total") or 0) or (_amount_in(text) or 0)
+    from app.modules.agent import said as _said_mod
+    # B2: what is agreed is read from the request; if it isn't there it is asked for, never filled with the customer's name.
+    scope = str(a.get("description") or "").strip() or _said_mod.scope_in(text, (customer or {}).get("name"))
+    if customer and _same_name(scope, customer.get("name")):
+        scope = ""
+    # B1: a price that recurs ("£450 a month for 12 months") is kept as it was said, with its total.
+    pricing = recurring_price(text, a)
+    value = float(a.get("total") or 0) or (pricing or {}).get("total") or (0 if pricing else (_amount_in(text) or 0))
+    term = str(a.get("term") or "").strip() or term_words(pricing)
     today = bz.local_now(data, ctx.now()).date()
     if not customer or not valid_email(customer.get("email")) or not scope or value <= 0:
         only_new = {"start_from": "new"} if quotes and not a else None
@@ -292,13 +371,15 @@ async def contract_details(ctx):
                            "options": [{"value": "new", "label": "New contract"}] + [{"value": q["id"], "label": _quote_label(q, data)} for q in quotes[:12]]})
         fields += await _customer_fields(ctx, customer, only_new)
         fields += [
-            {"key": "description", "label": "What is agreed (scope)", "type": "textarea", "required": True, "default": scope, **cond},
-            {"key": "total", "label": "Price", "type": "number", "required": True, "default": value or "", **cond},
-            {"key": "term", "label": "Term", "type": "text", "default": str(a.get("term") or ""), "hint": "For example: 12 months, or until the work is delivered.", **cond},
+            {"key": "description", "label": "What is agreed (scope)", "question": "What is agreed?", "type": "textarea", "required": True, "default": scope, **cond},
+            {"key": "total", "label": "Total price", "type": "number", "required": True, "default": value or "",
+             **({"hint": _said_mod.pricing_text(pricing, bz.currency_of(data))} if pricing else {}), **cond},
+            {"key": "term", "label": "Term", "type": "text", "default": term, "hint": "For example: 12 months, or until the work is delivered.", **cond},
             {"key": "start_date", "label": "Start date", "type": "date", "default": str(a.get("start_date") or today.isoformat()), **cond}]
         return WaitForInput("What should this contract say?", fields)
-    ctx.state.update({"customer": customer, "contract": {"description": scope[:4000], "amount": value, "term": str(a.get("term") or "").strip()[:200],
-                                                         "start_date": str(a.get("start_date") or today.isoformat())[:10]}})
+    ctx.state.update({"customer": customer, "contract": {"description": scope[:4000], "amount": value, "term": term[:200],
+                                                         "start_date": str(a.get("start_date") or today.isoformat())[:10],
+                                                         **({"pricing": priced(pricing, value, bz.currency_of(data))} if pricing else {})}})
     return Next()
 
 
@@ -368,7 +449,7 @@ def payment_fields(data: dict, text: str, today: str, answers: dict | None = Non
          "options": [{"value": i["id"], "label": _invoice_label(i, data)} for i in unpaid[:25]]},
         {"key": "amount", "label": "Amount received", "type": "number", "default": amount, "hint": "Leave blank for the full amount outstanding."},
         {"key": "paid_at", "label": "Date received", "type": "date", "required": True, "default": str(answers.get("paid_at") or today)},
-        {"key": "method", "label": "How it was paid", "type": "choice", "required": True, "default": answers.get("method") or "Bank transfer", "options": _METHODS}]
+        {"key": "method", "label": "How it was paid", "question": "How was it paid?", "type": "choice", "required": True, "default": answers.get("method") or "Bank transfer", "options": _METHODS}]
 
 
 async def take_payment(ctx, data: dict) -> dict:
@@ -383,10 +464,75 @@ async def take_payment(ctx, data: dict) -> dict:
     return {"invoice": inv, "amount": amount, "outstanding": made.get("outstanding")}
 
 
+def draft_invoices(data: dict) -> list[dict]:
+    return [i for i in (data.get("financials") or {}).get("invoices") or [] if isinstance(i, dict) and not i.get("archived") and bz.status_of(i) == "draft"]
+
+
+def _ref(i: dict) -> str:
+    return str(i.get("reference") or i.get("invoice_number") or i["id"][:8])
+
+
+def drafts_said(drafts: list[dict]) -> str:
+    """ "INV-1131026 is a draft waiting for your approval" / "2 invoices are drafts waiting for your approval (INV-1, INV-2)"."""
+    if len(drafts) == 1:
+        d = drafts[0]
+        return f"{_ref(d)}{' for ' + d['customer_name'] if d.get('customer_name') else ''} is a draft waiting for your approval in Needs Approval: it hasn't been sent."
+    return f"{len(drafts)} invoices are drafts waiting for your approval ({', '.join(_ref(d) for d in drafts[:4])}): none has been sent."
+
+
+async def issue_outside(ctx, inv: dict) -> None:
+    """B8: a draft the owner handed over themselves is issued as of now, and the Agent's own send of it is withdrawn
+    (it is never emailed later as well)."""
+    await ctx.call("mark_invoice_issued", invoice_id=inv["id"])
+    from app.modules.agent.models import APPROVAL_CANCELLED, APPROVAL_PENDING, RUN_AWAITING_APPROVAL, RUN_CANCELLED
+    for r in await ctx.rt.store.list_runs(ctx.run["business_id"], statuses=[RUN_AWAITING_APPROVAL], limit=200):
+        if r["id"] == ctx.run["id"] or (r.get("state") or {}).get("invoice_id") != inv["id"]:
+            continue
+        for a in await ctx.rt.store.list_approvals(run_id=r["id"], status=APPROVAL_PENDING):
+            await ctx.rt.store.update_approval(a["id"], {"status": APPROVAL_CANCELLED})
+        await ctx.orch._finish(r, RUN_CANCELLED, None, "issued_outside_app", f"Not sent by me: you handed {_ref(inv)} over yourself.")
+
+
+async def _named_draft_payment(ctx, data: dict, draft: dict, today: str):
+    """B8: a payment for an invoice that is still a draft. Said as it is, with both ways on: approve and send it, or
+    (handed over in person) mark it issued and record the payment now."""
+    choice = ctx.answers.get("draft_choice")
+    if not choice:
+        return WaitForInput(drafts_said([draft]) + " Did you hand it over yourself?", [
+            {"key": "draft_choice", "label": "What should happen", "question": "What should happen?", "type": "choice", "required": True,
+             "options": [{"value": "issued_paid", "label": "I handed it over: mark it issued and record the payment"},
+                         {"value": "issued", "label": "I handed it over: mark it issued, not paid yet"},
+                         {"value": "approve", "label": "Not yet: I'll approve and send it"}]}])
+    if choice == "approve":
+        return Done(f"{_ref(draft)} is waiting for you in Needs Approval. Approve it and I'll send it to the customer.",
+                    next_action="When they pay, tell me and I'll record it.", skipped=True,
+                    outcome={"reason": "draft_waiting", "invoice_id": draft["id"], "links": [{"label": "Needs Approval", "to": "/agent?bucket=needs_approval"}]})
+    await issue_outside(ctx, draft)
+    if choice == "issued":
+        return Done(f"Saved: {_ref(draft)} is marked as issued (handed over by you). Nothing was sent.",
+                    next_action="When they pay, tell me and I'll record it.", outcome={"invoice_id": draft["id"], "issued_outside_app": True})
+    ctx.answers["invoice_id"] = draft["id"]
+    return None      # issued: the payment is recorded below like any other
+
+
 async def record_payment_step(ctx):
     data = await ctx.rt.business.load(ctx.run["business_id"])
     today = bz.local_now(data, ctx.now()).date().isoformat()
+    # B8: an invoice named in the request that is still a draft is said as it is, never "no invoice is waiting".
+    drafts = draft_invoices(data)
+    named_draft = (bz.find(drafts, str(ctx.answers.get("draft_invoice_id") or "")) or bz.find(drafts, str(ctx.answers.get("invoice_id") or ""))
+                   or _invoice_named(_message(ctx), drafts))
+    if named_draft and not bz.find(_unpaid(data), str(ctx.answers.get("invoice_id") or "")):
+        ctx.answers["draft_invoice_id"] = named_draft["id"]
+        said = await _named_draft_payment(ctx, data, named_draft, today)
+        if said is not None:
+            return said
+        data = await ctx.rt.business.load(ctx.run["business_id"])
     if not _unpaid(data):
+        if drafts:
+            return Done(f"No sent invoice is waiting to be paid. {drafts_said(drafts)}",
+                        next_action="Approve it to send it, or tell me if you handed it over yourself and I'll record the payment.",
+                        skipped=True, outcome={"reason": "only_drafts", "links": [{"label": "Needs Approval", "to": "/agent?bucket=needs_approval"}]})
         return Done("No invoice is waiting to be paid, so there is nothing to record a payment against.",
                     next_action="Ask me for a new invoice and I'll prepare it.", skipped=True, outcome={"reason": "no_unpaid_invoices"})
     if not ctx.answers.get("invoice_id"):
@@ -435,11 +581,24 @@ async def add_customer_step(ctx):
     return Done(f"Saved: {name} is {'up to date' if how == 'updated' else 'now a customer'}.", outcome={"customer": name, "links": [{"label": "Customers", "to": "/catalogue?tab=customers"}]})
 
 
+_ITEM_NAMED = re.compile(r"\b(?:catalogue item|catalog item|product|service|item)\s*:?\s+(?:called\s+|named\s+)?(.+?)(?:\s+(?:at|for|priced at|@)\s+|\s*,|$)", re.I)
+_ITEM_TO = re.compile(r"\b(?:add|put|list)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:(?:new\s+)?(?:catalogue item|catalog item|product|service|item)\s+(?:called\s+|named\s+)?)?(.+?)"
+                      r"\s+(?:to|on|in|into)\s+(?:my|the|our)\s+(?:catalogue|catalog|price list|products?|services?)\b", re.I)
+
+
+def item_name_in(text: str) -> str:
+    """B3: the item's name, without the command, the catalogue, the price or connecting words:
+    "Add Oven deep clean to my catalogue at £65" -> "Oven deep clean"."""
+    m = _ITEM_TO.search(text or "") or _ITEM_NAMED.search(text or "")
+    name = _MONEY.sub("", m.group(1)) if m else ""
+    name = re.sub(r"\s+(?:at|for|priced at|@|costing)\s*$", "", name.strip(" .,"), flags=re.I).strip(" .,\"'")
+    return name[:120]
+
+
 async def add_item_step(ctx):
     text, a = _said(ctx), ctx.answers
     if not a:
-        m = re.search(r"\b(?:catalogue item|catalog item|product|service|item)\s*:?\s+(?:called\s+|named\s+)?(.+?)(?:\s+(?:at|for|priced at|@)\s+|\s*,|$)", text, re.I)
-        name = _MONEY.sub("", m.group(1)).strip(" .,") if m else ""
+        name = item_name_in(text)
         price = _amount_in(text)
         return WaitForInput("Is this right?" if name and price else "What should I add to your catalogue?", [
             {"key": "name", "label": "Name", "type": "text", "required": True, "default": name, "confirm": bool(name and price)},
@@ -451,21 +610,23 @@ async def add_item_step(ctx):
         return WaitForInput("I need a name and a price above 0.", [
             {"key": "name", "label": "Name", "type": "text", "required": True, "default": name},
             {"key": "price", "label": "Price", "type": "number", "required": True, "default": price or ""}])
-    cost = float(a.get("cost") or 0)
+    # B4: a cost not given is unknown (None), never 0: a 0 cost made the margin 100%.
+    cost = float(a["cost"]) if str(a.get("cost") if a.get("cost") is not None else "").strip() not in ("", "unknown") else None
     now = ctx.now().isoformat()
+    cur = _asked_currency(ctx, await ctx.rt.business.load(ctx.run["business_id"]))      # "£65" is £65 (the owner's QA, 20 Oct)
 
     def _apply(data: dict) -> str:
         products = data.setdefault("catalogue", {}).setdefault("products", [])
         for p in products:
             if str(p.get("name") or "").strip().lower() == name.lower():
-                p.update({"base_price": bz.money(price), **({"cost_of_sales": bz.money(cost)} if cost > 0 else {}), "updated_at": now})
+                p.update({"base_price": bz.money(price), **({"cost_of_sales": bz.money(cost)} if cost is not None else {}), "currency": cur, "updated_at": now})
                 return "updated"
-        products.append({"id": new_id(), "name": name, "base_price": bz.money(price), "cost_of_sales": bz.money(cost), "created_by_agent": True,
-                         "agent_run_id": ctx.run["id"], "created_at": now})
+        products.append({"id": new_id(), "name": name, "base_price": bz.money(price), "cost_of_sales": bz.money(cost) if cost is not None else None, "created_by_agent": True,
+                         "currency": cur, "agent_run_id": ctx.run["id"], "created_at": now})
         return "added"
     how = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    data = await ctx.rt.business.load(ctx.run["business_id"])
-    return Done(f"Saved: {name} is {'now priced at' if how == 'updated' else 'in your catalogue at'} {fmt_money(price, bz.currency_of(data))}.",
+    return Done(f"Saved: {name} is {'now priced at' if how == 'updated' else 'in your catalogue at'} {fmt_money(price, cur)}."
+                + ("" if cost is not None else " Its cost isn't known yet, so its margin isn't shown."),
                 outcome={"item": name, "links": [{"label": "Catalogue", "to": "/catalogue"}]})
 
 
@@ -491,17 +652,18 @@ async def record_expense_step(ctx):
     if not vendor or not what or amount <= 0:
         return form(a, "I need the supplier, what it was for, and an amount above 0.")
     now = ctx.now()
+    cur = _asked_currency(ctx, data)      # the currency it was given in ("£500"), never the workspace's by default (QA, 20 Oct)
 
     def _apply(d: dict) -> str:
         expenses = bz.records(d, "expenses")
         ref = bz.next_reference("EXP", expenses, now)
         expenses.append({"id": new_id(), "reference": ref, "vendor_name": vendor, "party_name": vendor, "party_type": "vendor", "description": what,
                          "amount": bz.money(amount), "total_amount": bz.money(amount), "date": str(a.get("date") or today)[:10],
-                         "status": "paid" if a.get("paid") != "no" else "pending", "currency": bz.currency_of(d), "source": "EnterprateAI Agent",
+                         "status": "paid" if a.get("paid") != "no" else "pending", "currency": cur, "source": "EnterprateAI Agent",
                          "agent_run_id": ctx.run["id"], "created_at": now.isoformat(), "updated_at": now.isoformat()})
         return ref
     ref = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
-    return Done(f"Saved: {fmt_money(amount, bz.currency_of(data))} to {vendor} for {what} ({ref}).",
+    return Done(f"Saved: {fmt_money(amount, cur)} to {vendor} for {what} ({ref}).",
                 outcome={"reference": ref, "amount": amount, "links": [{"label": "Expenses", "to": "/operations?tab=Procurement"}]})
 
 
@@ -511,7 +673,7 @@ def _record(key: str, title: str, step_title: str, handler, tools: tuple[str, ..
                               success_condition="Saved to the business's records after the owner confirmed it; nothing sent.")
 
 
-RECORD_PAYMENT = _record("record_payment", "Record a Payment", "Record the payment", record_payment_step, ("record_payment_confirmation",))
+RECORD_PAYMENT = _record("record_payment", "Record a Payment", "Record the payment", record_payment_step, ("record_payment_confirmation", "mark_invoice_issued"))
 ADD_CUSTOMER = _record("add_customer", "Add a Customer", "Save the customer", add_customer_step)
 ADD_CATALOGUE_ITEM = _record("add_catalogue_item", "Add a Catalogue Item", "Save the item", add_item_step)
 RECORD_EXPENSE = _record("record_expense", "Record an Expense", "Save the expense", record_expense_step)

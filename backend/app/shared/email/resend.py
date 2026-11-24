@@ -58,6 +58,14 @@ _FOOTER_HTML = (
     "</div>"
 )
 
+# Emails the superadmin writes (Send an email, Bulk email): their own footer, not the account one above (the owner, 12 Nov)
+WRITTEN_BY_US = ("manual", "bulk")
+_WRITTEN_FOOTER_LINES = ("This email was sent by EnterprateAI Marketplace",
+                         "If you would prefer not to receive further communications from us, you can unsubscribe at any time.")
+WRITTEN_FOOTER_HTML = ("<div style=\"margin-top:32px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.5;\">"
+                       + "<br/><br/>".join(_WRITTEN_FOOTER_LINES) + "</div>")
+WRITTEN_FOOTER_TEXT = "\n\n" + "\n\n".join(_WRITTEN_FOOTER_LINES)
+
 _FOOTER_TEXT = (
     "\n\n"
     "You received this email because an action was requested for your EnterprateAI account.\n"
@@ -65,7 +73,71 @@ _FOOTER_TEXT = (
 )
 
 
+def email_button(url: str, label: str) -> str:
+    """The one call to action in an email, aligned with the message text. The url and label are escaped here."""
+    return (f"<p style=\"margin:20px 0;\"><a href=\"{escape(url, quote=True)}\" "
+            "style=\"background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;\">"
+            f"{escape(label)}</a></p>")
+
+
+MSG_SWITCHED_OFF = "This email is switched off, so nothing was sent."
+MSG_OPTED_OUT = "This person asked not to get these emails, so nothing was sent."
+
+
 async def send_email_via_resend(
+    *,
+    to_email: str | list[str],
+    subject: str,
+    text_content: str,
+    html_content: str,
+    sender_name: str | None = None,
+    reply_to_email: str | None = None,
+    attachments: list[dict] | None = None,
+    idempotency_key: str | None = None,
+    headers: dict | None = None,
+    marketing: bool = False,
+    kind: str = "other",
+    values: dict | None = None,
+    sent_by: str | None = None,
+) -> EmailDeliveryResult:
+    """Every email goes through here. The superadmin's Emails area can switch a kind off (not an essential one) and
+    edit the wording of some; each email is logged with what happened to it."""
+    from app.shared.email import catalog
+    chosen = await catalog.setting(kind)
+    if chosen and chosen.get("enabled") is False and not (catalog.KINDS.get(kind) or catalog.KINDS["other"])["essential"]:
+        await catalog.log(kind=kind, to=to_email, subject=subject, status="switched_off", sent_by=sent_by)
+        return EmailDeliveryResult(sent=False, error=MSG_SWITCHED_OFF)
+    one = to_email if isinstance(to_email, str) else (to_email[0] if len(to_email) == 1 else None)
+    if one and await catalog.opted_out(one, kind):
+        await catalog.log(kind=kind, to=to_email, subject=subject, status="opted_out", sent_by=sent_by)
+        return EmailDeliveryResult(sent=False, error=MSG_OPTED_OUT)
+    if chosen and values is not None and kind in catalog.TEMPLATES and (chosen.get("subject") or chosen.get("body")):
+        try:
+            subject, text_content, html_content = catalog.render(kind, chosen, values, footer_html=_FOOTER_HTML, footer_text=_FOOTER_TEXT)
+        except Exception:      # noqa: BLE001 - an edit that can't be filled never stops the email: it goes as written in the product
+            logger.warning("Edited wording for %s could not be used", kind, exc_info=True)
+    if one and kind in catalog.OPT_OUT_LINKED:
+        # Every optional email says how to stop it, and gives mail apps their own unsubscribe button.
+        page, one_click = catalog.optout_links(one, kind)
+        if kind in WRITTEN_BY_US:      # their footer already says they can unsubscribe: the link alone, under it
+            text_content = f"{text_content}\nUnsubscribe: {page}"
+            line = (f"<p style=\"margin:8px 0 0;font-size:11px;line-height:1.5;\"><a href=\"{escape(page, quote=True)}\" "
+                    "style=\"color:#64748b;\">Unsubscribe</a></p>")
+        else:
+            text_content = f"{text_content}\n\nDon't want these emails? Unsubscribe: {page}"
+            line = ("<p style=\"margin:16px 0 0;font-size:11px;color:#94a3b8;\">Don't want these emails? "
+                    f"<a href=\"{escape(page, quote=True)}\" style=\"color:#64748b;\">Unsubscribe</a></p>")
+        html_content = html_content[:html_content.rfind("</div>")] + line + "</div>" if html_content.rstrip().endswith("</div>") else html_content + line
+        headers = {**(headers or {}), "List-Unsubscribe": f"<{one_click or page}>", **({"List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if one_click else {})}
+    result = await _deliver(to_email=to_email, subject=subject, text_content=text_content, html_content=html_content, sender_name=sender_name,
+                            reply_to_email=reply_to_email, attachments=attachments, idempotency_key=idempotency_key, headers=headers, marketing=marketing)
+    status = "sent" if result.sent else "uncertain" if result.uncertain else "not_configured" if result.error == MSG_NOT_CONFIGURED else "failed"
+    await catalog.log(kind=kind, to=to_email, subject=subject, status=status, error=None if result.sent else result.error,
+                      message_id=result.message_id, sent_by=sent_by)
+    return result
+
+
+async def _deliver(
     *,
     to_email: str | list[str],
     subject: str,
@@ -176,7 +248,7 @@ async def send_workspace_invitation_email_with_link(
         f"workspace on <strong>{escape(app_name)}</strong>.</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">Access level: {escape(access_label)}<br/>"
         f"This invitation expires in {expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(invite_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(invite_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Accept invitation</a></p>"
@@ -189,6 +261,9 @@ async def send_workspace_invitation_email_with_link(
         text_content=text_content,
         html_content=html_content,
         sender_name=sender_name,
+        kind="workspace_invitation",
+        values={"inviter_email": inviter_email, "app_name": app_name, "access_level": access_label,
+                "expires": f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}", "link": invite_url},
     )
 
 
@@ -214,7 +289,7 @@ async def send_password_reset_email(
         f"<p style=\"margin:0 0 12px;\">We received a request to set a new password for your "
         f"<strong>{escape(app_name)}</strong> account ({escape(to_email)}).</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in <strong>{expires_in_minutes} minutes</strong>.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(reset_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(reset_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Set new password</a></p>"
@@ -226,6 +301,8 @@ async def send_password_reset_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="password_reset",
+        values={"app_name": app_name, "email": to_email, "minutes": expires_in_minutes, "link": reset_url},
     )
 
 
@@ -254,7 +331,8 @@ async def send_task_code_email(*, to_email: str, code: str, saving: str = "") ->
         + _FOOTER_HTML
         + "</div>"
     )
-    return await send_email_via_resend(to_email=to_email, subject=subject, html_content=html_content, text_content=text_content)
+    return await send_email_via_resend(to_email=to_email, subject=subject, html_content=html_content, text_content=text_content,
+                                       kind="task_code", values={"app_name": app_name, "code": code, "saving": what})
 
 
 async def send_password_otp_email(
@@ -289,6 +367,8 @@ async def send_password_otp_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="password_otp",
+        values={"app_name": app_name, "code": otp_code},
     )
 
 
@@ -314,7 +394,7 @@ async def send_email_verification_email(
         f"<p style=\"margin:0 0 12px;\">{greeting}</p>"
         f"<p style=\"margin:0 0 20px;\">Thank you for signing up to <strong>{escape(app_name)}</strong>! "
         "Please verify your email address to activate your account.</p>"
-        f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(verify_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(verify_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "Verify my email</a></p>"
@@ -328,6 +408,8 @@ async def send_email_verification_email(
         subject=subject,
         text_content=text_content,
         html_content=html_content,
+        kind="email_verification",
+        values={"greeting": f"Hi {name}," if name else "Hi,", "app_name": app_name, "link": verify_url},
     )
 
 
@@ -397,7 +479,7 @@ async def send_proposal_request_invite_email(
         + desc_html
         + f"</div>"
         + req_html
-        + f"<p style=\"text-align:center;margin:28px 0;\"><a href=\"{escape(invite_url)}\" "
+        + f"<p style=\"margin:20px 0;\"><a href=\"{escape(invite_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#4f46e5;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         "View request &amp; apply</a></p>"
@@ -411,6 +493,12 @@ async def send_proposal_request_invite_email(
         html_content=html_content,
         sender_name=sender_name,
         reply_to_email=sender_email,
+        kind="proposal_invite",
+        values={"sender_name": sender_name, "request_title": request_title, "request_description": request_description or "",
+                "requirements": ("What you'll need to provide:\n" + "\n".join(
+                    f"{'Required' if (isinstance(r, dict) and r.get('mandatory')) else 'Optional'}: {r.get('text', r) if isinstance(r, dict) else r}"
+                    for r in req_list)) if req_list else "",
+                "link": invite_url},
     )
 
 
@@ -443,7 +531,7 @@ async def send_document_share_email(
         f"{article} {escape(doc_label)} with you via {escape(app_name)}.</p>"
         f"<p style=\"margin:0 0 20px;color:#475569;\">This link expires in "
         f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}.</p>"
-        f"<p style=\"text-align:center;margin:24px 0;\"><a href=\"{escape(share_url)}\" "
+        f"<p style=\"margin:20px 0;\"><a href=\"{escape(share_url)}\" "
         "style=\"display:inline-block;padding:12px 28px;border-radius:8px;background:#2563eb;"
         "color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;\">"
         f"Open {escape(doc_label)}</a></p>"
@@ -457,4 +545,7 @@ async def send_document_share_email(
         html_content=html_content,
         sender_name=sender_label,
         reply_to_email=sender_email,
+        kind="document_share",
+        values={"sender_label": sender_label, "article": article, "doc_label": doc_label, "app_name": app_name,
+                "expires": f"{expires_in_days} day{'s' if expires_in_days != 1 else ''}", "link": share_url},
     )

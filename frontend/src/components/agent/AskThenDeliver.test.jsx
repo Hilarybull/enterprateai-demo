@@ -11,6 +11,8 @@ import { CapabilityTable } from "../../pages/AgentCentrePage";
 import { useAuthStore } from "../../store/auth";
 import { useWorkspaceStore } from "../../store/workspace";
 
+// What a task cost, in any words ("Used 2 credits"): never shown. A credit note is a document, not a price.
+const CREDIT_WORDS = /\bcredits?\b(?!\s*notes?\b)/i;
 const SUMMARY = { suggestions: [], needs_approval: [], entitlement: { is_paid: true, agent_tasks: true, monthly_runs: 50, monthly_runs_used: 0, credits: 40 } };
 const CATALOGUE = [{ id: "p4", name: "Bookkeeping", unit_price: 300 }];
 const invoiceForm = { question: "What should this invoice include?", fields: [
@@ -48,6 +50,14 @@ async function type(text) {
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
 }
 const posts = (pattern) => calls.filter((c) => c.method === "POST" && pattern.test(c.path));
+// Answers each question in turn with its button ("Send", or "Confirm" for a record to check) until the dialog has nothing left to ask.
+async function sendAll(dialog, label = "Send") {
+  for (let i = 0; i < 10 && dialog.isConnected; i += 1) {
+    const button = within(dialog).queryByRole("button", { name: label });
+    if (!button) return;
+    await act(async () => { fireEvent.click(button); });
+  }
+}
 
 describe("a new document, asked for on the dashboard", () => {
   it("'I need a new invoice' opens one form in place: start from, customer, items with live totals; the draft lands in Needs Approval", async () => {
@@ -56,21 +66,25 @@ describe("a new document, asked for on the dashboard", () => {
     replies.run = { run: { id: "run-i" }, approvals: [{ status: "pending", tool_id: "send_invoice", payload: { reference: "INV-1071026", total: 720, currency: "GBP" } }] };
     mount();
     await type("I need a new invoice");
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(screen.queryByTestId("elsewhere")).toBeNull();                         // (f) no route change
     expect(within(dialog).getByText("New invoice")).toBeTruthy();                  // "Start from": New, or a quotation on record
     expect(within(dialog).getByText(/From quotation QUO-12/)).toBeTruthy();
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "New invoice" })); });      // a choice is answered with a tap
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 2 of 3");      // a new customer's name and email are counted only once asked for (E4)
     fireEvent.click(within(dialog).getByText("QA Round Six Ltd"));
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
+    expect(dialog.querySelector("[data-step]").textContent).toBe("Question 3 of 3");      // a customer on record: as counted
     fireEvent.change(within(dialog).getByLabelText("Item"), { target: { value: "p4" } });
     fireEvent.change(within(dialog).getByLabelText("Quantity"), { target: { value: "2" } });
     const totals = dialog.querySelector("[data-line-totals]");
     expect([totals.querySelector("[data-subtotal]").textContent, totals.querySelector("[data-vat]").textContent, totals.querySelector("[data-total]").textContent])
       .toEqual(["£600.00", "£120.00", "£720.00"]);                                 // updated as it is typed, VAT from Agent settings
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Send" })); });
     expect(posts(/\/workflow-runs\/run-i\/input$/)[0].body.answers).toEqual({ start_from: "new", customer_id: "c6",
       items: [{ product_id: "p4", name: "", quantity: "2", unit_price: 300 }] });
     expect(await screen.findByText("Invoice INV-1071026 for £720.00 is ready. It's in Needs Approval.")).toBeTruthy();
-    expect(screen.getByText("Used 2 credits.")).toBeTruthy();                      // every result shows the credits used
+    expect(screen.queryByText(CREDIT_WORDS)).toBeNull();                              // what it cost is never said with it
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
@@ -80,11 +94,10 @@ describe("a new document, asked for on the dashboard", () => {
     mount();
     await type("I need a new invoice");
     const dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByText(/From quotation QUO-12/));
-    expect(within(dialog).queryByLabelText("Search your customers")).toBeNull();
-    expect(within(dialog).queryByLabelText("Item")).toBeNull();
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
-    expect(posts(/\/input$/)[0].body.answers).toEqual({ start_from: "q1" });
+    expect(within(dialog).queryByLabelText("Search your customers")).toBeNull();      // one question at a time: the customer isn't asked yet
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: /From quotation QUO-12/ })); });
+    expect(posts(/\/input$/)[0].body.answers).toEqual({ start_from: "q1" });      // nothing a new invoice would need was asked
+    expect(screen.queryByLabelText("Item")).toBeNull();
   });
 
   it("a fully specified request shows the result with no dialog at all", async () => {
@@ -107,7 +120,8 @@ describe("records and choices", () => {
     await type("add a customer called Nova Labs, dana@novalabs.test");
     const dialog = screen.getByRole("dialog", { name: "Is this right?" });
     expect(within(dialog).getByLabelText("Customer name").value).toBe("Nova Labs");      // filled in from the request, there to correct
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" })); });
+    await sendAll(dialog, "Confirm");
+    expect(posts(/\/input$/)[0].body.answers).toEqual({ customer_name: "Nova Labs", customer_email: "dana@novalabs.test" });
     expect(await screen.findByText("Saved: Nova Labs is now a customer.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByTestId("elsewhere")).toBeNull();
@@ -117,8 +131,9 @@ describe("records and choices", () => {
     render(<QuestionForm question="Which payment should I record?" onSubmit={() => {}} fields={[
       { key: "paid_at", label: "Date received", type: "date", required: true, default: "2026-10-01" }]} />);
     const field = screen.getByLabelText("Date received");
-    expect(field.type).toBe("date");
-    expect(field.value).toBe("2026-10-01");
+    // A UK date field (QA P2-12): typed and shown as dd/mm/yyyy, with the calendar on its button.
+    expect(field.hasAttribute("data-uk-date")).toBe(true);
+    expect(field.value).toBe("01/10/2026");
   });
 
   it("the answer to 'which invoice?' keeps what the question was about (a reminder ahead of the due date)", async () => {
@@ -130,8 +145,7 @@ describe("records and choices", () => {
     mount();
     await type("send a payment reminder");
     const dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByText(/INV-1 · QA Round Six/));
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: /INV-1 · QA Round Six/ })); });
     const second = posts(/\/agent\/requests$/)[1].body;
     expect(second.capability).toBe("payment_followup");
     expect(second.params).toEqual({ upcoming: true, invoice_id: "i1" });
@@ -141,11 +155,11 @@ describe("records and choices", () => {
   it("when nothing can be done yet, the one step that unblocks it is a button, not a dead end", async () => {
     replies.request = (body) => (body.capability === "new_invoice"
       ? { kind: "workflow", run: { id: "run-i", status: "running", workflow_key: "new_invoice", pending_question: invoiceForm } }
-      : { kind: "answer", message: "Nothing is owed right now: every invoice is paid, so there is no one to remind.", actions: [{ label: "Start a new invoice", capability: "new_invoice" }] });
+      : { kind: "answer", message: "You have no unpaid invoices, so there is no one to remind.", actions: [{ label: "Start a new invoice", capability: "new_invoice" }] });
     mount();
     await type("send a payment reminder");
     await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "Start a new invoice" })); });
-    expect(screen.getByRole("dialog", { name: "The Agent needs a few details" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "A few details" })).toBeTruthy();
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 });
@@ -184,11 +198,11 @@ describe("every capability stays on the dashboard", () => {
     replies.run = { run: { id: "run-x" }, approvals: [{ status: "pending", tool_id: TOOL[capability], payload: { reference: "REF-1", receipt_number: "REF-1", invoice_reference: "REF-1", total: 100, currency: "GBP" } }] };
     mount();
     await type("do it");
-    const dialog = screen.getByRole("dialog", { name: "The Agent needs a few details" });
+    const dialog = screen.getByRole("dialog", { name: "A few details" });
     expect(screen.queryByTestId("elsewhere")).toBeNull();
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Continue" })); });
+    await sendAll(dialog);
     expect(await screen.findByText(/is ready\. It's in Needs Approval\.$/)).toBeTruthy();
-    expect(screen.getByText("Used 2 credits.")).toBeTruthy();
+    expect(screen.queryByText(CREDIT_WORDS)).toBeNull();
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
@@ -197,19 +211,20 @@ describe("every capability stays on the dashboard", () => {
     replies.input = { run: { id: "run-x", status: "succeeded", workflow_key: capability, summary: "Saved: done.", credits_used: 0 } };
     mount();
     await type("do it");
-    await act(async () => { fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Continue" })); });
+    await sendAll(screen.getByRole("dialog"));
     expect(await screen.findByText("Saved: done.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });
 
-  it.each(ANALYSES)("%s: the answer comes back in place with its figures, next step and credits", async (capability) => {
+  it.each(ANALYSES)("%s: the answer comes back in place with its figures and next step, never what it cost", async (capability) => {
     replies.request = { kind: "workflow", run: { id: "run-x", status: "succeeded", workflow_key: capability, summary: "Monthly net goes from £900 to £1,020.",
       next_action: "I'll work it out again next month.", credits_used: 2 } };
     mount();
     await type("do it");
     expect(await screen.findByText("Monthly net goes from £900 to £1,020.")).toBeTruthy();
-    expect(screen.getByText("I'll work it out again next month. Used 2 credits.")).toBeTruthy();
+    expect(screen.getByText("I'll work it out again next month.")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(CREDIT_WORDS);
     expect(screen.getByRole("button", { name: "See details" })).toBeTruthy();      // the full result is one click away, never forced
     expect(screen.queryByTestId("elsewhere")).toBeNull();
   });

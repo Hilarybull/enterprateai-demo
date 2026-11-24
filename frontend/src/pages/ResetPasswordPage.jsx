@@ -34,8 +34,8 @@ export default function ResetPasswordPage() {
       setError("Passwords do not match.");
       return;
     }
-    if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters.");
+    if (newPassword.length < 10) {
+      setError("Use at least 10 characters. A short phrase works well.");
       return;
     }
     setLoading(true);
@@ -44,6 +44,7 @@ export default function ResetPasswordPage() {
       setDone(true);
     } catch (err) {
       const msg = err?.message || "";
+      if (/too common|at least 10/i.test(msg)) { setError(msg.replace(/^HTTP 422:\s*/, "")); return; }
       if (msg.includes("expired")) {
         setError("This reset link has expired. Please request a new one.");
       } else if (msg.includes("Invalid")) {
@@ -63,7 +64,7 @@ export default function ResetPasswordPage() {
 
       <div className="relative w-full max-w-[440px]">
         <div className="text-center">
-          <img src={logoUrl} alt="EnterprateAI" className="mx-auto h-10 w-auto object-contain" />
+          <Link to="/" aria-label="EnterprateAI home" className="mx-auto block w-fit"><img src={logoUrl} alt="EnterprateAI" className="h-10 w-auto object-contain" /></Link>
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -102,7 +103,7 @@ export default function ResetPasswordPage() {
                     required
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="At least 8 characters"
+                    placeholder="At least 10 characters"
                     className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none ring-brand-200 placeholder:text-slate-400 focus:ring-2"
                   />
                 </div>

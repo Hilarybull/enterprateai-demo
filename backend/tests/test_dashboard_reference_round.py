@@ -46,7 +46,7 @@ def test_a_task_already_waiting_on_that_question_carries_on_once_the_profile_has
     run(env.store.set_policy("A", {"automation": {"auto_start": False}}, OWNER))      # even with automatic starting off
     run(autostart.answer_from_profile(env.orch, "A", env.businesses["A"]["data"], run(env.store.list_runs("A"))))
     after = run(env.store.get_run(r["id"]))
-    assert after["status"] == "succeeded" and after["summary"].startswith("Idea scored 68/100")      # it read the profile and finished
+    assert after["status"] == "succeeded" and after["summary"].startswith("Not enough evidence to score this idea yet")      # no price, cost or sales given: no score (PRD 5.2)      # it read the profile and finished
     assert env.orch.rt.studio.calls[0][1]["description"] == ABOUT
     # And through the ordinary look the Agent takes when the app is opened.
     other = Env()

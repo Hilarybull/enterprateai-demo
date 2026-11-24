@@ -48,7 +48,8 @@ export function buildActionPlan({ validation, ideaValidation, maxItems = 10 }) {
   const revenue = typeof m.revenue_monthly === "number" ? m.revenue_monthly : null;
   const costs = typeof m.costs_monthly === "number" ? m.costs_monthly : null;
   const margin = typeof m.margin === "number" ? m.margin : null;
-  const breakEven = typeof m.break_even_months === "number" ? m.break_even_months : null;
+  // Simulation audit F9: margin of safety (% sales can fall before costs aren't covered), not "break-even months".
+  const marginOfSafety = typeof m.margin_of_safety_pct === "number" ? m.margin_of_safety_pct : null;
   const runway = typeof m.runway_months === "number" ? m.runway_months : null;
   const utilization = typeof m.capacity?.utilization === "number" ? m.capacity.utilization : null;
 
@@ -76,8 +77,10 @@ export function buildActionPlan({ validation, ideaValidation, maxItems = 10 }) {
     if (margin !== null && margin < 0.25) {
       actions.push("Improve contribution margin by adjusting price, variable costs, or deliverable scope.");
     }
-    if (breakEven !== null && breakEven > 12) {
-      actions.push("Reduce fixed costs or increase monthly volume to reach break-even sooner.");
+    if (marginOfSafety !== null && marginOfSafety < 10) {
+      actions.push(marginOfSafety < 0
+        ? "Planned sales are below break-even: reduce fixed costs, raise margin, or increase monthly volume."
+        : "Your margin of safety is thin: reduce fixed costs or increase monthly volume so a small sales dip doesn't cause losses.");
     }
     if (runway !== null && runway < 6) {
       actions.push("Extend runway: reduce monthly burn, increase starting cash, or tighten payment terms.");

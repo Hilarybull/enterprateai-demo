@@ -368,8 +368,12 @@ class SupabaseStore(Store):
 
     async def stalled_candidates(self, limit=200):
         # Mid-step tasks, and stopped ones that may be due another attempt (newest first: old failures are settled).
-        return await self.sb.sb_select("agent_workflow_runs", filters=[("status", "in", ["created", "running", "failed"])],
-                                       order="updated_at", desc=True, limit=limit) or []
+        try:
+            return await self.sb.sb_select("agent_workflow_runs", filters=[("status", "in", ["created", "running", "failed"])],
+                                           order="updated_at", desc=True, limit=limit) or []
+        except Exception:
+            logger.warning("agent stalled_candidates skipped because the datastore was unavailable", exc_info=True)
+            return []
 
     async def list_runs(self, business_id, *, statuses=None, limit=200):
         filters: list = [("business_id", "eq", business_id)]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,7 +28,9 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
     data = ws.data or {}
     profile = data.get("workspace_profile")
     if not profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace profile not found")
+        # Not filled in at sign-up: an empty profile to fill in, never an error (the owner, 26 Oct: "HTTP 404: Workspace profile
+        # not found" on Account > Workspace); the workspace is still known, so the app opens on it
+        return {"workspace_id": str(ws.id), "profile": {}, "updated_at": ws.updated_at}
     _OPERATING_STAGE_MAP = {"growth": "growing"}
     _DELIVERY_MODEL_MAP = {"manual_only": "manual", "fully_automated": "automated"}
     normalized = dict(profile)
@@ -39,15 +43,90 @@ async def get_profile(*, user_id: str, workspace_id: str | None = None):
         profile_out = parsed.model_dump()
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning(
-            "Workspace profile validation failed for workspace %s: %s", ws.id, exc
-        )
+        # A profile not finished yet is normal on a read: said quietly, by field name only (never the values, which hold
+        # the owner's email and details). A value that is there but wrong is a warning.
+        errors = exc.errors() if hasattr(exc, "errors") else []
+        fields = [".".join(str(x) for x in e.get("loc") or ()) for e in errors]
+        wrong = [f for f, e in zip(fields, errors) if e.get("type") != "missing"]
+        log = logging.getLogger(__name__)
+        if wrong:
+            log.warning("Workspace profile for %s has invalid fields: %s", ws.id, ", ".join(wrong))
+        else:
+            log.debug("Workspace profile for %s is not finished yet: %s", ws.id, ", ".join(fields) or type(exc).__name__)
         # Return raw data so the user can still view and fix their profile — never 422 on a read
         profile_out = normalized
     return {"workspace_id": str(ws.id), "profile": profile_out, "updated_at": ws.updated_at}
 
 
-async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile):
+def owner_marks(data: dict | None, before: dict | None, after: dict) -> dict:
+    """The profile's sources after the owner saved it by hand: every field they changed is theirs ("by": "owner"), so the
+    Agent never fills it again, even when they cleared it."""
+    prov = dict((data or {}).get("profile_provenance") or {})
+    now = datetime.now(timezone.utc).isoformat()
+    for k, v in (after or {}).items():
+        was = (before or {}).get(k)
+        if was != v and not (was in (None, "", [], {}) and v in (None, "", [], {})):
+            prov[k] = {"source": "You", "by": "owner", "at": now, "value": v}
+    return prov
+
+
+def _rename_log(data: dict, before: dict | None, after: dict, by: str) -> dict:
+    """A rename, kept in the workspace's history: "Renamed from X to Y by <who>, <date>" (the owner's QA, 16 Oct)."""
+    old, new = str((before or {}).get("company_name") or "").strip(), str((after or {}).get("company_name") or "").strip()
+    if not old or not new or old == new:
+        return {}
+    entry = {"kind": "workspace_renamed", "from": old, "to": new, "by": by, "at": datetime.now(timezone.utc).isoformat()}
+    return {"workspace_history": [entry, *list((data or {}).get("workspace_history") or [])][:200]}
+
+
+async def _after_rename(workspace_id: str, before: dict | None, after: dict) -> dict:
+    """After a rename: the unsent drafts still showing the old name, to ask the owner about. Nothing is changed here."""
+    old, new = str((before or {}).get("company_name") or "").strip(), str((after or {}).get("company_name") or "").strip()
+    if not old or not new or old == new:
+        return {}
+    try:
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.agent.sender_refresh import drafts_with_old_name
+        return {"renamed_from": old, "unsent_drafts": await drafts_with_old_name(get_orchestrator(), workspace_id, new)}
+    except Exception:      # noqa: BLE001 - the rename is saved either way
+        import logging
+        logging.getLogger(__name__).info("drafts not listed after the rename of %s", workspace_id, exc_info=True)
+        return {"renamed_from": old, "unsent_drafts": []}
+
+
+async def _sync_catalogue(workspace_id: str) -> None:
+    """The profile's services in Catalogue > Products too (the owner's QA, 15 Oct), and its country's currency saved when
+    none is (16 Oct), in one guarded save of the record."""
+    try:
+        from app.modules.agent.business import SupabaseBusiness, save_country_currency
+        from app.shared.catalogue_sync import add_profile_services
+
+        def _both(d: dict):
+            save_country_currency(d)
+            return add_profile_services(d)
+        await SupabaseBusiness().mutate(workspace_id, _both)
+        # Tasks waiting on a question the saved profile now answers (the business email) carry on straight away.
+        from app.modules.agent.router import get_orchestrator
+        from app.modules.agent.autostart import answer_from_profile
+        orch = get_orchestrator()
+        await answer_from_profile(orch, workspace_id, await orch.rt.business.load(workspace_id), await orch.rt.store.list_runs(workspace_id, limit=200))
+    except Exception:      # noqa: BLE001 - the profile is saved either way; the next save adds them
+        import logging
+        logging.getLogger(__name__).info("catalogue not synced from the profile for %s", workspace_id, exc_info=True)
+
+
+def _with_unlisted(existing: dict | None, saved: dict) -> dict:
+    """The saved profile with everything the form doesn't hold kept as it was: fields set by the Agent or other modules
+    (their sources, the currency, the time zone) and a service's own extra details. A save never deletes them."""
+    out = {**{k: v for k, v in (existing or {}).items() if k not in saved}, **saved}
+    before = {str(s.get("service_name") or "").strip().lower(): s for s in (existing or {}).get("services") or [] if isinstance(s, dict)}
+    if isinstance(out.get("services"), list):
+        out["services"] = [{**{k: v for k, v in (before.get(str(s.get("service_name") or "").strip().lower()) or {}).items() if k not in s}, **s}
+                           if isinstance(s, dict) else s for s in out["services"]]
+    return out
+
+
+async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: WorkspaceProfile, seen: dict | None = None):
     ws = await _load_workspace(user_id, workspace_id)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -58,6 +137,12 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
         base = dict(existing or {})
         incoming = profile.model_dump()
         for k, v in incoming.items():
+            if seen is not None and k in seen and seen.get(k) == v and base.get(k) != v:
+                continue      # untouched in a form opened earlier: the newer saved value stays
+            if seen is None and base.get(k) not in (None, "", [], {}):
+                # A save from another page (Idea Validation's own form) fills what is empty, never what is already there
+                # (the owner's QA, 21 Oct: "you are overwriting fields that have values in the workspace profile").
+                continue
             # Only overwrite with incoming value when it's non-empty; keep existing otherwise
             if isinstance(v, list):
                 if v:
@@ -68,16 +153,21 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
             merged_profile = WorkspaceProfile.model_validate(base)
         except Exception as e:
             raise HTTPException(status_code=422, detail=str(e))
+        kept = _with_unlisted(existing, merged_profile.model_dump())
         await update_workspace(
             user_id=user_id,
             workspace_id=str(ws.id),
             data_patch={
-                "workspace_profile": merged_profile.model_dump(),
+                "workspace_profile": kept,
                 "workspace_profile_updated_at": now,
+                "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump()),
+                **_rename_log(ws.data if isinstance(ws.data, dict) else {}, existing, merged_profile.model_dump(), user_id),
             },
         )
+        await _sync_catalogue(str(ws.id))
         ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
-        return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at}
+        return {"workspace_id": str(ws.id), "profile": merged_profile, "updated_at": ws.updated_at,
+                **(await _after_rename(str(ws.id), existing, merged_profile.model_dump()))}
 
     # Create a workspace if none exists yet
     payload = {
@@ -85,6 +175,7 @@ async def upsert_profile(*, user_id: str, workspace_id: str | None, profile: Wor
         "workspace_profile_updated_at": now,
     }
     ws_id = await create_workspace(user_id=user_id, name=profile.company_name, data=payload)
+    await _sync_catalogue(str(ws_id))
     ws = await get_workspace(user_id=user_id, workspace_id=ws_id)
     return {"workspace_id": str(ws.id), "profile": profile, "updated_at": ws.updated_at}
 
@@ -108,10 +199,12 @@ async def patch_profile(*, user_id: str, workspace_id: str | None, profile_patch
         user_id=user_id,
         workspace_id=str(ws.id),
         data_patch={
-            "workspace_profile": validated.model_dump(),
+            "workspace_profile": _with_unlisted(existing, validated.model_dump()),
             "workspace_profile_updated_at": datetime.now(timezone.utc).isoformat(),
+            "profile_provenance": owner_marks(ws.data if isinstance(ws.data, dict) else {}, existing, validated.model_dump()),
         },
     )
+    await _sync_catalogue(str(ws.id))
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
     return {"workspace_id": str(ws.id), "profile": validated, "updated_at": ws.updated_at}
 
@@ -165,6 +258,33 @@ def _defaults(*, email: str, company_name: str) -> dict[str, Any]:
     }
 
 
+def _offering_key(name: str) -> str:
+    """"End of tenancy cleaning" and "end-of-tenancy clean" are one offering (the Agent matches typed items the same way)."""
+    from app.modules.agent.intent import _norm_name
+    return _norm_name(name)
+
+
+def catalogue_with_offerings(catalogue: dict | None, names: list[str], now: str) -> tuple[dict, list[dict]]:
+    """The catalogue with an offering for each name not already there (by name, whatever its case or ending).
+    No price is invented: a new offering has none, and says it needs one."""
+    cat = dict(catalogue or {})
+    products = [dict(x) for x in cat.get("products") or [] if isinstance(x, dict)]
+    have = {_offering_key(x.get("name") or "") for x in products if not x.get("archived")}
+    added = []
+    for name in names:
+        key = _offering_key(name)
+        if not name or not key or key in have:
+            continue
+        have.add(key)
+        item = {"id": str(uuid.uuid4()), "name": name[:120], "type": "service", "description": "", "base_price": None, "cost_of_sales": None,
+                "discount": 0, "freight_cost": 0, "marketplace_listed": True, "archived": False, "price_needed": True,
+                "source": "onboarding", "created_at": now, "updated_at": now}
+        products.append(item)
+        added.append(item)
+    cat["products"] = products
+    return cat, added
+
+
 async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, Any]) -> dict:
     """Apply the sign-up workspace answers. Skipped fields keep their current
     value (or a default for a first-time profile). Always marks onboarding done
@@ -205,6 +325,13 @@ async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, An
         patch["workspace_profile"] = validated.model_dump()
         patch["workspace_profile_updated_at"] = now
 
+    # QA D2: what the business offers, said at onboarding, becomes its Catalogue offerings (the records the
+    # pricing check, quotations and the Marketplace use), once each and never with an invented price.
+    offered = [str(sv.get("service_name") or "").strip() for sv in (cleaned.get("services") or []) if isinstance(sv, dict)]
+    catalogue, added = catalogue_with_offerings(data.get("catalogue"), offered, now)
+    if added:
+        patch["catalogue"] = catalogue
+
     patch["onboarding"] = {
         **(data.get("onboarding") or {}),
         "completed_at": now,
@@ -213,6 +340,7 @@ async def complete_onboarding(*, user_id: str, email: str, answers: dict[str, An
     }
     rename = cleaned.get("company_name") if cleaned.get("company_name") and (not ws.name or ws.name in (DEFAULT_WORKSPACE_NAME, "Unnamed")) else None
     await update_workspace(user_id=user_id, workspace_id=str(ws.id), data_patch=patch, name=rename)
+    await _sync_catalogue(str(ws.id))
     ws = await get_workspace(user_id=user_id, workspace_id=str(ws.id))
     profile = (ws.data or {}).get("workspace_profile") or {}
     return {

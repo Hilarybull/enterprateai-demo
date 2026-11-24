@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -60,7 +61,9 @@ def documented(pairs: list[tuple[str, Any]]) -> dict:
         return _res(PASSED)
     if len(empty) == len(pairs):
         return _res(UNKNOWN, "Not filled in yet: " + ", ".join(empty) + ".", missing=empty)
-    return _res(FAILED, "Still missing: " + ", ".join(empty) + ".", missing=empty)
+    # What is filled counts towards the score so far (the owner, 31 Oct: "launch readiness should also give some score based
+    # on the data provided"): the share of the fields given
+    return _res(FAILED, "Still missing: " + ", ".join(empty) + ".", missing=empty, filled=round((len(pairs) - len(empty)) / len(pairs), 2))
 
 
 def _amount(value: Any) -> tuple[Decimal | None, bool]:
@@ -207,25 +210,97 @@ def score_criterion(checks: list[dict]) -> tuple[str, int | None]:
     return ("met", 100) if passed == 2 else ("partially_met", 50) if passed == 1 else ("unmet", 0)
 
 
-def display_score(score: float | Decimal | None) -> int | float | None:
-    """The score as shown: a whole number, or one decimal place when it isn't whole. Scores
-    move in halves, so this is exact, and 59.5 can never appear as "60" beside "Not ready"."""
+# An area answered with the Agent's estimates counts for half until the owner changes them or adds evidence of their own
+# (New-User Test L1: approving 24 estimates took a launch from 4 to 78/100, with nothing checked).
+ESTIMATE_COUNTS_FOR = Decimal("0.5")
+_ESTIMATE = re.compile(r"estimate", re.I)
+
+
+def _estimated_share(profile: dict, criterion: dict, snapshot: dict) -> Decimal:
+    """How much of this criterion's area rests on estimates the Agent drafted (0 to 1). What the owner typed or changed, and
+    the owner's own evidence linked to the criterion (research isn't), don't."""
+    section = next((s for s in profile["sections"] if s["key"] == criterion["section"]), None)
+    if not section:
+        return Decimal(0)
+    subject, forecast = snapshot["subject"], snapshot.get("forecast")
+    for part in ("A", "B"):
+        if any(e.get("type") != "research" for e in linked(snapshot, f"{criterion['code']}.{part}")):
+            return Decimal(0)
+    prov = subject.get("provenance") or {}
+    fields = [f for f in section["fields"] if not f.get("when") or all(subject.get(k) == v for k, v in f["when"].items())]
+    answered = [f["key"] for f in fields if not blank(get(subject, f["key"]))]
+    estimated = sum(1 for k in answered if isinstance(prov.get(k), dict) and _ESTIMATE.search(str(prov[k].get("source") or ""))
+                    and prov[k].get("value") == get(subject, k))
+    total = len(answered)
+    if section.get("forecast") and forecast and (forecast.get("months") or not blank(forecast.get("opening_cash"))):
+        total += 1
+        estimated += 1 if forecast.get("drafted_by") == "Agent" else 0
+    return Decimal(estimated) / Decimal(total) if total else Decimal(0)
+
+
+# The thresholds a shown score must never seem to cross: 59.5 is shown as 59, never "60" beside "Not ready" (and 74.5 as
+# 74 beside "Preparation gaps remain"). Classification always compares the unrounded score.
+_NEVER_ROUNDED_UP_TO = (60, 75, 80)
+
+
+def display_score(score: float | Decimal | None) -> int | None:
+    """The score as shown: a whole number (22 Oct 2026: 47.5 is 48), rounded half up, except where rounding up would
+    reach a threshold the unrounded score is below."""
     if score is None:
         return None
-    d = Decimal(str(score)).quantize(Decimal("0.1"), rounding="ROUND_HALF_UP")
-    return int(d) if d == d.to_integral_value() else float(d)
+    exact = Decimal(str(score))
+    shown = int(exact.quantize(Decimal("1"), rounding="ROUND_HALF_UP"))
+    if shown in _NEVER_ROUNDED_UP_TO and exact < shown:
+        shown -= 1
+    return shown
+
+
+def why_not_ready(result: dict | None, ready_at: float | None = None) -> str | None:
+    """One line on why a check is not ready yet (the owner, 25 Oct: 88/100 beside "Not ready yet" said nothing about why),
+    from the result itself: a must-have that failed, documents still to mark as reviewed, what is still unknown, or a
+    score just under the line."""
+    if not result or result.get("classification") in (None, "ready"):
+        return None
+    failed = [g for g in result.get("gates") or [] if g.get("state") == FAILED]
+    if failed:
+        first = str(failed[0].get("label") or "a must-have").rstrip(".")
+        return f"{first[:1].upper() + first[1:]} must be fixed first." if len(failed) == 1 else f"{len(failed)} must-haves to fix first, starting with: {first[:1].lower() + first[1:]}."
+    checks = [ch for c in result.get("criteria") or [] for ch in c.get("checks") or []]
+    unreviewed = next((ch for ch in checks if str(ch.get("reason") or "").startswith("Not reviewed:")), None)
+    if unreviewed:
+        n = len([x for x in str(unreviewed["reason"])[len("Not reviewed:"):].strip().rstrip(".").split(",") if x.strip()])
+        return f"{n} document{'s' if n != 1 else ''} need{'s' if n == 1 else ''} marking as reviewed."
+    unknown = [ch for ch in checks if ch.get("state") == UNKNOWN]
+    if unknown:
+        first = str(unknown[0].get("label") or "").rstrip(".")
+        return (f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add, starting with: {first[:1].lower() + first[1:]}." if first
+                else f"{len(unknown)} thing{'s' if len(unknown) != 1 else ''} still to add.")
+    if result.get("estimated_areas"):
+        return "Some answers are still my estimates. They count for half until you change them or add your own evidence."
+    if result.get("classification") == "conditionally_ready" and ready_at is not None:
+        return f"Just under the {ready_at:g} needed to be ready."
+    return None
 
 
 def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     """Order matters: a confirmed failed gate gives not_ready even when other evidence is
     unknown; otherwise anything unknown gives insufficient_evidence; otherwise the score decides.
     Thresholds are evaluated on the unrounded score. The display shows that same score."""
+    counted = lambda c: Decimal(1) - Decimal(str(c.get("estimated") or 0)) * (Decimal(1) - ESTIMATE_COUNTS_FOR)      # noqa: E731
     known = [c for c in criteria if c["score"] is not None]
     coverage = sum(c["weight"] for c in known)
     all_known = len(known) == len(criteria)
     gates_known = all(g["state"] != UNKNOWN for g in gates)
-    known_points = sum(Decimal(c["score"]) * c["weight"] / Decimal(100) for c in known)
+    known_points = sum(Decimal(c["score"]) * c["weight"] * counted(c) / Decimal(100) for c in known)
     score = known_points if all_known and (gates_known or not profile["score_needs_gates"]) else None
+    # The score so far, from what the owner has answered (the owner, 26 Oct: "i told you score based on the user answers",
+    # "why 0"): each criterion's share of its checks passed, so a criterion with one check still open counts what passed.
+    # The same as the full score once everything is known.
+    # ... and a check partly filled in counts the share given (31 Oct)
+    credit = lambda ch: Decimal(1) if ch.get("state") == PASSED else Decimal(str(ch.get("filled") or 0))      # noqa: E731
+    answered = sum(Decimal(c["weight"]) * counted(c) * sum((credit(ch) for ch in c.get("checks") or []), Decimal(0)) / Decimal(max(1, len(c.get("checks") or [])))
+                   for c in criteria if c["score"] is None)
+    known_points = known_points + answered
     t = profile["thresholds"]
     if any(g["state"] == FAILED for g in gates):
         classification = "not_ready"
@@ -247,16 +322,23 @@ def classify(profile: dict, criteria: list[dict], gates: list[dict]) -> dict:
     }
 
 
-def _assemble(profile: dict, subject_type: str, results: dict[str, dict], gate_results: dict[str, dict], extras: dict) -> dict:
+def _assemble(profile: dict, subject_type: str, results: dict[str, dict], gate_results: dict[str, dict], extras: dict, snapshot: dict | None = None) -> dict:
     criteria = []
     for c in profile["criteria"]:
         checks = [{"code": ch["code"], "label": ch["label"], "kind": ch["kind"], "how_to": ch["missing"], **results[ch["code"]]} for ch in c["checks"]]
         state, score = score_criterion(checks)
+        share = _estimated_share(profile, c, snapshot) if snapshot else Decimal(0)
         criteria.append({"code": c["code"], "title": c["title"], "weight": c["weight"], "state": state, "score": score, "applicable": True,
-                         "section": c["section"], "tool": c["tool"], "checks": checks})
+                         "section": c["section"], "tool": c["tool"], "checks": checks, **({"estimated": float(share)} if share else {})})
     gates = [{"code": g["code"], "label": g["label"], "criterion": g["criterion"], "severity": g.get("severity", "critical"),
               "remedy": g["remedy"], **gate_results[g["code"]]} for g in profile["gates"]]
     summary = classify(profile, criteria, gates)
+    # Never 100 with an area unfinished (New-User Test F1: 100/100 and "Nothing left to do" with Traction at 3 of 4)
+    unfinished = [s["title"] for s in section_progress(profile, snapshot["subject"], snapshot.get("forecast")) if s["answered"] < s["total"]] if snapshot else []
+    if unfinished and summary["score"] is not None and summary["score"] >= 100:
+        summary.update({"score": 99.0, "score_display": 99, "known_points": 99.0})
+    summary["unfinished_areas"] = unfinished
+    summary["estimated_areas"] = [c["title"] for c in criteria if c.get("estimated")]
 
     # Gaps become actions: confirmed failed gates first, then missing mandatory evidence, then other gaps.
     weights = {c["code"]: c["weight"] for c in criteria}
@@ -374,6 +456,29 @@ def document_facts(subject: dict, forecast: dict | None) -> dict:
             "forecast_start": (forecast or {}).get("start_month") or None}
 
 
+EQUITY_ONLY_DOCUMENTS = ("executive_summary", "team_summary")
+
+_SIGN = {"GBP": "£", "NGN": "₦", "USD": "$", "EUR": "€", "GHS": "GH₵", "KES": "KSh "}
+
+
+def _cash(currency: str | None, value: Any) -> str:
+    """₦5,000,000, never "NGN 5,000,000.00" (the owner's QA, 21 Oct): the sign, whole units above 100. Wording only."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    sign = _SIGN.get(str(currency or "").upper(), f"{currency} " if currency else "")
+    text = f"{abs(v):,.2f}".replace(".00", "") if abs(v) < 100 else f"{round(abs(v)):,}"
+    return f"{chr(0x2212) if v < 0 else ''}{sign}{text}"
+
+
+def route_note(subject: dict) -> str | None:
+    """Said on a loan or grant case: what the check is measured against for now."""
+    route = str(subject.get("route_preference") or "").lower()
+    # Plain words, nothing about equity on a loan case (the owner's QA, 21 Oct).
+    return (f"{route.capitalize()} checklist coming soon, using general checks." if route in ("loan", "grant") else None)
+
+
 def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     s = snapshot["subject"]
     forecast = snapshot.get("forecast")
@@ -402,21 +507,26 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     elif not blank(s.get("receipt_date")) and receipt is None:
         r["C1.A"] = g["G1"] = _res(FAILED, "The intended receipt date is not a valid date.", trigger={"receipt_date": s.get("receipt_date")})
     elif target is None or not currency or receipt is None:
-        gone = [n for n, v in (("target amount", target), ("currency", currency or None), ("intended receipt date", receipt)) if v is None]
+        gone = [n for n, v in (("target amount", target), ("currency", currency or None), ("date you expect the money", receipt)) if v is None]
         # The action asks only for what is missing: an amount already given is not asked for again.
         ask = [w for w, v in (("the amount you want to raise", target), ("its currency" if target is None else "the currency", currency or None),
                               ("when you expect to receive it" if target is None else "when you expect to receive the funding", receipt)) if v is None]
-        have = [f"{currency or ''} {target:,.2f}".strip()] if target is not None else []
+        have = [_cash(currency, target)] if target is not None else []
+        only_date = target is not None and currency and receipt is None
         r["C1.A"] = g["G1"] = _res(UNKNOWN, "Not entered yet: " + ", ".join(gone) + "." + (f" Already entered: {have[0]}." if have else ""),
-                                   how_to="Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ", then confirm the amount and date.")
+                                   how_to="When do you need the money?" if only_date else
+                                   "Enter " + (", ".join(ask[:-1]) + " and " + ask[-1] if len(ask) > 1 else ask[0]) + ".",
+                                   # what is entered counts towards the score so far (the owner, 31 Oct: 0/100 with the amount given)
+                                   filled=round((3 - len(gone)) / 3, 2))
     elif not s.get("timing_confirmed"):
-        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not confirmed yet.", how_to="Confirm the amount and date you entered.")
+        r["C1.A"] = g["G1"] = _res(UNKNOWN, "The amount and date are entered but not saved as final yet.", how_to="Check the amount and date in Your answers, then save.",
+                                   filled=0.75)
     else:
-        r["C1.A"] = g["G1"] = _res(PASSED, f"{currency} {target:,.2f}, expected {receipt.strftime('%d %b %Y').lstrip('0')}.")
+        r["C1.A"] = g["G1"] = _res(PASSED, f"{_cash(currency, target)}, expected {receipt.strftime('%d %b %Y').lstrip('0')}.")
 
     if not blank(s.get("purpose")) and not milestones:
         r["C1.B"] = _res(UNKNOWN, "What the funding is for is entered. It isn't linked to a milestone yet.",
-                         how_to="Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.")
+                         how_to="Add a milestone the funding pays for, with a measure and a target, and link the purpose to it.", filled=0.5)
     elif blank(s.get("purpose")) and milestones:
         r["C1.B"] = _res(UNKNOWN, "Say what the funding is for.", how_to="Say what the funding is for and link it to one of your milestones.")
     elif blank(s.get("purpose")) or not milestones:
@@ -440,11 +550,11 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     else:
         total = sum((amt for amt, _ in parsed), Decimal(0)).quantize(fc.CENT)
         if total == target.quantize(fc.CENT):
-            r["C2.A"] = g["G2"] = _res(PASSED, f"Allocations total {currency} {total:,.2f}, equal to the target.")
+            r["C2.A"] = g["G2"] = _res(PASSED, f"Allocations total {_cash(currency, total)}, equal to the target.")
         else:
             diff = target.quantize(fc.CENT) - total
-            r["C2.A"] = g["G2"] = _res(FAILED, f"Allocations total {currency} {total:,.2f} against a target of {currency} {target:,.2f}: "
-                                               f"{currency} {abs(diff):,.2f} {'is not allocated' if diff > 0 else 'more than the target'}.",
+            r["C2.A"] = g["G2"] = _res(FAILED, f"Allocations total {_cash(currency, total)} against a target of {_cash(currency, target)}: "
+                                               f"{_cash(currency, abs(diff))} {'is not allocated' if diff > 0 else 'more than the target'}.",
                                        trigger={"target_amount": fc.money_str(target), "allocations_total": fc.money_str(total)})
     if not allocations:
         r["C2.B"] = _res(UNKNOWN, "No allocations yet.")
@@ -538,7 +648,12 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
     # C8 / G4: documents and risks
     facts = document_facts(s, forecast)
     docs, missing_docs, unreviewed, conflicts = [], [], [], []
+    # A loan or a grant (the owner's decision, 15 Oct): equity-only materials (pitch content, an ownership summary) are not
+    # asked for, so they are never a blocker; the rest of the equity checklist stands until loan and grant profiles exist.
+    route = str(s.get("route_preference") or "").lower()
     for d in profile["required_documents"]:
+        if route in ("loan", "grant") and d["key"] in EQUITY_ONLY_DOCUMENTS:
+            continue
         entry = (s.get("documents") or {}).get(d["key"]) or {}
         source, doc_facts = None, None
         if d.get("record") == "use_of_funds" and allocations:
@@ -613,6 +728,7 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
 
     uncorroborated = [e["id"] for e in fresh if e.get("verification") not in ("independently_reviewed", "corroborated")]
     return _assemble(profile, rules.FUNDING, r, g, {
+        "route_note": route_note(s),
         "metrics": {
             "forecast": fc.public(computed),
             "baseline_min_cash": computed["min_cash"], "first_negative_month": first_neg,
@@ -625,11 +741,12 @@ def assess_funding(snapshot: dict, profile: dict, today: date) -> dict:
         },
         "data_basis": _basis(computed), "documents": docs, "risks": risks,
         "evidence_used": [{"id": e["id"], "title": e.get("title"), "type": e.get("type"), "strength": rules.EVIDENCE_STRENGTH.get(e.get("type")),
-                           "effective_date": e.get("effective_date"), "verification": e.get("verification") or "unverified"} for e in demand],
+                           "effective_date": e.get("effective_date"), "verification": e.get("verification") or "unverified",
+                           "source": e.get("source"), "claim": e.get("claim")} for e in demand],
         "limitations": [fc.MONTHLY_LABEL, "Forecast figures are assumptions, however well evidenced.",
                         "Ownership and team information describes preparation. It is not a legal verification."],
         "_conflict": bool(conflicts or raised), "_uncorroborated": uncorroborated,
-    })
+    }, snapshot)
 
 
 # ══ Launch Readiness ══════════════════════════════════════════════════════════
@@ -688,7 +805,9 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
 
     def confirmed_within(path: str, limit: int, what: str) -> dict | None:
         at = parse_day(get(s, path))
-        if at is None or (today - at).days > limit:
+        if at is None:      # never confirmed: said so, never "more than 30 days ago" on a plan made today (the owner, 23 Oct)
+            return _res(UNKNOWN, f"{what} are not confirmed yet. Confirm they are right.")
+        if (today - at).days > limit:
             return _res(UNKNOWN, f"{what} were last confirmed more than {limit} days ago. Confirm they are still right.", stale=True)
         return None
 
@@ -711,9 +830,10 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
     r["C1.B"] = attested(rules.LAUNCH, "C1.B", snapshot, today, days["attestation"]) if demand else _res(UNKNOWN, "There is no evidence to review yet.")
 
     # C2 / B5: offer, pricing and contribution
-    offer = documented([("what you are launching", get(s, "offer.launch_scope")), ("price", get(s, "offer.price")),
+    # One price: the offer's, or the one the money check uses (the owner, 29 Oct: "Still missing: price" beside a ₦1,000 price)
+    offer = documented([("what you are launching", get(s, "offer.launch_scope") or get(s, "name")), ("price", get(s, "offer.price") or get(s, "economics.price_per_unit")),
                         ("delivery terms", get(s, "offer.delivery_terms")), ("customer promise", get(s, "offer.customer_promise"))])
-    r["C2.A"] = _res(UNKNOWN, "The offer is filled in but not confirmed yet.") if offer["state"] == PASSED and not get(s, "offer.confirmed") else offer
+    r["C2.A"] = _res(UNKNOWN, "The offer is filled in but not confirmed yet.", filled=0.5) if offer["state"] == PASSED and not get(s, "offer.confirmed") else offer
     econ = {k: _amount(get(s, f"economics.{k}")) for k in ("price_per_unit", "variable_cost_per_unit", "fixed_costs_monthly")}
     price, variable, fixed = (econ[k][0] for k in econ)
     stale_econ = confirmed_within("economics.confirmed_at", days["economics"], "Price and costs")
@@ -842,9 +962,17 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         unevidenced = [p for p in applicable if p.get("status") == "completed" and p.get("evidence_id") not in by_id]
         no_status = [p for p in applicable if p.get("status") not in ("completed", "not_completed")]
         needs_date = [p for p in applicable if p.get("status") == "completed" and parse_day(p.get("valid_until")) and target is None]
+        def named(p: dict) -> str:
+            """A prerequisite as a short name: one written as a long sentence (research saved before names were shortened)
+            reads as its obligation, never cut mid-word (QA F10, 30 Oct: "…need to register… if trans")."""
+            name = str(p.get("name") or "A prerequisite").strip().rstrip(". ")
+            if len(name) > 60:
+                from app.modules.readiness.service import short_name
+                name = short_name(name) or name[:60].rsplit(" ", 1)[0]
+            return name
         if undone or expired or unevidenced:
-            parts = ([f"Not completed: {', '.join(p.get('name') or 'A prerequisite' for p in undone[:4])}."] if undone else []) + expired[:2] + \
-                    ([f"Completed without evidence: {', '.join(p.get('name') or 'A prerequisite' for p in unevidenced[:4])}."] if unevidenced else [])
+            parts = ([f"Not completed: {', '.join(named(p) for p in undone[:4])}."] if undone else []) + expired[:2] + \
+                    ([f"Completed without evidence: {', '.join(named(p) for p in unevidenced[:4])}."] if unevidenced else [])
             r["C6.B"] = _res(FAILED, " ".join(parts))
         elif unresolved or no_status or needs_date:
             r["C6.B"] = _res(UNKNOWN, "Not yet known for every prerequisite: whether it applies, its status, or the launch date its validity is checked against.")
@@ -853,7 +981,7 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         critical_undone = [p for p in undone if p.get("critical")]
         critical_expired = [x for x in (at_launch(p) for p in applicable if p.get("critical") and p.get("status") == "completed") if x]
         if critical_undone or critical_expired:
-            parts = ([f"Required and not completed: {', '.join(p.get('name') or 'A prerequisite' for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
+            parts = ([f"Required and not completed: {', '.join(named(p) for p in critical_undone[:4])}."] if critical_undone else []) + critical_expired[:2]
             b["B3"] = _res(FAILED, " ".join(parts), trigger={"prerequisites": [p.get("id") for p in critical_undone]}, source="Operational prerequisites")
             dated = sorted(str(p["required_by"])[:10] for p in critical_undone if parse_day(p.get("required_by")))
             if dated:
@@ -918,15 +1046,23 @@ def assess_launch(snapshot: dict, profile: dict, today: date) -> dict:
         },
         "data_basis": _basis(computed), "risks": risks,
         "evidence_used": [{"id": e["id"], "title": e.get("title"), "type": e.get("type"), "strength": rules.EVIDENCE_STRENGTH.get(e.get("type")),
-                           "effective_date": e.get("effective_date"), "verification": e.get("verification") or "unverified"} for e in demand],
+                           "effective_date": e.get("effective_date"), "verification": e.get("verification") or "unverified",
+                           "source": e.get("source"), "claim": e.get("claim")} for e in demand],
         "limitations": [fc.MONTHLY_LABEL, "Forecast figures are assumptions, however well evidenced.",
                         "The prerequisites are the ones you recorded. This check does not claim the list is complete and does not certify compliance."],
         "_due": due, "_conflict": False, "_uncorroborated": uncorroborated,
-    })
+    }, snapshot)
 
 
 def assess(subject_type: str, snapshot: dict, profile: dict, today: date) -> dict:
-    return assess_funding(snapshot, profile, today) if subject_type == rules.FUNDING else assess_launch(snapshot, profile, today)
+    if subject_type != rules.FUNDING:
+        return assess_launch(snapshot, profile, today)
+    out = assess_funding(snapshot, profile, today)
+    # No loan or grant checklist yet: nothing in the result or its report reads as equity (New-User Test F7)
+    if str((snapshot.get("subject") or {}).get("route_preference") or "").lower() in ("loan", "grant"):
+        out["profile_title"] = "General funding checks"
+        out["headline"] = str(out.get("headline") or "").replace("initial equity discussions", "initial funding discussions")
+    return out
 
 
 # ── section progress (kept separate from readiness) ───────────────────────────
@@ -935,11 +1071,17 @@ def section_progress(profile: dict, subject: dict, forecast: dict | None) -> lis
     out = []
     for section in profile["sections"]:
         fields = [f for f in section["fields"] if not f.get("when") or all(subject.get(k) == v for k, v in f["when"].items())]
-        answered = sum(1 for f in fields if not blank(get(subject, f["key"])) or (f["type"] == "boolean" and get(subject, f["key"]) is False))
+        # "List them, or confirm there are none" (team gaps, risks, prerequisites): a list with items answers its "none" box
+        # too (the owner's QA, 22 Oct: "Team 2 of 3" beside a check that passed)
+        listed = any(f["type"] == "list" and not blank(get(subject, f["key"])) for f in fields)
+        answered = sum(1 for f in fields if not blank(get(subject, f["key"])) or (f["type"] == "boolean" and get(subject, f["key"]) is False)
+                       or (f["type"] == "boolean" and str(f["key"]).split(".")[-1].startswith("no_") and listed))
         total = len(fields)
         if section.get("forecast"):
             total += 1
-            answered += 1 if forecast and (forecast.get("months") or forecast.get("opening_cash") not in (None, "")) else 0
+            # Only real figures count (G5, 23 Oct: "Cash 1 of 1" ticked over empty month rows)
+            figures = any(not blank(m.get(k)) for m in (forecast or {}).get("months") or [] if isinstance(m, dict) for k in ("receipts", "payments"))
+            answered += 1 if forecast and (figures or not blank(forecast.get("opening_cash"))) else 0
         out.append({"key": section["key"], "title": section["title"], "answered": answered, "total": total})
     return out
 

@@ -2,7 +2,7 @@ import { isPlatformModuleGranted } from "./permissions";
 
 export const BILLING = { monthly: "monthly", annual: "annual" };
 
-// The plans as sold (EnterprateAI_Pricing_Plans_AI_Agent_Final.pdf, 19 Oct 2026): names, lines, prices and features word for word.
+// Public plan presentation. Funding remains accessible to Starter during the transition.
 export const PLANS = [
   {
     key: "explorer",
@@ -15,7 +15,7 @@ export const PLANS = [
     cta: "Get started free",
     ctaStyle: "solid",
     features: [
-      "50 welcome AI credits (valid 60 days)",
+      "50 welcome AI credits (one-off, no expiry)",
       "AI Agent access (credit-based)",
       "1 user seat",
       "Invoices, Quotes, Receipts & Contracts",
@@ -42,19 +42,20 @@ export const PLANS = [
       "1 user seat",
       "AI Business Plan Generator",
       "Product/Service Launch Readiness",
-      "AI-Powered Funding Readiness",
       "Proposals & Sales Letters Generator",
       "Pricing & Customer Growth Insights",
       "Up to 10 Marketplace Listings*",
-      "Scenario Simulations",
+      "4 Scenario Simulations a month",
       "Request for Proposal",
-      "RFQ-to-Quote Workflow",
+      "Request for Quotation",
+      "Tender",
+      "Tender Evaluation",
       "AI-Powered Decision Recommendations",
     ],
   },
   {
     key: "decision_engine",
-    label: "Decision Engine",
+    label: "Pro (Decision Engine)",
     headline: "Decide with confidence.",
     tagline: "For growing businesses and teams",
     monthlyPrice: 59,
@@ -62,7 +63,7 @@ export const PLANS = [
     annualTotal: 590,
     annualSaving: 118,
     badge: "Most Popular",
-    cta: "Choose Decision Engine",
+    cta: "Choose Pro (Decision Engine)",
     ctaStyle: "solid",
     features: [
       "Everything in Starter",
@@ -71,6 +72,7 @@ export const PLANS = [
       "3 user seats included",
       "Extra seat: £15/mo (+250 AI credits)",
       "Live & Adaptive Business Plan Intelligence",
+      "AI-Powered Funding Readiness",
       "Access to RFP Leads",
       "Third-Party Integrations",
       "Unlimited Marketplace Listings",
@@ -140,11 +142,11 @@ export const PLAN_MODULE_ACCESS = {
   // Explorer (free): core tools. Proposals, integrations and the live plan are paid.
   explorer: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "operations"],
   // Starter: everything on Explorer + proposals.
-  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations"],
+  starter_insight: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "readiness"],
   // Decision Engine: everything on Starter + integrations and Live Business Plan Intelligence.
-  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
-  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
-  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack"],
+  decision_engine: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
+  growth_navigator: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
+  strategic_business_os: ["dashboard", "validation", "blueprint", "simulation", "catalogue", "financials", "registration", "marketplace", "proposals", "operations", "integrations", "live_plan", "funding_pack", "readiness"],
 };
 
 // Minimum plan needed to access a module (for upgrade prompts)
@@ -153,6 +155,7 @@ export const MODULE_MIN_PLAN = {
   integrations: "decision_engine",
   live_plan: "decision_engine",
   funding_pack: "decision_engine",      // preparing the funding pack (the owner, 16 Oct)
+  readiness: "starter_insight",      // Launch and Funding Readiness (the pricing PDF, 19 Oct 2026)
   proposals: "starter_insight",
 };
 
@@ -173,7 +176,7 @@ export function planAllowsScenario(planKey, scenarioTemplateId, status) {
   return true;
 }
 
-const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];
+export const PLAN_ORDER = ["explorer", "starter_insight", "decision_engine", "growth_navigator", "strategic_business_os"];
 
 export function planRank(planKey) {
   const idx = PLAN_ORDER.indexOf(normalisePlanKey(planKey));
@@ -197,6 +200,12 @@ export function planHasModuleAccess(planKey, moduleKey, status) {
 export function hasFundingPack(subscription, platformGrants) {
   return planHasModuleAccess(subscription?.plan_key ?? "explorer", "funding_pack", subscription?.status ?? "trial")
     || isPlatformModuleGranted("funding_pack", platformGrants);
+}
+
+/** Launch and Funding Readiness: Starter and above (the pricing PDF); a team member works under the team's plan. */
+export function hasReadiness(subscription, platformGrants) {
+  return planHasModuleAccess(subscription?.plan_key ?? "explorer", "readiness", subscription?.status ?? "trial")
+    || isPlatformModuleGranted("readiness", platformGrants);
 }
 
 export function getPlan(key) {
@@ -228,6 +237,7 @@ export function accessLabel(subscription) {
   const source = subscription?.access_source;
   if (source === "admin full-access grant") return "Full access (test grant)";
   if (source === "early-access account" || subscription?.status === "grandfathered") return "Early Access";
+  if (source === "your team's plan") return `${planLabel(subscription?.plan_key, "active")} (team)`;      // a member works under the team's plan
   return planLabel(subscription?.plan_key, subscription?.status);
 }
 

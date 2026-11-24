@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MarketplacePublishRequest(BaseModel):
@@ -14,8 +14,17 @@ class MarketplaceUnpublishRequest(BaseModel):
 
 class ServiceEntryOut(BaseModel):
     service_name: str
-    service_category: str
+    service_category: str = ""
     service_description: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _any_saved_shape(cls, v):
+        """Saved services vary. One business's incomplete entry must never take the whole directory down."""
+        if not isinstance(v, dict):
+            return v
+        return {**v, "service_name": v.get("service_name") or v.get("name") or "", "service_category": v.get("service_category") or "",
+                "service_description": v.get("service_description") or v.get("description")}
 
 
 class MarketplaceListingItem(BaseModel):

@@ -1,0 +1,3 @@
+Written by generate.py before evaluate.py was run. Any later change to these files changes their SHA-256.
+truth.json  3c645c82043404948d9eda1aad72bb70e8e11022179047c450eb3aa1147e1f00
+expected.json  d19a45fb3fff1483bdaf2ebbf53dca86e796f721b454e381beb62d74aa2159cd

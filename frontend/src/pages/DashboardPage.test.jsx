@@ -6,9 +6,12 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import DashboardPage from "./DashboardPage";
 import { DashboardSkeleton } from "../components/dashboard/AdaptiveInsights";
-import { recallDashboard, rememberDashboard } from "../lib/dashboard";
+import { forgetDashboard, recallDashboard, rememberDashboard } from "../lib/dashboard";
 import { useAuthStore } from "../store/auth";
 import { useWorkspaceStore } from "../store/workspace";
+
+// Recommendation loading/error and workspace isolation have their own component tests.
+vi.mock("../components/dashboard/TenderRecommendations", () => ({ default: () => <section aria-label="Tender recommendations" /> }));
 
 const OPERATING_DEFAULTS = [/Paste a customer enquiry/, /Enquiry to Quote/, /Quote to Invoice/, /Payment Follow-up/, /Receipt Sending/, /Risk & Concentration/,
   /Essentials/, /Validate My Idea/, /Business Health Report/, /Total Revenue/];
@@ -38,7 +41,7 @@ function mockApi({ fail = false } = {}) {
 const mount = () => render(<MemoryRouter initialEntries={["/dashboard"]}><DashboardPage /></MemoryRouter>);
 
 beforeEach(() => {
-  sessionStorage.clear();
+  sessionStorage.clear(); forgetDashboard("ws1"); forgetDashboard("other");
   useAuthStore.setState({ token: "t", email: "a@b.test", hydrated: true });
   release = undefined;
   useWorkspaceStore.setState({ workspaceId: "ws1", workspaceName: "Alchemy Test", currency: "GBP", workspaceChecks: 0, workspaceCheckedOnce: true });
@@ -46,6 +49,34 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("dashboard before its composition arrives", () => {
+  it("loads the composed dashboard without a duplicate Agent summary request", async () => {
+    globalThis.fetch = vi.fn((url) => {
+      const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (/\/businesses\/ws1\/dashboard(\?|$)/.test(String(url))) return new Promise((resolve) => { release = () => resolve(json(preLaunch)); });
+      if (/\/agent\/summary/.test(String(url))) return Promise.resolve(json({ suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [] }));
+      return Promise.resolve(json({}));
+    });
+    mount();
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(globalThis.fetch.mock.calls.some(([url]) => /\/agent\/summary/.test(String(url)))).toBe(false);
+    expect(screen.getByRole("status", { name: "Loading your dashboard" })).toBeTruthy();      // the figures still loading below it
+    await act(async () => { release(); });
+    await screen.findByText("Pre-launch stage");
+    expect(document.querySelector("[data-agent-row-early]")).toBeNull();      // the full page, with one Agent row
+  });
+
+  it("keeps recommendations and the fallback Agent panel available when composition fails", async () => {
+    globalThis.fetch = vi.fn((url) => Promise.resolve(new Response(JSON.stringify(
+      /\/agent\/summary/.test(String(url)) ? { suggestions: [], needs_approval: [], needs_approval_count: 0, insights: [] } : {}
+    ), { status: /\/dashboard$/.test(String(url)) ? 503 : 200 })));
+    mount();
+    await screen.findByRole("alert");
+    await waitFor(() => expect(document.querySelector("[data-agent-row-early]")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "Tender recommendations" })).toBeTruthy();
+    expect(globalThis.fetch.mock.calls.filter(([url]) => /\/agent\/summary/.test(String(url)))).toHaveLength(1);
+  });
+
+
   it("shows a skeleton with nothing clickable and no stage's defaults, then the real stage", async () => {
     mockApi();
     mount();
@@ -86,9 +117,10 @@ describe("dashboard before its composition arrives", () => {
     expect(screen.getByText("Pre-launch stage")).toBeTruthy();               // no skeleton, no Operating defaults
     expect(screen.getByText(/Updating…/)).toBeTruthy();
     expect(screen.queryByText(/Enquiry to Quote/)).toBeNull();
-    // While the remembered copy shows: approvals, send and anything that starts a task wait; page links stay live.
+    // While the remembered copy shows: approvals and anything that starts a task wait; page links stay live, and a typed
+    // question is answered (the owner's brief, 25 Oct: Send works while "Updating…")
     const off = (el) => el.disabled === true;
-    expect(off(screen.getByRole("button", { name: "Send" }))).toBe(true);
+    expect(off(screen.getByRole("button", { name: "Send" }))).toBe(false);
     expect(off(screen.getByText("Quote #QUO-1").closest("button"))).toBe(true);
     expect(off(screen.getByRole("button", { name: /Ask Agent to prepare a follow-up/ }))).toBe(true);
     expect(off(screen.getByText("Would you like me to prepare a payment follow-up?").closest("button"))).toBe(true);
