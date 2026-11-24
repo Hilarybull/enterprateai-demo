@@ -751,7 +751,8 @@ class DirectoryService:
         """Every profile nobody holds, for moderators, whatever the visibility level."""
         if not await self.can_moderate(admin):
             raise Forbidden("Not available.")
-        rows = [r for r in await self.store.list("profiles", SCOPE, limit=5000) if not (r["data"] or {}).get("linked_business_id") and (r["data"] or {}).get("publication") != "merged"]
+        rows = [r for r in await self.store.list("profiles", SCOPE, limit=5000) if not (r["data"] or {}).get("linked_business_id") and (r["data"] or {}).get("publication") != "merged"
+                and not (r["data"] or {}).get("deleted_by_admin")]
         level = await self.visibility()
         waiting: dict[str, int] = {}
         try:
@@ -957,6 +958,22 @@ class DirectoryService:
             raise Invalid({"reason": "Give the reason. It is kept with the profile."})
         d = profile["data"] or {}
         actor = f"moderator:{admin['id']}"
+        if d.get("deleted_by_admin"):
+            raise Conflict("profile_deleted", "This profile has been deleted.")
+        if action == "delete":
+            if not self.is_superadmin(admin):
+                raise Forbidden("Only a superadmin can delete an unclaimed profile.")
+            if d.get("linked_business_id") or d.get("claim_state") != "unclaimed":
+                raise Conflict("profile_claimed", "Only unclaimed profiles can be deleted.")
+            now = self.clock()
+            deleted = await self.store.update("profiles", profile["id"], {"status": "suppressed", "updated_at": now, "data": {
+                **d, "publication": "suppressed",
+                "deleted_by_admin": {"by": actor, "reason": _text(reason), "at": now.isoformat()},
+            }}, expect_revision=profile["revision"])
+            if not deleted:
+                raise Conflict("profile_changed", "This profile changed. Refresh the list and try again.")
+            await self.event("DirectoryProfileDeleted", profile_id=profile["id"], actor=actor)
+            return {"id": profile["id"], "public_state": "Deleted"}
         if action in ("suppress", "archive"):
             if d.get("publication") != "suppressed":
                 await self.suppress(profile["id"], actor=actor, reason=_text(reason))
@@ -971,7 +988,7 @@ class DirectoryService:
                 **d, "publication": back, "suppressed": None, "restored": {"by": actor, "reason": _text(reason), "at": self.clock().isoformat()}}})
             await self.event("DirectoryProfileRestored", profile_id=profile["id"], actor=actor, payload={"publication": back})
         else:
-            raise Invalid({"action": "Choose suppress, archive or restore."})
+            raise Invalid({"action": "Choose suppress, archive, restore or delete."})
         fresh = await self.store.get("profiles", profile["id"])
         if action == "restore":
             await self._ensure_first_claim_invite(fresh)
@@ -1560,9 +1577,11 @@ class DirectoryService:
         if not out["claimed"]:
             out["requests_waiting"] = len(await self._held_requests(row["id"]))      # the number only: never who, or what they asked
         out["owner_controls"] = False
+        owns_profile = False
         if viewer and d.get("linked_business_id"):
             try:      # owner controls only for an authorised member of the linked business
                 actor = await self.business.actor(viewer["id"], d["linked_business_id"], {}, viewer.get("email"))
+                owns_profile = bool(actor.is_owner)
                 out["owner_controls"] = bool(actor.is_owner or actor.can_send)
                 out["business_id"] = d["linked_business_id"] if out["owner_controls"] else None
             except bz.BusinessAccessDenied:
@@ -1572,8 +1591,9 @@ class DirectoryService:
                 raise NotFound()      # not shown to the public until it passes; its owner still sees it, with what to fix
             out["quality_hold"] = list(held.values())
             out["noindex"] = True
-        if out["owner_controls"] or (viewer and await self.can_moderate(viewer)):
-            out["views"] = await self.profile_views(row["id"])      # how many people opened it: for its owner and the team only
+        out["can_view_profile_views"] = owns_profile or self.is_superadmin(viewer)
+        if out["can_view_profile_views"]:
+            out["views"] = await self.profile_views(row["id"])
         return out
 
     # ── visits to a profile (the owner, 14 Nov): one per visitor a day, never its owner or the team ──────────
@@ -1674,7 +1694,7 @@ class DirectoryService:
         keep_from = (now.date() - timedelta(days=400)).isoformat()
         days = {k: v for k, v in (d.get("days") or {}).items() if k >= keep_from}
         days[today] = int(days.get(today) or 0) + 1
-        data = {"schema_version": 1, "correlation_id": f"views:{profile_id}", "total": int(d.get("total") or 0) + 1, "days": days, "seen_day": today,
+        data = {**d, "schema_version": 1, "correlation_id": f"views:{profile_id}", "total": int(d.get("total") or 0) + 1, "days": days, "seen_day": today,
                 "seen": ([*seen, who] if who else seen)[-5000:], "last_viewed_at": now.isoformat()}
         if counter:
             await self.store.update("events", counter["id"], {"data": data, "updated_at": now}, bump=False)
@@ -2380,6 +2400,8 @@ class DirectoryService:
         saved = await self._move(claim, "verified", actor=actor, method=method, reason=reason, patch={"linked_business_id": business_id, "awaiting": None, "verified_at": now})
         await self._deliver_held(profile["id"], business_id)
         await self.event("BusinessClaimVerified", profile_id=profile["id"], claim_id=claim["id"], business_id=business_id, actor=actor, payload={"method": method})
+        from app.modules.activation.router import queue_welcome
+        await queue_welcome(user_id)
         await self.event("MarketplaceProfileLinked", profile_id=profile["id"], claim_id=claim["id"], business_id=business_id, actor=actor,
                          payload={"new_business": target == "new", "source": (claim["data"] or {}).get("acquisition_source")})
         return saved

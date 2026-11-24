@@ -1,0 +1,12 @@
+Projection cases: 400 (each = no-change + scenario, every month and closing figure compared)
+  none           match  50   differ   0
+  price_change   match  70   differ   0
+  cost_increase  match  56   differ   0
+  client_loss    match  51   differ   0
+  revenue_drop   match  62   differ   0
+  hire_staff     match  48   differ   0
+  take_loan      match  63   differ   0
+Verdicts agreeing: 348 of 350
+  app 'no_material_change' vs spec 'improved': 2
+
+Baseline method (dated, random histories 1-40 months): 300 of 300 match

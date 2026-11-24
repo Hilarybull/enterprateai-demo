@@ -184,3 +184,7 @@ def test_simulation_the_risk_check_and_the_dashboard_read_one_set_of_figures(wor
     assert shared["costs_monthly"] == 300 and shared["customers"] == [{"name": "Delta Offices Ltd", "share": 100.0}]
     lost = bz.simulate(d, "client_loss", {"customer": "Delta Offices Ltd"}, datetime.now(timezone.utc).date())
     assert lost["customer"] == "Delta Offices Ltd" and lost["monthly_burn"] == 300      # the owner's costs, as everywhere
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

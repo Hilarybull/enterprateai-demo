@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
@@ -11,8 +12,25 @@ from app.modules.scenario_intelligence.schemas import (
     ScenarioTemplate,
 )
 from app.shared.llm.openai_client import AutoLLMClient
+from app.modules.scenario_intelligence.projection import (  # noqa: F401  (re-exported for existing callers)
+    OK,
+    UNAVAILABLE,
+    UNBOUNDED,
+    _clamp,
+    _classify_health_status,
+    _month_span_from_days,
+    _monthly_projection_values,
+    _stability_score,
+    MODEL_VERSION,
+    clamp_months,
+    compare_projections,
+    project,
+    run_rate_snapshot,
+    typed_ratios,
+)
 
-ENGINE_VERSION = "scenario_intel_v1.0"
+ENGINE_VERSION = "scenario_intel_v2.1"  # Phase 1 integrated projection (simulation audit, 17 Nov 2026); model: MODEL_VERSION
+logger = logging.getLogger(__name__)
 _MEM_RUNS: Dict[str, Dict[str, Any]] = {}
 _MEM_TIMELINES: Dict[str, List[Dict[str, Any]]] = {}
 _MEM_RECOMMENDATIONS: Dict[str, List[Dict[str, Any]]] = {}
@@ -46,6 +64,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _today() -> date:
+    """The date projections run from (UTC). One function, so tests can fix it and every caller agrees."""
+    return datetime.now(timezone.utc).date()
+
+
 def _clean(doc: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if not doc:
         return doc
@@ -59,29 +82,8 @@ def _clean_many(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [d for d in (_clean(doc) for doc in docs) if d]
 
 
-def _clamp(val: float, lo: float = 0.0, hi: float = 100.0) -> float:
-    return max(lo, min(hi, val))
-
-
 # ── QA PF4: what the engine can and can't say (Blueprint AC-2, §11) ─────────────────────────────────────────────
-UNAVAILABLE, UNBOUNDED, OK = "unavailable", "unbounded", "ok"
 CLIENT_SCENARIOS = ("tmpl_client_loss",)      # about a client on record: never offered, or run, without one
-
-
-def typed_ratios(cash: float, cumulative_profit: float, accruals: float) -> tuple:
-    """The three risk ratios with what they mean when they can't be a number: "unavailable" when there is no profit to
-    compare with (never 1.00 from zeros), "unbounded" when money is owed and there is no cash to set it against."""
-    if cumulative_profit > 0:
-        conv, conv_state = round(cash / cumulative_profit, 2), OK
-        delayed, delayed_state = round(accruals / cumulative_profit, 2), OK
-    else:
-        conv, conv_state = None, UNAVAILABLE
-        delayed, delayed_state = (None, UNBOUNDED) if accruals > 0 else (None, UNAVAILABLE)
-    if cash > 0:
-        exposure, exposure_state = round(accruals / cash, 2), OK
-    else:
-        exposure, exposure_state = (None, UNBOUNDED) if accruals > 0 else (0.0, OK)
-    return conv, conv_state, exposure, exposure_state, delayed, delayed_state
 
 
 def sufficiency(state: BusinessStateSnapshot) -> dict:
@@ -109,50 +111,6 @@ def _runway_months(revenue: float, costs: float, starting_cash: float) -> float:
     return max(0.0, starting_cash / max(abs(net), 1.0))
 
 
-def _stability_score(state: BusinessStateSnapshot) -> float:
-    revenue = float(state.revenue_monthly)
-    costs = float(state.costs_monthly)
-    net = revenue - costs
-    cash = float(state.starting_cash)
-    
-    # Base score
-    score = 70.0
-    
-    # Nuanced Accounting Logic
-    # 1. Profitability Signal
-    if net < 0:
-        score -= 15.0
-    elif net > (revenue * 0.2):  # Healthy margin > 20%
-        score += 10.0
-        
-    # 2. Liquidity Signal (Months of costs covered)
-    coverage = cash / max(abs(costs), 1.0)
-    if coverage < 1:
-        score -= 15.0
-    elif coverage > 3:
-        score += 5.0
-        
-    # 3. Client Risk
-    if state.top_client_share_pct is not None and state.top_client_share_pct > 40:
-        score -= 8.0
-        
-    # 4. Capacity Risk
-    if state.capacity_utilisation_pct is not None and state.capacity_utilisation_pct > 85:
-        score -= 6.0
-        
-    # 🚨 RECEIVABLE PRESSURE PENALTY (Chartered Accountant Standard)
-    accruals = float(state.accrued_revenue_total or 0.0)
-    cash = float(state.starting_cash or 0.0)
-    if cash > 0 and accruals > 0:
-        exposure = accruals / cash
-        if exposure >= 1.0:
-            score -= 20.0
-        elif exposure >= 0.5:
-            score -= 10.0
-
-    return _clamp(score, 0.0, 100.0)
-
-
 def _state_label(score: float) -> str:
     """Legacy label used by snapshot metrics and risk detection. DO NOT REMOVE."""
     if score >= 70:
@@ -160,99 +118,6 @@ def _state_label(score: float) -> str:
     if score >= 55:
         return "tight"
     return "risk"
-
-
-def _classify_health_status(
-    net_profit: float,
-    cash_balance: float,
-    total_costs: float,
-    prev_cash: float | None = None,
-) -> str:
-    """
-    Accounting-correct 5-state health classifier as per proposal.
-    Priority order is critical to ensuring the worst state is flagged first.
-    """
-def _classify_health_status(
-    net_profit: float,
-    cash_balance: float,
-    total_costs: float,
-    prev_cash: float | None = None,
-) -> str:
-    """
-    Accounting-correct 5-state health classifier as per proposal.
-    Incorporates Profitability, Coverage, and Burn signals.
-    """
-    # Judged on the months of costs the cash covers and whether the month makes money, never on fixed amounts (the
-    # owner, 25 Oct: a profitable month with £381.50 against £22.83 of costs, over 16 months covered, read "at risk"
-    # because it was under £500).
-    if cash_balance < 0:
-        return "critical"      # overdrawn
-    costs = abs(float(total_costs or 0))
-    covered = cash_balance / costs if costs > 0 else float("inf")      # months of costs the cash pays for
-    if covered < 1:
-        return "at risk"
-    if covered < 3:
-        return "stress"
-    if covered < 6 or net_profit < 0:
-        return "tight"      # some cover, or a month that loses money
-    return "stable"
-
-
-def _month_span_from_days(days: int | None, fallback: int = 1, cap: int = 3) -> int:
-    if days is None:
-        return fallback
-    return max(0, min(cap, int(round(max(0, days) / 30.0)) or fallback))
-
-
-def _normalise_schedule(values: Any, months: int) -> List[float]:
-    if not isinstance(values, list):
-        return [0.0] * months
-    schedule = [0.0] * months
-    for index, value in enumerate(values[:months]):
-        try:
-            schedule[index] = max(0.0, float(value or 0.0))
-        except (TypeError, ValueError):
-            schedule[index] = 0.0
-    return schedule
-
-
-def _opening_accrual_balance(state: BusinessStateSnapshot, pending_receivables_schedule: List[float]) -> float:
-    try:
-        configured = float(state.opening_accrual_balance or 0.0)
-    except (TypeError, ValueError):
-        configured = 0.0
-    if configured > 0:
-        return configured
-    try:
-        accrued_total = float(state.accrued_revenue_total or 0.0)
-    except (TypeError, ValueError):
-        accrued_total = 0.0
-    if accrued_total > 0:
-        return accrued_total
-    return max(0.0, sum(float(value or 0.0) for value in pending_receivables_schedule))
-
-
-def _delay_receivable_schedule(schedule: List[float], amount: float, delay_months: int, is_absolute: bool = False) -> List[float]:
-    if delay_months <= 0 or amount <= 0 or not schedule:
-        return list(schedule)
-    adjusted = [max(0.0, float(value or 0.0)) for value in schedule]
-    remaining = max(0.0, float(amount or 0.0))
-    for index, value in enumerate(list(adjusted)):
-        if remaining <= 0:
-            break
-        shifted = min(value, remaining)
-        if shifted <= 0:
-            continue
-        adjusted[index] = max(0.0, adjusted[index] - shifted)
-        # If absolute, target_index is exactly the delay_months (0-indexed).
-        # e.g. delay_months=3 lands in Month 4 (index 3).
-        if is_absolute:
-            target_index = min(len(adjusted) - 1, delay_months)
-        else:
-            target_index = min(len(adjusted) - 1, index + delay_months)
-        adjusted[target_index] += shifted
-        remaining -= shifted
-    return adjusted
 
 
 def _templates() -> List[ScenarioTemplate]:
@@ -279,7 +144,7 @@ def _templates() -> List[ScenarioTemplate]:
             title="Increase Price",
             description="Simulate a price increase.",
             mode="manual",
-            required_inputs=["price_change_pct", "effective_month"],
+            required_inputs=["price_change_pct", "effective_month", "price_sensitivity"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_hire_staff",
@@ -287,7 +152,8 @@ def _templates() -> List[ScenarioTemplate]:
             title="Hire Employees",
             description="Simulate hiring additional staff members.",
             mode="adaptive_or_manual",
-            required_inputs=["employee_count", "employee_monthly_cost"],
+            required_inputs=["employee_count", "employee_monthly_cost", "employer_oncost_pct", "recruitment_cost_per_hire",
+                             "start_month", "revenue_per_hire_monthly"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_cost_increase",
@@ -327,7 +193,7 @@ def _templates() -> List[ScenarioTemplate]:
             title="Delay a Hire",
             description="Simulate cancelling or deferring a planned hire.",
             mode="manual",
-            required_inputs=["employee_count", "employee_monthly_cost"],
+            required_inputs=["employee_count", "employee_monthly_cost", "employer_oncost_pct"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_service_launch",
@@ -335,7 +201,39 @@ def _templates() -> List[ScenarioTemplate]:
             title="Launch New Service",
             description="Simulate a new service launch.",
             mode="manual",
-            required_inputs=["revenue_uplift_pct", "cost_uplift_pct"],
+            required_inputs=["revenue_uplift_pct", "cost_uplift_pct", "launch_cost"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_take_loan",
+            scenario_type="take_loan",
+            title="Take a Loan",
+            description="Simulate borrowing money and repaying it in monthly instalments.",
+            mode="manual",
+            required_inputs=["loan_amount", "loan_annual_rate_pct", "loan_term_months", "loan_start_month"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_raise_investment",
+            scenario_type="raise_investment",
+            title="Raise Investment",
+            description="Simulate equity investment, owner capital or a grant coming in.",
+            mode="manual",
+            required_inputs=["funding_amount", "funding_month", "funding_type"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_buy_equipment",
+            scenario_type="buy_equipment",
+            title="Buy Equipment",
+            description="Simulate buying equipment: the cash it costs, its depreciation and what it brings in.",
+            mode="manual",
+            required_inputs=["equipment_cost", "purchase_month", "useful_life_months", "extra_revenue_monthly", "cost_saving_monthly"],
+        ),
+        ScenarioTemplate(
+            scenario_template_id="tmpl_combined",
+            scenario_type="combined",
+            title="Combine Changes",
+            description="Simulate several changes together, such as a price rise and a new hire.",
+            mode="manual",
+            required_inputs=[],
         ),
     ]
 
@@ -582,110 +480,12 @@ def recommend_scenarios(risk_signals: List[Dict[str, Any]]) -> List[ScenarioReco
     return recommendations
 
 
-def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any]) -> BusinessStateSnapshot:
-    # A lost client or a sales drop is judged once it is fully in effect, never on its first ramp month (the owner, 25 Oct:
-    # losing a client worth 100% of revenue read "Neutral impact" from month 1, half of it gone)
-    month = 12 if scenario_type in ("client_loss", "revenue_drop") else 1
-    revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params, month)
-    starting_cash = float(state.starting_cash)
-
-    return BusinessStateSnapshot(
-        revenue_monthly=revenue,
-        expenses_monthly=expenses,
-        cost_of_sales_monthly=cost_of_sales,
-        costs_monthly=expenses + cost_of_sales,
-        accrued_revenue_total=state.accrued_revenue_total,
-        accrued_expenses_total=state.accrued_expenses_total,
-        accrued_cost_of_sales_total=state.accrued_cost_of_sales_total,
-        starting_cash=starting_cash,
-        top_client_share_pct=state.top_client_share_pct,
-        capacity_utilisation_pct=state.capacity_utilisation_pct,
-        payment_terms_days=state.payment_terms_days,
-        sales_cycle_days=state.sales_cycle_days,
-        clients_count=state.clients_count,
-        approaching_receivables_count=state.approaching_receivables_count,
-        overdue_receivables_count=state.overdue_receivables_count,
-        approaching_payables_count=state.approaching_payables_count,
-        overdue_payables_count=state.overdue_payables_count,
-    )
-
-
-def _monthly_projection_values(
-    state: BusinessStateSnapshot,
-    scenario_type: str,
-    params: Dict[str, Any],
-    month_index: int,
-) -> Tuple[float, float, float]:
-    base_revenue = float(state.revenue_monthly or 0.0)
-    base_expenses = float(state.expenses_monthly or max(float(state.costs_monthly) - float(state.cost_of_sales_monthly or 0), 0.0))
-    base_cost_of_sales = float(state.cost_of_sales_monthly or 0.0)
-
-    revenue = base_revenue
-    expenses = base_expenses
-    cost_of_sales = base_cost_of_sales
-
-    sales_ramp_months = _month_span_from_days(state.sales_cycle_days, fallback=1, cap=3)
-    pricing_ramp_months = max(1, min(2, sales_ramp_months))
-    cost_ramp_months = 2
-
-    if scenario_type == "client_loss":
-        sales_ramp_months = max(2, sales_ramp_months)
-        loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
-        progress = min(1.0, month_index / float(sales_ramp_months))
-        multiplier = max(0.0, 1.0 - ((loss_pct / 100.0) * progress))
-        revenue *= multiplier
-        cost_of_sales *= multiplier
-    elif scenario_type == "revenue_drop":
-        drop_pct = float(params.get("revenue_drop_pct") or 0.0)
-        progress = min(1.0, month_index / float(sales_ramp_months))
-        multiplier = max(0.0, 1.0 - ((drop_pct / 100.0) * progress))
-        revenue *= multiplier
-        cost_of_sales *= multiplier
-    elif scenario_type == "price_change":
-        change_pct = float(params.get("price_change_pct") or 0.0)
-        effective_month = max(1, int(params.get("effective_month") or 1))
-        selected_revenue = float(params.get("selected_product_revenue_monthly") or 0.0)
-        if month_index >= effective_month:
-            progress = min(1.0, ((month_index - effective_month) + 1) / float(pricing_ramp_months))
-            if selected_revenue > 0:
-                revenue += selected_revenue * ((change_pct / 100.0) * progress)
-            else:
-                revenue *= 1.0 + ((change_pct / 100.0) * progress)
-    elif scenario_type == "cost_increase":
-        inc_pct = float(params.get("cost_increase_pct") or 0.0)
-        progress = min(1.0, month_index / float(cost_ramp_months))
-        multiplier = 1.0 + ((inc_pct / 100.0) * progress)
-        expenses *= multiplier
-        cost_of_sales *= multiplier
-    elif scenario_type == "hire_staff":
-        add_cost = float(params.get("employee_monthly_cost") or 0.0)
-        employee_count = max(1, int(params.get("employee_count") or 1))
-        # Staff are treated as overhead/expenses per professional proposal
-        expenses += add_cost * employee_count
-    elif scenario_type == "contractor_addition":
-        # Contractors are treated as Direct Costs (Cost of Sales) per professional proposal
-        add_cost = float(params.get("contractor_monthly_cost") or 0.0)
-        contractor_count = max(1, int(params.get("employee_count") or 1))
-        cost_of_sales += add_cost * contractor_count
-    elif scenario_type == "reduce_fixed_cost":
-        red_pct = float(params.get("cost_reduction_pct") or 0.0)
-        progress = min(1.0, month_index / float(cost_ramp_months))
-        multiplier = max(0.0, 1.0 - ((red_pct / 100.0) * progress))
-        expenses *= multiplier
-    elif scenario_type == "delay_hiring":
-        # Removes the planned hire cost — shows how much the business saves
-        saved_cost = float(params.get("employee_monthly_cost") or 0.0)
-        employee_count = max(1, int(params.get("employee_count") or 1))
-        expenses = max(0.0, expenses - saved_cost * employee_count)
-    elif scenario_type == "service_launch":
-        uplift = float(params.get("revenue_uplift_pct") or 0.0)
-        cost_up = float(params.get("cost_uplift_pct") or 0.0)
-        progress = min(1.0, month_index / 3.0)
-        revenue *= 1.0 + ((uplift / 100.0) * progress)
-        expenses *= 1.0 + ((cost_up / 100.0) * progress)
-        cost_of_sales *= 1.0 + ((cost_up / 100.0) * progress)
-
-    return revenue, expenses, cost_of_sales
+def _apply_scenario(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any],
+                    as_of: date | None = None) -> BusinessStateSnapshot:
+    """The business's monthly figures once the scenario has run its course: the last month of the projection, for every
+    scenario alike (audit F7: losses used to be judged at month 12 and everything else at month 1)."""
+    month = clamp_months((params or {}).get("timeline_months") or 6)
+    return run_rate_snapshot(state, scenario_type, params or {}, month, as_of=as_of)
 
 
 def _timeline(
@@ -693,194 +493,44 @@ def _timeline(
     scenario_type: str,
     params: Dict[str, Any],
     months: int,
+    as_of: date | None = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    months = max(3, min(12, int(months)))
-    base = state
-    scenario_state = _apply_scenario(state, scenario_type, params)
+    """The scenario's month-by-month projection, plus its comparison with the same business doing nothing.
 
-    delay_months = int(params.get("delay_months") or 0)
-    payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
-
-    # ── Split-Delay Revenue Logic ──
-    # Revenue is split into 'Immediate' (Received) and 'Delayed' (Pending).
-    # We use the selected_pending_receivable_amount as the 'Delayed' run-rate.
-    selected_amount = float(params.get("selected_pending_receivable_amount") or 0.0)
-    baseline_monthly_revenue = float(state.revenue_monthly or 0.0)
-    
-    # ── Accounting Initial State ──
-    # Accruals in table reflect simulation-period pending (Earned - Received).
-    accruals_balance = 0.0
-    cumulative_profit = 0.0
-    cash = float(state.starting_cash or 0.0)
-    prev_cash = cash
-
-    # ── Debt Recovery (Generalized) ──
-    baseline_debt_schedule = _normalise_schedule(state.pending_receivables_schedule, months)
-    
-    if scenario_type == "payment_delay" and selected_amount > 0:
-        historical_debt_schedule = _delay_receivable_schedule(
-            baseline_debt_schedule,
-            selected_amount,
-            delay_months,
-            is_absolute=True
-        )
-    else:
-        historical_debt_schedule = baseline_debt_schedule
-
-    # ── Universal Split-Delay Accounting Engine ──
-    # We apply a baseline 'Pending' float to ALL scenarios to ensure cash conversion is realistic.
-    # We use the user's £24,887 (or current pending) target as a permanent liquidity sink.
-    pending_total = sum(float(v or 0.0) for v in state.pending_receivables_schedule)
-    standard_delayed_amount = float(params.get("selected_pending_receivable_amount") or pending_total or 0.0)
-    
-    # ── Pure Event-Based Settlement Engine ──
-    # We use a long-tail settlement for the delayed part to reflect 'Stressed' collections.
-    settlement_ledger: Dict[int, float] = {m: 0.0 for m in range(months + 12)}
-    
-    # ── Standard Schedules ──
-    pending_payables_schedule = _normalise_schedule(state.pending_payables_schedule, months)
-    forecast: List[Dict[str, Any]] = []
-
-    for i in range(months):
-        month_idx = i + 1
-        
-        # 🟢 1. Monthly revenue and costs (ACCUAL BASIS)
-        monthly_revenue, monthly_expenses, monthly_cost_of_sales = _monthly_projection_values(
-            base, scenario_type, params, month_idx
-        )
-        total_costs = monthly_expenses + monthly_cost_of_sales
-        net_profit = monthly_revenue - total_costs
-        cumulative_profit += net_profit
-
-        # 🔵 2. Universal Settlement Scheduling (INVOICE -> SETTLEMENT)
-        # Revenue is split into 'Immediate' (Received) and 'Stressed Pending' (Sink).
-        delayed_portion = min(monthly_revenue, standard_delayed_amount)
-        immediate_portion = max(0.0, monthly_revenue - delayed_portion)
-        
-        # Immediate Settlement (Lands NOW)
-        if month_idx in settlement_ledger:
-            settlement_ledger[month_idx] += immediate_portion
-            
-        # Delayed Settlement (Surgically Calibrated)
-        # USER RULE: For 'Payment Delay', revenue is shifted by the scenario delay.
-        # This creates the Stack-and-Plateau effect (24k, 48k, 72k, 72k...).
-        if scenario_type == "payment_delay":
-            del_target = month_idx + delay_months
-        else:
-            # Persistent Sink for other scenarios (BCP, Cost Increase, Revenue Drop)
-            # Keeps the stress visible without doubling the accrual display.
-            del_target = month_idx + max(6, delay_months, payment_term_months)
-
-        if del_target in settlement_ledger:
-            settlement_ledger[del_target] += delayed_portion
-            
-        # 📈 3. Cash Settlement Logic (PURE CASH BASIS)
-        # 🚨 USER RULE: Only simulation settlements hit cash. NO historical debt noise in scenarios.
-        settled_from_sim = settlement_ledger.get(month_idx, 0.0)
-        
-        # Unified Inflow (SIMULATION SETTLEMENTS ONLY)
-        collected_total = settled_from_sim
-        paid_total = total_costs + pending_payables_schedule[i]
-        
-        # 🟢 Cash Balance Update (Surgical Alignment)
-        # USER RULE: CashBalance(t) = NetFlow(t) + OpeningBalance(t)
-        # This reflects: Cash = Prev + (Immediate_Recv - Total_Costs)
-        monthly_cash_flow = collected_total - paid_total
-        cash = prev_cash + monthly_cash_flow
-        
-        # 📈 4. Accrual Tracking (Scenario-Dependent Logic)
-        # 🚨 USER RULE: Only 'Payment Delay' should show cumulative stacking debt.
-        # It grows for the duration of the delay, then PLATEAUS.
-        if scenario_type == "payment_delay":
-            if i < delay_months:
-                accruals_balance += delayed_portion
-        else:
-            # Steady-state float KPI for others (e.g. 24,887)
-            accruals_balance = (monthly_revenue - settled_from_sim)
-        
-        # Update prev_cash for next period
-        prev_cash = cash
-
-        # ── Accounting Totals ──
-        gross_profit = monthly_revenue - monthly_cost_of_sales
-        gross_margin_pct = round((gross_profit / monthly_revenue * 100) if monthly_revenue > 0 else 0.0, 2)
-
-        # ── Cash runway (how many months at current burn rate) ──
-        monthly_burn = paid_total - collected_total  # positive = burning cash
-        cash_runway_months: float | None = None
-        if monthly_burn > 0 and cash > 0:
-            cash_runway_months = round(cash / monthly_burn, 2)
-        elif cash <= 0 and paid_total > 0:
-            cash_runway_months = 0.0
-
-        # ── Health Status ──
-        health_status = _classify_health_status(
-            net_profit=net_profit,
-            cash_balance=cash,
-            total_costs=total_costs,
-            prev_cash=prev_cash,
-        )
-        prev_cash = cash
-
-        # ── Risk Enhancement Ratios (Chartered Accountant Standard) ──
-        cash_conv, cash_conv_state, receivable_exp, receivable_state, delayed_rev_pct, delayed_state = typed_ratios(cash, cumulative_profit, accruals_balance)
-
-        # Inject critical collection alert if ratios hit extremes
-        # Only money actually owed to the business escalates it: a loss with nothing owed is judged on its cash above
-        if accruals_balance > 0 and accruals_balance > cumulative_profit and i > 2: # Give it some months to settle
-            health_status = "stress" # Escalate status even if cash is positive
-        
-        score = _stability_score(
-            BusinessStateSnapshot(
-                revenue_monthly=monthly_revenue,
-                expenses_monthly=monthly_expenses,
-                cost_of_sales_monthly=monthly_cost_of_sales,
-                costs_monthly=total_costs,
-                accrued_revenue_total=accruals_balance,
-                starting_cash=cash,
-            )
-        )
-
-        forecast.append(
-            dict(
-                month_index=i + 1,
-                revenue=round(monthly_revenue, 2),
-                accruals=round(accruals_balance, 2),
-                expenses=round(monthly_expenses, 2),
-                cost_of_sales=round(monthly_cost_of_sales, 2),
-                gross_profit=round(gross_profit, 2),
-                gross_margin_pct=gross_margin_pct,
-                costs=round(total_costs, 2),
-                profit=round(net_profit, 2),
-                cumulative_profit=round(cumulative_profit, 2),
-                cash_balance=round(cash, 2),
-                cash_runway_months=cash_runway_months,
-                stability_score=round(score, 2),
-                state_label=health_status,
-                # Ratio exports
-                cash_conversion_ratio=cash_conv,
-                cash_conversion_state=cash_conv_state,
-                receivable_exposure_ratio=receivable_exp,
-                receivable_exposure_state=receivable_state,
-                delayed_revenue_pct=delayed_rev_pct,
-                delayed_revenue_state=delayed_state,
-            )
-        )
+    Returns (timeline_rows, metrics) where metrics holds baseline_metrics / scenario_metrics (the monthly figures before
+    and at the end of the run, as before) and, new in Phase 0, baseline_summary / scenario_summary (horizon totals,
+    closing cash, checks, assumptions) and verdict (see projection.compare_projections)."""
+    months = clamp_months(months)
+    params = {**(params or {}), "timeline_months": months}
+    # Both sides use the same business settings (tax, VAT, loans, inflation live on the state) and the same date, so the
+    # only difference between them is the scenario itself.
+    rows, scenario_summary = project(state, scenario_type, params, months, as_of=as_of)
+    base_rows, baseline_summary = project(state, "do_nothing_projection", {}, months, as_of=as_of)
+    verdict = compare_projections(baseline_summary, scenario_summary)
+    # Phase 2 (audit F5/F11): range, robustness of the verdict, sensitivity, where each input came from, confidence, KPIs
+    from app.modules.scenario_intelligence.uncertainty import analyse
+    uncertainty = analyse(state, scenario_type, params, months, as_of, baseline_summary, base_rows, scenario_summary, rows)
+    scenario_state = run_rate_snapshot(state, scenario_type, params, months, as_of=as_of)
+    base_state = run_rate_snapshot(state, "do_nothing_projection", {}, 1, as_of=as_of) if as_of else state
+    return rows, dict(
+        baseline_metrics=_snapshot_metrics(base_state),
+        scenario_metrics=_snapshot_metrics(scenario_state, rows, state),
+        baseline_summary=baseline_summary,
+        scenario_summary=scenario_summary,
+        verdict=verdict,
+        uncertainty=uncertainty,
+    )
 
 
-    baseline_metrics = _snapshot_metrics(base)
-    scenario_metrics = _snapshot_metrics(scenario_state)
-    return forecast, dict(baseline_metrics=baseline_metrics, scenario_metrics=scenario_metrics)
-
-
-def _snapshot_metrics(state: BusinessStateSnapshot) -> Dict[str, Any]:
+def _snapshot_metrics(state: BusinessStateSnapshot, rows: List[Dict[str, Any]] | None = None,
+                      original: BusinessStateSnapshot | None = None) -> Dict[str, Any]:
     revenue = float(state.revenue_monthly)
     expenses = float(state.expenses_monthly or 0)
     cost_of_sales = float(state.cost_of_sales_monthly or 0)
     costs = float(state.costs_monthly)
     net = revenue - costs
     stability = _stability_score(state)
-    return dict(
+    out = dict(
         monthly_revenue=round(revenue, 2),
         monthly_expenses=round(expenses, 2),
         monthly_cost_of_sales=round(cost_of_sales, 2),
@@ -888,6 +538,18 @@ def _snapshot_metrics(state: BusinessStateSnapshot) -> Dict[str, Any]:
         net_profit=round(net, 2),
         stability_score=round(stability, 2),
     )
+    if rows is not None:
+        # The names the Live Plan reads when a scenario is adopted (live_plan.service.adopt_scenario: revenue_monthly,
+        # gross_margin_pct, cash_runway_months, clients_count). They were never written, so adopting a scenario set those
+        # targets to blank (found in the Phase 1 coordination review, 17 Nov 2026).
+        last = rows[-1] if rows else {}
+        out.update(
+            revenue_monthly=round(revenue, 2),
+            gross_margin_pct=round((revenue - cost_of_sales) / revenue * 100, 2) if revenue > 0 else None,
+            cash_runway_months=last.get("cash_runway_months"),      # None while cash is not running down
+            clients_count=(original.clients_count if original is not None else state.clients_count),
+        )
+    return out
 
 
 def _deltas(base: Dict[str, Any], scenario: Dict[str, Any]) -> Dict[str, Any]:
@@ -902,6 +564,8 @@ def _deltas(base: Dict[str, Any], scenario: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _result_state(base_score: float, scenario_score: float) -> str:
+    """Legacy: compares the rule-based stability scores. No longer decides a run's verdict (simulation audit F7); runs
+    use projection.compare_projections. Kept only for callers that still compare two stability scores directly."""
     if scenario_score >= base_score + 3:
         return "improved"
     if scenario_score <= base_score - 3:
@@ -947,18 +611,28 @@ async def create_scenario_run(
     scenario_type: str,
     params: Dict[str, Any],
     state: BusinessStateSnapshot,
+    as_of: date | None = None,
 ) -> Dict[str, Any]:
     run_id = str(uuid4())
     now = _now_iso()
-    timeline_months = int(params.get("timeline_months") or 6)
-    timeline, metrics = _timeline(state, scenario_type, params, timeline_months)
+    as_of = as_of or _today()
+    timeline_months = clamp_months(params.get("timeline_months") or 6)
+    params = {**params, "timeline_months": timeline_months}
+    timeline, metrics = _timeline(state, scenario_type, params, timeline_months, as_of=as_of)
     baseline_metrics = metrics["baseline_metrics"]
     scenario_metrics = metrics["scenario_metrics"]
     deltas = _deltas(baseline_metrics, scenario_metrics)
-    state_result = _result_state(baseline_metrics["stability_score"], scenario_metrics["stability_score"])
+    # Audit F7: better or worse is judged on the projection itself (profit and cash against doing nothing, same months),
+    # no longer on the rule-based stability score. The verdict, its basis and the assumptions are kept with the run,
+    # inside the existing JSON columns so no database change is needed.
+    verdict = metrics["verdict"]
+    state_result = verdict["state_result"]
+    baseline_metrics = {**baseline_metrics, "projection": metrics["baseline_summary"]}
+    scenario_metrics = {**scenario_metrics, "projection": metrics["scenario_summary"], "verdict": verdict,
+                        "uncertainty": metrics["uncertainty"]}
 
-    # Run the multi-engine orchestration (baseline + scenario) and attach outputs
-    # Import here to avoid circular import
+    # Engine scores recomputed on the business's own figures at the end of the period, with and without the change
+    # (audit F3/F4). A failure is logged, never silently swallowed.
     try:
         from app.modules.scenario_intelligence.orchestration_service import (
             run_scenario_with_all_engines,
@@ -967,12 +641,16 @@ async def create_scenario_run(
             scenario_id=run_id,
             business_id=business_id,
             tenant_id=tenant_id,
-            business_state=state,
+            baseline_end_state=run_rate_snapshot(state, "do_nothing_projection", {}, timeline_months,
+                                                 cash=metrics["baseline_summary"]["closing_cash"], as_of=as_of),
+            scenario_end_state=run_rate_snapshot(state, scenario_type, params, timeline_months,
+                                                 cash=metrics["scenario_summary"]["closing_cash"], as_of=as_of),
             scenario_type=scenario_type,
-            parameters=params,
             timeline_months=timeline_months,
+            verdict=verdict,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - the projection stands on its own; the engine scores are supplementary
+        logger.exception("multi-engine scoring failed for scenario run %s", run_id)
         multi_engine_outputs = None
 
     run_doc = dict(
@@ -986,7 +664,7 @@ async def create_scenario_run(
         scenario_type=scenario_type,
         parameters=params,
         baseline_snapshot=state.model_dump(),
-        scenario_snapshot=_apply_scenario(state, scenario_type, params).model_dump(),
+        scenario_snapshot=_apply_scenario(state, scenario_type, params, as_of).model_dump(),
         engine_version=ENGINE_VERSION,
         status="completed",
         timeline_months=timeline_months,
@@ -1022,8 +700,15 @@ async def create_scenario_run(
     
     run_risks = detect_risks(final_state)
     run_doc["risk_signals"] = run_risks
-
-    stored = await _safe_insert("scenario_runs", run_doc)
+    # Keep the complete result in an existing JSON column. Some deployed schemas
+    # predate the extra risk, engine and timeline columns; writing those columns
+    # made the whole insert fail and left history only in process memory.
+    run_doc["scenario_metrics"] = {
+        **run_doc["scenario_metrics"],
+        "_saved_result": {"timeline": timeline, "risk_signals": run_risks, "multi_engine": multi_engine_outputs},
+    }
+    database_doc = {key: value for key, value in run_doc.items() if key not in {"risk_signals", "multi_engine"}}
+    stored = await _safe_insert("scenario_runs", database_doc)
     if not stored:
         _MEM_RUNS[run_id] = run_doc
 
@@ -1031,9 +716,9 @@ async def create_scenario_run(
         dict(scenario_run_id=run_id, created_at=now, **row) for row in timeline
     ]
     if timeline_docs:
-        stored = await _safe_insert("scenario_timelines", timeline_docs)
-        if not stored:
-            _MEM_TIMELINES[run_id] = timeline_docs
+        # New runs read their timeline from the same saved JSON snapshot. The
+        # legacy table remains readable for runs saved by earlier versions.
+        _MEM_TIMELINES[run_id] = timeline_docs
 
     # recs = _recommendations_from_result(state_result, scenario_type, run_risks)
     recs = _recommendations_from_result(state_result, scenario_type, run_risks)
@@ -1141,7 +826,7 @@ def _recommendations_from_result(
             dict(
                 action_type="pricing_action",
                 title="Scenario appears viable",
-                description=f"This {scenario_type.replace('_', ' ')} run improves stability. Proceed carefully and monitor cash weekly.",
+                description=f"This {scenario_type.replace('_', ' ')} run leaves profit and cash materially better than doing nothing. Proceed carefully and monitor cash weekly.",
             )
         ]
     if state_result == "worse":
@@ -1149,7 +834,7 @@ def _recommendations_from_result(
             dict(
                 action_type="risk_mitigation",
                 title="Scenario increases risk",
-                description=f"This {scenario_type.replace('_', ' ')} run worsens the business state. Adjust the plan before acting on it.",
+                description=f"This {scenario_type.replace('_', ' ')} run leaves profit or cash materially worse than doing nothing. Adjust the plan before acting on it.",
             )
         ]
     return [
@@ -1163,12 +848,21 @@ def _recommendations_from_result(
 
 async def get_scenario_run(run_id: str) -> Dict[str, Any] | None:
     doc = await _safe_select("scenario_runs", filters=[("scenario_run_id", "eq", run_id)], single=True)
-    if doc:
-        return _clean(doc)
-    return _clean(_MEM_RUNS.get(run_id))
+    doc = _clean(doc or _MEM_RUNS.get(run_id))
+    if not doc:
+        return None
+    metrics = dict(doc.get("scenario_metrics") or {})
+    saved = metrics.pop("_saved_result", None)
+    if not isinstance(saved, dict):
+        return doc
+    return {**doc, "scenario_metrics": metrics, "risk_signals": saved.get("risk_signals") or [],
+            "multi_engine": saved.get("multi_engine"), "_timeline": saved.get("timeline") or []}
 
 
 async def get_scenario_timeline(run_id: str) -> List[Dict[str, Any]]:
+    run = await get_scenario_run(run_id)
+    if run and "_timeline" in run:
+        return _clean_many(run["_timeline"])
     data = await _safe_select(
         "scenario_timelines",
         filters=[("scenario_run_id", "eq", run_id)],
@@ -1192,6 +886,37 @@ async def get_recommendations(run_id: str) -> List[Dict[str, Any]]:
     return _clean_many(_MEM_RECOMMENDATIONS.get(run_id, []))
 
 
+def run_digest(run: Dict[str, Any]) -> Dict[str, Any]:
+    """A saved run in brief, for other modules that pass runs to an AI model (business assistant): the verdict, its
+    reason and figures, confidence and robustness, and the monthly figures before and after. The full run (monthly detail,
+    13-week view, ranges) is too large to pass whole and would be cut off (Phase 2 coordination, 17 Nov 2026)."""
+    sm = run.get("scenario_metrics") or {}
+    bm = run.get("baseline_metrics") or {}
+    verdict = sm.get("verdict") or {}
+    u = sm.get("uncertainty") or {}
+    keep = ("monthly_revenue", "monthly_costs", "net_profit")
+    return dict(
+        scenario_run_id=run.get("scenario_run_id"),
+        scenario_name=run.get("scenario_name"),
+        scenario_type=run.get("scenario_type"),
+        created_at=run.get("created_at"),
+        state_result=run.get("state_result"),
+        verdict={k: verdict.get(k) for k in ("outcome", "reason", "months", "net_cash_change", "cumulative_profit_change",
+                                             "materiality_threshold", "cash_shortfall_introduced")} if verdict else None,
+        confidence=(u.get("confidence") or {}).get("level"),
+        robustness=(u.get("ranges") or {}).get("robustness"),
+        before={k: bm.get(k) for k in keep},
+        after={k: sm.get(k) for k in keep},
+        basis=(run.get("parameters") or {}).get("basis") or "records",
+    )
+
+
+def _range_brief(run: Dict[str, Any]) -> Dict[str, Any]:
+    """The verdicts in the low/base/high cases and whether the verdict is robust, for the AI explanation."""
+    ranges = (((run.get("scenario_metrics") or {}).get("uncertainty") or {}).get("ranges") or {})
+    return {k: v for k, v in ranges.items() if k in ("verdicts", "robustness", "note")}
+
+
 async def generate_scenario_interpretation(run_id: str, user_id: str) -> Dict[str, Any]:
     run = await get_scenario_run(run_id)
     if not run:
@@ -1211,6 +936,10 @@ Scenario type: {run.get("scenario_type")}
 Baseline snapshot: {baseline}
 Scenario snapshot: {scenario}
 Final month output: {last_month}
+Verdict against doing nothing (same months): {(run.get("scenario_metrics") or {}).get("verdict")}
+Assumptions: {((run.get("scenario_metrics") or {}).get("projection") or {}).get("assumptions")}
+Confidence in the data: {(((run.get("scenario_metrics") or {}).get("uncertainty") or {}).get("confidence"))}
+Range and robustness: {_range_brief(run)}
 Recommendations: {recs}
 
 Basis: {"an estimate from the owner's own pricing answers (" + str((run.get("parameters") or {}).get("estimate_basis")) + ")" if (run.get("parameters") or {}).get("basis") == "estimate" else "the business's records"}
@@ -1222,7 +951,8 @@ Include:
 3. One practical next step.
 Only describe the engine output above: never add a figure, a cause or a risk that is not in it. Where a value is
 missing, unavailable or unbounded, say so instead of guessing. If the basis is an estimate, say it is an estimate.
-If there is not enough data for a point, say "not enough data" for it.
+If there is not enough data for a point, say "not enough data" for it. State the confidence level, and if the verdict is
+not robust across the low and high cases, say so plainly.
 """
 
     system = (
@@ -1302,9 +1032,31 @@ async def scenario_history(tenant_id: str, business_id: str) -> List[Dict[str, A
                 executed_at=r.get("completed_at") or r.get("created_at"),
                 decision_status=decision_map.get(r["scenario_run_id"]),
                 state_result=r.get("state_result"),
+                # Phase 6: which model made it (for the model-update notice) and its verdict
+                model_version=((r.get("scenario_metrics") or {}).get("projection") or {}).get("model_version"),
+                outcome=((r.get("scenario_metrics") or {}).get("verdict") or {}).get("outcome"),
             )
         )
     return history
+
+
+async def forecast_accuracy(tenant_id: str, business_id: str, state: BusinessStateSnapshot,
+                            as_of: date | None = None) -> Dict[str, Any]:
+    """Earlier runs' forecasts against the months that have since completed, and a backtest on the business's own
+    history (Phase 3, accuracy.py)."""
+    from app.modules.scenario_intelligence.accuracy import accuracy_report, run_record
+    run_list = _clean_many(await _safe_select(
+        "scenario_runs", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)],
+        order="created_at", desc=True) or [])
+    if not run_list:
+        run_list = [r for r in _MEM_RUNS.values() if r.get("tenant_id") == tenant_id and r.get("business_id") == business_id]
+    decisions = _clean_many(await _safe_select(
+        "scenario_decisions", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)]) or [])
+    if not decisions:
+        decisions = [d for d in _MEM_DECISIONS.values() if d.get("tenant_id") == tenant_id and d.get("business_id") == business_id]
+    status = {d.get("scenario_run_id"): d.get("decision_status") for d in decisions if d.get("scenario_run_id")}
+    records = [run_record(r, status.get(r.get("scenario_run_id"))) for r in run_list]
+    return accuracy_report(records, state.revenue_by_month, as_of or _today())
 
 
 async def clear_history(tenant_id: str, business_id: str) -> int:
@@ -1327,12 +1079,19 @@ async def clear_history(tenant_id: str, business_id: str) -> int:
 
     await _safe_delete("scenario_decisions", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
     await _safe_delete("scenario_risk_signals", filters=[("tenant_id", "eq", tenant_id), ("business_id", "eq", business_id)])
-    _MEM_RUNS.clear()
-    _MEM_TIMELINES.clear()
-    _MEM_RECOMMENDATIONS.clear()
-    _MEM_DECISIONS.clear()
-    _MEM_RISK_SIGNALS.clear()
-    return len(deleted_runs) if isinstance(deleted_runs, list) else 0
+    # Simulation audit, Phase 4: only this tenant's runs for this business (it used to clear every business's runs)
+    def mine(doc: Any) -> bool:
+        return isinstance(doc, dict) and doc.get("tenant_id") == tenant_id and doc.get("business_id") == business_id
+    mem_ids = [rid for rid, doc in _MEM_RUNS.items() if mine(doc)]
+    for rid in mem_ids:
+        _MEM_RUNS.pop(rid, None)
+        _MEM_TIMELINES.pop(rid, None)
+        _MEM_RECOMMENDATIONS.pop(rid, None)
+        _MEM_DECISIONS.pop(rid, None)
+    _MEM_RISK_SIGNALS[:] = [s for s in _MEM_RISK_SIGNALS if not mine(s)]
+    if isinstance(deleted_runs, list):
+        return len(deleted_runs)
+    return len(mem_ids)
 
 
 async def do_nothing_projection(
@@ -1341,149 +1100,20 @@ async def do_nothing_projection(
     state_version: str,
     state: BusinessStateSnapshot,
     timeline_months: int,
+    as_of: date | None = None,
+    params: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    projection_id = str(uuid4())
-    months = max(1, min(12, int(timeline_months)))
-    cash = float(state.starting_cash)
-    payment_term_months = _month_span_from_days(state.payment_terms_days, fallback=1, cap=6)
-    
-    # Baseline setup
-    pending_payables_schedule = _normalise_schedule(state.pending_payables_schedule, months)
-    
-    # 🚨 ABSOLUTE BALANCE SHEET ALIGNMENT
-    # Baseline Continuity (BCP) tracks the total business state.
-    # We remove historical debt noise to keep the simulation flow clean (as per scenario logic).
-    historical_debt_schedule = [0.0] * months
-    baseline_delayed_amount = float(state.accrued_revenue_total or 0.0)
-    accruals_balance = baseline_delayed_amount
-    
-    # ── Pure Event-Based Settlement Engine ──
-    # Cash Basis Settlement for Business Continuity
-    settlement_ledger = {m: 0.0 for m in range(months + payment_term_months + 1)}
-    
-    forecast: List[Dict[str, Any]] = []
-    cumulative_profit = 0.0
-    prev_cash: float | None = None
-
-    for i in range(months):
-        month_idx = i + 1
-        
-        # 🟢 1. Monthly revenue and costs (ACCUAL BASIS)
-        monthly_revenue, monthly_expenses, monthly_cost_of_sales = _monthly_projection_values(
-            state, "do_nothing_projection", {}, month_idx
-        )
-        total_costs = monthly_expenses + monthly_cost_of_sales
-        net_profit = monthly_revenue - total_costs
-        cumulative_profit += net_profit
-
-        # 🔵 2. Split-Delay Settlement Scheduling (Standard Timing)
-        # We apply a 'Pure Liquid' model: Only immediate cash hits the balance.
-        # The delayed portion (Sink) stays in Accruals for the duration of the simulation.
-        delayed_part = min(monthly_revenue, baseline_delayed_amount)
-        immediate_part = max(0.0, monthly_revenue - delayed_part)
-        
-        # Immediate Settlement (Lands NOW - This is the only cash inflow)
-        if month_idx in settlement_ledger:
-            settlement_ledger[month_idx] += immediate_part
-            
-        # Delayed Settlement (Lands after simulation window to ensure stress visibility)
-        target_month = month_idx + max(6, payment_term_months)
-        if target_month in settlement_ledger:
-            settlement_ledger[target_month] += delayed_part
-            
-        # 📈 3. Cash Settlement Logic (PURE CASH BASIS)
-        # 🚨 USER RULE: Only simulation settlements hit cash. NO historical debt noise.
-        settled_this_month = settlement_ledger.get(month_idx, 0.0)
-        
-        # Unified Inflow (SIMULATION SETTLEMENTS ONLY)
-        collected_total = settled_this_month
-        paid_total = total_costs + pending_payables_schedule[i]
-        
-        # 🟢 Cash Balance Update (Surgical Alignment)
-        # USER RULE: CashBalance(t) = NetFlow(t) + OpeningBalance(t)
-        # This reflects: Cash = Prev + (Immediate_Recv - Total_Costs)
-        monthly_cash_flow = collected_total - paid_total
-        cash = (prev_cash if prev_cash is not None else float(state.starting_cash)) + monthly_cash_flow
-        
-        # 📈 4. Accrual Tracking (Snapshot Logic)
-        # USER RULE: Accruals show the monthly 'Pending' float as a KPI.
-        # This prevents the doubling with starting debt and matches scenario behavior.
-        accruals_balance = (monthly_revenue - settled_this_month)
-        
-        # Update prev_cash for next period
-        prev_cash = cash
-
-        # ── Accounting Totals ──
-        gross_profit = monthly_revenue - monthly_cost_of_sales
-        gross_margin_pct = round((gross_profit / monthly_revenue * 100) if monthly_revenue > 0 else 0.0, 2)
-        net_profit = monthly_revenue - total_costs
-
-        # ── Cash runway ──
-        monthly_burn = paid_total - collected_total
-        cash_runway_months: float | None = None
-        if monthly_burn > 0 and cash > 0:
-            cash_runway_months = round(cash / monthly_burn, 2)
-        elif cash <= 0:
-            cash_runway_months = 0.0
-
-        # ── Health Status ──
-        health_status = _classify_health_status(
-            net_profit=net_profit,
-            cash_balance=cash,
-            total_costs=total_costs,
-            prev_cash=prev_cash,
-        )
-        prev_cash = cash
-
-        # ── Risk Enhancement Ratios (Chartered Accountant Standard) ──
-        cash_conv, cash_conv_state, receivable_exp, receivable_state, delayed_rev_pct, delayed_state = typed_ratios(cash, cumulative_profit, accruals_balance)
-        
-        score = _stability_score(
-            BusinessStateSnapshot(
-                revenue_monthly=monthly_revenue,
-                expenses_monthly=monthly_expenses,
-                cost_of_sales_monthly=monthly_cost_of_sales,
-                costs_monthly=total_costs,
-                accrued_revenue_total=accruals_balance,
-                starting_cash=cash,
-                top_client_share_pct=state.top_client_share_pct,
-                capacity_utilisation_pct=state.capacity_utilisation_pct,
-                payment_terms_days=state.payment_terms_days,
-                sales_cycle_days=state.sales_cycle_days,
-                clients_count=state.clients_count,
-            )
-        )
-
-        forecast.append(
-            dict(
-                month_index=i + 1,
-                revenue=round(monthly_revenue, 2),
-                accruals=round(accruals_balance, 2),
-                expenses=round(monthly_expenses, 2),
-                cost_of_sales=round(monthly_cost_of_sales, 2),
-                gross_profit=round(gross_profit, 2),
-                gross_margin_pct=gross_margin_pct,
-                costs=round(total_costs, 2),
-                profit=round(net_profit, 2),
-                cumulative_profit=round(cumulative_profit, 2),
-                cash_balance=round(cash, 2),
-                cash_runway_months=cash_runway_months,
-                stability_score=round(score, 2),
-                state_label=health_status,
-                # Ratio exports
-                cash_conversion_ratio=cash_conv,
-                cash_conversion_state=cash_conv_state,
-                receivable_exposure_ratio=receivable_exp,
-                receivable_exposure_state=receivable_state,
-                delayed_revenue_pct=delayed_rev_pct,
-                delayed_revenue_state=delayed_state,
-            )
-        )
-
+    """The business as it is, projected forward on the same engine as every scenario (audit F1), with its range, inputs,
+    confidence and KPIs (Phase 2). `params` carries only the estimate basis, when the run is from an estimate."""
+    from app.modules.scenario_intelligence.uncertainty import analyse
+    as_of = as_of or _today()
+    forecast, summary = project(state, "do_nothing_projection", {}, timeline_months, clamp=False, as_of=as_of)
+    summary["uncertainty"] = analyse(state, "do_nothing_projection", params or {}, summary["months"], as_of, summary, forecast)
     return dict(
-        projection_id=projection_id,
-        timeline_months=months,
+        projection_id=str(uuid4()),
+        timeline_months=summary["months"],
         forecast=forecast,
+        summary=summary,
     )
 
 
@@ -1496,3 +1126,56 @@ def resolve_template(template_id: str) -> ScenarioTemplate | None:
 
 def template_list() -> List[ScenarioTemplate]:
     return _templates()
+
+
+# ── Simulation audit, Phase 6 (model 1.6): reproduce a saved run; compare runs side by side ─────────────────────────
+
+def reproduce(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a saved scenario again from its own stored inputs (the snapshot: state, scenario, settings, date) and say
+    whether it gives the same figures. With the same model version it must match exactly; after a model change it
+    shows what moved and why (model_info)."""
+    from app.modules.scenario_intelligence import model_info
+    from app.modules.scenario_intelligence.projection import MODEL_VERSION, compare_projections, project
+    saved = ((run.get("scenario_metrics") or {}).get("projection") or {})
+    saved_base = ((run.get("baseline_metrics") or {}).get("projection") or {})
+    state = BusinessStateSnapshot(**(run.get("baseline_snapshot") or {}))
+    params = dict(run.get("parameters") or {})
+    months = int(run.get("timeline_months") or params.get("timeline_months") or 6)
+    as_of = date.fromisoformat(saved["as_of"]) if saved.get("as_of") else None
+    _r, base = project(state, "do_nothing_projection", {}, months, as_of=as_of)
+    _r, scen = project(state, run.get("scenario_type") or "do_nothing_projection", params, months, as_of=as_of)
+    verdict = compare_projections(base, scen)
+    then = saved.get("model_version")
+    compared = []
+    for label, now_v, then_v in (("Closing cash", scen["closing_cash"], saved.get("closing_cash")),
+                                 ("Profit over the period", scen["cumulative_profit"], saved.get("cumulative_profit")),
+                                 ("Closing cash if nothing changes", base["closing_cash"], saved_base.get("closing_cash"))):
+        if then_v is not None:
+            compared.append(dict(figure=label, saved=round(float(then_v), 2), now=round(float(now_v), 2),
+                                 same=abs(float(then_v) - float(now_v)) < 0.01))
+    saved_outcome = ((run.get("scenario_metrics") or {}).get("verdict") or {}).get("outcome")
+    same = all(c["same"] for c in compared) and (saved_outcome in (None, verdict["outcome"]))
+    return dict(scenario_run_id=run.get("scenario_run_id"), reproduced=same, model_version_saved=then, model_version_now=MODEL_VERSION,
+                as_of=saved.get("as_of"), compared=compared, verdict_saved=saved_outcome, verdict_now=verdict["outcome"],
+                explanation=("Run again from its saved inputs, it gives exactly the same figures." if same else
+                             ("Different, because the model has changed since this run: " + " ".join(model_info.changes_since(then))
+                              if then and then != MODEL_VERSION else
+                              "Different with the same model version: please report this, it should not happen.")))
+
+
+def comparison_row(run: Dict[str, Any]) -> Dict[str, Any]:
+    """One run's key results, for the side-by-side comparison."""
+    from app.modules.scenario_intelligence.projection import MODEL_VERSION
+    m = run.get("scenario_metrics") or {}
+    v = m.get("verdict") or {}
+    u = m.get("uncertainty") or {}
+    verdicts = ((u.get("ranges") or {}).get("verdicts") or {})
+    proj = m.get("projection") or {}
+    return dict(scenario_run_id=run.get("scenario_run_id"), scenario_name=run.get("scenario_name"), scenario_type=run.get("scenario_type"),
+                created_at=run.get("created_at"), months=run.get("timeline_months"), outcome=v.get("outcome"), reason=v.get("reason"),
+                profit_change=v.get("cumulative_profit_change"), net_cash_change=v.get("net_cash_change"),
+                net_cash_change_low=(verdicts.get("low") or {}).get("net_cash_change"),
+                net_cash_change_high=(verdicts.get("high") or {}).get("net_cash_change"),
+                robust=(u.get("ranges") or {}).get("robust"), confidence=(u.get("confidence") or {}).get("level"),
+                closing_cash=proj.get("closing_cash"), model_version=proj.get("model_version"),
+                current_model=proj.get("model_version") in (None, MODEL_VERSION))

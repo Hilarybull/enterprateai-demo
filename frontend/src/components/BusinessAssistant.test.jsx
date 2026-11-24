@@ -34,6 +34,29 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it("keeps the reply score and loads next steps directly without another AI turn", async () => {
+  replies = [{ kind: "answer", conversational: true, message: "Your score is now 46/100.", cards: [
+    { type: "score_change", case_id: "funding-1", before: 66, after: 46 },
+    { type: "result", case_id: "funding-1" },
+  ] }];
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init) => {
+    if (String(url).includes("/agent/readiness-items/funding/funding-1")) {
+      calls.push({ path: String(url), method: "GET" });
+      return new Response(JSON.stringify({ type: "readiness_tasks", case_id: "funding-1", topic: "funding", title: "Your remaining funding items", items: [{ title: "Confirm the funding date", detail: "A date is needed", code: "C1", section: "funding_goal" }], drafts: [] }), { status: 200 });
+    }
+    return normalFetch(url, init);
+  });
+  await act(async () => { render(<BusinessAssistant work={[{ id: "funding-1", kind: "funding", title: "Funding readiness", score: 61, detail: "Shoes loan" }]} />); });
+  await ask("Update my funding need");
+  expect(await screen.findByText("Funding readiness · 46/100")).toBeTruthy();
+  expect(screen.queryByText("Funding readiness · 61/100")).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "See next steps" })); });
+  expect(await screen.findByText(/Confirm the funding date/)).toBeTruthy();
+  expect(sent(/\/agent\/requests$/)).toHaveLength(1);
+  expect(calls.some(call => call.path.includes("/agent/readiness-items/funding/funding-1"))).toBe(true);
+});
+
 async function open() {
   // The Agent Centre's chat: always open there (the owner, 27 Oct)
   await act(async () => { render(<BusinessAssistant />); });
@@ -43,6 +66,135 @@ async function ask(text) {
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
 }
 const sent = (pattern) => calls.filter((c) => c.method === "POST" && pattern.test(c.path));
+
+it("retries a temporarily unavailable acknowledgement with the same message identifier", async () => {
+  vi.useFakeTimers();
+  const normalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (String(url).endsWith("/agent/requests")) {
+      calls.push({ path: String(url), method: "POST", body: JSON.parse(init.body) });
+      attempts += 1;
+      if (attempts < 3) return new Response(JSON.stringify({ code: "service_unavailable", detail: "Try shortly" }), { status: 503 });
+      return new Response(JSON.stringify({ kind: "answer", message: "Your funding request is ready." }), { status: 200 });
+    }
+    return normalFetch(url, init);
+  });
+  try {
+    await open();
+    await ask("What funding options do I have?");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3500); });
+    expect(screen.getByText("Your funding request is ready.")).toBeTruthy();
+    const requests = sent(/\/agent\/requests$/);
+    expect(requests).toHaveLength(3);
+    expect(new Set(requests.map(request => request.body.client_request_id)).size).toBe(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("automatically reconnects after more than three failed reply checks without resubmitting", async () => {
+  vi.useFakeTimers();
+  const fetchNormally = globalThis.fetch;
+  let checks = 0;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (/\/agent\/requests$/.test(String(url))) {
+      calls.push({ path: String(url), method: "POST", body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ kind: "pending_reply", job_id: "reconnecting" }), { status: 200 });
+    }
+    if (/\/agent\/replies\/reconnecting$/.test(String(url))) {
+      checks += 1;
+      if (checks <= 4) return new Response(JSON.stringify({ detail: "Temporarily unavailable" }), { status: 503 });
+      return new Response(JSON.stringify({ state: "complete", result: { kind: "answer", message: "Your earlier deadline is recovered." } }), { status: 200 });
+    }
+    return fetchNormally(url, init);
+  });
+  try {
+    await open();
+    await ask("I already answered");
+    await act(async () => { await vi.advanceTimersByTimeAsync(13000); });
+    expect(screen.getByRole("progressbar")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check reply" })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+    expect(screen.getByText("Your earlier deadline is recovered.")).toBeTruthy();
+    expect(sent(/\/agent\/requests$/)).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps clarification answers relevant and lets the owner type a different answer", async () => {
+  replies = [{ kind: "answer", quick: true, message: "Did you mean no revenue, or no funding yet?",
+    actions: ["No revenue yet", "No funding yet"].map(label => ({ label, prompt: label, kind: "explain", answers_question: true })) }];
+  await open();
+  await ask("None yet");
+  expect(await screen.findByRole("button", { name: "No revenue yet" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "No funding yet" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "I need funding" })).toBeNull();
+  replies = [{ kind: "answer", message: "Thanks, I'll use your explanation." }];
+  await ask("I meant that this new project has no customers yet");
+  expect(sent(/\/agent\/requests$/).at(-1).body.text).toBe("I meant that this new project has no customers yet");
+});
+
+it("hides old general suggestions when the reply asks a clarification", async () => {
+  replies = [{ kind: "answer", quick: true, message: "What do you mean by none yet?",
+    actions: [{ label: "Restart the loan", prompt: "Restart the loan", kind: "explain" }] }];
+  await open();
+  await ask("None yet");
+  expect(await screen.findByText("What do you mean by none yet?")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Restart the loan" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Suggested actions" })).toBeNull();
+});
+
+it("keeps thinking after handover while a background reply is pending, then displays it once", async () => {
+  vi.useFakeTimers();
+  const fetchNormally = globalThis.fetch;
+  let checks = 0;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (/\/agent\/requests$/.test(String(url))) {
+      calls.push({ path: String(url), method: "POST", body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ kind: "pending_reply", job_id: "funding-reply" }), { status: 200 });
+    }
+    if (/\/agent\/replies\/funding-reply$/.test(String(url))) return new Response(JSON.stringify(++checks === 1
+      ? { state: "pending" } : { state: "complete", result: { kind: "answer", message: "I have your NGN 1m food loan details." } }), { status: 200 });
+    return fetchNormally(url, init);
+  });
+  const words = "I need funding: NGN 1m for food, a loan, March next year. The business is trading.";
+  window.history.replaceState(null, "", `/agent?chat=${encodeURIComponent(words)}`);
+  try {
+    await open();
+    expect(screen.getByText("Thinking…")).toBeTruthy();
+    expect(screen.getByRole("progressbar")).toBeTruthy();
+    expect(sent(/\/agent\/requests$/)[0].body.text).toBe(words);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(screen.getByText("I have your NGN 1m food loan details.")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(sent(/\/agent\/requests$/)).toHaveLength(1);
+  } finally { vi.useRealTimers(); window.history.replaceState(null, "", "/"); }
+});
+
+it("resumes a saved pending reply after refresh without submitting the funding request again", async () => {
+  sessionStorage.setItem("ea:agent:pending-reply:ws-2:ada@example.test", JSON.stringify({ job_id: "saved-reply" }));
+  const fetchNormally = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init) => /\/agent\/replies\/saved-reply$/.test(String(url))
+    ? new Response(JSON.stringify({ state: "complete", user_message: "My food loan request", chat_id: "original-chat",
+      result: { kind: "answer", message: "Your saved funding reply is ready." } }), { status: 200 }) : fetchNormally(url, init));
+  await open();
+  expect(await screen.findByText("Your saved funding reply is ready.")).toBeTruthy();
+  expect(screen.getByText("My food loan request")).toBeTruthy();
+  expect(sent(/\/agent\/requests$/)).toHaveLength(0);
+});
+
+it("shows thinking with progress until a delayed answer arrives", async () => {
+  const fetchNormally = globalThis.fetch;
+  let finish;
+  globalThis.fetch = vi.fn((url, init) => /\/agent\/requests$/.test(String(url))
+    ? new Promise(resolve => { finish = resolve; }) : fetchNormally(url, init));
+  await open();
+  await ask("What funding options do I have?");
+  expect(screen.getByText("Thinking…")).toBeTruthy();
+  expect(screen.getByRole("progressbar")).toBeTruthy();
+  await act(async () => { finish(new Response(JSON.stringify({ kind: "answer", message: "Here are your funding options.", conversational: true }),
+    { status: 200, headers: { "Content-Type": "application/json" } })); });
+  expect(await screen.findByText("Here are your funding options.")).toBeTruthy();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
 
 it("the upload quick action opens the chat picker and follows the selected business", async () => {
   await open();
@@ -68,6 +220,8 @@ it("old checklist links list the items in chat and each item continues there", a
   await act(async () => { fireEvent.click(await screen.findByRole("link", { name: "See all 9" })); });
   expect(await screen.findByText("1. Confirm your target amount")).toBeTruthy();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Work on this" })); });
+  expect(screen.getByRole("button", { name: "I’ll answer" })).toBeTruthy();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Let the agent draft it" })); });
   expect(await screen.findByText("What amount would you like to confirm?")).toBeTruthy();
   expect(sent(/\/agent\/requests$/).at(-1).body.text).toContain("Confirm your target amount");
   expect(screen.getByTestId("chat-location").textContent).toBe("/agent");

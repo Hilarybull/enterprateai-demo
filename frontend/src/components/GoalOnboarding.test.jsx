@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import GoalLauncher, { GOALS_EVERY_MS, goalSets } from "./GoalLauncher";
 import { QuestionForm } from "./agent/AgentBits";
 import DraftEditor, { editableApproval } from "./agent/DraftEditor";
-import StartPage from "../pages/StartPage";
+import StartPage, { carriedText } from "../pages/StartPage";
 import LandingPage, { greetingAt } from "../pages/LandingPage";
 import { DocumentList } from "../pages/AgentCentrePage";
 import { useWorkspaceStore } from "../store/workspace";
@@ -18,6 +18,13 @@ import { useAuthStore } from "../store/auth";
 vi.mock("./GoogleSignInButton", () => ({ default: ({ onCredential }) => <button type="button" onClick={() => onCredential("google-credential")}>Continue with Google</button> }));
 
 const PROMPT = "What do you want EnterprateAI to do for your business?";
+it("preserves what a short landing answer referred to during funding handover", () => {
+  const text = carriedText({ goal_key: "need_funding", original_goal: "I need funding", currency: "NGN",
+    inputs: { amount: 1000000, use: "food", route: "loan", timing: "March next year", stage: "Trading", traction: "None yet" } });
+  expect(text).toContain("Traction reported for this funding request: None yet");
+  expect(text.toLowerCase()).toContain("march next year");
+  expect(text).not.toContain("trading, none yet");
+});
 const INVOICE_QUESTIONS = [{ key: "customer", label: "Who is it for?", type: "text", required: true, default: "", proposed: false },
   { key: "item", label: "What is it for?", type: "text", required: true, default: "", proposed: false },
   { key: "amount", label: "How much?", type: "number", required: true, prefix: "£", default: "", proposed: false }];
@@ -171,7 +178,7 @@ describe("the homepage launcher", () => {
     fireEvent.change(screen.getByLabelText(PROMPT), { target: { value: "I need more customers" } });
     await click(heroSend());      // the launcher's Send (it replaced the Start button)
     // The currency hint aside: it follows the machine's region (tested on its own below).
-    expect(posts(/\/task-sessions$/).map(({ body: { currency: _c, ...rest } }) => rest)).toEqual([
+    expect(posts(/\/task-sessions$/).map(({ body: { currency: _c, client_request_id: _request, ...rest } }) => rest)).toEqual([
       { key: "need_funding", entry_mode: "business_goal" }, { key: "create_invoice", entry_mode: "quick_task" }, { text: "I need more customers", entry_mode: "free_text" }]);
     // The funnel is told which way in was used and which suggestion, never the words that were typed.
     expect(events().filter((e) => e.name === "entry_mode_selected")).toEqual([
@@ -585,55 +592,26 @@ describe("carrying on after sign-in", () => {
     expect(calls.some((c) => /first-value$/.test(c.path))).toBe(false);      // the quick score is never fetched or shown first
   });
 
-  it("someone with a workspace carries on inside the real app, and the last step is named for the work being done", async () => {
-    let letPrepare;
-    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" }) : {});
-    const real = globalThis.fetch;
-    globalThis.fetch = vi.fn((url, init) => (/prepare$/.test(String(url)) ? new Promise((resolve) => { letPrepare = () => resolve(new Response(JSON.stringify(
-      funding({ authenticated: true, next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/funding/f1?tab=results", message: "I set up your funding case." } })), { status: 200 })); }) : real(url, init)));
-    const { container } = mount();
-    await waitFor(() => expect(states(container)).toEqual({ read: "done", check: "active", write: "todo" }));
-    expect(container.querySelector("[data-real-app]")).toBeTruthy();
-    expect(container.querySelector("[data-shell-skeleton]")).toBeNull();
-    expect(useWorkspaceStore.getState().workspaceId).toBe("biz-1");
-    expect(container.querySelector("[data-step='check']").textContent).toContain("Checking what funders ask for");
-    expect(container.querySelector("[data-step='check']").textContent).not.toContain("I need funding");
-    expect(screen.queryByText("Your dashboard opens as soon as there is something to show you.")).toBeNull();      // removed (QA, 15 Oct)
-    await act(async () => { letPrepare(); });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
-  });
-  it("a funding case already on record: asks whether to update it or start a new one, and creates nothing until told", async () => {
-    const choose = { key: "subject_choice", label: "You already have a funding case. Update it or start a new one?", type: "choice", required: true,
-      options: [{ value: "f1", label: "Update QA Seed round (amount £120,000 → £50,000)" }, { value: "new", label: "Start a new case" }] };
-    let chosen = false;
-    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/inputs$/.test(path) ? ((chosen = true), funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" }))
-      : /\/prepare$/.test(path) ? (chosen ? funding({ authenticated: true, state: "handed_off", next: "handoff", missing: [], business_id: "biz-1", handoff: { to: "/funding/f1?tab=results", message: "I updated \"QA Seed round\"." } })
-        : funding({ authenticated: true, state: "collecting_required_data", next: "choose", missing: [], business_id: "biz-1", choose })) : {});
-    const { container } = mount("/start/sess-1?workspace=biz-1");
-    const group = await screen.findByRole("group", { name: choose.label });
-    expect(posts(/\/resume$/)[0].body).toEqual({ business_id: "biz-1" });   // the workspace picked on the homepage
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Update QA Seed round (amount £120,000 → £50,000)", "Start a new case"]);
-    expect(states(container).read).toBe("done");
-    expect(screen.queryByTestId("where")).toBeNull();                       // nothing happens until they choose
-    await click(within(group).getByRole("button", { name: /^Update QA Seed round/ }));
-    expect(posts(/\/inputs$/)[0].body).toEqual({ answers: { subject_choice: "f1" } });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/funding/f1?tab=results"));
-  });
-  it("a new funding need with a quick result: Replace or Update is still asked first, never the old case's result (QA, 15 Oct)", async () => {
-    const choose = { key: "subject_choice", label: "This looks like a new funding need. Replace 'Car wash vans' with this one (£250k loan)?", type: "choice", required: true,
-      options: [{ value: "replace:f1", label: "Replace" }, { value: "update:f1", label: "Just update the changed details" }, { value: "cancel:f1", label: "Cancel" }] };
-    answer = (path) => (/attach-user$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1" })
-      : /\/resume$/.test(path) ? funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", first_value: true })
-      : /\/first-value$/.test(path) ? { result: { assessment_type: "funding_readiness_initial", score: 40, band: "Weak", title: "Car wash vans" } }
-      : /\/prepare$/.test(path) ? funding({ authenticated: true, state: "collecting_required_data", next: "choose", missing: [], business_id: "biz-1", first_value: true, choose }) : {});
+  it.each(["need_funding", "launch"])("a completed %s request opens Agent Centre without preparing a case first", async goal => {
+    const saved = funding({ goal_key: goal, authenticated: true, next: "prepare", missing: [], business_id: "biz-1",
+      original_goal: goal === "launch" ? "Launch a product" : "I need funding", inputs: { amount: 50000, stage: "trading" } });
+    answer = path => /attach-user$/.test(path) || /resume$/.test(path) ? saved : {};
     mount("/start/sess-1?workspace=biz-1");
-    const group = await screen.findByRole("group", { name: choose.label });
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Replace", "Just update the changed details", "Cancel"]);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.getByRole("group", { name: choose.label })).toBeTruthy();      // a late quick result never covers the question
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(saved))}`));
+    expect(useWorkspaceStore.getState().workspaceId).toBe("biz-1");
+    expect(posts(/\/prepare$/)).toHaveLength(0);
+    expect(posts(/readiness-question$/)).toHaveLength(0);
+    expect(posts(/\/inputs$/)).toHaveLength(0);
+  });
+
+  it("leaves the existing funding need unchanged before the agent handles replace or update", async () => {
+    const saved = funding({ authenticated: true, next: "prepare", missing: [], business_id: "biz-1", first_value: true,
+      inputs: { amount: 250000, use: "new equipment", route: "loan" } });
+    answer = path => /attach-user$/.test(path) || /resume$/.test(path) ? saved : {};
+    mount("/start/sess-1?workspace=biz-1");
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(saved))}`));
+    expect(posts(/\/prepare$/)).toHaveLength(0);
+    expect(posts(/\/inputs$/)).toHaveLength(0);
   });
 
   // Signed in, a conversation from the landing page carries on in its chat, as a signed-in owner's message does (the owner,
@@ -647,7 +625,7 @@ describe("carrying on after sign-in", () => {
     // Each answer with its question, a choice by its words (the owner, 28 Oct)
     const words = "I need funding: £50,000. The business is trading.";
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(words)}`));
-    expect(posts(/readiness-question$/)[0].body).toEqual({ business_id: "biz-1", text: words });
+    expect(posts(/readiness-question$/)).toHaveLength(0);
     expect(posts(/\/prepare$/).length).toBe(0);
   });
 
@@ -957,6 +935,7 @@ describe("launch readiness from the landing page (QA, 15 Oct)", () => {
   const choose = { key: "subject_choice", label: "You already have a launch plan. Update it or start a new one?", type: "choice", required: true, default: "new",
     options: [{ value: "plan-1", label: "Update QA Launch UK SMB plan" }, { value: "new", label: "Start a new launch plan" }] };
   const launch = (over = {}) => session({ goal_key: "launch", goal_label: "I want to launch a product/service", entry_mode: "business_goal", questions: [],
+    resolution: { original_goal: "I want to launch a product/service", resolution_class: "composite_goal" },
     missing: [], authenticated: true, business_id: "biz-1", ...over });
 
   it("a reload picks the task up at its choice, shown as a quick reply with the new plan marked, and carries on once picked", async () => {
@@ -970,7 +949,7 @@ describe("launch readiness from the landing page (QA, 15 Oct)", () => {
     expect(buttons.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["Update QA Launch UK SMB plan", "false"], ["Start a new launch plan", "true"]]);
     await click(within(group).getByRole("button", { name: "Start a new launch plan" }));
     expect(withoutId(posts(/\/inputs$/)[0].body)).toEqual({ answers: { subject_choice: "new" }, picked: "Start a new launch plan", asked: "subject_choice" });
-    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/start/sess-1"));
+    await waitFor(() => expect(screen.getByTestId("where").textContent).toBe(`/agent?chat=${encodeURIComponent(carriedText(launch({ state: "ready_to_prepare", next: "prepare" })))}`));
   });
 
   it("a signed-in owner is never asked to confirm an email: the first step is done from the start", async () => {
@@ -1020,12 +999,33 @@ describe("while a typed reply is read (the owner's QA, 17 Oct)", () => {
     await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: /Send|Working/ }));
     const turn = card().querySelector("[data-question-turn]");
     expect(turn.querySelector("[data-sending]").textContent).toBe("ten thousand");
-    expect(turn.querySelector("[data-reading]").textContent).toBe("Reading your reply…");
+    expect(turn.querySelector("[data-reading]").textContent).toBe("Thinking…");
+    expect(turn.querySelectorAll("[data-quick-reply]")).toHaveLength(0);
+    expect(turn.querySelector("[data-question-choice]")).toBeNull();
+    expect(turn.querySelector("[data-question-multi]")).toBeNull();
     expect(turn.textContent).not.toContain("Where is the business now?");      // never the next question while reading
     await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)); });
     expect(card().querySelector("[data-reading]")).toBeNull();
     expect(card().querySelector("[data-question-turn]").textContent).toContain("Where is the business now?");
   });
+});
+
+it("keeps a text composer for multi-select questions instead of requiring option clicks", async () => {
+  const questions = [{ key: "channel", label: "How do customers find you?", type: "choice", multi: true, required: true,
+    options: [{value:"social",label:"Social media"},{value:"referrals",label:"Referrals"}] }];
+  answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+    ? funding({questions,missing:["channel"],inputs:{},turns:[{role:"assistant",content:"How do customers find you?",next:"channel"}]})
+    : /\/inputs$/.test(path) ? funding({questions,missing:[],inputs:{channel:"social,referrals"},next:"identity"}) : undefined;
+  mountLauncher();
+  await click(screen.getByRole("button", {name:"I need funding"}));
+  const input = card().querySelector("[data-composer] input");
+  expect(input).toBeTruthy();
+  expect(input.placeholder).toBe("Type your reply");
+  fireEvent.change(input,{target:{value:"social"}});
+  expect(input.value).toBe("social");
+  fireEvent.change(input,{target:{value:"Mostly Instagram and word of mouth"}});
+  await click(within(card().querySelector("[data-task-footer]")).getByRole("button",{name:"Send"}));
+  expect(posts(/\/inputs$/).at(-1).body.message).toBe("Mostly Instagram and word of mouth");
 });
 
 describe("the chat's currency (the owner's brief, 20 Oct)", () => {
@@ -1055,6 +1055,63 @@ describe("signed in, the homepage's chat runs by the side, on the page (the owne
     await click(screen.getByRole("button", { name: "I need funding" }));
     await waitFor(() => expect(posts(/task-sessions$/).length).toBe(1));
     expect(screen.queryByTestId("where")?.textContent || "").not.toContain("/dashboard");      // stayed on the page
+  });
+});
+
+describe("conversation control", () => {
+  it("retries a saved failed reply without asking the user to type it again", async () => {
+    const failed = funding({ inputs: { amount: 1000000 }, missing: ["use"],
+      questions: [{ key: "use", label: "What do you need the money for?", type: "text", required: true }],
+      turns: [{ role: "user", content: "food" }, { role: "assistant", content: "I'm having trouble connecting right now.", next: "use" }],
+      agent_turn: { reply: "I'm having trouble connecting right now.", next: "use", control: { action: "respond" }, retry: { message: "food", asked: "use" } } });
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path) ? failed : /\/inputs$/.test(path)
+      ? funding({ inputs: { amount: 1000000, use: "food" }, missing: ["stage"] }) : undefined;
+    mountLauncher(); await click(screen.getByRole("button", { name: "I need funding" }));
+    expect(card().querySelector("[data-composer] input").value).toBe("");
+    await click(within(card()).getByRole("button", { name: "Try again" }));
+    expect(posts(/\/inputs$/).at(-1).body.message).toBe("food");
+    expect(posts(/\/inputs$/).at(-1).body.asked).toBe("use");
+    expect(within(card()).queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+  it("keeps an enquiry in the thread without showing the pending choice menu", async () => {
+    const q = { key: "stage", label: "What stage is the business at?", type: "choice", required: true,
+      options: [{ value: "idea", label: "Just an idea" }, { value: "trading", label: "Trading" }] };
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+      ? funding({ questions: [q], missing: ["stage"], inputs: {} })
+      : /\/inputs$/.test(path) ? funding({ questions: [q], missing: ["stage"], inputs: {},
+        turns: [{ role: "user", content: "Can you explain what you do?" }, { role: "assistant", content: "I help you plan and prepare drafts." }],
+        agent_turn: { reply: "I help you plan and prepare drafts.", next: "stage", control: { action: "respond" } } }) : undefined;
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    const input = card().querySelector("[data-composer] input");
+    fireEvent.change(input, { target: { value: "Can you explain what you do?" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
+    expect(within(card()).getByText("I help you plan and prepare drafts.")).toBeTruthy();
+    expect(within(card()).queryByRole("button", { name: "Just an idea" })).toBeNull();
+    expect(card().querySelector("[data-composer] input")).toBeTruthy();
+  });
+
+  it.each([false, true])("keeps a task switch in the landing conversation (signed in: %s)", async (signedIn) => {
+    if (signedIn) {
+      useAuthStore.setState({ token: "tok-1", email: "owner@example.test" });
+      useWorkspaceStore.setState({ workspaceId: "ws1" });
+    }
+    const oldTurns = [{ role: "user", content: "I need funding" }, { role: "assistant", content: "What stage is the business at?", next: "stage" }];
+    answer = (path, method) => method === "POST" && /task-sessions$/.test(path)
+      ? funding({ questions: [{ key: "stage", label: "What stage is the business at?", type: "text", required: true }], missing: ["stage"], inputs: {}, turns: oldTurns })
+      : /\/inputs$/.test(path) ? funding({ goal_key: "create_business_plan", goal_label: "Create Business Plan", inputs: {}, missing: ["description"],
+        questions: [{ key: "description", label: "What does the business do?", type: "text", required: true }],
+        turns: [...oldTurns, { role: "user", content: "I want a business plan instead" }, { role: "assistant", content: "Sure. What does the business do?", next: "description" }],
+        agent_turn: { reply: "Sure. What does the business do?", next: "description", control: { action: "switch", target: "create_business_plan" } } }) : undefined;
+    mountLauncher();
+    await click(screen.getByRole("button", { name: "I need funding" }));
+    fireEvent.change(card().querySelector("[data-composer] input"), { target: { value: "I want a business plan instead" } });
+    await click(within(card().querySelector("[data-task-footer]")).getByRole("button", { name: "Send" }));
+    expect(posts(/task-sessions$/)).toHaveLength(1);
+    expect(posts(/\/inputs$/).at(-1).path).toContain("sess-1/inputs");
+    expect(within(card()).getByText("Sure. What does the business do?")).toBeTruthy();
+    expect(within(card()).getByText("I need funding")).toBeTruthy();
+    expect(card().querySelector("[data-composer] input").value).toBe("");
   });
 });
 

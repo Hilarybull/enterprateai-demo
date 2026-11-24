@@ -212,6 +212,41 @@ function generateScenarioExplanation(output, currency) {
     };
   }
 
+  // Simulation audit, Phase 3: the headline is the server's verdict (profit and cash against doing nothing), the same
+  // the Simulation page shows. The stability-score wording below is kept only for runs saved before the verdict existed.
+  const verdict = scenario.verdict;
+  if (verdict?.outcome) {
+    const words = {
+      improved: "Better than doing nothing",
+      worse: "Worse than doing nothing",
+      mixed: "Mixed: a trade-off to weigh",
+      no_material_change: "No material change",
+    }[verdict.outcome] || verdict.outcome;
+    const range = scenario.netCashRange;
+    const cashEnd = scenario.timelineSummary?.endCashBalance;
+    const narrative = [
+      `This scenario (${scenario.scenarioName || scenario.scenarioType || "simulation"}) is compared with the same business making no change, over ${verdict.months} months.`,
+      verdict.reason,
+      `Profit over the period: ${formatCurrency(verdict.cumulative_profit_change, currency)} against doing nothing; cash after loans and tax owed: ${formatCurrency(verdict.net_cash_change ?? verdict.closing_cash_change, currency)}.`,
+      range ? `Net cash at the end: ${formatCurrency(range.low, currency)} (low case) to ${formatCurrency(range.high, currency)} (high case).` : null,
+      scenario.robustness || null,
+      cashEnd != null ? `Projected cash balance at the end: ${formatCurrency(cashEnd, currency)}.` : null,
+    ].filter(Boolean).join(" ");
+    const actions = scenario.decisionPath?.recommendedActions || [];
+    return {
+      headline: `${words}.`,
+      narrative,
+      keyPoints: [
+        `Verdict: ${words}.`,
+        scenario.confidence?.level ? `Confidence: ${scenario.confidence.level}${scenario.confidence.reasons?.length ? ` (${scenario.confidence.reasons.join("; ")})` : ""}.` : null,
+        scenario.robustness ? `Robustness: ${scenario.robustness}` : null,
+        ...(scenario.assumptions || []).slice(0, 4).map((a) => `Assumption: ${a}`),
+      ].filter(Boolean),
+      actionSummary: actions.length ? actions : ["Review the timeline and decide whether to accept, reject, or defer."],
+      confidenceNote: scenario.confidence?.level ? `Data confidence: ${scenario.confidence.level}.` : buildConfidenceNote(output?.confidence),
+    };
+  }
+
   const stab = scenario.deltas?.stabilityDelta;
   const stabText =
     stab == null

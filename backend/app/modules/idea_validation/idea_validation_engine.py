@@ -103,18 +103,22 @@ def evaluate_idea_validation_v3(
     else:
         scores["differentiation"] = 40
         
-    # 6. Trend Strength (15%) - Market Momentum
+    # 6. Trend Strength (15%) - Market Momentum. Without research: not assessed (it used to score an assumed 60, and market
+    # evidence an assumed 40; simulation audit F5).
     scores["trend_strength"] = research.trend_score if research else 60
+    not_assessed = {}
+    if research is None:
+        not_assessed = {"market_evidence": "No market research was available.", "trend_strength": "No market research was available."}
+        for k in not_assessed:
+            scores[k] = None
     
     # Final Calculation
-    weighted_score = (
-        (scores["problem_severity"] * 0.20) +
-        (scores["customer_clarity"] * 0.15) +
-        (scores["demand_validation"] * 0.20) +
-        (scores["market_evidence"] * 0.15) +
-        (scores["differentiation"] * 0.15) +
-        (scores["trend_strength"] * 0.15)
-    )
+    # Over the dimensions that were assessed, weights re-scaled to sum to 1
+    weights = {"problem_severity": 0.20, "customer_clarity": 0.15, "demand_validation": 0.20,
+               "market_evidence": 0.15, "differentiation": 0.15, "trend_strength": 0.15}
+    assessed = {k: w for k, w in weights.items() if scores.get(k) is not None}
+    weighted_score = sum(scores[k] * w for k, w in assessed.items()) / sum(assessed.values())
+    data_coverage_pct = round(sum(assessed.values()) / sum(weights.values()) * 100, 1)
     
     if weighted_score >= 85:
         classification = "High Integrity Concept"
@@ -152,10 +156,13 @@ def evaluate_idea_validation_v3(
         "reasons": reasons[:4],
         "recommendations": recs[:4],
         "dimension_scores": scores,
+        "not_assessed": not_assessed,
+        "data_coverage_pct": data_coverage_pct,
+        "confidence": "high" if data_coverage_pct >= 85 else "medium" if data_coverage_pct >= 60 else "low",
         "metrics": {
-            "research_demand": research.demand_score if research else 50,
+            "research_demand": research.demand_score if research else None,
             "competitor_count": research.competitor_count if research else 0,
-            "trend": research.trend_score if research else 50,
-            "rubric_v": "3.0"
+            "trend": research.trend_score if research else None,
+            "rubric_v": "3.1"      # 3.1 (17 Nov 2026): no research -> not assessed, not assumed (simulation audit F5)
         }
     }

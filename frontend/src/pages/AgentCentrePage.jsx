@@ -433,17 +433,16 @@ export default function AgentCentrePage() {
     if (!workspaceId) { setLoading(false); return; }
     // Loaded independently: if the task list can't load, the Agent panel (with its
     // allowance header) still works, and vice versa.
-    const [list, sum, docs] = await Promise.allSettled([listRuns(workspaceId, runQuery), getAgentSummary(workspaceId), listDocuments(workspaceId, JSON.parse(docKey))]);
-    if (docs.status === "fulfilled") setDocuments(docs.value);
-    if (sum.status === "fulfilled") setSummary(sum.value);
-    if (list.status === "fulfilled") {
-      setRuns(list.value.items || []);
-      setRunTotal(list.value.total ?? (list.value.items || []).length);
-      setCounts(list.value.counts || {});
-    }
-    const failed = list.status === "rejected" ? list.reason : sum.status === "rejected" ? sum.reason : null;
-    setError(failed ? agentErrorMessage(failed, "The Agent Centre could not be loaded.") : "");
-    setLoading(false);
+    const current = () => useWorkspaceStore.getState().workspaceId === workspaceId;
+    await Promise.allSettled([
+      listRuns(workspaceId, runQuery).then(list => {
+        if (!current()) return;
+        setRuns(list.items || []); setRunTotal(list.total ?? (list.items || []).length); setCounts(list.counts || {}); setError("");
+      }).catch(() => { if (current()) setError("Couldn't load the latest tasks. Any counts shown may be out of date."); })
+        .finally(() => { if (current()) setLoading(false); }),
+      getAgentSummary(workspaceId).then(sum => { if (current()) setSummary(sum); }),
+      listDocuments(workspaceId, JSON.parse(docKey)).then(docs => { if (current()) setDocuments(docs); }),
+    ]);
   }, [workspaceId, runQuery, docKey]);
 
   // A short pause, so typing in the search box asks once, not on every letter.
@@ -468,11 +467,13 @@ export default function AgentCentrePage() {
     if (!workspaceId) return;
     let live = true;
     const read = (path) => apiRequest(path, "GET").catch(() => null);
-    Promise.all([read(`/businesses/${workspaceId}/agent/assistant-context?kind=funding`), read(`/businesses/${workspaceId}/funding-cases`),
+    const context = read(`/businesses/${workspaceId}/agent/assistant-context?kind=funding`).then(c => {
+      if (live) setContextRecord(previous => c ? { workspaceId, value: c } : previous?.workspaceId === workspaceId ? previous : { workspaceId, value: {} });
+      return c;
+    });
+    Promise.all([context, read(`/businesses/${workspaceId}/funding-cases`),
       read(`/businesses/${workspaceId}/launch-initiatives`), read(`/businesses/${workspaceId}/agent/assistant-context?kind=idea&case_id=idea`)]).then(([c, f, l, i]) => {
       if (!live) return;
-      setContextRecord((previous) => c ? { workspaceId, value: c } :
-        previous?.workspaceId === workspaceId ? previous : { workspaceId, value: {} });
       // The newest open case first, never an older one the list happens to start with (the owner, 30 Oct: the van case's
       // 95/100 shown while the equipment case was the one being worked on)
       const at = (x) => String(x.updated_at || x.created_at || "");
@@ -505,13 +506,17 @@ export default function AgentCentrePage() {
   const COUNT_TONE = { needs_approval: "bg-blue-600 text-white", needs_attention: "bg-amber-100 text-amber-800", completed: "bg-emerald-100 text-emerald-700" };
   const shownTab = listOpen ? tab : (TABS.some((t) => t.key === asked) ? asked : "needs_approval");
   // Each tab's number, the one its list shows (the owner's QA, 27 Oct: "Needs Approval says 5 but the list shows 1-10 of 48")
-  const countOf = (key) => (key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : key === "results" ? resultsCount
+  const countOf = (key) => loading && !summary ? "…" : (key === "documents" ? documents?.all_total ?? documents?.total ?? 0 : key === "results" ? resultsCount
     : key === "needs_approval" ? waitingCount : counts[key] || 0);
   const CARD = "rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900";
   const LINK = "text-[13.5px] font-medium text-blue-600 hover:underline";
   const TITLE = "text-[18px] font-bold text-slate-900 dark:text-slate-50";
   const panel = (
     <div className={`${CARD} flex min-h-0 flex-col ${listOpen ? "h-full" : ""}`} data-task-panel>
+      {error && <div role="alert" className="mb-3 flex items-start gap-2 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
+        <p className="min-w-0 flex-1">{error}</p>
+        <button type="button" aria-label="Dismiss task list notice" onClick={() => setError("")} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-rose-100">×</button>
+      </div>}
       <div className="flex items-center justify-between"><p className={TITLE}>Tasks</p>
         {!listOpen && <button type="button" onClick={() => pick(shownTab)} className={LINK}>View all →</button>}</div>
       {/* One line (the owner, 28 Oct): smaller chips, never wrapped; when they don't fit, the row scrolls sideways with no
@@ -624,7 +629,6 @@ export default function AgentCentrePage() {
             className="whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-2 text-[14px] font-medium text-slate-900 hover:bg-slate-50 max-sm:px-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">Agent settings</button>
         </div>
       </header>
-      {error && <p role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-[13.5px] text-rose-700">{error}</p>}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(19rem,1fr)]" data-agent-centre>
         {workspaceId && <AgentChat key={workspaceId} ctx={ctx} work={work} waiting={waiting} onWaitingChanged={() => { load(); setWorkTick((t) => t + 1); }} />}

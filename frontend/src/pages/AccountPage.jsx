@@ -344,6 +344,7 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
   const p = initialData || {};
 
   const [saving, setSaving] = useState(false);
+  const [fillBusy, setFillBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
   const [companyName, setCompanyName] = useState(p.company_name || "");
@@ -408,6 +409,42 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
   function updateService(index, key, value) {
     setServices((prev) => prev.map((s, i) => (i === index ? { ...s, [key]: value } : s)));
+  }
+
+  const missingCopy = [
+    ...(!tagline.trim() ? [{ field: "tagline", apply: setTagline }] : []),
+    ...(!aboutCompany.trim() ? [{ field: "about_company", apply: setAboutCompany }] : []),
+    ...services.flatMap((service, index) => service.service_name.trim() && !service.service_description.trim()
+      ? [{ field: "service_description", serviceName: service.service_name.trim(), apply: (value) => updateService(index, "service_description", value) }]
+      : []),
+  ];
+
+  async function fillMissingCopy() {
+    if (!missingCopy.length || fillBusy) return;
+    setFillBusy(true);
+    setMsg(null);
+    let filled = 0;
+    let failed = 0;
+    for (const item of missingCopy) {
+      try {
+        const response = await apiRequest("/blueprint/suggest-field", "POST", {
+          field: item.field,
+          company_name: companyName,
+          industry: primaryIndustry === "other" ? customIndustry : primaryIndustry,
+          value_proposition: aboutCompany,
+          selected_services: item.serviceName ? [item.serviceName] : services.map((service) => service.service_name).filter(Boolean),
+        });
+        const value = String(response?.value || "").trim();
+        if (!value) { failed += 1; continue; }
+        item.apply(value);
+        filled += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setFillBusy(false);
+    if (filled) setMsg({ type: failed ? "error" : "success", text: `${filled} field${filled === 1 ? "" : "s"} drafted${failed ? `; ${failed} couldn't be filled` : ""}. Review the suggestions, then save. ${filled * 2} credits used.` });
+    else setMsg({ type: "error", text: "The missing text couldn't be drafted. No fields were filled." });
   }
 
   async function handleSave(e) {
@@ -475,6 +512,16 @@ function WorkspaceEditForm({ workspaceId, initialData, onSaved, onCancel }) {
 
   return (
     <form onSubmit={handleSave} className="space-y-5">
+
+      {missingCopy.length > 0 && <section className="flex flex-col gap-3 rounded-2xl border border-brand-200 bg-brand-50/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-brand-900 dark:bg-brand-900/15" data-ai-fill-missing>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Draft missing profile text with AI</p>
+          <p className="mt-1 text-[12px] leading-5 text-slate-600 dark:text-slate-300">2 credits per field. Suggestions stay here for you to review. Business type, company size and founding year need confirmed facts.</p>
+        </div>
+        <button type="button" onClick={fillMissingCopy} disabled={fillBusy} className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+          {fillBusy ? "Drafting…" : `Fill ${missingCopy.length} field${missingCopy.length === 1 ? "" : "s"} · ${missingCopy.length * 2} credits`}
+        </button>
+      </section>}
 
       <FormSection title="Company identity">
         {/* Logo */}

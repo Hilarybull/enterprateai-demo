@@ -11,6 +11,7 @@ Neutral items:
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -21,6 +22,7 @@ from app.shared.llm.openai_client import ai_slot
 from app.shared.llm.usage import record_ai_usage
 
 logger = logging.getLogger(__name__)
+PROVIDER_SECONDS = 25
 
 CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -55,7 +57,7 @@ async def chat(*, system: str, items: list[dict], tools: list[dict], user_id: st
     last: Exception | None = None
     for p in providers():
         try:
-            return await (_claude if p == "claude" else _openai)(system, items, tools, user_id, feature)
+            return await asyncio.wait_for((_claude if p == "claude" else _openai)(system, items, tools, user_id, feature), timeout=PROVIDER_SECONDS)
         except Exception as e:      # noqa: BLE001 - the next provider answers the same request
             logger.warning("agent chat: %s did not answer, trying the next provider", p, exc_info=True)
             last = e

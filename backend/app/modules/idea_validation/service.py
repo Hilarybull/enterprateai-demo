@@ -465,15 +465,16 @@ async def evaluate(
                 starting_cash=iv_payload.cash.starting_cash if iv_payload.cash else 0.0
             )
 
+            # Audit F5: with no capacity answers, capacity is not assessed (it used to assume 1 person x 100 units)
             cap_inputs = CapacityCalcInputs(
                 demand_units_per_month=iv_payload.demand.expected_units_per_month or 1.0,
-                team_size=iv_payload.capacity.team_size if iv_payload.capacity else 1,
-                capacity_units_per_person_per_month=iv_payload.capacity.capacity_units_per_person_per_month if iv_payload.capacity else 100.0
-            )
+                team_size=iv_payload.capacity.team_size,
+                capacity_units_per_person_per_month=iv_payload.capacity.capacity_units_per_person_per_month
+            ) if iv_payload.capacity else None
 
-            sc_inputs = SalesCycleInputs(
-                sales_cycle_days=iv_payload.demand.sales_cycle_days or 30,
-                payment_terms_days=iv_payload.demand.payment_terms_days or 14
+            sc_inputs = SalesCycleInputs(      # None when not given: not assessed, never an assumed 30 / 14 days (audit F5)
+                sales_cycle_days=iv_payload.demand.sales_cycle_days,
+                payment_terms_days=iv_payload.demand.payment_terms_days
             )
 
             conc_inputs = ConcentrationInputs(
@@ -1242,6 +1243,11 @@ async def update_workspace(
 
     merged = dict(ws.data or {})
     data_patch = _augment_workspace_patch(data_patch or {}, existing=merged)
+    from app.shared.master_records import prepare_employee_expenses
+    try:
+        prepare_employee_expenses(data_patch, merged)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if isinstance((data_patch or {}).get("financials"), dict):
         # Invoice numbers are unique per business and issued by the server; a duplicate typed
         # by hand is refused here (409), before anything is saved.
@@ -1262,6 +1268,8 @@ async def update_workspace(
                 # save write those placeholders over the real requests.
                 from app.modules.addons.service import restore_locked_rfqs
                 v = {**v, "rfq_requests": restore_locked_rfqs(v["rfq_requests"], merged[k].get("rfq_requests") or [])}
+            merged[k] = {**merged[k], **v}
+        elif k == "catalogue" and isinstance(v, dict) and isinstance(merged.get(k), dict):
             merged[k] = {**merged[k], **v}
         elif k == "workspace_profile" and isinstance(v, dict) and isinstance(merged.get(k), dict):
             # QA D1: the company profile is merged, never replaced, by a whole-document save (the Registration

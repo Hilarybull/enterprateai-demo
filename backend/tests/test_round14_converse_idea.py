@@ -91,8 +91,9 @@ def test_on_the_idea_page_a_launch_question_is_the_ideas_and_funding_is_taken_to
     page = lambda t: client.post("/agent/requests", json={"business_id": "A", "text": t, "source_channel": "text", "page": "idea"}).json()      # noqa: E731
     out = page("Am I ready to launch?")      # no idea conversation running: still the idea's, never the launch plan's
     assert out.get("conversational") and [c["type"] for c in out["cards"]] == ["launch_fit"] and len(model.prompts) == 1
+    model.replies.append({"say": "How much funding do you need?"})
     there = page("I need funding for this")
-    assert there["elsewhere"].startswith(("/funding/", "/agent")) and len(model.prompts) == 1      # taken there, nothing answered here
+    assert not there.get("elsewhere") and there.get("conversational")      # taken there, nothing answered here
 
 
 def test_research_it_for_me_uses_what_the_idea_has_and_says_free_on_reuse(monkeypatch):

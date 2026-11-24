@@ -36,6 +36,7 @@ RETRY_AFTER = timedelta(hours=1)
 
 @dataclass
 class Config:
+    welcome_live: bool = False            # signup/claim events only; independent of promotional rollout
     enabled: bool = False                 # off: nothing is scheduled or sent
     dry_run: bool = True                  # on: everything is worked out and reported, nothing is sent
     cohort: str = "internal"              # internal | sample | all  (the staged rollout)
@@ -200,10 +201,10 @@ class ActivationService:
                     n += 1
         return n
 
-    async def _schedule(self, user_id: str, journey: str, step: str, due: datetime) -> bool:
+    async def _schedule(self, user_id: str, journey: str, step: str, due: datetime, *, template_version: str | None = None) -> bool:
         try:
             await self.store.insert_ledger({"user_id": user_id, "journey_key": journey, "step_key": step, "due_at": due, "state": "scheduled", "attempt_count": 0,
-                                            "provider_message_id": None, "sent_at": None, "stopped_reason": None, "template_version": rules.TEMPLATE_VERSION,
+                                            "provider_message_id": None, "sent_at": None, "stopped_reason": None, "template_version": template_version or rules.TEMPLATE_VERSION,
                                             "delivery_status": None, "created_at": self.clock(), "updated_at": self.clock()})
             return True
         except Duplicate:
@@ -216,6 +217,26 @@ class ActivationService:
                 return False
             return bool(await self.store.update_ledger(old["id"], {"state": "scheduled", "due_at": due, "stopped_reason": None, "attempt_count": 0,
                                                                    "template_version": rules.TEMPLATE_VERSION, "updated_at": self.clock()}, expect_state="cancelled"))
+
+    async def welcome(self, user_id: str) -> bool:
+        """Queue once after verified signup or a successful claim, including older accounts."""
+        c = self.config
+        if not c.welcome_live and (not c.enabled or not c.lifecycle_emails):
+            return False
+        user = await self.store.get_user(user_id)
+        if not user or (not c.welcome_live and not self.in_cohort(user)) or not self.may_send(user, {"journey_key": "W"})[0]:
+            return False
+        version = f"{rules.TEMPLATE_VERSION}-welcome" if c.welcome_live else rules.TEMPLATE_VERSION
+        if await self._schedule(user_id, "W", "w1", self.clock(), template_version=version):
+            return True
+        # A new signup/claim may have a preview queued already. Promote only that
+        # event's unsent row; never backfill old previews or resend accepted mail.
+        if c.welcome_live:
+            old = next((r for r in await self.store.ledger(user_id) if r["journey_key"] == "W" and r["step_key"] == "w1"
+                        and r.get("state") == "scheduled" and r.get("template_version") != version), None)
+            if old:
+                return bool(await self.store.update_ledger(old["id"], {"template_version": version, "due_at": self.clock(), "updated_at": self.clock()}, expect_state="scheduled"))
+        return False
 
     def _historical(self, user: dict) -> bool:
         start = self.config.start_at
@@ -408,13 +429,16 @@ class ActivationService:
         text = "\n\n".join([hello, *body, f"{t['button']}: {link}", "The EnterprateAI team", foot, sender])
         html = (f"<div style='font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#1e293b;max-width:560px'>"
                 f"<p>{escape(hello)}</p>" + "".join(f"<p>{escape(p)}</p>" for p in body)
-                + f"<p style='margin:28px 0;text-align:center'><a href='{escape(link)}' style='background:#4f46e5;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:600;display:inline-block'>{escape(t['button'])}</a></p>"
+                + f"<p style='margin:20px 0'><a href='{escape(link)}' style='background:#4f46e5;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:600;display:inline-block'>{escape(t['button'])}</a></p>"
                 f"<p>The EnterprateAI team</p>"
                 f"<p style='font-size:12px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:12px;margin-top:28px'>"
                 + ("You are receiving this because you have an EnterprateAI account." if about_account else
                    f"You are receiving this because you asked for tips on getting started with EnterprateAI. "
                    f"<a href='{escape(unsubscribe)}' style='color:#64748b'>Unsubscribe</a> · <a href='{escape(prefs)}' style='color:#64748b'>Email preferences</a>")
                 + f"<br>{escape(sender)}</p></div>")
+        if row["step_key"] == "w1":
+            from app.modules.activation.welcome import render
+            text, html = render(user.get("name"))
         headers = {"X-Entity-Ref-ID": f"activation-{row['id']}"}
         if c.api_base_url and not about_account:      # one-click unsubscribe for mail clients that offer it
             headers["List-Unsubscribe"] = f"<{c.api_base_url.rstrip('/')}/email/unsubscribe?token={token}>"
@@ -426,12 +450,15 @@ class ActivationService:
         """Send what is due. Each step is claimed first, so two workers can't both take it, and
         everything that decides whether it should go is read again at this moment."""
         now, c = self.clock(), self.config
-        dry = c.dry_run if dry_run is None else dry_run
         rows = [r for r in await self.store.ledger() if (r.get("state") in ("scheduled", "uncertain") and (rules.parse(r.get("due_at")) or now) <= now)
                 or (r.get("state") == "sending" and (rules.parse(r.get("updated_at")) or now) <= now - STUCK_AFTER)]
         rows.sort(key=lambda r: (str(r.get("due_at")), r["journey_key"], r["step_key"]))
         report, sent_this_run = [], set()
         for r in rows:
+            live_welcome = c.welcome_live and r["journey_key"] == "W" and str(r.get("template_version") or "").endswith("-welcome")
+            if not c.enabled and not live_welcome:
+                continue
+            dry = dry_run if dry_run is not None else (False if live_welcome else c.dry_run)
             out = {"user_id": r["user_id"], "journey": r["journey_key"], "step": r["step_key"], "ledger_id": r["id"]}
             user = await self.store.get_user(r["user_id"])
             if not user:
@@ -502,9 +529,9 @@ class ActivationService:
 
     async def tick(self) -> dict:
         """One run of the scheduled job."""
-        if not self.config.enabled:
+        if not self.config.enabled and not self.config.welcome_live:
             return {"enabled": False, "selected": [], "delivered": []}
-        return {"enabled": True, "dry_run": self.config.dry_run, "selected": await self.select(), "delivered": await self.deliver()}
+        return {"enabled": True, "dry_run": self.config.dry_run, "selected": await self.select() if self.config.enabled else [], "delivered": await self.deliver()}
 
     async def dry_run(self, at: datetime | None = None) -> dict:
         """Who would be enrolled, cancelled or emailed if the job ran now (or at `at`), and why each

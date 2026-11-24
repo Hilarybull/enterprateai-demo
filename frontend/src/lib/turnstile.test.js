@@ -48,7 +48,7 @@ describe("the person check", () => {
 
   it("sends nothing if the person cancels, and clears the screen", async () => {
     cloudflare((o) => o["error-callback"](), () => document.querySelector("[role=dialog] button").click());
-    expect(await humanCheck("key")).toEqual({});
+    await expect(humanCheck("key")).rejects.toMatchObject({ code: "PERSON_CHECK_UNAVAILABLE" });
     expect(document.querySelector("[role=dialog]")).toBeNull();
   });
 });

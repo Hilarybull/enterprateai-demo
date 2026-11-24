@@ -9,7 +9,7 @@ export const MODULES = [
   { key: "validation", label: "Idea Validation", subtitle: "Validate business ideas" },
   { key: "blueprint", label: "Business Blueprints", subtitle: "Plans & documents" },
   { key: "simulation", label: "Simulation", subtitle: "What-if scenarios" },
-  { key: "catalogue", label: "Catalogue", subtitle: "Products & offers" },
+  { key: "catalogue", label: "Master records", subtitle: "Products, contacts & employees" },
   { key: "financials", label: "Financials", subtitle: "Invoicing & tracking" },
   { key: "integrations", label: "Integrations", subtitle: "External service connections" },
   { key: "registration", label: "Business Registration", subtitle: "Legal & compliance" },
@@ -35,10 +35,11 @@ export const FEATURES = {
     { key: "recommendations", label: "Recommendations" },
   ],
   catalogue: [
-    { key: "view_catalogue", label: "View Catalogue" },
+    { key: "view_catalogue", label: "View master records" },
     { key: "manage_products", label: "Manage Products" },
     { key: "manage_customers", label: "Customers" },
     { key: "manage_vendors", label: "Vendors" },
+    { key: "manage_employees", label: "Employees" },
   ],
   financials: [
     { key: "view_financials", label: "View Financials" },

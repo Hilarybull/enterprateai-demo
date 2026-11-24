@@ -1,3 +1,4 @@
+import Input from "../Input";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { pageNumbers } from "../Pagination";
@@ -203,8 +204,8 @@ export default function PublicTenders({ query }) {
             <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2 xl:grid-cols-4 dark:border-slate-800">
               <label className="grid min-w-0 gap-1.5 text-xs font-medium">SME suitability<select value={sme} onChange={e=>update("sme",e.target.value)} className={field}><option value="suitable">Suitable for SMEs</option><option value="all">All tenders</option><option value="unspecified">Suitability not specified</option></select></label>
               <label className="grid min-w-0 gap-1.5 text-xs font-medium">Contract type<select className={field + " min-w-0 w-full"} value={category} onChange={e=>update("category",e.target.value)}><option value="">All types</option><option value="goods">Goods</option><option value="services">Services</option><option value="works">Works</option></select></label>
-              <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline from<input type="date" className={field + " min-w-0 w-full"} value={from} max={to || undefined} onChange={e=>update("deadline_from",e.target.value)}/></label>
-              <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline to<input type="date" className={field + " min-w-0 w-full"} value={to} min={from || undefined} onChange={e=>update("deadline_to",e.target.value)}/></label>
+              <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline from<Input type="date" className={field + " min-w-0 w-full"} value={from} max={to || undefined} onChange={e=>update("deadline_from",e.target.value)}/></label>
+              <label className="grid min-w-0 gap-1.5 text-xs font-medium">Deadline to<Input type="date" className={field + " min-w-0 w-full"} value={to} min={from || undefined} onChange={e=>update("deadline_to",e.target.value)}/></label>
             </div>
           </details>
           {[industries[industry],location,category,from && "From " + from,to && "To " + to].some(Boolean) && <div className="flex flex-wrap gap-2">{[industries[industry],location,category,from && "From " + from,to && "To " + to].filter(Boolean).map(label=><span key={label} className="rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">{label}</span>)}</div>}

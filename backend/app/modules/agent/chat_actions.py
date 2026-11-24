@@ -47,19 +47,24 @@ async def scenario(user: dict, business_id: str, kind: str) -> dict:
         return {"type": "scenario", "kind": kind, "title": spec["name"], "gate": detail, "summary": detail.get("message") or "This scenario isn't on your plan yet."}
     template = si.resolve_template(spec["template"])
     share = float(state.top_client_share_pct or 0)
-    # Customers paying late is the month's sales arriving later: the engine delays what is owed, so a month's revenue is what is
-    # owed (the owner, 28 Oct: "cash after 6 months" came out the same, with no receivables on record)
+    # Customers paying late: every customer payment, already owed or from new sales, arrives two months later than it would
+    # otherwise (simulation audit F2, 16 Nov 2026: a month's revenue used to be passed as a "selected invoice", which the old
+    # engine re-delayed every month).
     params = {"timeline_months": 6, **({"revenue_drop_pct": round(share * 0.3, 1) if share else 20.0} if kind == "order_reduction"
-                                       else {"delay_months": 2, "selected_pending_receivable_amount": float(state.revenue_monthly or 0)})}
+                                       else {"delay_months": 2})}
     # The figures worked out here, in a moment; the run is kept in the Simulation history after the answer is given
     # (the owner, 27 Oct: "Simulate order reduction timed out after about a minute"; the saving was the slow part).
-    timeline, metrics = sis._timeline(state, template.scenario_type, params, 6)
+    as_of = sis._today()      # one date for the answer and the saved run, so both show the same figures
+    timeline, metrics = sis._timeline(state, template.scenario_type, params, 6, as_of=as_of)
     _keep(sis.create_scenario_run(tenant_id=user.get("email") or user["id"], business_id=business_id, state_version="state_v1.0", template_id=spec["template"],
-                                  scenario_mode="manual", scenario_name=spec["name"], scenario_type=template.scenario_type, params=params, state=state))
+                                  scenario_mode="manual", scenario_name=spec["name"], scenario_type=template.scenario_type, params=params, state=state,
+                                  as_of=as_of))
     base, after = metrics.get("baseline_metrics") or {}, metrics.get("scenario_metrics") or {}
     months = len(timeline) or 6
-    cash_base = round(float(state.starting_cash or 0) + months * float(base.get("net_profit") or 0), 2)
-    cash_after = round(float((timeline[-1] if timeline else {}).get("cash_balance") or cash_base), 2)
+    # Both from the same cash projection, same months (audit F1/F7): "as things are" used to be profit added to cash, set
+    # against a scenario figure that followed when money arrives, so the two were not comparable.
+    cash_base = round(float((metrics.get("baseline_summary") or {}).get("closing_cash", state.starting_cash or 0)), 2)
+    cash_after = round(float((metrics.get("scenario_summary") or {}).get("closing_cash", cash_base)), 2)
     data = await get_orchestrator().rt.business.load(business_id) or {}
     ccy = research.task_currency(data)
     m = lambda n: research.money(n, ccy)      # noqa: E731
@@ -76,7 +81,7 @@ async def scenario(user: dict, business_id: str, kind: str) -> dict:
     return {"type": "scenario", "kind": kind, "title": spec["name"], "currency": ccy, "months": months,
             "rows": [{"label": "Monthly revenue", "before": m(rev_b), "after": m(rev_a)}, {"label": "Monthly profit", "before": m(net_b), "after": m(net_a)},
                      {"label": f"Cash after {months} months", "before": m(cash_base), "after": m(cash_after)}],
-            "worse": cash_after < cash_base or net_a < net_b, "summary": line, "to": "/simulation"}
+            "worse": (metrics.get("verdict") or {}).get("state_result") == "worse", "summary": line, "to": "/simulation"}
 
 
 _SAVING: set = set()      # the runs being kept, held until they finish

@@ -73,14 +73,18 @@ answer it, then carry on with the task.
 - Interpret the meaning of what the owner wrote, not a list of expected words or a command template. Different wording can express the same intent. Use the whole recent conversation and business records to resolve references and continue the right task. When the owner wants to approve, reject, send, or change something, first call list_pending_items and match the intended item from context and its details. If more than one item could fit, ask which one. Call decide_pending_item only when the latest message clearly authorizes that decision. Approval means carry out the approved action; approval without sending keeps it ready and sends nothing. For a requested edit, use revise_pending_item, show the changed draft, and leave it waiting for approval again. Never infer approval from an earlier message.
 - A tool result is the truth: never say something was created, saved, started, sent or charged unless a tool result says so. \
 Never invent figures, customers, prices or results. Never state a price for the app's own services yourself.
+- A timeout notice in conversation history is not proof that background work failed or that nothing was saved. Check current task or case records before reporting its outcome. Keep labelled landing answers tied to their original question: traction, revenue and prior funding are different facts. Do not reinterpret an unspecified answer as one of them or merge a new funding request with unrelated existing cases.
 - If a tool says a price must be agreed first, tell them its price and ask; call it again with price_agreed true only after \
 they say yes.
 - Funding and launch readiness: use readiness_status to answer how ready they are, their score, what's left and what was found. For anything to do on a funding case or launch plan (change an amount or purpose, answer what's left, draft the rest, search for funding options, approve drafts, start one), call work_on_funding or work_on_launch with the owner's own words, exactly as they said them; a reply to what that module asked ("yes, start", "replace it") goes back to it the same way.
+- When selected_readiness_item is present, work on that exact item in its case. Forward the full request and issue details to its specialist. Never turn it into general research, drafting the rest, or listing all remaining tasks. A saved research run does not mean that this item was fixed. Ask for missing facts such as an explicit exchange rate before a conversion; never invent them or silently change the workspace currency.
 - Route buyer sourcing, supplier matching, RFQ/RFP drafting and proposal evaluation through work_on_procurement. Use IDs only when supplied by the workspace.
 - Contracts, receipts, payments and other areas you have no tool for: call hand_over with the module, at once.
 - Recommend a concrete next step when it helps the owner act. A greeting, explanation or clarification can stand on its own; do not force a task or confirmation into every reply.
 
-How replies look: natural sentences, like a helpful person writing in a chat. Put the one or two phrases that matter most in **bold**. No headings. A short list only when you are listing several things. When useful, add up to three quick actions the owner might tap next, written in their own voice as something they'd say to you, specific to this reply, and only things you can do or answer, like this:
+How replies look: natural sentences, like a helpful person writing in a chat. Put the one or two phrases that matter most in **bold**. No headings. A short list only when you are listing several things.
+When asking a question, suggestions must answer that exact question. Put up to three short, distinct answers in <reply_options>, one per line, written in the owner's voice. Include the alternatives you actually asked about. Never mix in restarting a task, browsing another case or unrelated next steps. For an open question with no useful discrete answers, omit suggestions. Typing is always allowed. Use <reply_options> only for answers to your current question; never for task suggestions. Do not use <quick_actions> when asking a question.
+When not asking a question, you may add up to three quick actions the owner might tap next, written in their own voice as something they'd say to you, specific to this reply, and only things you can do or answer, like this:
 <quick_actions>
 Show me what's left on my funding case
 Draft the invoice for Tosin Giwa
@@ -305,11 +309,14 @@ async def readiness_status(orch, user: dict, business_id: str, kind: str) -> dic
     return {kind: out or "none yet", **({"funding_options_found": [{"title": o["title"], "route": o.get("route"), "fit": o.get("fit")} for o in found]} if found else {})}
 
 
-async def _readiness_turn(orch, user: dict, business_id: str, request: str, *, launch: bool) -> dict | None:
+async def _readiness_turn(orch, user: dict, business_id: str, request: str, *, launch: bool, history=None, selected_item=None) -> dict | None:
     """The funding or launch conversation, with the owner's own words: its reply (cards, buttons, prices first) as it is."""
     from app.modules.agent import converse, converse_launch
+    if selected_item:
+        from app.modules.agent.readiness_chat import work_on_item
+        return await work_on_item(orch, user, business_id, request, selected_item, history=history)
     module = converse_launch if launch else converse
-    return await module.turn(orch=orch, user=user, business_id=business_id, text=request[:2000])
+    return await module.turn(orch=orch, user=user, business_id=business_id, text=request[:2000], **({"history": history} if history is not None else {}), **({"selected_item": selected_item} if selected_item else {}))
 
 
 # ── One reply ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -341,16 +348,40 @@ def _items(turns: list[dict], text: str, context: dict, history: list[dict] | No
 
 
 _QUICK = re.compile(r"<quick_actions>(.*?)(?:</quick_actions>|$)", re.S | re.I)
+_REPLY_OPTIONS = re.compile(r"<reply_options>(.*?)(?:</reply_options>|$)", re.S | re.I)
+_INVOKED_QUICK = re.compile(r'<invoke\s+name=[\"\x27]quick_actions[\"\x27]\s*>(.*?)(?:</invoke>|$)', re.S | re.I)
 
 
 def quick_actions(say: str) -> tuple[str, list[dict]]:
     """The reply without its quick actions block, and the actions as buttons that say them (at most three)."""
-    found = _QUICK.search(say or "")
-    if not found:
-        return say, []
-    lines = [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", x).strip() for x in found.group(1).splitlines()]
-    acts = [{"label": x[:80], "kind": "explain", "prompt": x[:300]} for x in lines if x][:3]
-    return (say[:found.start()] + say[found.end():]).strip(), acts
+    lines = []
+    def invoked(match):
+        parameter = re.search(r'<parameter\s+name=[\"\x27]actions[\"\x27]\s*>(.*?)(?:</parameter>|$)', match.group(1), re.S | re.I)
+        if parameter:
+            try:
+                values = json.loads(parameter.group(1).strip())
+                if isinstance(values, list):
+                    lines.extend(x.strip() for x in values if isinstance(x, str) and x.strip())
+            except (ValueError, TypeError):
+                pass  # Malformed presentation metadata must never become chat text.
+        return ""
+    clean = _INVOKED_QUICK.sub(invoked, say or "")
+    def plain(match):
+        lines.extend(re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", x).strip() for x in match.group(1).splitlines())
+        return ""
+    clean = _QUICK.sub(plain, clean).strip()
+    options = []
+    def answers(match):
+        options.extend(re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", x).strip() for x in match.group(1).splitlines())
+        return ""
+    clean = _REPLY_OPTIONS.sub(answers, clean).strip()
+    # General task suggestions are not answer choices. Fail closed for legacy
+    # question replies rather than displaying unrelated tasks under a question.
+    answering = bool(options)
+    choices = options if answering else [] if "?" in clean else lines
+    acts = [{"label": x[:80], "kind": "explain", "prompt": x[:300], **({"answers_question": True} if answering else {})}
+            for x in dict.fromkeys(choices) if x and not re.search(r"[<>]", x)][:3]
+    return clean, acts
 
 
 def _tidy(say: str) -> str:
@@ -388,7 +419,11 @@ async def turn(orch, user: dict, body, known: dict) -> dict | str | None:
     history = getattr(body, "history", None)
     if hasattr(body, "model_fields_set") and "history" not in body.model_fields_set:
         history = None
-    items = _items(turns[-conductor.THREAD_TURNS:], text, conductor._context(known), history)
+    context = conductor._context(known)
+    selected = (getattr(body, "params", None) or {}).get("readiness_item")
+    if isinstance(selected, dict):
+        context["selected_readiness_item"] = selected
+    items = _items(turns[-conductor.THREAD_TURNS:], text, context, history)
     outcome: dict[str, Any] = {}
 
     async def run_turn():
@@ -426,7 +461,7 @@ async def turn(orch, user: dict, body, known: dict) -> dict | str | None:
                 # Returning a reply prevents the router from calling the same exhausted provider
                 # again through the legacy chat fallback.
                 return {"kind": "answer", "conversational": True, "message": unavailable, "actions": []}
-            return None
+            return {"kind": "unavailable", "message": "I couldn't finish this reply because the AI service didn't respond. Your message is saved; please try again.", "actions": []}
     if outcome.get("pass"):
         await conductor._keep(orch, business_id, user["id"], [*turns, {"role": "owner", "text": text[:600]},
                                                               {"role": "agent", "text": f"(handed over to {outcome.get('module') or 'its module'})"}])
@@ -512,7 +547,14 @@ async def _use(orch, user: dict, business_id: str, known: dict, body, name: str,
         if name == "readiness_status":
             return await readiness_status(orch, user, business_id, args.get("kind") or "funding")
         if name in ("work_on_funding", "work_on_launch"):
-            got = await _readiness_turn(orch, user, business_id, str(args.get("request") or getattr(body, "text", "") or ""), launch=name == "work_on_launch")
+            visible = getattr(body, "history", None)
+            if hasattr(body, "model_fields_set") and "history" not in body.model_fields_set:
+                visible = None
+            history = [h if isinstance(h, dict) else h.model_dump() for h in visible] if visible is not None else None
+            selected = (getattr(body, "params", None) or {}).get("readiness_item")
+            selected = selected if isinstance(selected, dict) else None
+            request = getattr(body, "text", "") if selected else args.get("request") or getattr(body, "text", "")
+            got = await _readiness_turn(orch, user, business_id, str(request or ""), launch=name == "work_on_launch", history=history, selected_item=selected)
             return {"final": got, "written": True} if got else {"pass": True, "module": "launch" if name == "work_on_launch" else "funding"}
         if name == "hand_over":
             return {"pass": True, "module": args.get("module")}

@@ -77,7 +77,7 @@ def test_the_narrative_says_not_enough_data_with_no_model_call_and_no_charge(wor
     who["user"] = OWNER
 
     async def a_run(_id):
-        return {"scenario_run_id": "s1", "baseline_snapshot": EMPTY}
+        return {"scenario_run_id": "s1", "business_id": "A", "tenant_id": "A", "baseline_snapshot": EMPTY}
     monkeypatch.setattr(si, "get_scenario_run", a_run)
     called = []
 

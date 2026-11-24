@@ -8,12 +8,17 @@ import { cameFrom, forgetCameFrom, noteCameFrom } from "../lib/cameFrom";
 import { DOES_IT, NEW_REQUEST, cardsToShow, agentErrorMessage, approveAction, doesItFirst, clearConversation, getAgentSummary, getChat, listChats, newChatId, offerFor, replyText, saveAgentFact, saveChat, submitAgentRequest, continueConversation } from "../lib/agent";
 import { apiRequest } from "../api/client";
 import ReadinessProgress from "./agent/ReadinessProgress";
+import ThinkingProgress from "./agent/ThinkingProgress";
+import ReadinessTasks from "./agent/ReadinessTasks";
+import FundingOptions from "./agent/FundingOptions";
+import { pendingAgentReply, resumeAgentReply } from "../lib/agent";
 import { PostponeChoice, PreviewCard, SLOW, ScenarioCard, SegmentsCard, chatActions, said as sayDone } from "./agent/ChatActions";
 import { askFor, questionDefault, questionIsEmpty, questionNormalize, questionSummary, shows, useTaskFlow } from "./agent/TaskFlow";
 import { checkLines, linesFromText } from "./agent/AgentBits";
 import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValueCard";
 import { resultHome } from "../lib/resultHome";
 import ChatDownload from "./agent/ChatDownload";
+import { replyMarkup } from "../lib/replyMarkup";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
 const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
@@ -65,6 +70,7 @@ function toMessage(routed, businessId) {
   } else if (routed.kind === "answer") {
     message.links = (routed.actions || []).filter((a) => a.to).map((a) => ({ label: a.label, to: a.to }));
     message.prompts = (routed.actions || []).filter((a) => (a.capability || a.kind === "explain") && !a.to).map((a) => ({ label: a.label, prompt: a.prompt || a.label }));
+    message.answersQuestion = Boolean(routed.actions?.length && routed.actions.every(a => a.answers_question));
     // Funding and launch conversations return structured result/next-step cards alongside the reply.
     // Keep those cards in the chat; dropping them here left the user with only the model's prose.
     if (Array.isArray(routed.cards) && routed.cards.length) message.cards = routed.cards;
@@ -206,6 +212,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const [history, setHistory] = useState(null);      // the list, while it is open
   const sent = useRef(false);      // a message was sent here: the last conversation is never brought back over it
   const [restored, setRestored] = useState(false);      // the last conversation was brought back on load
+  const [restoredFor, setRestoredFor] = useState(null);
   const gone = useRef(false);      // the Agent Centre was left: a reply still coming is saved, not shown
   useEffect(() => { gone.current = false; return () => { gone.current = true; }; }, []);
   useEffect(() => {
@@ -225,7 +232,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (!live || sent.current || !last || (!back && fresh && String(last.at || "") < fresh)) return;
       const chat = await getChat(bizId, last.id);
       if (live && !sent.current && chat?.messages?.length) { setChatId(chat.id); continueConversation(bizId, chat.messages); setRestored(chat.messages.length); setMessages([{ role: "assistant", content: intro }, ...chat.messages]); }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => { if (live) setRestoredFor(bizId); });
     return () => { live = false; };
   }, [bizId]);      // eslint-disable-line react-hooks/exhaustive-deps
   const [own, setWaiting] = useState(null);
@@ -570,6 +577,31 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   }
 
   const sendDisabled = !String(input || "").trim() || loading;
+  const resumedReply = useRef(null);
+  async function pickUpReply(businessId) {
+    setLoading(true);
+    try {
+      const pending = pendingAgentReply(businessId);
+      if (pending?.job_id) {
+        const snapshot = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${encodeURIComponent(pending.job_id)}`);
+        if (gone.current || useWorkspaceStore.getState().workspaceId !== businessId) return;
+        if (snapshot.chat_id) setChatId(snapshot.chat_id);
+        if (snapshot.user_message) setMessages(previous => [...previous].reverse().find(m => m.role === "user")?.content === snapshot.user_message
+          ? previous : [...previous, { role: "user", content: snapshot.user_message }]);
+      }
+      const result = await resumeAgentReply(businessId);
+      if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) await deliver(result, businessId);
+    }
+    catch (error) { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setMessages(prev => [...prev, { role: "assistant", content: error.message, recoverReply: error.code === "AGENT_REPLY_PENDING" }]); }
+    finally { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setLoading(false); }
+  }
+  useEffect(() => {
+    const pending = bizId && pendingAgentReply(bizId);
+    if (!pending || sent.current || resumedReply.current === pending.job_id || new URLSearchParams(window.location.search).has("chat")) return;
+    if (restoredFor !== bizId) { setLoading(true); return; }
+    resumedReply.current = pending.job_id;
+    void pickUpReply(bizId);
+  }, [bizId, restoredFor]); // Resume the saved job, never submit the funding request again.
   // Named for the conversation, never the business (the owner, 27 Oct: "why is the chat name E2E Car Wash Abuja")
   const title = useMemo(() => {
     const first = messages.find((m) => m.role === "user")?.content;
@@ -687,9 +719,25 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     return () => { window.removeEventListener("ea:chat", onChat); window.removeEventListener(CHAT_REVIEW, review); };
   }, []);      // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function send(prefilledQuestion = "", { fresh = false } = {}) {
+  async function send(prefilledQuestion = "", { fresh = false, readinessItem = null, readinessList = null } = {}) {
     let question = String(prefilledQuestion || input || "").trim();
     if (!question) return;
+    if (readinessList) {
+      if (loading) return;
+      const businessId = useWorkspaceStore.getState().workspaceId;
+      setInput("");
+      push(mine(question));
+      setLoading(true);
+      try {
+        const result = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/readiness-items/${encodeURIComponent(readinessList.topic)}/${encodeURIComponent(readinessList.caseId)}`);
+        if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) {
+          push({ role: "assistant", content: "Here are the remaining items and drafts for your review.", cards: [result] });
+        }
+      } catch (error) {
+        if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) push({ role: "assistant", content: agentErrorMessage(error, "I couldn't load these items. Please try again.") });
+      } finally { if (!gone.current) setLoading(false); }
+      return;
+    }
     sent.current = true;
     if (!prefilledQuestion) {
       // Typed at the last reply's buttons ("yes, go ahead", "open it"): that button, as a click (the owner, 27 Oct)
@@ -779,9 +827,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       }
       // One Agent: every message goes to the same place. It answers from the records, runs the
       // task, or writes the answer itself. There is no second chat behind this one.
-      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true,
+      const routed = await submitAgentRequest({ businessId: agentBusinessId, text: question, sourceChannel: "text", background: true, chatId,
+        ...(readinessItem ? { params: { readiness_item: readinessItem } } : {}),
         history: fresh ? [] : messages.slice(-18).filter((m) => (m.role === "user" || m.role === "assistant") && m.content) });
-      if (gone.current) {
+      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId) {
         // Left before the reply came (a validation takes a while): saved into the conversation, so it is there on return (the owner, 29 Oct)
         const parts = (routed?.kind === "multi" ? routed.results || [] : [routed]).filter((r) => r && r.kind !== "workflow");
         const late = parts.map((r) => ({ ...toMessage(r, agentBusinessId), at: new Date().toISOString() })).filter((m) => m.content);
@@ -794,9 +843,10 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" });
       });
     } catch (error) {
-      setMessages((prev) => [...prev, { role: "assistant", content: agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again.") }]);
+      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: error.code === "AGENT_REPLY_PENDING" || error.code === "AGENT_REPLY_FAILED" ? error.message : agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again."), recoverReply: error.code === "AGENT_REPLY_PENDING" }]);
     } finally {
-      setLoading(false);
+      if (!gone.current && useWorkspaceStore.getState().workspaceId === agentBusinessId) setLoading(false);
     }
   }
 
@@ -805,7 +855,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const biz = ctx?.business?.name || workspaceName || "your business";
   const n = waiting?.count || 0;
   const risk = ctx?.risk && ctx.risk.share >= 50 ? ctx.risk : null;
-  const ready = waiting !== null && (given === undefined || ctx !== null);
+  const ready = messages.some(m => m.role === "user") || (waiting !== null && (given === undefined || ctx !== null));
   // Said once (the owner, 28 Oct: the greeting and approvals came again at the bottom, with a new time, on every visit): while
   // nothing it says has changed it keeps the time it was first said, so it stays where it was; a change is a new greeting
   const sig = `${n}|${risk ? risk.share : ""}`;      // never a customer's name: this goes in the browser
@@ -829,7 +879,12 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     prompts: [...(n ? [{ label: "Show what's waiting", prompt: "Show what's waiting for my approval" }] : []),
       ...(risk ? [{ label: "Show the customer risk", prompt: "Show the customer risk" }] : [])] }];
   // Each shown message knows its place in the conversation (`_i`), whatever comes before it on screen
-  const said = messages.map((m, i) => ({ ...m, _i: i })).slice(1);
+  const said = messages.map((m, i) => {
+    if (m.role !== "assistant") return { ...m, _i: i };
+    const clean = replyMarkup(m.content);
+    const prompts = m.quick && clean.text.includes("?") && !m.answersQuestion ? [] : m.prompts?.length ? m.prompts : clean.prompts;
+    return { ...m, content: clean.text, prompts, _i: i };
+  }).slice(1);
   // The greeting and its cards (approvals, the risk and its Simulate buttons) always, after a conversation brought back
   // (the owner, 28 Oct: "bring them back, after the conversation in time order")
   // A conversation brought back, then the greeting, then what is said now: in time order (the owner, 28 Oct: a result posted
@@ -841,33 +896,24 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const greetedAlready = restored > 0 && said.slice(0, restored).some((m) => m.role === "assistant");
   const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
   const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
-  const card = (c, key) => {
+  const card = (c, key, siblings = []) => {
     if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onReady={(result) => {
-      setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id ? result : item) })));
+      setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id && Boolean(item.options) === Boolean(c.options) ? result : item) })));
       loadWaiting();
     }} />;
     if (c.type === "check_result" && c.result) return <section key={key} aria-label="Your check result" className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4 text-sm">
       <h3 className="font-semibold">{c.result.headline || "Your check result"}</h3>
       {c.result.missing?.length > 0 && <ul className="mt-3 space-y-2">{c.result.missing.map((item, i) => <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"><span>{item}</span><button type="button" disabled={loading} onClick={() => send(`Help me address this item from my ${c.goal || "business"} check: ${item}. Use my saved data and work through it here, one question at a time.`)} className="min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-brand-700">Work on this</button></li>)}</ul>}
     </section>;
-    if (c.type === "readiness_tasks") return <section key={key} aria-label={c.title} className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4 text-sm">
-      <h3 className="font-semibold">{c.title}</h3>
-      {c.drafts?.length > 0 && <div className="mt-3 space-y-3"><p className="font-semibold">Drafts ready for your review</p>{c.drafts.map((draft, i) => <div key={i} className="rounded-lg border border-brand-200 p-3">
-        <p className="font-medium">{draft.label}</p><p className="mt-1 whitespace-pre-wrap">{draft.value}</p><p className="mt-1 text-xs text-slate-500">{draft.source}</p>
-        <div className="mt-2 flex flex-wrap gap-2">{["Approve", "Edit", "Reject"].map(action => <button key={action} type="button" disabled={loading} className="min-h-11 rounded-lg border px-3 py-2" onClick={() => {
-          const instruction = `${action} the ${draft.label} draft on my ${c.topic} case`;
-          if (action === "Edit") { setInput(`${instruction}: `); } else void send(instruction);
-        }}>{action}</button>)}</div>
-      </div>)}</div>}
-      {!c.items?.length ? <p className="mt-2">No outstanding items on this check.</p> : <ol className="mt-3 space-y-3">{c.items.map((item, i) => <li key={i} className="rounded-lg border border-slate-200 p-3">
-        <p className="font-medium">{i + 1}. {item.title}</p>{item.detail && <p className="mt-1 text-slate-600">{item.detail}</p>}
-        <button type="button" disabled={loading} onClick={() => send(`Help me complete this ${c.topic} item: ${item.title}. Use my saved business data and existing drafts. Ask me for missing details here, one at a time, and show proposed changes for my confirmation.`)} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-brand-700 disabled:opacity-50">Work on this</button>
-      </li>)}</ol>}
-    </section>;
+    if (c.type === "options") return <FundingOptions key={key} item={c} />;
+    if (c.type === "readiness_tasks") return <ReadinessTasks key={key} item={c} businessId={bizId} busy={loading} onSend={send}
+      onUpdated={(result) => { setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "readiness_tasks" && item.case_id === c.case_id ? result : item) }))); loadWaiting(); }} />;
     if (c.type === "download") return <ChatDownload key={key} item={c} />;
     if (c.type === "approvals" && waiting?.items?.length) return <WaitingCard key={key} businessId={bizId} items={waiting.items} count={n} onDone={loadWaiting} go={go} act={act} onEdit={startEdit} say={push} />;
     if (["records", "result", "next"].includes(c.type)) {
-      const readiness = work.find((item) => item.id && String(item.id) === String(c.case_id));
+      const current = work.find((item) => item.id && String(item.id) === String(c.case_id));
+      const change = siblings.find(item => item.type === "score_change" && String(item.case_id) === String(c.case_id));
+      const readiness = current && { ...current, score: c.score ?? change?.after ?? current.score };
       if (c.type === "records") return <section key={key} aria-label="Business records checked" data-readiness-card="records" className="max-w-xl rounded-xl border border-slate-200 bg-white p-3 text-sm">
         <p className="font-semibold text-slate-800">What I checked in your records</p>
         <ul className="mt-2 grid gap-1 sm:grid-cols-2">{(ctx?.records || []).map((item) => <li key={item.key} className="flex justify-between gap-3 text-slate-600"><span>{item.label}</span><span className={item.available ? "text-emerald-700" : "text-slate-400"}>{item.detail}</span></li>)}</ul>
@@ -875,7 +921,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       if (readiness) return <section key={key} aria-label={c.type === "next" ? "Recommended next step" : "Readiness result"} data-readiness-card={c.type} className="max-w-xl rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-sm">
         <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
           <p className="mt-1 text-slate-700">{readiness.detail}</p></div>
-          <button type="button" onClick={() => send(`List every remaining item for ${readiness.title} here and help me work through them one at a time.`)} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">See next steps</button></div>
+          <button type="button" disabled={loading} onClick={() => send(`List every remaining item for ${readiness.title} here and help me work through them one at a time.`, { readinessList: { topic: readiness.kind === "launch" ? "launch" : "funding", caseId: c.case_id } })} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">See next steps</button></div>
       </section>;
       return null;
     }
@@ -897,7 +943,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const chips = loading || working ? []
     : last?.failed && !answered ? []
     : (last?.prompts || []).length && !answered ? last.prompts
-      : STARTER_PROMPTS.map((q) => ({ label: q, prompt: q }));
+      : shown.some(m => m.role === "user") ? [] : STARTER_PROMPTS.map((q) => ({ label: q, prompt: q }));
   return (
     <section aria-label="Agent chat" data-agent-chat className="flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       {/* Earlier conversations and a fresh one, at the top right of the chat (the owner, 27 Oct: out of the suggestions row) */}
@@ -936,7 +982,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         </div>
       )}
       <div ref={listRef} data-conversation-panel className={`min-h-0 flex-1 space-y-4 overflow-auto px-4 py-5 sm:px-6 ${history ? "hidden" : ""}`}>
-        {!ready && (
+        {!ready && !loading && (
           <div className="space-y-3" aria-busy="true" aria-label="Checking your business" data-chat-skeleton>
             <div className="flex items-start gap-3"><span className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-slate-100 dark:bg-slate-800" />
               <span className="block h-14 w-full max-w-md animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-800" /></div>
@@ -955,6 +1001,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
               <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
                 {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}><Rich text={message.content} /></p>}
                 {message.content ? <ReplyTools text={message.content} at={message.at} /> : message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
+                {message.recoverReply && <button type="button" disabled={loading} onClick={() => pickUpReply(bizId)} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-700 disabled:opacity-50">Check reply</button>}
                 {message.check && <button type="button" onClick={() => send(message.check.said || "Help me continue this check")} className="mt-2 min-h-11 rounded-lg border border-brand-200 px-3 py-2 text-sm font-semibold text-brand-700">Continue this check here</button>}
                 {message.link && (
                   <a href={message.link} onClick={() => noteCameFrom(chatId, message.link)} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
@@ -979,25 +1026,23 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                 )}
               </div>
             </div>
-            {cardsToShow(shown, index).length > 0 && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j)}</div>)}</div>}
+            {cardsToShow(shown, index).length > 0 && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j, shown[index].cards || [])}</div>)}</div>}
           </div>
         )))}
         {loading || working ? (
-          <div className="flex items-center gap-4"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
-            <span className="text-[14px] text-slate-500">{working && !loading ? "Working on it…" : "Thinking…"}</span></div>
+          <div className="flex min-w-0 items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50"><Spark /></span>
+            <div className="min-w-0 flex-1 pt-1"><ThinkingProgress label={working && !loading ? "Working on it…" : "Thinking…"} /></div></div>
         ) : null}
         {flow.element}
       </div>
       <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-2.5 dark:border-slate-800 sm:px-5">
-        <div className="flex items-center gap-2 pb-2.5">
-          {!history && !loading && (
+        {!history && !loading && chips.length > 0 && <div className="flex items-center gap-2 pb-2.5">
             <div role="group" aria-label="Suggested actions" className="flex min-w-0 flex-1 flex-wrap gap-2" data-chat-chips data-quick-actions={last?.quick || undefined}>
               {doesItFirst(chips).map((p) => <button key={p.label} type="button" onClick={() => void send(p.prompt)}
                 data-does-it={DOES_IT.test(p.label) || undefined}
                 className="max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[13px] leading-snug text-slate-700 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">{p.label}</button>)}
             </div>
-          )}
-        </div>
+        </div>}
         <form className="flex items-center gap-2 rounded-2xl border border-slate-200 py-2 pl-4 pr-2 dark:border-slate-700" onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void attachFile(f); }} data-chat-file />
           <button type="button" aria-label="Attach a document" onClick={() => fileRef.current?.click()} className="p-1 text-slate-500 hover:text-slate-800">

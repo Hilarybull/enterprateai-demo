@@ -1382,6 +1382,9 @@ class ReadinessService:
                 out[path] = d
                 continue
             src = str(d.get("source") or "")
+            if re.search(r"edited by you; awaiting approval", src, re.I):
+                out[path] = d
+                continue      # the owner's own edited draft stays pending until approved
             if re.search(r"\bestimate", src, re.I):
                 out[path] = {**d, "value": _money_words(d["value"], currency or research.task_currency(workspace))}
                 continue

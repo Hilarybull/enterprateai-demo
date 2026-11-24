@@ -64,7 +64,8 @@ def test_the_dashboard_agent_agent_centre_and_the_risk_tile_open_the_same_risk_c
     who["user"] = OWNER
     for text in ("help me understand my business risks", "what are my risks?", "I'm worried I rely on one customer"):
         out = client.post("/agent/requests", json={"business_id": "A", "text": text, "source_channel": "text"}).json()
-        assert (out["kind"], out["goal_key"], out["said"]) == ("check", "business_risks", text)
+        assert out["kind"] == "answer" and out["conversational"]
+        assert out["actions"] == [{"label": "View saved check", "to": "/check/risks"}]
     tile = client.post("/agent/requests", json={"business_id": "A", "capability": "risk_concentration", "source_channel": "ui_action"}).json()
     assert (tile["kind"], tile["goal_key"]) == ("check", "business_risks") and env.meter.charges == []
 
@@ -93,3 +94,7 @@ def test_the_check_page_shows_the_same_result_as_the_chat(world, monkeypatch):
     page = client.get("/businesses/A/quick-check/business_risks").json()["last"]["result"]
     assert chat["score"] == page["score"] and [b["label"] for b in chat["blockers"]] == [b["label"] for b in page["blockers"]]
     assert page["free_next_actions"] == chat["free_next_actions"]
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

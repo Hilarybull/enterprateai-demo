@@ -360,7 +360,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     data = await orch.rt.business.load(business_id) or {}
     mine = ((data.get("agent_conversations") or {}).get(str(user["id"])) or {}) if in_conversation(data, user["id"], now, TOPIC) else {}
     turns = list(mine.get("turns") or [])[-MAX_TURNS:]
-    if not turns and history:      # an earlier conversation, opened again: what was said there
+    if history:      # The visible conversation is authoritative, including landing answers.
         turns = [{"role": "owner" if h.get("role") == "user" else "agent", "text": str(h.get("content") or "")[:500]} for h in history if h.get("content")][-MAX_TURNS:]
     by_id = {str(p["id"]): p for p in plans}
     # On a plan's own page, that plan, never "which launch?" (the owner, 28 Oct)

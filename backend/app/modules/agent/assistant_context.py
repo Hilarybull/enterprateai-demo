@@ -168,7 +168,7 @@ async def context(orch, user: dict, business_id: str, kind: str, case_id: str | 
         # options" answered with drafts about winning customers)
         from app.modules.agent import converse as _converse
         try:
-            extra["funding_options"] = _converse.option_cards(_converse.options_found(data))
+            extra["funding_options"] = _converse.option_cards(_converse.options_found(data, case_id=case_id))
         except Exception:      # noqa: BLE001 - the rest of the context never fails for it
             extra["funding_options"] = []
     return {**extra, "business": business_card(name, data, now), "revenue": revenue(data, now), "records": records_check(data, kind),

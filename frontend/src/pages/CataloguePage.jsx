@@ -1,3 +1,5 @@
+import { CardIcon, ActionMenu } from "../components/MasterRecordUI";
+import EmployeeRecords from "../components/EmployeeRecords";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useRef } from "react";
@@ -89,6 +91,7 @@ export default function CataloguePage() {
     if (canCatalogueFeature("manage_products")) return "products";
     if (canCatalogueFeature("manage_customers")) return "customers";
     if (canCatalogueFeature("manage_vendors")) return "vendors";
+    if (canCatalogueFeature("manage_employees")) return "employees";
     return "overview";
   }
 
@@ -97,6 +100,7 @@ export default function CataloguePage() {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [profileServices, setProfileServices] = useState([]);
   const [catalogueIntegrations, setCatalogueIntegrations] = useState({
     crm: { hubspot: "not_connected", salesforce: "not_connected", zoho_crm: "not_connected" },
@@ -137,7 +141,7 @@ export default function CataloguePage() {
   const [reportFinancials, setReportFinancials] = useState({ invoices: [], expenses: [] });
   const [pendingCatalogueReport, setPendingCatalogueReport] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
-  const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true });
+  const [reportFilter, setReportFilter] = useState({ products: true, customers: true, vendors: true, employees: true });
   const [reportPreviewHtml, setReportPreviewHtml] = useState(null);
   const currency = useWorkspaceStore((s) => s.currency);
 
@@ -148,6 +152,7 @@ export default function CataloguePage() {
       products: !canCatalogueFeature("manage_products"),
       customers: !canCatalogueFeature("manage_customers"),
       vendors: !canCatalogueFeature("manage_vendors"),
+      employees: !canCatalogueFeature("manage_employees"),
     };
     if (locked[activeTab]) setActiveTab(firstAccessibleCatalogueTab());
   }, [activeTab, canViewCatalogueOverview, isMemberMode, memberPermissionType, memberPermissions]); // eslint-disable-line
@@ -182,8 +187,9 @@ export default function CataloguePage() {
       terms: v.payment_terms ? `${v.payment_terms}d` : "Not set",
       spent: formatCurrency(vendorSpendMap.get(v.name) || 0, cur),
     }));
-    return { productRows, customerRows, vendorRows, cur };
-  }, [products, customers, vendors, reportFinancials, currency]);
+    const employeeRows = employees.filter(e => !e.archived).map(e => ({ name: e.name || "Not set", role: e.job_title || "Not set", department: e.department || "Not set", email: e.email || "Not set", phone: e.phone || "Not set", startDate: e.start_date ? String(e.start_date).slice(0, 10).split("-").reverse().join("/") : "Not set" }));
+    return { productRows, customerRows, vendorRows, employeeRows, cur };
+  }, [products, customers, vendors, employees, reportFinancials, currency]);
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -236,67 +242,6 @@ export default function CataloguePage() {
   const [vendorIndustryOther, setVendorIndustryOther] = useState(false);
   const customerIndustryCategory = customerIndustryOther ? "Other" : (customerForm.industry || "");
   const vendorIndustryCategory = vendorIndustryOther ? "Other" : (vendorForm.industry || "");
-
-  function CardIcon({ tone = "bg-brand-50 text-brand-600", children }) {
-    return (
-      <div className={`flex h-9 w-9 items-center justify-center rounded-2xl ${tone}`}>
-        {children}
-      </div>
-    );
-  }
-
-  function ActionMenu({ items, label = "More actions" }) {
-    const [open, setOpen] = useState(false);
-    const menuRef = useRef(null);
-
-    useEffect(() => {
-      if (!open) return;
-      function handleClickOutside(event) {
-        if (!menuRef.current || menuRef.current.contains(event.target)) return;
-        setOpen(false);
-      }
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [open]);
-
-    return (
-      <div ref={menuRef} className="relative shrink-0">
-        <button
-          type="button"
-          aria-label={label}
-          onClick={() => setOpen((v) => !v)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-            <circle cx="5" cy="12" r="2" />
-            <circle cx="12" cy="12" r="2" />
-            <circle cx="19" cy="12" r="2" />
-          </svg>
-        </button>
-        {open ? (
-          <div className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-lg">
-            {items.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  item.onClick?.();
-                }}
-                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs ${
-                  item.tone === "danger"
-                    ? "text-rose-600 hover:bg-rose-50"
-                    : "text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
 
   function ProductTypeIcon({ type, className = "h-4 w-4" }) {
     const isService = String(type || "").toLowerCase() === "service";
@@ -390,8 +335,9 @@ export default function CataloguePage() {
     return str || "Payment terms";
   }
 
-  function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, cur }) {
-    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${c ?? "Not set"}</td>`).join("");
+  function buildCatalogueReportHtml({ productRows, customerRows, vendorRows, employeeRows = null, cur }) {
+    const escapeCell = value => String(value ?? "Not set").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const col = (cells) => cells.map((c) => `<td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;">${escapeCell(c)}</td>`).join("");
     const hdr = (cells) => cells.map((c) => `<th style="padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;text-align:left;">${c}</th>`).join("");
     const table = (headers, rows) => `
       <table style="width:100%;border-collapse:collapse;margin-top:8px;">
@@ -405,20 +351,21 @@ export default function CataloguePage() {
         ${content}
       </div>`;
     const logoSrc = workspaceLogo && String(workspaceLogo).trim() ? workspaceLogo : null;
-    return `<!doctype html><html><head><meta charset="utf-8"/><title>Catalogue Report</title>
+    return `<!doctype html><html><head><meta charset="utf-8"/><title>Master records report</title>
 <style>*{color:#0f172a!important;}body{font-family:Inter,Arial,sans-serif;background:#fff;padding:32px;font-size:13px;line-height:1.5;}</style>
 </head><body>
 <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;">
   <div>
     ${logoSrc ? `<img src="${logoSrc}" style="display:block;max-width:140px;max-height:56px;margin-bottom:10px;"/>` : ""}
-    <div style="font-size:20px;font-weight:700;">${workspaceName || "EnterprateAI"}</div>
-    <div style="font-size:12px;color:#64748b;">Catalogue Report</div>
+    <div style="font-size:20px;font-weight:700;">${escapeCell(workspaceName || "EnterprateAI")}</div>
+    <div style="font-size:12px;color:#64748b;">Master records report</div>
   </div>
   <div style="text-align:right;font-size:11px;color:#64748b;">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"})}</div>
 </div>
 ${productRows !== null ? section("Products & Services","Pricing, cost of sales, and margin per item.",table(["Name","Type","Sell price","Cost of sales","Margin"],productRows.map((p)=>[p.name,p.category,p.price,p.cos,p.margin]))) : ""}
 ${customerRows !== null ? section("Customers","Revenue earned and outstanding per customer.",table(["Name","Invoices","Revenue earned","Outstanding","Payment terms"],customerRows.map((c)=>[c.name,c.invoices,c.revenue,c.outstanding,c.terms]))) : ""}
 ${vendorRows !== null ? section("Vendors","Supplier list and total spend from paid expenses.",table(["Name","Category","Payment terms","Total spent"],vendorRows.map((v)=>[v.name,v.category,v.terms,v.spent]))) : ""}
+${employeeRows !== null ? section("Employees", "Active team members from Master records.", table(["Name", "Job title", "Department", "Work email", "Phone", "Start date"], employeeRows.map(e => [e.name, e.role, e.department, e.email, e.phone, e.startDate]))) : ""}
 </body></html>`;
   }
 
@@ -435,7 +382,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       document.body.appendChild(container);
       await html2pdf()
         .set({
-          filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`,
+          filename: `master-records-report-${new Date().toISOString().slice(0, 10)}.pdf`,
           margin: [10, 10, 10, 10],
           pagebreak: { mode: ["css", "legacy", "avoid-all"] },
           image: { type: "jpeg", quality: 0.98 },
@@ -573,6 +520,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     setProducts(Array.isArray(cat.products) ? cat.products : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
     setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
+    setEmployees(Array.isArray(cat.employees) ? cat.employees : []);
     setProfileServices(Array.isArray(ws?.data?.workspace_profile?.services) ? ws.data.workspace_profile.services : []);
     setCatalogueIntegrations({
       crm: {
@@ -987,8 +935,8 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
   return (
     <div>
       <PageHeader
-        title="Catalogue"
-        description="Manage products, customers, and suppliers for reuse across invoices and documents."
+        title="Master records"
+        description="Your products, customers, vendors and employees, together in one place."
         badge={{ text: "Beta", tone: "slate" }}
       />
 
@@ -1006,16 +954,20 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       <div className="mt-6">
         <SegmentedTabs
           value={activeTab}
+          className="flex-wrap"
           onChange={setActiveTab}
           options={[
             ...(canViewCatalogueOverview ? [{ value: "overview", label: "Overview" }] : []),
             ...(canCatalogueFeature("manage_products") ? [{ value: "products", label: "Products", "data-tour": "catalogue-products-tab" }] : []),
             ...(canCatalogueFeature("manage_customers") ? [{ value: "customers", label: "Customers", "data-tour": "catalogue-customers-tab" }] : []),
             ...(canCatalogueFeature("manage_vendors") ? [{ value: "vendors", label: "Vendors" }] : []),
+            ...(canCatalogueFeature("manage_employees") ? [{ value: "employees", label: "Employees" }] : []),
             { value: "report", label: "Report" },
           ]}
         />
       </div>
+
+      {activeTab === "employees" && canCatalogueFeature("manage_employees") ? <div className="mt-6"><EmployeeRecords key={workspaceId} employees={employees} onSave={async next => { await persist({ employees: next }); setEmployees(next); }} /></div> : null}
 
       {activeTab === "overview" ? (
         <div className="mt-6 space-y-4">
@@ -1866,12 +1818,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
       {activeTab === "report" && (
         <div className="mt-6 space-y-5">
           {/* Filter controls */}
-          <SectionCard title="Generate Catalogue Report" subtitle="Select the sections to include, preview, then download as PDF.">
+          <SectionCard title="Generate Master records report" subtitle="Select the sections to include, preview, then download as PDF.">
             <div className="mt-3 flex flex-wrap gap-4">
               {[
                 { key: "products", label: "Products & Services" },
                 { key: "customers", label: "Customers" },
                 { key: "vendors", label: "Vendors" },
+                ...(canCatalogueFeature("manage_employees") ? [{ key: "employees", label: "Employees" }] : []),
               ].map(({ key, label }) => (
                 <label key={key} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
                   <input
@@ -1891,12 +1844,13 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <Button
                 size="sm"
                 onClick={() => {
-                  const { productRows, customerRows, vendorRows, cur } = reportRows;
+                  const { productRows, customerRows, vendorRows, employeeRows, cur } = reportRows;
                   const filteredProductRows = reportFilter.products ? productRows : null;
                   const filteredCustomerRows = reportFilter.customers ? customerRows : null;
                   const filteredVendorRows = reportFilter.vendors ? vendorRows : null;
-                  setReportPreviewHtml(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
-                  setPendingCatalogueReport(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, cur }));
+                  const filteredEmployeeRows = reportFilter.employees && canCatalogueFeature("manage_employees") ? employeeRows : null;
+                  setReportPreviewHtml(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, employeeRows: filteredEmployeeRows, cur }));
+                  setPendingCatalogueReport(buildCatalogueReportHtml({ productRows: filteredProductRows, customerRows: filteredCustomerRows, vendorRows: filteredVendorRows, employeeRows: filteredEmployeeRows, cur }));
                 }}
               >
                 Generate &amp; Preview
@@ -1912,7 +1866,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
                         container.innerHTML = pendingCatalogueReport;
                         container.style.cssText = "width:210mm;padding:12mm;box-sizing:border-box;font-size:13px;background:#fff;";
                         document.body.appendChild(container);
-                        await html2pdf().set({ filename: `catalogue-report-${new Date().toISOString().slice(0, 10)}.pdf`, margin: [10, 10, 10, 10], pagebreak: { mode: ["css", "legacy", "avoid-all"] }, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 3, useCORS: true, windowWidth: 794, backgroundColor: "#ffffff", letterRendering: true }, jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true } }).from(container).save();
+                        await html2pdf().set({ filename: `master-records-report-${new Date().toISOString().slice(0, 10)}.pdf`, margin: [10, 10, 10, 10], pagebreak: { mode: ["css", "legacy", "avoid-all"] }, image: { type: "jpeg", quality: 0.98 }, html2canvas: { scale: 3, useCORS: true, windowWidth: 794, backgroundColor: "#ffffff", letterRendering: true }, jsPDF: { unit: "pt", format: "a4", orientation: "portrait", compress: true } }).from(container).save();
                         document.body.removeChild(container);
                       } catch { setError("Unable to generate the PDF report."); }
                     }}
@@ -1931,7 +1885,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
                 <iframe
                   srcDoc={reportPreviewHtml}
-                  title="Catalogue Report Preview"
+                  title="Master records report Preview"
                   className="h-[600px] w-full bg-white"
                   sandbox="allow-same-origin"
                 />
@@ -1943,7 +1897,7 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
 
       {loading ? (
         <div className="mt-4">
-          <div className="text-xs text-slate-500">Syncing catalogue...</div>
+          <div className="text-xs text-slate-500">Syncing master records...</div>
         </div>
       ) : null}
 
@@ -2027,8 +1981,3 @@ ${vendorRows !== null ? section("Vendors","Supplier list and total spend from pa
     </div>
   );
 }
-
-
-
-
-

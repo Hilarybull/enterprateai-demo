@@ -1,3 +1,4 @@
+import Input from "../Input";
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../../api/client";
 
@@ -107,7 +108,7 @@ export default function DiscountsAdmin() {
           <label className="grid gap-1 text-xs font-medium text-slate-600">Discount duration<select className={field} value={form.duration} onChange={update("duration")}><option value="once">One invoice</option><option value="repeating">Repeat for a set number of months</option><option value="forever">For the life of the subscription</option></select></label>
           {form.duration === "repeating" && <label className="grid gap-1 text-xs font-medium text-slate-600">Duration (months)<input className={field} type="number" min="1" max="36" step="1" value={form.duration_in_months} onChange={update("duration_in_months")} required /></label>}
           <label className="grid gap-1 text-xs font-medium text-slate-600">Maximum redemptions <span className="font-normal text-slate-400">(optional)</span><input className={field} type="number" min="1" step="1" value={form.max_redemptions} onChange={update("max_redemptions")} placeholder="No limit" /></label>
-          <label className="grid gap-1 text-xs font-medium text-slate-600">Last day to redeem <span className="font-normal text-slate-400">(optional)</span><input className={field} type="date" value={form.redeem_by} onChange={update("redeem_by")} /></label>
+          <label className="grid gap-1 text-xs font-medium text-slate-600">Last day to redeem <span className="font-normal text-slate-400">(optional)</span><Input className={field} type="date" value={form.redeem_by} onChange={update("redeem_by")} /></label>
         </div>
         {problem && <p role="alert" className="mt-3 text-sm text-rose-600">{problem}</p>}
         {notice && <p role="status" className="mt-3 text-sm text-emerald-700">{notice}</p>}

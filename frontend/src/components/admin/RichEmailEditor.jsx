@@ -81,6 +81,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
   variablesNote = "Each person gets their own. You can type these in the subject too." }, ref) {
   const box = useRef(null);
   const saved = useRef(null);
+  const variableInput = useRef(null);
   const picker = useRef(null);
   const [link, setLink] = useState(null);      // the address being typed for a link, or null when closed
   const [button, setButton] = useState(null);      // { text, url } for a button being made, or null
@@ -154,6 +155,21 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
     </span>
   ));
   function insertVariable(key) {
+    const input = variableInput.current;
+    if (input?.isConnected) {
+      const token = `{${key}}`;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      const value = input.value.slice(0, start) + token + input.value.slice(end);
+      if (input.dataset.variableField === "link") setLink(value);
+      else setButton((current) => ({ ...current, [input.dataset.variableField]: value }));
+      setMenu(false);
+      requestAnimationFrame(() => {
+        input.focus();
+        input.setSelectionRange(start + token.length, start + token.length);
+      });
+      return;
+    }
     restoreSelection();
     document.execCommand("insertText", false, `{${key}}`);
     setMenu(false);
@@ -211,7 +227,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
         </div>
         {link !== null && (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
-            <input autoFocus aria-label="Link address" placeholder="Web address, email, or a link variable like {claim_link}" value={link} onChange={(e) => setLink(e.target.value)}
+            <input autoFocus aria-label="Link address" data-variable-field="link" onFocus={(e) => { variableInput.current = e.currentTarget; }} placeholder="Web address, email, or a link variable like {claim_link}" value={link} onChange={(e) => setLink(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") addLink(e); if (e.key === "Escape") setLink(null); }}
               className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
             <button type="button" onClick={addLink} className="rounded-md bg-brand-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-brand-700">Add link</button>
@@ -221,10 +237,10 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
         )}
         {button !== null && (
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-950">
-            <input autoFocus aria-label="Button text" placeholder="Button text, like Claim your page" value={button.text} onChange={(e) => setButton({ ...button, text: e.target.value })}
+            <input autoFocus aria-label="Button text" data-variable-field="text" onFocus={(e) => { variableInput.current = e.currentTarget; }} placeholder="Button text, like Claim your page" value={button.text} onChange={(e) => setButton({ ...button, text: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") addButton(e); if (e.key === "Escape") setButton(null); }}
               className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
-            <input aria-label="Button link" placeholder="Where it goes: a web address or {claim_link}" value={button.url} onChange={(e) => setButton({ ...button, url: e.target.value })}
+            <input aria-label="Button link" data-variable-field="url" onFocus={(e) => { variableInput.current = e.currentTarget; }} placeholder="Where it goes: a web address or {claim_link}" value={button.url} onChange={(e) => setButton({ ...button, url: e.target.value })}
               onKeyDown={(e) => { if (e.key === "Enter") addButton(e); if (e.key === "Escape") setButton(null); }}
               className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] dark:border-slate-700 dark:bg-slate-900" />
             <button type="button" onClick={addButton} disabled={!button.text.trim() || !button.url.trim()} className="rounded-md bg-brand-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Add button</button>
@@ -232,7 +248,7 @@ const RichEmailEditor = forwardRef(function RichEmailEditor({ onChange, label = 
             <LinkChoices pick={(url) => setButton((b) => ({ ...b, url }))} />
           </div>
         )}
-        <div ref={box} role="textbox" aria-multiline="true" aria-label={label} contentEditable suppressContentEditableWarning
+        <div ref={box} role="textbox" aria-multiline="true" aria-label={label} onFocus={() => { variableInput.current = null; }} contentEditable suppressContentEditableWarning
           onInput={report} onBlur={keepSelection} onKeyUp={keepSelection} onMouseUp={keepSelection}
           onDrop={(e) => { if (onFiles && e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files); } }}
           className="rich-email min-h-[180px] max-h-[460px] overflow-y-auto px-3 py-2 text-[14px] leading-relaxed text-slate-800 outline-none dark:text-slate-100 [&_a]:text-brand-600 [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600 [&_h2]:text-[18px] [&_h2]:font-bold [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6" />

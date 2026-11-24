@@ -101,10 +101,10 @@ DORMANT_STEPS = (("d3", timedelta(days=60)), ("d2", timedelta(days=30)), ("d1", 
 DORMANT_STOP = timedelta(days=90)                     # quiet for this long: we stop, as continuing tips do
 
 LIFECYCLE: dict[str, dict[str, Any]] = {
-    "w1": {"journey": "W", "subject": "Welcome to EnterprateAI",
-           "body": ["Thanks for joining EnterprateAI. Your account is ready, whether you already run a business or are still working out an idea.",
-                    "Tell the Agent what you are trying to do, or open the tool that fits. You can see your plan and credits at any time in Account Settings."],
-           "button": "Open EnterprateAI", "to": "/dashboard"},
+    "w1": {"journey": "W", "subject": "Welcome to EnterprateAI - Get Discovered. Win Business. Grow.",
+           "body": ["Welcome to EnterprateAI!",
+                    "You've just joined a smarter way to Plan, Operate, Sell and Grow your business powered by AI Agents and interconnected Business Intelligence."],
+           "button": "Click to Login", "to": "/dashboard"},
     "s7": {"journey": "S", "subject": "Your EnterprateAI plan ends on {date}",
            "body": ["Your current EnterprateAI plan ends on {date}.",
                     "To keep what your plan includes, renew before then from Plan & credits. If you don't, your account moves to the free Explorer plan. Your workspaces and records are kept."],

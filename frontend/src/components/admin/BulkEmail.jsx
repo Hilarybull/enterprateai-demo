@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../../api/client";
-import { AdminTable, Chip } from "./AdminUI";
+import { AdminDateFilter, AdminTable, Chip } from "./AdminUI";
 import { Btn, Notice, inputClass } from "../readiness/Fields";
 import { confirmDialog } from "../../lib/dialog";
 import RichEmailEditor, { EMAIL_VARIABLES, VariableSpacing, unknownVariables } from "./RichEmailEditor";
@@ -11,7 +11,7 @@ import { PLAN_ORDER, normalisePlanKey, planLabel } from "../../lib/plans";
 
 const SOURCES = [["users", "Users"], ["workspaces", "Workspaces"], ["claimed", "Claimed profiles"], ["unclaimed", "Unclaimed profiles"]];
 const MARKETING = { agreed: ["Agreed", "emerald"], not_agreed: ["Not agreed", "slate"], unsubscribed: ["Unsubscribed", "rose"], unknown: ["Unknown", "slate"] };
-const EMPTY_FILTER = { q: "", plan: "", marketing: "", category: "", since: "", withEmail: true };
+const EMPTY_FILTER = { q: "", plan: "", marketing: "", category: "", since: "", until: "", withEmail: true };
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const problemOf = (e) => String((typeof e?.detail === "string" && e.detail) || e?.message || "Something went wrong.").replace(/^HTTP \d+:\s*/, "");
 
@@ -60,7 +60,10 @@ export default function BulkEmail() {
     if (filter.plan && normalisePlanKey(r.plan) !== filter.plan) return false;
     if (filter.marketing && r.marketing !== filter.marketing) return false;
     if (filter.category && r.category !== filter.category) return false;
-    if (filter.since && (r.since || "") < filter.since) return false;
+    const day = (r.since || "").slice(0, 10);
+    if ((filter.since || filter.until) && !day) return false;
+    if (filter.since && day < filter.since) return false;
+    if (filter.until && day > filter.until) return false;
     return true;
   }), [rows, filter]);
 
@@ -163,8 +166,8 @@ export default function BulkEmail() {
               <option value="">Every category</option>{options.categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
-          <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-600 dark:text-slate-300">{people ? "Joined from" : "Listed from"}
-            <input type="date" aria-label={people ? "Joined from" : "Listed from"} className={inputClass} value={filter.since} onChange={(e) => setFilter({ ...filter, since: e.target.value })} /></label>
+          <AdminDateFilter label={people ? "Date joined" : "Date listed"} start={filter.since} end={filter.until}
+            onApply={(since, until) => setFilter((current) => ({ ...current, since, until }))} />
           {!people && (
             <label className="flex items-center gap-2 text-[13px] text-slate-600 dark:text-slate-300">
               <input type="checkbox" checked={filter.withEmail} onChange={(e) => setFilter({ ...filter, withEmail: e.target.checked })} /> Only ones with an email</label>
@@ -176,7 +179,7 @@ export default function BulkEmail() {
             <div className="flex flex-wrap items-center gap-2 text-[13px]">
               <span className="text-slate-500">{shown.length.toLocaleString()} shown</span>
               <Btn className="!py-1.5 !text-[13px]" disabled={!addable} onClick={() => add(shown)}>Pick all {addable.toLocaleString()} shown</Btn>
-              {(filter.q || filter.plan || filter.marketing || filter.category || filter.since) && <Btn kind="link" className="text-[13px]" onClick={() => setFilter(EMPTY_FILTER)}>Clear filters</Btn>}
+              {(filter.q || filter.plan || filter.marketing || filter.category || filter.since || filter.until) && <Btn kind="link" className="text-[13px]" onClick={() => setFilter(EMPTY_FILTER)}>Clear filters</Btn>}
             </div>
             <AdminTable caption={label} minWidth={640} rows={shown} rowKey={(r) => r.key} rowLabel={(r) => r.name || r.email} selection={selection}
               emptyText="Nobody matches these filters." columns={columns[people ? source : "profile"]} />

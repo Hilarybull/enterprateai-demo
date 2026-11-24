@@ -18,3 +18,7 @@ def test_the_rules_take_the_second_change_when_the_model_took_only_the_first():
     by_key = {"amount": {"key": "amount", "type": "number", "prefix": "£"}, "timing": {"key": "timing", "type": "choice"}}
     more = intake_turn._every_change("make it 45000 and within 3 months", "need_funding", by_key, {"amount"})
     assert [(i["slot"], i["value"]) for i in more] == [("timing", "Within 3 months")]
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

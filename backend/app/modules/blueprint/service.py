@@ -1446,6 +1446,17 @@ def _fmt_months(val: Any) -> str:
     return f"{n:.2f} months"
 
 
+def _fmt_margin_of_safety(val: Any) -> str:
+    """Simulation audit F9: break-even is shown as a margin of safety, never as months."""
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return "Not reachable at current prices and costs"
+    if n >= 0:
+        return f"{n:.1f}% (sales can fall this far before costs are not covered)"
+    return f"{n:.1f}% (sales must rise {abs(n):.1f}% to break even)"
+
+
 def _extract_currency_from_workspace_data(data: dict) -> str | None:
     iv = data.get("idea_validation")
     if isinstance(iv, dict):
@@ -1541,7 +1552,7 @@ def _validation_from_workspace_financials(data: dict) -> dict | None:
             "costs_monthly": costs,
             "net_monthly": net,
             "margin": margin,
-            "break_even_months": None,
+            "margin_of_safety_pct": None,
             "runway_months": None,
         }
     }
@@ -1558,7 +1569,7 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
     costs      = metrics.get("costs_monthly", 0.0)
     net        = metrics.get("net_monthly", 0.0)
     margin     = metrics.get("margin", 0.0)
-    break_even = metrics.get("break_even_months")
+    safety     = metrics.get("margin_of_safety_pct")
     runway     = metrics.get("runway_months")
 
     rows = [
@@ -1566,7 +1577,7 @@ def _render_validation_snapshot(*, currency: str, validation: dict | None) -> st
         ("Monthly costs", _fmt_money(float(costs or 0.0), currency)),
         ("Monthly net", _fmt_money(float(net or 0.0), currency)),
         ("Contribution margin", _fmt_pct(float(margin or 0.0))),
-        ("Break-even", _fmt_months(break_even)),
+        ("Margin of safety", _fmt_margin_of_safety(safety)),
         ("Runway", _fmt_months(runway)),
     ]
     return "\n".join([f"- {label}: {value}" for label, value in rows]).strip()
@@ -1695,7 +1706,7 @@ def _render_financial_projection(*, currency: str, validation: dict | None, star
     costs      = float(metrics.get("costs_monthly") or 0.0)
     net        = float(metrics.get("net_monthly") or 0.0)
     margin     = float(metrics.get("margin") or 0.0)
-    break_even = metrics.get("break_even_months")
+    safety     = metrics.get("margin_of_safety_pct")
     runway     = metrics.get("runway_months")
     parts: list[str] = []
     parts.append("## Baseline Snapshot")
@@ -1703,7 +1714,7 @@ def _render_financial_projection(*, currency: str, validation: dict | None, star
     parts.append(f"- Monthly costs: {_fmt_money(costs, currency)}")
     parts.append(f"- Monthly net: {_fmt_money(net, currency)}")
     parts.append(f"- Contribution margin: {_fmt_pct(margin)}")
-    parts.append(f"- Break-even: {_fmt_months(break_even)}")
+    parts.append(f"- Margin of safety: {_fmt_margin_of_safety(safety)}")
     parts.append(f"- Runway: {_fmt_months(runway)}")
     parts.append("")
     parts.append("## 12-Month Projection (Constant-assumption)")

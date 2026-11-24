@@ -255,6 +255,7 @@ export default function DirectoryProfilePage() {
   const claimLink = `/marketplace/claim/${b.canonical_slug || b.slug}${carried ? `?${carried}` : ""}`;
   const paused = b.trust.state === "disputed";
   const mine = Boolean(b.owner_controls) && !asVisitor;
+  const canViewViews = Boolean(b.can_view_profile_views ?? b.owner_controls) && !asVisitor;
 
   async function unlist() {
     if (!(await confirmDialog("Your profile will no longer be shown on the Marketplace. Your profile, offerings and settings are kept, and you can list it again at any time.",
@@ -496,7 +497,7 @@ export default function DirectoryProfilePage() {
                 )}
               </Panel>
             )}
-            {b.views && !asVisitor && <ProfileVisits views={b.views} mine={Boolean(b.owner_controls)} />}
+            {canViewViews && b.views && <ProfileVisits views={b.views} mine={mine} />}
             {!b.claimed ? (
               <Panel title={myClaim ? "Your claim" : "Is this your business?"}>
                 {/* While their claim is under review the claimant sees where it stands, not the pitch to claim it (QA R9). */}

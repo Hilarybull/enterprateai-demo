@@ -5,6 +5,7 @@ import { apiRequest, getApiBaseUrl } from "../api/client";
 import { accessLabel } from "../lib/plans";
 import { useAuthStore } from "../store/auth";
 import { Switch, TipsSwitch } from "./EmailPreferencesPage";
+import { resetCookieConsent } from "../lib/cookieConsent";
 
 // Account settings, in the dashboard's design: a header, a section list on the left and one
 // section at a time in a column up to 880px. On a phone the list is the page, and each section
@@ -248,7 +249,7 @@ export function PrivacySection() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-700 dark:text-slate-200">Cookie consent{" "}
             <span className={`${chip} ml-1 ${consent ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{consent ? "Given" : "Not given yet"}</span></p>
-          <button type="button" className={outline} onClick={() => { try { localStorage.removeItem("ea_cookie_consent"); } catch { /* asked again anyway */ } window.location.reload(); }}>Change</button>
+          <button type="button" className={outline} onClick={() => { resetCookieConsent(); window.location.reload(); }}>Change</button>
         </div>
         <p className="mt-2 text-[13px] text-slate-500">Choosing Change asks you again, so you can accept or refuse.</p>
       </Section>

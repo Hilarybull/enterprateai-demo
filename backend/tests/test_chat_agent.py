@@ -14,6 +14,25 @@ from test_agent import OWNER, Env, run
 USER = {"id": OWNER, "email": OWNER}
 
 
+def test_funding_specialist_receives_the_visible_chat_not_just_the_latest_message(claude, monkeypatch):
+    from app.modules.agent import converse
+    from app.modules.agent.router import AgentRequestIn
+    script, seen = claude
+    env = Env()
+    received = []
+    async def specialist(**kwargs):
+        received.append(kwargs)
+        return {"kind": "answer", "message": "You said March next year. I'll use that."}
+    monkeypatch.setattr(converse, "turn", specialist)
+    script.append(tool("work_on_funding", {"request": "I already answered"}))
+    history = [{"role": "user", "content": "I need NGN 1m for food by March next year."},
+               {"role": "assistant", "content": "When do you need the money?"}]
+    body = AgentRequestIn(business_id="A", text="I already answered", history=history)
+    out = run(chat_agent.turn(env.orch, USER, body, env.businesses["A"]["data"]))
+    assert received[0]["history"] == history and received[0]["text"] == "I already answered"
+    assert "March next year" in out["message"]
+
+
 def text(t):
     return Reply(text=t, provider="claude")
 
@@ -151,7 +170,7 @@ def test_other_areas_are_handed_over_without_a_charge(claude):
     assert env.meter.balances[OWNER] == 100
 
 
-def test_without_claude_the_chat_that_answers_today_answers(claude, monkeypatch):
+def test_provider_failure_returns_once_without_starting_another_legacy_model_loop(claude, monkeypatch):
     script, _seen = claude
     env = Env()
 
@@ -159,7 +178,7 @@ def test_without_claude_the_chat_that_answers_today_answers(claude, monkeypatch)
         raise RuntimeError("model unavailable")
     monkeypatch.setattr(chat_agent, "_ask", broken)
     monkeypatch.setattr("app.modules.agent.research._default_llm", lambda _uid: None)
-    assert say(env, "hello") is None
+    assert say(env, "hello")["kind"] == "unavailable"
     assert env.meter.balances[OWNER] == 100      # nothing charged for a reply that wasn't written
 
 
@@ -205,6 +224,23 @@ def test_one_conversation_reads_the_same_to_either_provider():
     tools = tool_chat.openai_tools(chat_agent.TOOLS)
     assert {t["name"] for t in tools} >= {"create_invoice", "work_on_funding"} and all(t["type"] == "function" for t in tools)
     assert next(t for t in tools if t["name"] == "create_invoice")["strict"] is True
+
+
+def test_slow_provider_is_cancelled_and_backup_answers_inside_the_same_turn(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(tool_chat, "PROVIDER_SECONDS", 0.01)
+    monkeypatch.setattr(tool_chat, "providers", lambda: ["claude", "openai"])
+    cancelled = []
+    async def slow(*args):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+    async def backup(*args): return Reply(text="The backup answered.", provider="openai")
+    monkeypatch.setattr(tool_chat, "_claude", slow)
+    monkeypatch.setattr(tool_chat, "_openai", backup)
+    result = run(tool_chat.chat(system="s", items=[], tools=[]))
+    assert cancelled == [True] and result.text == "The backup answered."
 
 
 def test_a_reply_brings_its_quick_actions_as_buttons(claude):

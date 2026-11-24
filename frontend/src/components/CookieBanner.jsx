@@ -1,34 +1,34 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-
-const COOKIE_KEY = "ea_cookie_consent";
+import { COOKIE_CONSENT_KEY, applyClarityConsent, readCookieConsent, saveCookieConsent } from "../lib/cookieConsent";
 
 export default function CookieBanner() {
   const [state, setState] = useState(null);
   const [analytics, setAnalytics] = useState(true);
 
   useEffect(() => {
-    try {
-      const val = localStorage.getItem(COOKIE_KEY);
-      setState(val ? "saved" : "pending");
-    } catch {
-      setState("pending");
+    function syncPreferences() {
+      const preferences = readCookieConsent();
+      setAnalytics(preferences?.analytics ?? true);
+      setState(preferences ? "saved" : "pending");
+      applyClarityConsent(preferences);
     }
+    function onStorage(event) {
+      if (event.key === COOKIE_CONSENT_KEY || event.key === null) syncPreferences();
+    }
+    syncPreferences();
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   function savePreferences() {
-    try { localStorage.setItem(COOKIE_KEY, JSON.stringify({ operational: true, analytics })); } catch {}
+    saveCookieConsent(analytics);
     setState("saved");
   }
 
   function acceptAll() {
-    try { localStorage.setItem(COOKIE_KEY, JSON.stringify({ operational: true, analytics: true })); } catch {}
+    saveCookieConsent(true);
     setState("saved");
-  }
-
-  function withdraw() {
-    try { localStorage.removeItem(COOKIE_KEY); } catch {}
-    setState("pending");
   }
 
   if (state === null) return null;

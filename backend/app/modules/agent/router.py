@@ -306,9 +306,50 @@ class AgentRequestIn(BaseModel):
     confirmed: bool = False
     locale: str = "en-GB"
     background: bool = False      # return as soon as the task exists; the caller watches it
+    defer_reply: bool = False
+    client_request_id: str | None = Field(default=None, max_length=80)
+    chat_id: str | None = Field(default=None, max_length=100)
     # Sent from a module's own Assistant (a funding case, a launch plan, the idea): its conversation answers, never another's
     page: str | None = Field(default=None, pattern="^(funding|launch|idea|customers|risks|pricing|procurement)$")
     case_id: str | None = Field(default=None, max_length=80)      # the plan's page it was sent from: the plan it is about (28 Oct)
+
+
+async def _pending_business_plan_purpose(body: AgentRequestIn, user: dict) -> str | None:
+    """If the latest message answers an open business-plan reader question, keep it in that task.
+
+    The words "investors" or "a bank" also look like funding goals when read on their own. The
+    recent exchange decides whether they are a purpose answer or a new request.
+    """
+    history = body.history or []
+    if not history or history[-1].role != "assistant":
+        return None
+    from app.modules.agent import goals
+    previous_plan_request = any(
+        (goals.resolve(text=turn.content) or {}).get("goal_key") == "create_business_plan"
+        for turn in history[-8:] if turn.role == "user"
+    )
+    if not previous_plan_request:
+        return None
+    classifier = get_orchestrator().rt.classifier
+    if not classifier.available:
+        return None
+    exchange = "\n".join(f"{turn.role}: {turn.content}" for turn in history[-8:])
+    try:
+        choice = await asyncio.wait_for(classifier.choose(
+            task=(
+                "Read the conversation. The user previously asked for a business plan. Decide whether their latest message "
+                "answers the assistant's still-open question about who will read/use that plan. Interpret their meaning "
+                "in context, including natural paraphrases. Return investors, lender, partners, planning, or "
+                "not_a_purpose_answer. Do not treat an answer to the plan question as a new funding-readiness request."
+            ),
+            text=f"Conversation:\n{exchange}\nLatest user message:\n{body.text or ''}",
+            options=["investors", "lender", "partners", "planning", "not_a_purpose_answer"],
+            user_id=user["id"],
+        ), timeout=6.0)
+        return choice if choice in {"investors", "lender", "partners", "planning"} else None
+    except Exception:      # noqa: BLE001 - normal routing remains available if semantic context is unavailable
+        logger.info("business-plan follow-up classification unavailable", exc_info=True)
+        return None
 
 
 class ReadinessAskIn(BaseModel):
@@ -371,12 +412,15 @@ def _card_kept(x: dict) -> dict:
         out.update({k: short(x.get(k), 200) for k in ("file_id", "name", "format", "business_id")})
     if x.get("type") == "readiness_tasks":
         out.update({"title": short(x.get("title")), "topic": short(x.get("topic")),
-                    "items": [{"title": short(item.get("title"), 300), "detail": short(item.get("detail"), 600)}
+                    "items": [{"title": short(item.get("title"), 300), "detail": short(item.get("detail"), 600), "section": short(item.get("section"), 80),
+                               "code": short(item.get("code"), 40) if item.get("code") else None, "review": item.get("review") if item.get("review") in ("documents", "attestation") else None}
                               for item in x.get("items") or [] if isinstance(item, dict)],
-                    "drafts": [{"label": short(d.get("label"), 300), "value": short(d.get("value"), 12000), "source": short(d.get("source"), 300)}
+                    "drafts": [{"label": short(d.get("label"), 300), "path": short(d.get("path"), 120), "value": short(d.get("value"), 12000), "source": short(d.get("source"), 300)}
                                for d in x.get("drafts") or [] if isinstance(d, dict)]})
     if x.get("type") == "progress":
         out["topic"] = short(x.get("topic"))
+    if x.get("type") == "options":
+        out.update({"title": short(x.get("title")), "message": short(x.get("message"), 600), "routes": x.get("routes") or []})
     if x.get("type") == "scenario":
         out.update({"title": short(x.get("title"), 120), "summary": short(x.get("summary"), 600), "months": x.get("months") if isinstance(x.get("months"), int) else None,
                     "worse": bool(x.get("worse")), "kind": short(x.get("kind"), 40),
@@ -501,8 +545,25 @@ async def download_chat_file(business_id: str, file_id: str, user=Depends(get_cu
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
+@router.get("/businesses/{business_id}/agent/replies/{job_id}")
+async def agent_reply_status(business_id: str, job_id: str, user=Depends(get_current_user)):
+    from app.modules.agent import reply_jobs
+    return await reply_jobs.status(get_orchestrator(), user, business_id, job_id)
+
+
+@router.get("/businesses/{business_id}/agent/readiness-items/{topic}/{case_id}")
+async def readiness_items(business_id: str, topic: str, case_id: str, user=Depends(get_current_user)):
+    if topic not in {"funding", "launch"}:
+        raise HTTPException(404, "Check not found.")
+    from app.modules.agent.readiness_chat import remaining_card
+    from app.core.supabase import read_cache
+    # get_subject applies the workspace, record and feature access checks.
+    with read_cache():
+        return await remaining_card(get_orchestrator(), user, business_id, topic, [], [{"case_id": case_id}])
+
+
 @router.get("/businesses/{business_id}/agent/readiness-work/{topic}/{case_id}")
-async def readiness_work_status(business_id: str, topic: str, case_id: str, user=Depends(get_current_user)):
+async def readiness_work_status(business_id: str, topic: str, case_id: str, options: bool = False, user=Depends(get_current_user)):
     if topic not in {"funding", "launch"}:
         raise HTTPException(404, "Check not found.")
     orch = get_orchestrator()
@@ -521,10 +582,10 @@ async def readiness_work_status(business_id: str, topic: str, case_id: str, user
     from app.modules.agent import research
     if not research.research_state(data, "need_funding" if topic == "funding" else topic, case_id=case_id).get("run_id"):
         return {"working": True}
-    from app.modules.agent.readiness_chat import remaining_card
-    card = await remaining_card(orch, user, business_id, topic, [], [{"case_id": case_id}])
+    from app.modules.agent.readiness_chat import remaining_card, funding_options_card
+    card = (await funding_options_card(orch, user, business_id, case_id) if options and topic == "funding"
+            else await remaining_card(orch, user, business_id, topic, [], [{"case_id": case_id}]))
     return {"working": False, "card": card}
-
 
 
 class SignOffIn(BaseModel):
@@ -902,6 +963,9 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             "code": "channel_not_allowed",
             "message": "That request channel is reserved for system integrations.",
         })
+    if body.defer_reply and body.text and not body.capability:
+        from app.modules.agent import reply_jobs
+        return await reply_jobs.start(get_orchestrator(), user, body, submit_request)
     # Procurement UI actions use the same specialist and workspace checks as chat.
     if body.page == "procurement" and body.business_id and not body.capability:
         from app.modules.agent import procurement
@@ -936,7 +1000,33 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         from app.modules.agent import procurement
         if procurement.should_route(body, conductor._thread(known, user["id"])):
             return _result(await procurement.run(get_orchestrator(), user, body, known))
-        if not body.page and conductor.enabled(known):
+        # Resolve a pending plan question before goal routing: "investors" is an audience answer here,
+        # not a fresh request to open Funding Readiness.
+        purpose = await _pending_business_plan_purpose(body, user)
+        if purpose:
+            try:
+                plan_reply = await get_orchestrator().submit(AgentRequest(
+                    requesting_actor_id=user["id"], business_id=body.business_id, source_channel=body.source_channel,
+                    raw_input=body.text, requested_capability="business_plan_draft", params={"purpose": purpose},
+                    locale=body.locale, history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]],
+                ), email=user.get("email"))
+            except AccessDenied as e:
+                raise _denied(e)
+            except Conflict as e:
+                raise _conflict(e)
+            return _result(plan_reply)
+        # Read saved plans and replies to the plans list before routing into an
+        # open funding conversation or treating a document noun as a creation request.
+        plan_reply = await _plans_turn(user, body)
+        if plan_reply is not None:
+            return _result(plan_reply)
+        # A plain-language business-plan request has a concrete workflow. Letting the free-form
+        # conductor decide first meant "business plan for investors" could be mistaken for Funding
+        # Readiness just because it mentions investors. The deterministic plan route below owns it.
+        resolved_goal = _goals_for_routing.resolve(text=body.text) or {}
+        resolved = resolved_goal.get("goal_key")
+        direct_plan_task = resolved == "create_business_plan" and (resolved_goal.get("provenance") or {}).get("rule") == "task_rule:business_plan_draft"
+        if not body.page and conductor.enabled(known) and not direct_plan_task:
             try:
                 led = await conductor.turn(get_orchestrator(), user, body, known)
             except converse.OutOfCredits as e:
@@ -947,28 +1037,67 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
         # A follow-up stays in it unless it is plainly another task ("create an invoice for Mark" goes to its own flow)
         from app.modules.agent import converse_check
         check_topics = {goal: name for name, goal in converse_check.GOALS.items()}
-        resolved = (_goals_for_routing.resolve(text=body.text) or {}).get("goal_key")
         other = resolved not in (None, "need_funding", "launch", "test_idea") and resolved != converse_check.GOALS.get(body.page or "")
         # A receipt, an invoice, a quotation or another document is its own task, never the open funding or launch chat's (the
         # owner, 29 Oct: "receipt" became "I'll attach it to your pot selling launch plan")
         from app.modules.agent.intent import _GOAL_RULES as _task_rules
         _TASKS = {"receipt_send", "new_invoice", "enquiry_to_quote", "quote_to_cash", "payment_followup", "new_contract", "new_proposal", "new_purchase_order", "business_plan_draft"}
-        if any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules) and not converse.wants_funding(body.text):
+        matched_task = any(cap in _TASKS and rx.search(body.text) for cap, rx in _task_rules)
+        semantic_task = None
+        if body.page and not direct_plan_task and not matched_task:
+            # A module Assistant must understand an answer in context too. For example, the owner may
+            # have asked for an investor plan, then answered a follow-up with "it's for investors".
+            # Classify the recent exchange, not just the last sentence or a fixed phrase list.
+            try:
+                recent = (body.history or [])[-8:]
+                exchange = "\n".join(
+                    f"{getattr(turn, 'role', '')}: {getattr(turn, 'content', '')}"
+                    for turn in recent
+                )
+                classifier = get_orchestrator().rt.classifier
+                candidates = [cap for cap in _TASKS if cap in WORKFLOWS]
+                if classifier.available and candidates:
+                    semantic_task = await asyncio.wait_for(
+                        classifier.choose(
+                            task=(
+                                f"The user is on the {body.page} readiness page. Read the recent conversation and latest "
+                                "message. Decide whether they are asking for a different supported business task, including "
+                                "when their latest message answers a question about an earlier request. Interpret meaning, "
+                                "not exact words. Choose a task only when the conversation clearly asks to do it; otherwise "
+                                "choose continue_current_page."
+                            ),
+                            text=f"Recent conversation:\n{exchange}\nLatest message:\n{body.text}",
+                            options=[*candidates, "continue_current_page"], user_id=user["id"],
+                        ),
+                        timeout=6.0,
+                    )
+            except Exception:      # noqa: BLE001 - semantic routing is an enhancement; the page flow remains available
+                logger.info("semantic page routing unavailable", exc_info=True)
+        semantic_plan_task = semantic_task == "business_plan_draft"
+        matched_task = matched_task or semantic_task in _TASKS
+        if direct_plan_task or semantic_plan_task or (matched_task and not converse.wants_funding(body.text)):
             other = True
             if body.page:
-                task_capability = next((cap for cap, rx in _task_rules if cap in _TASKS and rx.search(body.text)), None)
+                # Keep cross-task work in this same conversation. Redirecting to /agent created a
+                # fresh thread and discarded the question the user was answering.
+                task_capability = ("business_plan_draft" if direct_plan_task or semantic_plan_task else semantic_task)
+                if task_capability not in _TASKS:
+                    task_capability = next((cap for cap, rx in _task_rules if cap in _TASKS and rx.search(body.text)), None)
                 if task_capability in WORKFLOWS:
                     try:
-                        return _result(await get_orchestrator().submit(AgentRequest(
+                        task_reply = await get_orchestrator().submit(AgentRequest(
                             requesting_actor_id=user["id"], business_id=body.business_id,
                             source_channel=body.source_channel, raw_input=body.text,
-                            requested_capability=task_capability, params={}, locale=body.locale,
+                            requested_capability=task_capability,
+                            params={"existing_plan": "new"} if task_capability == "business_plan_draft" else {},
+                            locale=body.locale,
                             history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]],
-                        ), email=user.get("email")))
-                    except AccessDenied as exc:
-                        raise _denied(exc)
-                    except Conflict as exc:
-                        raise _conflict(exc)
+                        ), email=user.get("email"))
+                    except AccessDenied as e:
+                        raise _denied(e)
+                    except Conflict as e:
+                        raise _conflict(e)
+                    return _result(task_reply)
         # An earlier conversation opened from History carries on as it was (the owner, 27 Oct: "can't continue previous convo")
         earlier = [{"role": t.role, "content": t.content} for t in (body.history or [])[-12:]]
         was = next((k for t in reversed(earlier) if t["role"] == "user"
@@ -1172,6 +1301,15 @@ async def _converse(user: dict, body: AgentRequestIn) -> dict:
     """No task fits and the records don't answer it directly: the Agent answers in writing, from
     this business's labelled, plan-masked records and the conversation so far. This is the one
     place a model writes the reply, and the one place a chat answer is charged."""
+    # The same low-risk social boundary works with the conductor enabled or disabled. A greeting
+    # is conversation, not a business-data question and never an answer to a pending task field.
+    from app.modules.agent.chat_agent import social_reply
+    history = [{"role": getattr(t, "role", None) or (t.get("role") if isinstance(t, dict) else ""),
+                "content": getattr(t, "content", None) or (t.get("content") if isinstance(t, dict) else "")}
+               for t in (body.history or [])[-18:]]
+    social = social_reply(body.text, history)
+    if social:
+        return {"kind": "answer", "message": social, "actions": [], "conversational": True}
     from app.modules.business_assistant.schemas import BusinessAssistantChatRequest
     from app.modules.business_assistant.service import chat_about_business
     turns = [{"role": t.role, "content": t.content} for t in body.history[-18:]] + [{"role": "user", "content": body.text.strip()}]
@@ -1841,11 +1979,13 @@ async def _plans_turn(user: dict, body) -> dict | None:
     text = str(body.text or "").strip()
     said = [t.content or "" for t in reversed(body.history or []) if t.role == "assistant"][:3]
     after_list = any(_PLANS_ASKED in x for x in said)
-    goal = (_goals.resolve(text=text) or {}).get("goal_key")
+    resolution = _goals.resolve(text=text) or {}
+    goal = resolution.get("goal_key")
     if goal not in (None, "create_business_plan"):
         return None      # about something else ("Validate a new idea"): never an answer to the plans' question (the owner, 29 Oct)
     asked = goal == "create_business_plan"
-    if asked and _MAKE_NEW.search(text):
+    direct_plan_task = asked and bool(re.search(r"\b(?:create|draft|write|prepare|generate|make)\b.*\bbusiness plans?\b", text, re.I))
+    if asked and (_MAKE_NEW.search(text) or direct_plan_task):
         after_list = True      # "create a new business plan": a new one, whatever was said before (the owner, 28 Oct)
     if not asked and not after_list:
         return None
@@ -1862,14 +2002,18 @@ async def _plans_turn(user: dict, body) -> dict | None:
                 f"Sorry, I wasn't clear. {waiting} of your plans {'is' if waiting == 1 else 'are'} waiting for your review; you have {n} business plan{'s' if n != 1 else ''} in all: {names}."
                 + (f" And {n - 8} more." if n > 8 else "") + " Would you like to open one, or create a new one?",
                 "offers": [{"label": f"Open “{i['subject'][:32]}”", "to": i["to"]} for i in items[:3]] + [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]}
-    if after_list and (_NEW_PLAN.search(text) or (not asked and _named_in(text))):
+    if after_list and (_NEW_PLAN.search(text) or direct_plan_task or (not asked and _named_in(text))):
         # A new one, said: started, never asked again whether to open the old one (the owner, 27 Oct). Named with it, it is for that
-        name = _named_in(text)
-        params = {"existing_plan": "new", **({"plan_for": "new", "idea": name} if name else {})}
+        name = "" if direct_plan_task else _named_in(text)
+        purpose = "investors" if direct_plan_task and re.search(r"\binvestors?\b", text, re.I) else None
+        params = {"existing_plan": "new", **({"purpose": purpose} if purpose else {}), **({"plan_for": "new", "idea": name} if name else {})}
         return await get_orchestrator().submit(AgentRequest(
             requesting_actor_id=user["id"], business_id=body.business_id, source_channel="ui_action", raw_input=f"Business plan for {name}" if name else text,
             requested_capability="business_plan_draft", params=params, locale=body.locale,
             history=[{"role": t.role, "content": t.content} for t in (body.history or [])[-6:]]), email=user.get("email"))
+    if asked and not n and re.match(r"^(?:do|does|have|has|how many|what|which|show|list)\b", text, re.I):
+        return {"kind": "answer", "message": "You have no saved business plans yet.",
+                "offers": [{"label": "Create a new one", "capability": "business_plan_draft", "params": {"existing_plan": "new"}}]}
     if not asked or not n:
         return None
     shown = items[:5]

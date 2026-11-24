@@ -4,7 +4,7 @@ import pytest
 
 # QA D1: the suite never talks to a real database. backend/.env points at the dev Supabase; these
 # are cleared before the app is imported, and every test runs with no way to open a connection.
-for _name in ("SUPABASE_URL", "PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY", "SUPABASE_ANON_KEY"):
+for _name in ("SUPABASE_URL", "PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY", "SUPABASE_ANON_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "RESEND_API_KEY"):
     os.environ[_name] = ""
 
 from app.core.config import get_settings  # noqa: E402
@@ -64,6 +64,8 @@ def _no_local_qa_overrides(monkeypatch):
     monkeypatch.setattr(settings, "agent_max_active_runs_override", None)
     # No extra Marketplace moderators unless a test names them (a local .env may list QA accounts).
     monkeypatch.setattr(settings, "marketplace_moderators", "")
+    monkeypatch.setattr(settings, "marketplace_claim_invites_enabled", False)
+    monkeypatch.setattr(settings, "marketplace_claim_reminders_enabled", False)
     # The suite describes the directory with unclaimed profiles open to everyone; the tests for
     # the other visibility levels set theirs explicitly.
     monkeypatch.setattr(settings, "marketplace_unclaimed_visibility", "public")
@@ -84,6 +86,11 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "as_shipped: run with the shipped setting for the monthly task count (not applied)")
 
 
+@pytest.fixture(autouse=True)
+def isolated_telemetry_outbox(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEMETRY_OUTBOX_PATH", str(tmp_path / "telemetry.sqlite3"))
+
+
 def pytest_terminal_summary(terminalreporter):
     tests = sorted({t.split(" ")[0] for t in _ATTEMPTS})
     # Blocked, not failed: app code that reads optional data (a plan, a grant) carries on without it, as it would offline.
@@ -95,3 +102,20 @@ def _agent_conductor_off_unless_asked(monkeypatch):
     """The one-Agent switch in a developer's .env never changes what the tests check: off, unless a test turns it on."""
     from app.core.config import get_settings
     monkeypatch.setattr(get_settings(), "agent_conductor", False, raising=False)
+
+
+@pytest.fixture
+def rules_only_intake(monkeypatch):
+    """Legacy rule-reader journeys explicitly use the supported rules-only mode.
+
+    Model control, provider failures and retries are covered by the intake model
+    suites; these older journeys assert the deterministic reader's exact wording.
+    """
+    from app.modules.agent import goals
+    original = goals.add_inputs
+
+    async def add_inputs(*args, **kwargs):
+        kwargs["rules_only"] = True
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(goals, "add_inputs", add_inputs)

@@ -34,14 +34,14 @@ def test_an_idea_is_read_from_the_goal_text_and_the_first_question_is_the_custom
 
 def test_a_correction_changes_the_slot_it_refers_to_not_the_question_on_screen():
     store, s = go(FUNDING)
-    s = asyncio.run(goals.add_inputs(store, s, {"route": "actually make it 40k"}, message="actually make it 40k", asked="route"))
+    s = asyncio.run(goals.add_inputs(store, s, {"route": "actually make it 40k"}, message="actually make it 40k", asked="route", rules_only=True))
     assert s["inputs"]["amount"] == 40000 and "route" not in s["inputs"]
     assert goals.public(s)["agent_turn"]["ack"] == "Updated: £40,000." and s["provenance"]["amount"] == "user_corrected"
 
 
 def test_a_question_to_the_agent_is_answered_the_question_asked_again_and_nothing_saved():
     store, s = go("Help me price my cupcake boxes")
-    s = asyncio.run(goals.add_inputs(store, s, {"customer": "why do you need to know who I sell to?"}, message="why do you need to know who I sell to?", asked="customer"))
+    s = asyncio.run(goals.add_inputs(store, s, {"customer": "why do you need to know who I sell to?"}, message="why do you need to know who I sell to?", asked="customer", rules_only=True))
     assert "customer" not in s["inputs"] and "customer" not in (s.get("proposed") or {})
     reply = goals.public(s)["turns"][-1]
     assert reply["content"].startswith("Who buys it shapes the price") and reply["content"].endswith("So, who are you selling it to?") and reply["next"] == "customer"
@@ -50,7 +50,7 @@ def test_a_question_to_the_agent_is_answered_the_question_asked_again_and_nothin
 def test_the_thread_is_what_was_said_once_each_and_progress_counts_filled_slots():
     store, s = go("Help me price my cupcake boxes")
     msg = "HR teams in Abuja. I charge 30000 naira a box, it costs me 12000, about 40 boxes a month"
-    s = asyncio.run(goals.add_inputs(store, s, {"customer": msg}, message=msg, asked="customer"))
+    s = asyncio.run(goals.add_inputs(store, s, {"customer": msg}, message=msg, asked="customer", rules_only=True))
     turns = goals.public(s)["turns"]
     assert [t["role"] for t in turns] == ["user", "assistant", "user", "assistant"]
     assert turns[2]["content"] == msg                                                # the owner's message exactly as typed, one bubble

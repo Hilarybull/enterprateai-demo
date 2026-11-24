@@ -333,5 +333,5 @@ async def my_profile_views(
     workspace_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ) -> dict:
-    return await get_profile_views(user_id=user["id"], workspace_id=workspace_id)
+    return await get_profile_views(user_id=user["id"], workspace_id=workspace_id, user_email=user.get("email"))
 

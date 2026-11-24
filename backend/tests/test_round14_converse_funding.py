@@ -635,6 +635,56 @@ def test_replace_it_with_nothing_asked_is_left_to_the_conversation(talk):
     assert out["message"] == "What would you like to replace?" or "replace" in out["message"].lower()
 
 
+def test_landing_deadline_survives_replace_even_when_model_omits_it(talk):
+    env, ask, model, cid = talk
+    words = "I need funding: NGN 1m for food, a loan, March next year. The business is trading."
+    model.replies.append({"say": ASKED, "change": {"target_amount": 1000000, "currency": "NGN", "purpose": "food", "route_preference": "loan"}})
+    ask(words)
+    out = ask("Replace it")
+    from datetime import datetime, timezone
+    expected = f"{datetime.now(timezone.utc).year + 1}-03-31"
+    assert _case(env, cid)["receipt_date"] == expected
+    assert "When do you need the money" not in out["message"]
+
+
+def test_landing_deadline_survives_confirmation_recovered_from_history(talk):
+    env, ask, model, cid = talk
+    words = "I need NGN 1m for food, a loan, March next year."
+    model.replies.append({"say": ASKED})
+    ask(words)
+    env.businesses["A"]["data"].pop("agent_conversations", None)
+    out = ask("Replace it", history=[{"role": "user", "content": words}, {"role": "assistant", "content": ASKED}])
+    assert _case(env, cid)["receipt_date"].endswith("-03-31")
+    assert "When do you need the money" not in out["message"]
+
+
+@pytest.mark.parametrize("words,expected", [
+    ("I need it in March next year.", "2027-03-31"),
+    ("By Feb 2028", "2028-02-29"),
+    ("September this year", "2026-09-30"),
+    ("Within 3 months", "2027-02-28"),
+])
+def test_funding_deadline_is_read_from_the_supplied_answer(words, expected):
+    from datetime import date
+    assert converse.said_in_words(words, date(2026, 11, 23))["receipt_date"] == expected
+
+
+def test_an_earlier_landing_answer_can_repair_a_missing_date_after_confirmation(talk):
+    from datetime import datetime, timezone
+    env, ask, model, cid = talk
+    run(service_for_case(env, cid, {"target_amount": "1000000", "purpose": "food", "currency": "NGN", "route_preference": "loan", "receipt_date": None}))
+    deadline = f"{datetime.now(timezone.utc).year + 1}-03-31"
+    model.replies.append({"say": "You said March next year. I'll use that.", "change": {"receipt_date": deadline}})
+    history = [{"role": "user", "content": "I need NGN 1m for food, a loan, March next year."},
+               {"role": "assistant", "content": "Replace or update it?"},
+               {"role": "user", "content": "Replace it"},
+               {"role": "assistant", "content": "When do you need the money?"}]
+    out = ask("I already answered", history=history)
+    assert _case(env, cid)["receipt_date"] == deadline
+    assert "When do you need the money?" not in out["message"]
+    assert "updated" in out["changed"]
+
+
 def test_a_funding_message_in_the_agent_centre_returns_its_result_without_redirecting(talk):
     """Specialists answer inside the main thread; opening the workspace is optional."""
     env, ask, model, cid = talk

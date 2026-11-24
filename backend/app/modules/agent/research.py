@@ -1971,8 +1971,11 @@ def funding_options(i: dict, items: list[dict], limit: int = 3) -> list[dict]:
     """One scheme per card (the owner's QA, 21 Oct): each checked source of a route finding is its own option, titled by
     what it describes, with the sentence about it, "Fits" with a reason, and when it was last confirmed open."""
     out: list[dict] = []
+    chosen = ROUTE_OF_ANSWER.get(str(i.get("route") or i.get("route_preference") or "").strip().lower())
     said_before: set[str] = set()
     for x in items:
+        if chosen and x.get("topic") != chosen:
+            continue
         if not (str(x.get("topic") or "").startswith("route_") and x.get("value") and x.get("sources")):
             continue
         sentences = [t.strip() for t in re.split(r"(?<=[.;])\s+", str(x["value"])) if t.strip()]

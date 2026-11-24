@@ -3,9 +3,19 @@ read by every other tool. Before revenue exists, the growth tools work from them
 "none on record"; Launch Evidence reports the same score and coverage the review page shows; Readiness Refresh runs when
 asked, and when the figures behind a review change it scores the review again as a new version."""
 import copy
+from datetime import date
+import pytest
 
 from app.modules.agent import planned      # §2 replaced the review re-scoring tests: see test_s2_one_assessment.py
 from test_agent import OWNER, Env, run
+
+@pytest.fixture(autouse=True)
+def fixed_planned_figure_date(monkeypatch):
+    # These fixtures describe an accepted review in October; freshness must not depend
+    # on the calendar date on the machine running the suite.
+    original = planned.figures
+    monkeypatch.setattr(planned, "figures", lambda data, today=None: original(data, today or date(2026, 10, 14)))
+
 
 ADOPTED_AT = "2026-10-13T20:00:00+00:00"
 SHARED = {

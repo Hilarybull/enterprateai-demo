@@ -101,6 +101,7 @@ export function Wording({ kind, onSaved, onClose }) {
   const [form, setForm] = useState({ subject: kind.subject || "", body: kind.body || "", button_label: kind.button_label || "" });
   const [plain, setPlain] = useState(kind.body || "");      // the message as words, for the spacing check
   const editor = useRef(null);
+  const buttonInput = useRef(null);
   const variables = kind.variables.map((key) => ({ key, label: titleOf(key), hint: KIND_VARIABLES[key] || "Filled in for each email" }));
   const [preview, setPreview] = useState(null);
   const [state, setState] = useState({});
@@ -117,6 +118,20 @@ export function Wording({ kind, onSaved, onClose }) {
     setState({ busy: true });
     try { await apiRequest(`/admin/emails/kinds/${kind.key}/wording`, "DELETE"); onSaved(`${kind.label}: back to the product's wording.`); }
     catch (e) { setState({ problem: problemOf(e).message }); }
+  }
+  function insertButtonVariable(key) {
+    const input = buttonInput.current;
+    if (!key || !input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const token = `{${key}}`;
+    const label = input.value.slice(0, start) + token + input.value.slice(end);
+    if (label.length > input.maxLength) return;
+    setForm((f) => ({ ...f, button_label: label }));
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(start + token.length, start + token.length);
+    });
   }
   const errors = { ...(preview?.errors || {}), ...(state.errors || {}) };
   const field = (key, label, el) => (
@@ -136,10 +151,18 @@ export function Wording({ kind, onSaved, onClose }) {
           <div>
             <RichEmailEditor ref={editor} variables={variables} initialHtml={asEditorHtml(form.body)} variablesNote="Filled in for each email as it is sent. You can type these in the subject too."
               onChange={({ html, text }) => { setForm((f) => ({ ...f, body: html })); setPlain(text); }} />
-            <VariableSpacing texts={[form.subject, plain]} />
+            <VariableSpacing texts={[form.subject, plain, form.button_label]} />
             {errors.body && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{errors.body}</span>}
           </div>
-          {kind.required.includes("link") && field("button", "Button label", <input className={`mt-1 ${inputClass}`} value={form.button_label} maxLength={80} onChange={(e) => setForm({ ...form, button_label: e.target.value })} />)}
+          {kind.required.includes("link") && (
+            <div className="space-y-1">
+              {field("button", "Button label", <input ref={buttonInput} className={`mt-1 ${inputClass}`} value={form.button_label} maxLength={80} onChange={(e) => setForm({ ...form, button_label: e.target.value })} />)}
+              <select aria-label="Insert variable into button label" className={inputClass} value="" onChange={(e) => insertButtonVariable(e.target.value)}>
+                <option value="">Insert a variable into the button label</option>
+                {variables.filter(({ key }) => key !== "link").map(({ key, label }) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </div>
+          )}
           {state.problem && <p role="alert" className="text-[12px] font-medium text-rose-600">{state.problem}</p>}
           <div className="flex flex-wrap gap-2">
             <Btn kind="primary" disabled={state.busy || Object.keys(preview?.errors || {}).length > 0} onClick={save}>{state.busy ? "Saving…" : "Save wording"}</Btn>

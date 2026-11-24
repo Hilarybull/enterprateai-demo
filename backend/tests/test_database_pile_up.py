@@ -125,3 +125,14 @@ def test_stale_connection_retry_can_recover_on_a_fresh_connection(monkeypatch):
         return "saved"
 
     assert REAL_WITH_CLIENT(query, max_attempts=2) == "saved"
+
+
+def test_saturated_pool_refuses_extra_connections_instead_of_causing_a_connection_storm(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    monkeypatch.setattr(sb, "_slots", SimpleNamespace(acquire=lambda **kwargs: False))
+    make = Mock()
+    monkeypatch.setattr(sb, "_make_pool_client", make)
+    with pytest.raises(httpx.PoolTimeout):
+        REAL_WITH_CLIENT(lambda client: "unexpected")
+    make.assert_not_called()

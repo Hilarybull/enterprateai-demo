@@ -14,6 +14,8 @@ import GoogleSignInButton from "./GoogleSignInButton";
 import { DURATION, prefersReducedMotion, useReducedMotion, useTypewriter } from "../lib/motion";
 import { DEMO_SECONDS } from "../config/agentDemo";
 import AgentShell, { AgentAvatar, AgentIdentity } from "./agent/AgentShell";
+import ThinkingProgress from "./agent/ThinkingProgress";
+import { carriedText } from "../lib/goalHandover";
 
 export { AgentAvatar };
 
@@ -209,11 +211,12 @@ export function useGoalFlow({ inApp = false } = {}) {
       const ws = chatWorkspace();
       const said = body.text || [...(offer.goals || []), ...(offer.tasks || [])].find((g) => g.key === body.key)?.label || "";
       if (!inApp && here && ws.business_id && said) {
-        const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: ws.business_id, text: said }, { timeoutMs: 12000 }).catch(() => null);
+        const asked = await apiRequest("/agent/readiness-question", "POST", { business_id: ws.business_id, text: said }, { timeoutMs: 3000 }).catch(() => null);
         // Funding and launch are conversations, in the chat panel (the owner, 27 Oct); any other case question, the dashboard Agent
         if (asked?.converse || asked?.kind) { navigate(`/agent?chat=${encodeURIComponent(said)}`); return true; }
       }
-      const startTask = (check) => apiRequest("/task-sessions", "POST", { ...body, currency: body.currency || chatCurrency(), ...ws }, check);
+      const clientRequestId = globalThis.crypto?.randomUUID?.() || `start-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const startTask = (check) => apiRequest("/task-sessions", "POST", { ...body, client_request_id: clientRequestId, currency: body.currency || chatCurrency(), ...ws }, { ...check, timeoutMs: 60000 });
       try {
         keep(await retryOnce(async () => startTask(here ? undefined : await humanCheck())));
       } catch (e) {
@@ -243,9 +246,9 @@ export function useGoalFlow({ inApp = false } = {}) {
     const mid = messageId || `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     try {
       // `said`: the reply as typed and the question it answers, read in full by the Agent (every slot it gives a value for).
-      // A slow reply never holds the chat: 20 seconds a try, tried again once on a 5xx or a timeout, then "Try again".
+      // Leave room for provider failover before offering a retry.
       keep(await retryOnce(() => apiRequest(`/task-sessions/${session.id}/inputs`, "POST", { answers, ...(confirm ? { confirm: true } : {}), ...(said || {}), client_message_id: mid },
-        { timeoutMs: 20000 })));
+        { timeoutMs: 60000 })));
       setFailed(null);
       return true;
     } catch {
@@ -263,22 +266,17 @@ export function useGoalFlow({ inApp = false } = {}) {
     try { localStorage.removeItem(sessionKey); } catch { /* ignore */ }
     putTaskInAddress("");
   }, [sessionKey, inApp]);
-  const [opening, setOpening] = useState("");      // a funding case or launch plan being set up, in the chat
-  const openingFor = useRef("");
+  const opening = "";
   /** Straight on, for someone signed in; or to the sign-in page for someone who says they have an account.
    *  The address is never put in a link: only where to come back to. */
   const carryOn = useCallback(() => {
     const next = startPath(session.id);
     markCardSignIn(session.id);
     if (here && OPENS_A_CASE[session.goal_key]) {
-      // Funding and launch are set up here in the chat, never on a page of their own (the owner, 2 Nov: "this is old")
-      if (openingFor.current === session.id) return "";
-      openingFor.current = session.id;
-      setOpening(OPENS_A_CASE[session.goal_key]);
-      openCase(session.id).then((out) => {
-        if (out?.choose) { openingFor.current = ""; setSession({ ...out.choose, questions: out.choose.questions || [] }); return; }      // Replace or update: asked here
-        navigate(out?.to || next, { replace: true });
-      }).catch(() => navigate(next, { replace: true })).finally(() => setOpening(""));
+      const businessId = session.business_id || chatWorkspace().business_id;
+      if (!businessId) { navigate(next); return ""; }
+      useWorkspaceStore.getState().setWorkspaceId(businessId);
+      navigate(`/agent?chat=${encodeURIComponent(carriedText(session))}`, { replace: true });
       return "";
     }
     if (here) { markStraightOn(session.id); navigate(next); return ""; }
@@ -390,18 +388,6 @@ const OPENS_A_CASE = { need_funding: "Opening your funding case…", launch: "Op
 
 /** Everything said: the case made and opened on its Assistant tab, the currency they typed kept. { to }, or { choose } when
  *  the workspace already has a different need, or nothing when only the task's own page can carry on. */
-async function openCase(id) {
-  const path = `/task-sessions/${id}`;
-  await apiRequest(`${path}/attach-user`, "POST", { confirm: true }, { timeoutMs: 20000 });
-  let now = await apiRequest(`${path}/resume`, "POST", chatWorkspace(), { timeoutMs: 30000 });
-  if (now?.missing?.length) return null;
-  if (now?.currency_question) now = await apiRequest(`${path}/currency`, "POST", { choice: "keep" }, { timeoutMs: 20000 });      // they typed it: never asked again
-  const done = await apiRequest(`${path}/prepare`, "POST", { confirmed: false }, { timeoutMs: 120000 });
-  if (done?.business_id) useWorkspaceStore.getState().setWorkspaceId(done.business_id);
-  if (done?.next === "choose" && done.choose) return { choose: done };
-  const to = String(done?.handoff?.to || "");
-  return done?.handoff?.subject_id && /^\/(funding|launch)\//.test(to) ? { to: `${to.split("?")[0]}?tab=assistant` } : null;
-}
 
 function chatWorkspace() {
   try {
@@ -769,6 +755,11 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   const otherInput = useRef(null);
   const [editing, setEditing] = useState(() => new Set());
   const [answeredHere, setAnsweredHere] = useState(() => new Set());
+  const activeGoal = useRef(session?.goal_key);
+  activeGoal.current = session?.goal_key;
+  const activeControl = useRef(session?.agent_turn?.control?.action);
+  activeControl.current = session?.agent_turn?.control?.action;
+  useEffect(() => { setAnsweredHere(new Set()); }, [session?.id, session?.goal_key]);
   // The question a reply is being read for: the card stays on it until the server answers (the owner's QA, 17 Oct: the next
   // question showed while the reply was still being read).
   const [awaitingKey, setAwaitingKey] = useState(null);
@@ -937,7 +928,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
       setDraftValue("");
       return;
     }
-    setDraftValue(kept === "unknown" ? "" : kept);      // "not known" is never typed back into the box
+    setDraftValue(kept === "unknown" || (!changing && currentQuestion.type === "choice") ? "" : kept);
   }, [currentQuestion?.key, currentQuestion?.default]);      // eslint-disable-line react-hooks/exhaustive-deps
   const step = session?.next;
   useEffect(() => { if (step !== "identity") { setRecapOk(false); setChangingRecap(false); } }, [step]);
@@ -959,7 +950,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
   }, [said_turns]);      // eslint-disable-line react-hooks/exhaustive-deps
   const lastAgent = said_turns && said_turns.length && said_turns[said_turns.length - 1].role === "assistant" ? said_turns[said_turns.length - 1] : null;
   const past = said_turns ? (lastAgent ? said_turns.slice(0, -1) : said_turns) : null;
-  const agentLine = lastAgent && currentQuestion && lastAgent.next === currentQuestion.key ? lastAgent.content : null;
+  const agentLine = lastAgent && (turn?.control || (currentQuestion && lastAgent.next === currentQuestion.key)) ? lastAgent.content : null;
   const recapStep = step === "identity" || (here && step === "prepare");
   // A change asked for at the recap (the owner's QA, 21 Oct): that one question again, with its chips and the composer.
   const reasking = recapStep && Boolean(currentQuestion);
@@ -1060,6 +1051,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
 
   function submitQuestion(nextValue = draftValue, typed = nextValue === draftValue) {
     const activeQuestion = currentQuestion;
+    const submittedGoal = session?.goal_key;
     if (!activeQuestion) return;
     let answerValue = nextValue ?? "";
     const asTyped = typed && typeof answerValue === "string" ? answerValue.trim() : "";
@@ -1097,7 +1089,9 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
     setAwaitingText(asTyped || chipWords || String(nextValue ?? ""));
     Promise.resolve(answer(answers, questions.some((question) => question.proposed),
       asTyped ? { message: asTyped, asked: activeQuestion.key } : chipWords ? { picked: chipWords, asked: activeQuestion.key } : null)).then((ok) => {
-      if (ok !== false) setAnsweredHere((had) => new Set([...had, activeQuestion.key]));      // never advanced on a failure
+      if (!asTyped && ok !== false && activeGoal.current === submittedGoal && !["respond", "clarify"].includes(activeControl.current)) {
+        setAnsweredHere((had) => new Set([...had, activeQuestion.key]));      // an aside or an old task's reply cannot answer this question
+      }
     }).finally(() => { setAwaitingKey(null); setAwaitingText(""); });
   }
 
@@ -1398,13 +1392,16 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                   {turn?.confirm?.[0]?.slot === currentQuestion.key ? turn.confirm[0].question : currentQuestion.label}
                 </>}
               </div>
+              {turn?.retry && !busy && !awaitingKey && <button type="button" onClick={() => answer({}, false, turn.retry)}
+                className="min-h-11 rounded-lg border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50">Try again</button>}
+              {turn?.retry && busy && !awaitingKey && <div data-reading><ThinkingProgress label="Thinking…" /></div>}
               {awaitingKey && awaitingText && (
                 <>
                   <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-tr-sm bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white" data-sending>{awaitingText}</div>
-                  <p role="status" className="text-[12px] text-slate-500" data-reading>Reading your reply…</p>
+                  <div data-reading><ThinkingProgress label="Thinking…" /></div>
                 </>
               )}
-              {currentQuestion.type === "choice" && currentQuestion.multi ? (
+              {!busy && !awaitingKey && !turn?.confirm?.length && !["respond", "clarify"].includes(turn?.control?.action) && (currentQuestion.type === "choice" && currentQuestion.multi ? (
                 // Several at once (the owner, 25 Oct: "can be multichoice"): each a toggle, then Done; one that excludes the rest
                 // ("I don't have customers yet", "Not sure") is sent on its own at once
                 <div className="space-y-2" data-question-multi>
@@ -1448,7 +1445,7 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
                     </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
           )}
 
@@ -1537,14 +1534,14 @@ export function GoalTaskCard({ flow, placement = "column", compact = false }) {
 
         {/* Always in reach, however long the card: the one next step, and the way out. */}
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-b-2xl border-t border-slate-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-task-footer>
-          {askingNow && currentQuestion && !currentQuestion.multi ? (
+          {askingNow && currentQuestion ? (
             <div className="flex w-full items-center gap-2" data-composer>
               {currentQuestion.prefix
                 ? <span className="min-w-0 flex-1"><MoneyInput aria-label={currentQuestion.label} value={draftValue} currency={shownCurrency} onChange={setDraftValue} className={`${inputCls} w-full`} /></span>
                 : currentQuestion.type === "date"
                 ? <UkDateInput aria-label={currentQuestion.label} value={draftValue} onChange={setDraftValue} className={`${inputCls} flex-1`} />
-                : <input ref={reply} aria-label={currentQuestion.label} placeholder={currentQuestion.type === "choice" ? "Pick one above, or type your reply" : "Type your reply"}
-                    value={!reasking && [...(currentQuestion.options || []), ...(currentQuestion.chips || [])].some((o) => String(o.value) === String(draftValue)) ? "" : draftValue}
+                : <input ref={reply} aria-label={currentQuestion.label} placeholder="Type your reply"
+                    value={draftValue}
                     onChange={(e) => setDraftValue(e.target.value)}
                     inputMode={currentQuestion.type === "number" ? "decimal" : undefined} type="text" className={`${inputCls} min-w-0 flex-1`} />}
               <button type="submit" disabled={busy} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-[#1F5BFF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#1747CC] disabled:opacity-60">

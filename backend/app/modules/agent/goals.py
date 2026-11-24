@@ -697,8 +697,9 @@ _LAUNCH_ASK_AGAIN = {
 def _placeholder(key: str, value: Any) -> bool:
     """A launch answer that names nothing ("customers", "unknown", "readiness of my product")."""
     from app.modules.readiness.service import _vague
+    from app.modules.agent.intake_turn import generic_offering
     text = str(value or "").strip()
-    return bool(text) and (_vague(text) or (key == "sell" and bool(_LAUNCH_WORDS.fullmatch(text))))
+    return bool(text) and (_vague(text) or (key == "sell" and (bool(_LAUNCH_WORDS.fullmatch(text)) or generic_offering(text))))
 
 
 def _launch_facts(text: str) -> dict[str, Any]:
@@ -711,7 +712,7 @@ def _launch_facts(text: str) -> dict[str, Any]:
         from app.modules.readiness.service import _vague
         # "launch readiness", "my business": not what is launched (the owner's QA, 23 Oct): asked instead
         vague = re.fullmatch(r"(?:it|this|that|something|(?:a |my )?product(?:/service)?|(?:a |my )?service|(?:a |my )?business)", what, re.I) \
-            or _vague(what) or _LAUNCH_WORDS.fullmatch(what)
+            or _placeholder("sell", what)
         if len(what) >= 3 and not vague and not re.match(r"(?:in|on|at|by|next|this|before|soon)\b", what, re.I):
             out["sell"] = what
             # A service: said so, or an activity done for someone ("dog walking", "car valeting", "tutoring").
@@ -951,8 +952,8 @@ class SupabaseSessionStore(SessionStore):
         if self._no_events:
             return
         try:
-            from app.core.supabase import sb_insert
-            await sb_insert("goal_events", {"name": event["name"], "session_id": event.get("session_id"), "entry_mode": event.get("entry_mode"),
+            from app.shared.telemetry_outbox import enqueue
+            await enqueue("goal_events", {"name": event["name"], "session_id": event.get("session_id"), "entry_mode": event.get("entry_mode"),
                                             "goal_key": event.get("goal_key"), "capability": event.get("capability"),
                                             "resolution_class": event.get("resolution_class"), "signed_in": bool(event.get("signed_in")), "created_at": event["at"]})
         except Exception as e:      # noqa: BLE001 - analytics never gets in the way of the task
@@ -1185,6 +1186,17 @@ def _conversation(session: dict) -> dict:
             "questions_avoided": len(understood)}
 
 
+def retry_message(session: dict) -> dict | None:
+    """Offer recovery for the latest failed turn, including chats saved before retry controls existed."""
+    if session.get("pending_retry"):
+        return session["pending_retry"]
+    turns, failures = session.get("turns") or [], session.get("fallbacks") or []
+    if len(turns) >= 2 and failures and failures[-1].get("at") == turns[-1].get("at") and turns[-1].get("role") == "assistant" \
+            and turns[-2].get("role") == "user" and failures[-1].get("why") not in ("plain_answer", "turn_cap", "no_model"):
+        return {"message": turns[-2]["content"], "asked": turns[-1].get("next")}
+    return None
+
+
 def public(session: dict) -> dict:
     """What the browser is given. The visitor's own answers come back to them; nothing else is in a session."""
     res, answers, missing = session["resolution"], session.get("inputs") or {}, _missing(session)
@@ -1210,7 +1222,7 @@ def public(session: dict) -> dict:
         # Their own first name, when they have said it ("I'm Munah"): the page greets them with it and doesn't ask again.
         "first_name": (session.get("visitor") or {}).get("first_name") or None,
         # The Agent's last turn: what it captured, said back in one line, and its next question (or a check to confirm).
-        "agent_turn": session.get("agent_turn"),
+        "agent_turn": {**session["agent_turn"], **({"retry": retry_message(session)} if retry_message(session) else {})} if session.get("agent_turn") else None,
         # The thread as it happened: each message as typed, each Agent reply once. Nothing made up for slots never asked.
         "turns": [{k: t.get(k) for k in ("role", "content", "next") if t.get(k) is not None} for t in (session.get("turns") or [])[-MAX_TURNS:]],
         "questions_avoided": len([k for k in (session.get("from_message") or session.get("proposed") or [])]) + int(session.get("questions_avoided") or 0),
@@ -1435,7 +1447,7 @@ def _opening_turns(session: dict, text: str | None, key: str | None, now: dateti
     return [{"role": "user", "content": said[:1000], "at": now.isoformat()}, _agent_turn(session, ack, now)]
 
 
-async def start(store: SessionStore, *, text: str | None, key: str | None, entry_mode: str, clock=None, currency: str | None = None) -> dict:
+async def start(store: SessionStore, *, text: str | None, key: str | None, entry_mode: str, clock=None, currency: str | None = None, session_id: str | None = None, start_context: dict | None = None) -> dict:
     now = _now(clock)
     began = time.perf_counter()
     from app.shared import people
@@ -1443,7 +1455,7 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
     res = resolve(text=text, key=key)
     if text and not key and res.get("resolution_class") == NO_MATCH:
         res = await _understood_goal(text, res)
-    session = {"id": secrets.token_urlsafe(24), **({"visitor": visitor, "name": visitor["full_name"]} if visitor else {}), "state": INITIATED, "entry_mode": entry_mode if entry_mode in ("business_goal", "quick_task", "free_text") else "free_text",
+    session = {"id": session_id or secrets.token_urlsafe(24), **({"visitor": visitor, "name": visitor["full_name"]} if visitor else {}), "state": INITIATED, "entry_mode": entry_mode if entry_mode in ("business_goal", "quick_task", "free_text") else "free_text",
                "goal_key": res.get("goal_key"), "original_goal": res["original_goal"], "resolution": res, "inputs": {},
                "proposed": (await proposed_from(text or "", res.get("goal_key"), owner_name=(visitor or {}).get("full_name")) if not key else {}),
                "user_id": None, "business_id": None,
@@ -1473,6 +1485,7 @@ async def start(store: SessionStore, *, text: str | None, key: str | None, entry
     # The opening message and the first question are saved with the session (the owner's QA, 21 Oct: they were added after
     # the save, so the first answer loaded a thread without them and both disappeared).
     session["turns"] = _opening_turns(session, text, key, now)
+    session.update(start_context or {})
     await store.put(session)
     await track(store, "goal_or_task_submitted", session, clock=clock)
     await track(store, "goal_outcome_resolved", session, clock=clock)
@@ -1684,27 +1697,85 @@ def _recap_choice(slots: list[dict], message: str) -> tuple[str, str, str] | Non
     return hits[0] if len(hits) == 1 else None
 
 
+_TASK_DRAFT_FIELDS = (
+    "goal_key", "original_goal", "resolution", "inputs", "proposed", "provenance", "from_message",
+    "rejected", "pending_confirm", "recent_slots", "subject_choice", "choose", "case_changes",
+    "handoff", "result", "first_value", "prepared", "prepare_error", "currency", "said_currency", "currency_confirmed",
+    "currency_question", "confirm", "problem", "execution_id",
+)
+
+
+def _switch_task(session: dict, target: str, message: str, now: datetime, intro: str = "") -> None:
+    """Switch draft context, preserving the thread, identity and each task's own answers.
+
+    This never prepares work, grants access, or writes a business record. Those
+    remain behind the existing review, authentication and credit checks.
+    """
+    from copy import deepcopy
+    drafts = session.setdefault("paused_tasks", {})
+    current = session.get("goal_key")
+    drafts[current] = deepcopy({k: session[k] for k in _TASK_DRAFT_FIELDS if k in session})
+    restored = drafts.pop(target, None)
+    currency = session.get("currency")
+    for k in _TASK_DRAFT_FIELDS:
+        session.pop(k, None)
+    if restored:
+        session.update(restored)
+    else:
+        session.update({"goal_key": target, "original_goal": message, "resolution": resolve(key=target),
+                        "inputs": {}, "proposed": {}, "currency": currency, "handoff": None, "execution_id": secrets.token_urlsafe(24)})
+    session["state"] = COLLECTING
+    q = _asking(session)
+    reply = intro.strip() or ("Let's pick up where we left off." if restored else "We can work on that here.")
+    reply += " " + (q["label"] if q else "Your draft answers are ready to review.")
+    session["agent_turn"] = {"ack": "", "answer": None, "reply": reply, "intent": "change_goal", "confirm": [],
+                             "next": (q or {}).get("key"), "control": {"action": "switch", "target": target}}
+    _event(session, "ConversationTaskSwitched", now, previous_goal=current, goal_key=target)
+
+
 async def _take_turn(session: dict, answers: dict, message: str, asked: str | None, now: datetime, rules_only: bool = False) -> dict:
     """The Agent's intake turn on the reply as typed (intake_turn): every slot it gives a value for, checked; the
     acknowledgement and the next question; the record of what was read, for audit. The answers are returned to keep."""
     from app.modules.agent import intake_turn
+    retry = retry_message(session)
+    if retry and retry.get("message") == message and retry.get("asked") == asked:
+        # Replace the failed exchange instead of appending the same user message
+        # again, and keep the failure out of the model's conversational context.
+        turns = session.get("turns") or []
+        if len(turns) >= 2 and turns[-2].get("role") == "user" and turns[-2].get("content") == message and turns[-1].get("role") == "assistant":
+            session["turns"] = turns[:-2]
+    session.pop("pending_retry", None)
     slots = _questions(session)
     known = {**(session.get("proposed") or {}), **(session.get("inputs") or {})}
     pending = session.pop("pending_confirm", None)
-    if pending and re.match(r"^\s*(?:yes|yeah|yep|yup|correct|right|that'?s right|exactly|sure|ok(?:ay)?)\b", message, re.I):
-        # "Just to check: ₦30,000 a box?" "Yes": the value it asked about is the owner's now.
-        out = {k: v for k, v in answers.items() if k != asked}
-        out.update({c["slot"]: c["value"] for c in pending})
-        session["agent_turn"] = {"ack": "Thanks, noted.", "reply": "", "answer": None, "confirm": [], "intent": "answer", "next": None}
-        return out
+    affirmative = bool(re.fullmatch(r"\s*(?:yes|yeah|yep|yup|correct|right|that'?s right|exactly|sure|ok(?:ay)?)(?:[, ]+(?:correct|exactly|that'?s right))?[.!\s]*", message, re.I))
+    repeated = pending and len(pending) == 1 and intake_turn._norm(message) == intake_turn._norm(pending[0].get("value"))
+    confirmed = {c["slot"]: c["value"] for c in pending or []} if pending and (affirmative or repeated) else {}
     turns = session.setdefault("turns", [])
     visitor = session.get("visitor") or {}
-    r = await intake_turn.turn(goal_key=session.get("goal_key") or "", message=message, slots=slots, known=known,
+    if confirmed:
+        merged = {**known, **confirmed}
+        next_question = intake_turn.next_slot(slots, merged)
+        ack = "Thanks, noted."
+        r = {"values": confirmed, "corrected": [], "confirm": [], "currency": None, "intent": "answer", "answer": None,
+             "ack": ack, "reply": " ".join(t for t in (ack, intake_turn.template_question(next_question)) if t),
+             "next": (next_question or {}).get("key"), "records": [], "ai_turn": False, "fallback_used": None,
+             "control": {"action": "continue", "target": None}}
+    else:
+        r = await intake_turn.turn(goal_key=session.get("goal_key") or "", message=message, slots=slots, known=known,
                                provenance=session.get("provenance") or {}, asked=asked, history=turns[-6:],
                                owner_name=visitor.get("full_name") or visitor.get("first_name"), currency=session.get("currency"),
-                               ai_turns=intake_turn.MAX_AI_TURNS if rules_only else int(session.get("ai_turns") or 0),
-                               recent=list(session.get("recent_slots") or []))
+                               ai_turns=0 if rules_only else int(session.get("ai_turns") or 0), llm=None if rules_only else "default",
+                               recent=list(session.get("recent_slots") or []), paused_tasks=list(session.get("paused_tasks") or {}))
     turns.append({"role": "user", "content": message[:1000], "at": now.isoformat()})
+    control = r.get("control") or {}
+    if control.get("action") == "switch":
+        _switch_task(session, control["target"], message, now, intro=r["reply"])
+        r = {**r, **session["agent_turn"]}
+        asked, answers = None, {}
+    elif control.get("action") in ("respond", "clarify"):
+        # The browser sends its entire draft form. An aside must not confirm it.
+        answers = {}
     if not asked and not r["values"] and _summed_up(session):
         # A change typed at the recap ("actually make it a loan"): read against each choice question, kept when one option
         # alone says it, and acknowledged as that change (the owner's QA, 21 Oct: "Thanks, that's useful evidence").
@@ -1714,7 +1785,7 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
             r = {**r, "values": {slot: value}, "corrected": [slot], "intent": "answer", "next": None,
                  "ack": (label[:1].lower() + label[1:] if re.match(r"(?i)^(?:a|an|investors)\b", label) else f"{'an' if label[:1].lower() in 'aeiou' else 'a'} {label.lower()}") if slot == "route" else label}
     out = {k: v for k, v in answers.items() if k != asked}
-    if r["intent"] == "answer" and intake_turn.rule_intent(message) == "answer" and asked and asked in answers and asked not in r["values"]             and not r["confirm"] and not r["values"]:
+    if not r.get("control") and r["intent"] == "answer" and intake_turn.rule_intent(message) == "answer" and asked and asked in answers and asked not in r["values"]             and not r["confirm"] and not r["values"]:
         out[asked] = answers[asked]      # an answer nothing else read: as given (the form's own readers check it); never a question or an aside
     session["recent_slots"] = (list(session.get("recent_slots") or []) + [k for k in r["values"] if r["values"][k] != intake_turn.UNKNOWN])[-6:]
     out.update(r["values"])
@@ -1727,10 +1798,14 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
         session["pending_confirm"] = r["confirm"]
     if asked and (asked in r["values"] or r["intent"] in ("question_to_agent", "not_sure", "off_topic", "change_goal")):
         (session.get("rejected") or {}).pop(asked, None)      # handled: the earlier "Please enter a number" no longer applies
-    session["agent_turn"] = {"ack": r["ack"], "reply": r["reply"], "answer": r["answer"], "confirm": r["confirm"], "intent": r["intent"], "next": r["next"]}
+    session["agent_turn"] = {"ack": r["ack"], "reply": r["reply"], "answer": r["answer"], "confirm": r["confirm"], "intent": r["intent"], "next": r["next"],
+                             **({"control": r["control"]} if r.get("control") else {})}
+    if r.get("retry"):
+        session["pending_retry"] = r["retry"]
+        session["agent_turn"]["retry"] = r["retry"]
     session["ai_turns"] = int(session.get("ai_turns") or 0) + (1 if r["ai_turn"] else 0)
     # PRD 16: the AI cost of each intake, in tokens (priced when the intake completes, from the model's own rate).
-    session["ai_tokens"] = int(session.get("ai_tokens") or 0) + max((int(rec.get("tokens") or 0) for rec in r["records"]), default=0)
+    session["ai_tokens"] = int(session.get("ai_tokens") or 0) + max(int(r.get("tokens") or 0), max((int(rec.get("tokens") or 0) for rec in r["records"]), default=0))
     session["questions_avoided"] = int(session.get("questions_avoided") or 0) + max(0, len([k for k in r["values"] if k != asked]))
     session.setdefault("turn_records", []).extend(r["records"][:20])
     session["turn_records"] = session["turn_records"][-120:]
@@ -1847,7 +1922,7 @@ async def add_inputs(store: SessionStore, session: dict, answers: dict, clock=No
         # The Agent's reply, set against what was actually kept (its next question is the session's own next one).
         last = session["turns"][-1]
         q = _asking(session)
-        if (session.get("agent_turn") or {}).get("confirm"):
+        if (session.get("agent_turn") or {}).get("confirm") or (session.get("agent_turn") or {}).get("control"):
             pass
         elif q and last.get("next") != q["key"]:
             t = session.get("agent_turn") or {}
@@ -2079,10 +2154,11 @@ def end_of_month(said: Any, today: date | None = None) -> str | None:
     from app.modules.agent.intake_turn import resolve_when
     today = today or date.today()
     text = resolve_when(str(said or "").strip(), today)
-    m = re.search(rf"\b({_MONTHS})\b\s+(\d{{4}})", text, re.I)
+    m = re.search(rf"\b({_MONTHS})\b\s+(\d{{4}}|next year|this year)\b", text, re.I)
     if m:
-        month = [x.lower() for x in calendar.month_name].index(m.group(1).lower())
-        year = int(m.group(2))
+        month = next(i for i in range(1, 13) if calendar.month_name[i].lower().startswith(m.group(1).lower()[:3]))
+        period = m.group(2).lower()
+        year = today.year + 1 if period == "next year" else today.year if period == "this year" else int(period)
     else:
         n = re.search(r"\b(?:(?:within|in)\s+(?:\d+\s*(?:to|-|–)\s*)?|\d+\s*(?:to|-|–)\s*)(\d+|a|one)\s+months?\b", text, re.I)
         if not n:
@@ -2756,7 +2832,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                 # First value is the result, not an empty case: the readiness check is run now. It is
                 # worked out by fixed rules from what is on record, so it uses no AI Credits.
                 try:
-                    checked = await svc.request_assessment(user_id, session["business_id"], kind, made["id"], idempotency_key=f"goal:{session['id']}"[:120], email=email)
+                    checked = await svc.request_assessment(user_id, session["business_id"], kind, made["id"], idempotency_key=f"goal:{session.get('execution_id') or session['id']}"[:120], email=email)
                     result = checked.get("result") or {}
                     if checked.get("execution_status") == "succeeded":
                         actions = [x for x in await svc.store.list("actions", session["business_id"], subject_id=made["id"], limit=300)
@@ -2792,7 +2868,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
             # goal is marked, once, and the Agent waives the charge for the one task started from it.
             if config.FIRST_TASK_FREE and session.get("new_workspace") and capability in config.FREE_FIRST_TASKS:
                 def _free(d: dict) -> None:
-                    d.setdefault("onboarding", {}).setdefault("free_first_task", {"reference": f"goal:{session['id']}", "capability": capability, "at": now.isoformat()})
+                    d.setdefault("onboarding", {}).setdefault("free_first_task", {"reference": f"goal:{session.get('execution_id') or session['id']}", "capability": capability, "at": now.isoformat()})
                 await orch.rt.business.mutate(session["business_id"], _free)
             out = await orch.submit(AgentRequest(requesting_actor_id=user_id, business_id=session["business_id"], source_channel="text",
                                                  raw_input=_request_text(session), requested_capability=capability, background=True,
@@ -2800,7 +2876,7 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                                                          **({"answers": _answers_for_task(session)} if _answers_for_task(session) else {}),
                                                          # who the business plan is for, as the plan task reads it
                                                          **({"purpose": str(a["purpose"])} if session.get("goal_key") == "create_business_plan" and a.get("purpose") else {})},
-                                                 source_reference=f"goal:{session['id']}", confirmed=confirmed,
+                                                 source_reference=f"goal:{session.get('execution_id') or session['id']}", confirmed=confirmed,
                                                  essential_handoff=True), email=email)
             if out.get("kind") == "needs_confirmation":
                 # P0.5c: its price first ("Write your business plan. 40 credits. You have 90."), Start or Not now; nothing started.

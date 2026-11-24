@@ -96,7 +96,7 @@ def _note_worked() -> None:
 # the database gateway refuse new ones for a while, so when every connection is busy a
 # query waits its turn (a fraction of a second) instead of opening another.
 _POOL_SIZE = max(1, int(os.environ.get("SUPABASE_POOL_SIZE") or 10))          # connections kept open, and the most queries in flight at once
-_POOL_WAIT = 15.0        # seconds a query waits for a free connection before using a one-off
+_POOL_WAIT = 2.0         # reject saturation promptly instead of opening extra connections
 _POOL_IDLE_MAX = 240.0   # seconds; a connection left idle longer is assumed closed by the server
 # Oldest on the left, most recently used on the right. Requests take from the right, so
 # the same few connections stay busy; the keep-warm task refreshes from the left.
@@ -130,7 +130,7 @@ def _make_pool_client() -> SyncPostgrestClient:
         f"{settings.supabase_url.rstrip('/')}/rest/v1",
         headers={"apikey": key, "Authorization": f"Bearer {key}"},
         # Fail fast when a connection can't be opened, rather than holding the request for 20s.
-        timeout=httpx.Timeout(20.0, connect=6.0),
+        timeout=httpx.Timeout(8.0, connect=4.0, pool=2.0),
         verify=_shared_ssl_context(),  # httpx accepts a ready-made context here
     )
 
@@ -173,15 +173,15 @@ def _take_idle(older_than: float, limit: int) -> list[SyncPostgrestClient]:
     return taken
 
 
-def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int = 3, base_delay: float = 1.0):
+def _with_client(fn: Callable[[SyncPostgrestClient], Any], *, max_attempts: int = 2, base_delay: float = 0.25):
     """Run fn(client) on a pooled client, retrying transient connection errors."""
     if time.monotonic() < _down["until"]:
         raise httpx.ConnectTimeout("The database is recovering.")      # said as any other "couldn't reach the database"
-    # One of the pool's turns. If none comes free in time, carry on with a one-off
-    # connection rather than fail the request.
+    # Keep concurrency bounded: an occupied pool must not cause a new connection
+    # storm while the database is already struggling.
     have_slot = _slots.acquire(timeout=_POOL_WAIT)
     if not have_slot:
-        logger.warning("Supabase pool busy for %.0fs; using a one-off connection", _POOL_WAIT)
+        raise httpx.PoolTimeout("The database is busy. Please retry shortly.")
     try:
         last_exc: Exception | None = None
         attempt = 0
@@ -238,7 +238,7 @@ async def keep_pool_warm(interval: float = 30.0, idle_after: float = 90.0) -> No
             if first:
                 first = False
                 await asyncio.gather(
-                    *[anyio.to_thread.run_sync(_refresh, None) for _ in range(_POOL_SIZE)],
+                    *[anyio.to_thread.run_sync(_refresh, None) for _ in range(min(2, _POOL_SIZE))],
                     return_exceptions=True,
                 )
             # Refresh idle connections two at a time, so the pool is never emptied while

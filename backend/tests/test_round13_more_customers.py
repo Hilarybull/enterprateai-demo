@@ -68,7 +68,7 @@ def test_the_dashboard_and_agent_centre_open_the_same_chat(world, monkeypatch):
     _records(env, who, monkeypatch)
     for text in ("I need customers", "I need more customers", "help me find customers"):
         out = client.post("/agent/requests", json={"business_id": "A", "text": text, "source_channel": "text"}).json()
-        assert out["kind"] == "check" and out["goal_key"] == "more_customers", (text, out)
+        assert out["kind"] == "answer" and out["conversational"], (text, out)
     assert env.meter.charges == []
 
 
@@ -166,3 +166,7 @@ def test_every_do_all_run_and_free_check_is_in_the_agent_centre_history(world, m
     # Ended research is in Recently Completed too, a newer run's replaced one not (the owner, 28 Oct)
     done = {r["id"] for r in others if r.get("kind") == "research"}
     assert "research:c1:done" not in done and {"research:c2:done", "research:f1:done"} <= done
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

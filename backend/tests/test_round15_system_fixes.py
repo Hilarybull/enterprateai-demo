@@ -108,7 +108,7 @@ def test_funding_options_come_as_cards_never_a_block_of_text(talk, monkeypatch):
     env, ask, model, cid = talk
     found = {"at": "2026-10-30", "options": [{"title": "Start Up Loans", "route": "loan", "text": "Government-backed loans of up to £25,000 for new businesses.",
                                               "fits": {"fit": "Likely", "why": "UK business, under 3 years"}, "source": {"url": "https://www.startuploans.co.uk", "publisher": "startuploans.co.uk"}}]}
-    monkeypatch.setattr(converse, "options_found", lambda data: found)
+    monkeypatch.setattr(converse, "options_found", lambda data, **_kwargs: found)
     out = ask("Which loans or grants fit my case?")
     card = next(c for c in out["cards"] if c["type"] == "options")["options"][0]
     assert card["title"] == "Start Up Loans" and card["fit"] == "Likely" and card["amount"] == 25000 and card["url"].startswith("https://")

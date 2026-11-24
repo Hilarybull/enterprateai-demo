@@ -25,9 +25,9 @@ const RESEARCH = { id: "rr_1", goal: "launch", status: "review", before: { score
     { id: "i1", topic: "channels", criterion: "route", label: "Launch channels used by similar businesses", value: "Local Facebook groups and Nextdoor", state: "researched", confidence: 0.7,
       sources: [{ title: "How cleaners find clients", url: "https://example.org/cleaners", date: "Mar 2026" }] },
     { id: "i2", topic: "comparable_prices", criterion: "offer", label: "Comparable prices", value: "About £15 to £20 an hour", state: "estimated", confidence: 0.4, sources: [] }] };
-const ADOPTED = { ...RESEARCH, status: "adopted", dataset_version: 1, after: { score: 43, score_label: "out of 100", evidence_coverage: 55, blockers: 1 } };
+const ADOPTED = { ...RESEARCH, status: "adopted", dataset_version: 1, assessment: {score: 43, evidence_coverage: 55, classification: "not_ready"}, after: { score: 43, score_label: "out of 100", evidence_coverage: 55, blockers: 1 } };
 
-function mockApi({ quote, start = () => ({ started: true, research: RESEARCH }), review = () => ({ research: ADOPTED, result: RESULT }) } = {}) {
+function mockApi({ quote, start = () => ({ started: true, research: RESEARCH }), review = () => ({ research: ADOPTED, assessment: ADOPTED.assessment, result: RESULT }) } = {}) {
   const calls = [];
   globalThis.fetch = vi.fn(async (url, init = {}) => {
     const path = String(url);
@@ -78,8 +78,9 @@ describe("PF3 the premium research, walked through in the browser", () => {
     await click(within(review).getByRole("button", { name: "Use what I accepted" }));
     expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { i1: { decision: "accept", pressed: true }, i2: { decision: "reject" } } });
     const done = document.querySelector("[data-research-adopted]");
-    expect(done.querySelector("[data-score-change]").textContent).toBe("38 → 43 out of 100");
-    expect(done.querySelector("[data-coverage-change]").textContent).toBe("45% → 55%");
+    expect(done.querySelector("[data-assessment-summary]").textContent).toContain("Score43");
+    expect(done.querySelector("[data-assessment-summary]").textContent).toContain("Evidence coverage55%");
+    expect(done.querySelector("[data-score-change]")).toBeNull(); // one canonical assessment, no second readiness score
     expect(screen.queryByTestId("where")).toBeNull();                             // still on the page
   });
 
@@ -102,11 +103,11 @@ describe("PF3 the premium research, walked through in the browser", () => {
         routes: [{ route: "loan", name: "Loan", what_it_is: "Borrowed and repaid with interest.", local: "Start Up Loans: £500 to £25,000", sources: [{ title: "Start Up Loans", url: "https://www.startuploans.co.uk/", date: "2026" }], preferred: true }],
         evidence_gaps: [{ criterion: "team", gap: "Who will deliver the plan is not recorded", how_to_close: "Name who will deliver the plan." }],
         executive_summary: "Home cleaning, for busy households. This is a draft from your own answers and figures. It makes no claim about the chance of being funded." } };
-    const adopted = { ...withQuestions, status: "adopted", dataset_version: 1, after: { score: 52, score_label: "out of 100", evidence_coverage: 70 },
+    const adopted = { ...withQuestions, status: "adopted", dataset_version: 1, assessment: {score: 52, evidence_coverage: 70, classification: "conditionally_ready"}, after: { score: 52, score_label: "out of 100", evidence_coverage: 70 },
       changes: [{ criterion: "control", label: "Launch control", before: "unknown", after: "met" }, { criterion: "process", label: "Operational process", before: "unknown", after: "unknown" },
         { criterion: "cash", label: "Cash preparation", before: "unknown", after: "partially_met" }] };
     const calls = mockApi({ quote: () => ({ ...ALLOWED(), cost: 0, not_connected: "Research isn't connected yet. What can be worked out from your figures, and asked, still is; nothing is charged." }),
-      start: () => ({ started: true, research: withQuestions }), review: () => ({ research: adopted, result: RESULT }) });
+      start: () => ({ started: true, research: withQuestions }), review: () => ({ research: adopted, assessment: adopted.assessment, result: RESULT }) });
     await toResult();
     await click(document.querySelector("[data-do-all]")      /* the one research button, under the steps (the owner, 20 Oct) */);
     const confirm = await screen.findByRole("dialog", { name: "Before I start" });      // a modal on the page (F-2, F-3)
@@ -145,8 +146,11 @@ describe("PF3 the premium research, walked through in the browser", () => {
     expect(calls.find((c) => /\/review$/.test(c.path)).body).toEqual({ decisions: { q1: { decision: "answer", value: "Hilary" }, q2: { decision: "skip", value: "" }, e1: { decision: "accept", pressed: true } } });
     expect(document.querySelector("[data-research-adopted] [data-funding-drafts]")).toBeTruthy();      // after adopting: the draft again
     await click(within(document.querySelector("[data-research-adopted]")).getByRole("button", { name: "Check or review inputs" }));
-    const rows = [...document.querySelectorAll("[data-criteria-changes] tbody tr")].map((r) => r.textContent);
-    expect(rows).toEqual(["Launch controlNeed from youMet", "Operational processNeed from youNeed from you", "Cash preparationNeed from youPartly met"]);
+    const summary = document.querySelector("[data-assessment-summary]");
+    expect(summary.textContent).toContain("Conditionally ready");
+    expect(summary.textContent).toContain("Score52");
+    expect(summary.textContent).toContain("Evidence coverage70%");
+    expect(document.querySelector("[data-criteria-changes]")).toBeNull(); // readiness uses its own checklist, not a second criterion table
   });
 });
 

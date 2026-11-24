@@ -202,11 +202,13 @@ def create_app() -> FastAPI:
         # Open database connections now and keep them open, so requests don't each pay
         # for a new one.
         if settings.supabase_url and settings.supabase_service_role_key:
+            from app.shared.telemetry_outbox import start as start_telemetry
+            start_telemetry()
             app.state.supabase_warm_task = asyncio.create_task(keep_pool_warm())
         # Agent workflows wait on due dates and payments; this wakes the ones that are due.
         start_agent_scheduler()
         start_tender_scheduler()
-        start_activation_scheduler()      # does nothing each run unless ACTIVATION_EMAILS_ENABLED is set
+        start_activation_scheduler()      # welcome events and activation campaigns have independent switches
         if settings.supabase_url and settings.supabase_service_role_key:
             from app.modules.marketplace.directory_router import start_workspace_sweep
             start_workspace_sweep()
@@ -218,6 +220,10 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown():
+        from app.modules.agent.reply_jobs import drain as drain_replies
+        await drain_replies()
+        from app.shared.telemetry_outbox import stop as stop_telemetry
+        await stop_telemetry()
         stop_agent_scheduler()
         stop_tender_scheduler()
         stop_activation_scheduler()

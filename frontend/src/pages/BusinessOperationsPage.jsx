@@ -1,3 +1,4 @@
+import { EXPENSE_TYPES, expenseType, expenseCategory, expenseParty } from "../lib/expenses";
 import UkDateInput from "../components/UkDateInput";
 import { pipelineCounts } from "../lib/pipelineCounts";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
@@ -371,11 +372,11 @@ function Field({ label, children }) {
   );
 }
 
-function TextInput({ value, onChange, placeholder, type = "text" }) {
-  if (type === "date") return <UkDateInput value={value || ""} onChange={onChange}      // dd/mm/yyyy (QA R7)
+function TextInput({ value, onChange, placeholder, type = "text", ...props }) {
+  if (type === "date") return <UkDateInput {...props} value={value || ""} onChange={onChange}      // dd/mm/yyyy (QA R7)
     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />;
   return (
-    <input type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    <input {...props} type={type} value={value || ""} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
   );
 }
@@ -838,7 +839,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-function RecordModal({ mode, type, record, customers, catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
+export function RecordModal({ mode, type, record, customers, employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
@@ -858,6 +859,11 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
       id: record?.id || newRecordId(),
       customer_name: record?.customer_name || record?.recipient || record?.counterparty_name || "",
       vendor_name: record?.vendor_name || record?.party_name || record?.counterparty_name || "",
+      expense_type: expenseType(record),
+      expense_type_other: record?.expense_type_other || (expenseType(record) === "other" ? record?.category || "" : ""),
+      employee_id: record?.employee_id || "",
+      employee_name: record?.employee_name || "",
+      category: record?.category || "",
       party_name: record?.party_name || record?.customer_name || record?.vendor_name || "",
       party_type: record?.party_type || "customer",
       reference: ref || nextRef || "",
@@ -923,12 +929,27 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
     setValidationError(null);
     if (type === "invoice" && !form.customer_name?.trim()) { setValidationError("Customer name is required."); return; }
     if (type === "quote" && !form.customer_name?.trim()) { setValidationError("Customer name is required."); return; }
-    if (type === "expense" && !form.vendor_name?.trim() && !form.party_name?.trim()) { setValidationError("Vendor / supplier name is required."); return; }
+    if (type === "expense") {
+      if (form.expense_type === "staff_payments" && !form.employee_id) { setValidationError("Select the employee this payment is for."); return; }
+      if (form.expense_type === "other" && !form.expense_type_other.trim()) { setValidationError("Enter the type of expense."); return; }
+      if (form.expense_type !== "staff_payments" && !form.vendor_name?.trim() && !form.party_name?.trim()) { setValidationError("Vendor / supplier name is required."); return; }
+    }
     if (type === "contract") {
       if (!form.party_name?.trim()) { setValidationError(`${form.party_type === "vendor" ? "Vendor" : "Customer"} name is required.`); return; }
     }
     if (type !== "invoice" && type !== "quote" && !form.amount && type !== "contract") { setValidationError("Amount is required."); return; }
-    const saved = { ...form, updated_at: new Date().toISOString() };
+    const saved = { ...record, ...form, updated_at: new Date().toISOString() };
+    if (type === "expense") {
+      saved.category = expenseCategory(form.expense_type, form.expense_type_other);
+      if (form.expense_type === "staff_payments") {
+        saved.employee_name = employees.find(e => e.id === form.employee_id)?.name || form.employee_name;
+        saved.party_name = saved.employee_name;
+        saved.party_type = "employee";
+        saved.vendor_name = "";
+      } else {
+        saved.employee_id = ""; saved.employee_name = "";
+      }
+    }
     if (type === "invoice" || type === "quote") {
       const items = saved.line_items || [];
       const subtotal = items.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.unit_price) || 0), 0);
@@ -955,7 +976,7 @@ function RecordModal({ mode, type, record, customers, catalogueProducts = [], al
 
   async function downloadPDF() {
     const ref = refLabel || "";
-    const party = form.customer_name || form.vendor_name || form.party_name || "—";
+    const party = type === "expense" ? expenseParty(form, employees) : form.customer_name || form.vendor_name || form.party_name || "—";
     const amt = Number(form.amount || 0);
     const cur = form.currency || wsIso;
     const fmt = n => new Intl.NumberFormat(undefined, { style: "currency", currencyDisplay: "narrowSymbol", currency: cur }).format(n);
@@ -1618,10 +1639,15 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
           </>) : null}
           {type === "expense" && (<>
-            <Field label="Vendor / Supplier">
-              {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> :
-                <TextInput value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
+            <Field label="Expense type">
+              {isView ? <div className="text-sm font-medium text-slate-900">{EXPENSE_TYPES.find(([key]) => key === form.expense_type)?.[1]}{form.expense_type === "other" ? ` · ${form.expense_type_other}` : ""}</div> : <select aria-label="Expense type" className="ea-input" value={form.expense_type} onChange={e => setForm(f => ({ ...f, expense_type: e.target.value, party_name: "", vendor_name: e.target.value === "staff_payments" ? "" : f.vendor_name }))}>{EXPENSE_TYPES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
             </Field>
+            {form.expense_type === "other" && !isView ? <Field label="What type of expense?"><TextInput aria-label="Other expense type" value={form.expense_type_other} onChange={set("expense_type_other")} placeholder="For example, training or insurance" /></Field> : null}
+            {form.expense_type === "staff_payments" ? <Field label="Employee">
+              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employees.find(emp => emp.id === e.target.value)?.name || "" }))}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
+            </Field> : <Field label="Vendor / Supplier">
+              {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> : <TextInput aria-label="Vendor / Supplier" value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
+            </Field>}
             <Field label="Reference">
               {isView ? <div className="text-sm text-slate-900">{form.reference || "—"}</div> :
                 <TextInput value={form.reference} onChange={set("reference")} placeholder="EXP-001" />}
@@ -1630,8 +1656,8 @@ ${form.notes ? `<!-- NOTES -->
               {isView ? <div className="text-sm text-slate-900">{form.description || "—"}</div> :
                 <TextInput value={form.description} onChange={set("description")} placeholder="What was this expense for?" />}
             </Field>
-            <Field label="Amount (£)">
-              {isView ? <div className="text-lg font-bold text-slate-900">£{Number(form.amount || 0).toLocaleString()}</div> :
+            <Field label={`Amount (${form.currency || wsIso})`}>
+              {isView ? <div className="text-lg font-bold text-slate-900">{formatCurrency(Number(form.amount || 0), form.currency || wsIso)}</div> :
                 <TextInput type="number" value={form.amount} onChange={set("amount")} placeholder="0.00" />}
             </Field>
             <div className="grid grid-cols-2 gap-3">
@@ -1836,6 +1862,7 @@ export default function BusinessOperationsPage() {
   const [rfqRespondTarget, setRfqRespondTarget] = useState(null);
   const [rfqAgent, setRfqAgent] = useState({});      // request id -> where the Agent has got to with it
   const [customers, setCustomers] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [catalogueProducts, setCatalogueProducts] = useState([]);
   const [recordModal, setRecordModal] = useState(null);
 
@@ -1936,6 +1963,7 @@ export default function BusinessOperationsPage() {
     setRfqRequests(Array.isArray(fin.rfq_requests) ? fin.rfq_requests : []);
     setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
+    setEmployees(Array.isArray(cat.employees) ? cat.employees : []);
     setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
     setRecordsIn(true);
   }
@@ -2289,7 +2317,7 @@ export default function BusinessOperationsPage() {
         status: i.status || "—", date: invDate(i)?.slice(0,10) || "—"
       })),
       ...expenses.filter(e => inRange(expDate(e))).map(e => ({
-        type: "Expense", party: e.vendor_name || e.party_name || "—",
+        type: "Expense", party: expenseParty(e, employees),
         reference: getRef(e, null),
         description: e.description || e.category || "—",
         amount: Number(e.total_amount || e.amount || 0), currency: e.currency || wsCurrency || "",
@@ -3352,7 +3380,7 @@ export default function BusinessOperationsPage() {
                   cols={["Type", "Party", "Reference", "Amount", "Date", "Status", "Linked Record", "Action"]}
                   rows={[
                     ...invoices.map(i => ({ ...i, _t: "Invoice", _party: i.party_name || i.customer_name || i.recipient || "—", _linked: i.contract_id || "—", amount: i.total_amount || i.amount })),
-                    ...expenses.map(e => ({ ...e, _t: "Expense", _party: e.vendor_name || e.party_name || e.counterparty_name || "—", _linked: e.contract_id || "—", amount: e.total_amount || e.amount || e.price })),
+                    ...expenses.map(e => ({ ...e, _t: "Expense", _party: expenseParty(e, employees), _linked: e.contract_id || "—", amount: e.total_amount || e.amount || e.price })),
                   ].sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0)).slice(0, 8).map(t => ({
                     Type: <StatusPill status={t._t} />,
                     Party: t._party,
@@ -3420,7 +3448,7 @@ export default function BusinessOperationsPage() {
                 <TableSection title="Expenses" searchPlaceholder="Search expenses..."
                   cols={["Vendor", "Reference", "Description", "Amount", "Status", "Date", "Action"]}
                   rows={[...expenses].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).map(e => ({
-                    Vendor: e.vendor_name || e.party_name || "—",
+                    Vendor: expenseParty(e, employees),
                     Reference: e.reference || e.id?.slice(0, 8) || "—",
                     Description: e.description || e.title || "—",
                     Amount: <AmountCell value={Number(e.total_amount || e.amount || e.price || 0)} currency={e.currency} doc={e} />,
@@ -3651,7 +3679,7 @@ export default function BusinessOperationsPage() {
                   cols={["Type", "Party", "Amount", "Date", "Status"]}
                   rows={[
                     ...invoices.map(i => ({ _t: "Invoice", _party: i.customer_name || i.party_name || "—", _amt: Number(i.total_amount || i.amount || 0), _cur: i.currency, date: i.date || i.created_at, status: i.status, _paymentType: i.payment_type })),
-                    ...expenses.map(e => ({ _t: "Expense", _party: e.vendor_name || e.party_name || "—", _amt: Number(e.total_amount || e.amount || e.price || 0), _cur: e.currency, date: e.date || e.created_at, status: e.status })),
+                    ...expenses.map(e => ({ _t: "Expense", _party: expenseParty(e, employees), _amt: Number(e.total_amount || e.amount || e.price || 0), _cur: e.currency, date: e.date || e.created_at, status: e.status })),
                   ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 20).map(r => ({
                     Type: <StatusPill status={r._t} />,
                     Party: r._party,
@@ -3729,6 +3757,7 @@ export default function BusinessOperationsPage() {
           type={recordModal.type}
           record={recordModal.record}
           customers={customers}
+          employees={employees}
           catalogueProducts={catalogueProducts}
           allKnownCustomers={[...new Set([
             ...invoices.map(i => i.customer_name),

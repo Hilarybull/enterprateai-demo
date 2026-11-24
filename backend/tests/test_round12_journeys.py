@@ -103,3 +103,7 @@ def test_8_dashboard_launch_question_matches_the_named_plan(owner):
     drone = ask(client, "How ready is my drone cleaning launch?")
     assert drone["offers"][0] == {"label": "Start a new launch plan", "to": "/launch?new=1"}
     assert env.meter.charges == []
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

@@ -20,7 +20,18 @@ from app.shared.auth.deps import get_current_user
 from app.shared.auth.schemas import RegisterRequest
 
 T0 = datetime(2026, 10, 5, 10, 0, tzinfo=timezone.utc)      # a Monday, 11:00 in London
-run = lambda c: asyncio.get_event_loop().run_until_complete(c)      # noqa: E731
+def run(coro):
+    # Other suites legitimately close the default loop with asyncio.run().
+    # Recreate it when needed so these synchronous fixtures work in the full suite.
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
 class World:

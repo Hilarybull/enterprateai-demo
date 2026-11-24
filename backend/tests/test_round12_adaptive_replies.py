@@ -50,4 +50,8 @@ def test_a_typo_on_the_dashboard_agent_is_read_the_same(world):
     env, store, client, who = world
     who["user"] = OWNER
     out = client.post("/agent/requests", json={"business_id": "A", "text": "i want to understand a rsisk", "source_channel": "text"}).json()
-    assert (out["kind"], out["goal_key"]) == ("check", "business_risks")
+    assert out["kind"] == "answer" and out["actions"] == [{"label": "View saved check", "to": "/check/risks"}]
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

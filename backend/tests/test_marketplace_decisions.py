@@ -509,7 +509,7 @@ def test_the_emails_read_properly_and_are_safe(monkeypatch, kind):
     assert sent["to_email"] == "a@b.test" and sent["idempotency_key"] == "k"
     assert "<b>Acme" not in sent["html_content"] and "&lt;b&gt;Acme" in sent["html_content"] and "/marketplace/claim/acme" in sent["text_content"]
     assert "Next step:" in sent["text_content"]
-    assert "text-align:center" in sent["html_content"] and "background:#4f46e5" in sent["html_content"]      # a centred button, not a bare link
+    assert "display:inline-block" in sent["html_content"] and "background:#4f46e5" in sent["html_content"]      # the shared styled email button, not a bare link
     for dash in ("–", "—"):
         assert dash not in sent["text_content"] and dash not in sent["subject"]
 

@@ -73,6 +73,7 @@ def _within(request: Request, bucket: str, limit: int) -> bool:
 
 
 class StartIn(BaseModel):
+    client_request_id: str | None = Field(default=None, max_length=80)
     text: str | None = Field(default=None, max_length=500)
     key: str | None = Field(default=None, max_length=64)                 # a homepage goal or quick task
     entry_mode: str = Field(default="free_text", max_length=20)          # business_goal | quick_task | free_text
@@ -119,6 +120,8 @@ class Accounts:
             await sb_insert("users", row)
         except Exception:      # noqa: BLE001 - a column that isn't there yet must not stop someone getting in
             await sb_insert("users", {"id": email, "email": email, "email_verified": True, "auth_provider": "email_code", **({"name": name} if name else {})})
+        from app.modules.activation.router import queue_welcome
+        await queue_welcome(email)
         return row
 
     async def set_name(self, email: str, name: str) -> None:
@@ -144,6 +147,8 @@ class Accounts:
     async def mark_verified(self, email: str) -> None:
         from app.core.supabase import sb_update
         await sb_update("users", filters=[("id", "eq", email)], payload={"email_verified": True, "email_verification_token": None})
+        from app.modules.activation.router import queue_welcome
+        await queue_welcome(email)
 
     def token(self, user_id: str) -> str:
         from app.shared.auth.security import create_access_token
@@ -228,21 +233,31 @@ async def start_session(body: StartIn, request: Request):
         started_by = None
     if not started_by:
         await require_human(request)      # signed out, this door leads to paid AI
+    session_id, fingerprint = None, None
+    if body.client_request_id:
+        import hashlib
+        import json
+        import uuid
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"task-start:{(started_by or {}).get('id', 'anonymous')}:{body.client_request_id}"))
+        fingerprint = hashlib.sha256(json.dumps(body.model_dump(exclude={"client_request_id"}), sort_keys=True).encode()).hexdigest()
+        existing = await get_store().get(session_id)
+        if existing:
+            if existing.get("start_fingerprint") != fingerprint:
+                raise HTTPException(409, "This task identifier belongs to a different request.")
+            return goals.public(existing)
     if body.business_id:
         # Signed in: the workspace's own currency, never what the browser had kept (the owner's QA, 20 Oct: £ chips on a
         # naira workspace put £250,000 on the case). Signed out, the visitor's country's, as the page sends it.
         try:
-            user = await get_optional_user(request)
+            user = started_by
             if user:
                 from app.modules.agent import business as bz
                 biz = await _business_for(user, body.business_id)
                 currency = bz.currency_of(biz) or currency
         except Exception:      # noqa: BLE001 - not this user's workspace, or no access: the page's hint stands
             user, biz = None, None
-    session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency)
-    if started_by:
-        session["started_by"] = started_by["id"]
-        await get_store().put(session)
+    session = await goals.start(get_store(), text=body.text, key=body.key, entry_mode=body.entry_mode, currency=currency, session_id=session_id,
+                                start_context={**({"start_fingerprint": fingerprint} if fingerprint else {}), **({"started_by": started_by["id"]} if started_by else {})})
     if user and biz is not None and session.get("goal_key") in ("need_funding", "launch", "create_business_plan", "business_risks", "more_customers"):
         try:
             session = await _from_records(session, user, body.business_id, biz)
@@ -266,7 +281,10 @@ async def _from_records(session: dict, user: dict, business_id: str, data: dict)
                       and not str(p[k]).strip().endswith("with EnterprateAI.")), "")
         found.update({k: v for k, v in {"description": about[:400], "customer": str(p.get("target_customer") or "").strip()[:200]}.items() if v})
     if key == "need_funding":
-        case = await _case_of(user, business_id)
+        try:
+            case = await asyncio.wait_for(_case_of(user, business_id), 5)
+        except Exception:
+            case = None  # Optional case suggestions must not hold the first question open.
         on_case = _case_answers((case or {}).get("data") or {})
         found.update({k: v for k, v in on_case.items() if k in ("stage", "traction")})
         shown = first_value.records_traction(data)
@@ -618,13 +636,13 @@ async def _business_for(user: dict, business_id: str) -> dict:
     """The business's records, for someone who can see it (404 otherwise: nothing about it is said)."""
     orch = get_orchestrator()
     try:
-        actor, _policy = await orch.actor_for(user["id"], business_id, user.get("email"))
+        actor, record = await orch.rt.business.context(user["id"], business_id, user.get("email"))
     except Exception as e:      # noqa: BLE001 - no access reads as not found
         raise HTTPException(status_code=404, detail="Not found.") from e
     if not getattr(actor, "can_view", False):
         raise HTTPException(status_code=404, detail="Not found.")
     try:
-        return await orch.rt.business.load(business_id) or {}
+        return record.get("data") or {}
     except Exception:      # noqa: BLE001 - the answers alone still give a result
         return {}
 

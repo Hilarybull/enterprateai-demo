@@ -43,7 +43,7 @@ const NAV = [
   { to: "/operations", label: "Business Operations", subtitle: "Sales, procurement & contracts", icon: "chart", moduleKey: "operations" },
   { to: "/blueprint", label: "Business Blueprints", subtitle: "Plans & documents", icon: "book", moduleKey: "blueprint" },
   { to: "/simulation", label: "Simulation", subtitle: "Run what-if scenarios", icon: "beaker", moduleKey: "simulation", public: true },
-  { to: "/catalogue", label: "Catalogue", subtitle: "Products, customers & vendors", icon: "box", moduleKey: "catalogue" },
+  { to: "/catalogue", label: "Master records", subtitle: "Products, customers, vendors & employees", icon: "box", moduleKey: "catalogue" },
   { to: "/registration", label: "Business Registration", subtitle: "Legal & compliance", icon: "doc", moduleKey: "registration" },
   { to: "/integrations", label: "Integrations", subtitle: "Import from external services", icon: "plug", moduleKey: "integrations" },
   // On the sidebar; only the landing page's top bar leaves it out (the owner, 2 Nov)

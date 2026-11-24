@@ -1931,7 +1931,10 @@ export default function ResultsPage({ embedded = false }) {
   const revenue = typeof m.revenue_monthly === "number" ? m.revenue_monthly : null;
   const costs = typeof m.costs_monthly === "number" ? m.costs_monthly : null;
   const margin = typeof m.margin === "number" ? m.margin : null;
-  const be = typeof m.break_even_months === "number" ? m.break_even_months : null;
+  // Simulation audit F9: break-even shown as a margin of safety (and break-even units), never as "months".
+  const be = typeof m.margin_of_safety_pct === "number" ? m.margin_of_safety_pct : null;
+  const beUnits = typeof m.break_even_units === "number" ? m.break_even_units : null;
+  const beLabel = be == null ? "" : be >= 0 ? `${formatNumber(be)}%` : `${formatNumber(be)}% (below break-even)`;
   const runway = typeof m.runway_months === "number" ? m.runway_months : null;
   const net = typeof m.net_monthly === "number" ? m.net_monthly : null;
   const capacity = typeof m.capacity === "object" && m.capacity ? m.capacity : null;
@@ -1987,7 +1990,7 @@ export default function ResultsPage({ embedded = false }) {
     const isStrong = score >= 75;
     const lowMargin = margin != null && margin < 0.3;
     const highBurn = burn != null && burn > 0;
-    const longBreakEven = be != null && be > 12;
+    const longBreakEven = be != null && be < 10;      // thin or negative margin of safety
     const capacityStrained = utilization != null && utilization > 0.8;
 
     if (highBurn || isRisky) recs.push({ id: "tmpl_revenue_drop", label: "Revenue Drop", desc: "Stress-test your model if early sales fall short.", icon: "📉" });
@@ -2019,6 +2022,13 @@ export default function ResultsPage({ embedded = false }) {
 
   const orderedDimensions = useMemo(() => {
     if (!dimensionScores) return [];
+    // Simulation audit F5: dimensions with no data (null) are "not assessed": listed in words, never drawn as 0
+    const scored = Object.fromEntries(Object.entries(dimensionScores).filter(([, v]) => v != null));
+    return orderOfDimensions(scored);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimensionScores, isV4, isComprehensive]);
+
+  function orderOfDimensions(dimensionScores) {
     if (isV4) {
       const present = new Set(Object.keys(dimensionScores));
       return V4_DIM_ORDER.filter((k) => present.has(k) && (isComprehensive || !V4_BASIC_HIDDEN.has(k)));
@@ -2028,8 +2038,13 @@ export default function ResultsPage({ embedded = false }) {
     const base = preferred.filter((k) => present.has(k));
     const rest = Object.keys(dimensionScores || {}).filter((k) => !base.includes(k));
     return [...base, ...rest].slice(0, Math.max(6, base.length));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dimensionScores, isV4, isComprehensive]);
+  }
+  const notAssessedNote = (() => {
+    const na = validation?.not_assessed && typeof validation.not_assessed === "object" ? Object.keys(validation.not_assessed) : [];
+    if (!na.length && !validation?.confidence) return "";
+    const conf = validation?.confidence ? `Confidence: ${validation.confidence}${validation?.data_coverage_pct != null ? ` (${Math.round(validation.data_coverage_pct)}% of the score rests on data you gave)` : ""}.` : "";
+    return `${na.length ? `Not assessed (no data, left out of the score): ${na.map((k) => dimLabel(k)).join(", ")}. ` : ""}${conf}`.trim();
+  })();
 
   const validationExplanation = (() => {
     const raw = String(validation?.validation_explanation || validation?.market_research?.executive_summary || "").trim();
@@ -2330,15 +2345,17 @@ export default function ResultsPage({ embedded = false }) {
               subtitle={dimensionScores?.problem_severity !== undefined ? "Performance across core validation dimensions." : "Unit economics and feasibility from your structured inputs."}
               className="bg-white"
             >
+              {notAssessedNote ? <div className="mb-3 text-xs text-slate-500" data-not-assessed>{notAssessedNote}</div> : null}
               {dimensionScores?.problem_severity !== undefined ? (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {orderedDimensions.map((key) => (
                     <StatTile
                       key={key}
                       label={dimLabel(key)}
-                      value={`${Math.round(dimensionScores[key] || 0)}/100`}
-                      info={dimHelp(key)}
-                      tone={(dimensionScores[key] || 0) >= 80 ? "success" : (dimensionScores[key] || 0) >= 50 ? "warn" : "danger"}
+                      // Simulation audit F5 (17 Nov 2026): a dimension with no data is "Not assessed", never shown as 0/100
+                      value={dimensionScores[key] == null ? "Not assessed" : `${Math.round(dimensionScores[key])}/100`}
+                      info={dimensionScores[key] == null ? (validation?.not_assessed?.[key] || "No data was given for this, so it is left out of the score.") : dimHelp(key)}
+                      tone={dimensionScores[key] == null ? "default" : dimensionScores[key] >= 80 ? "success" : dimensionScores[key] >= 50 ? "warn" : "danger"}
                       className="bg-white shadow-sm ring-1 ring-slate-100 hover:ring-brand-200 transition-all"
                     />
                   ))}
@@ -2359,9 +2376,9 @@ export default function ResultsPage({ embedded = false }) {
                     <StatTile label="Contribution margin" value={formatPercent(margin)} info="(Revenue - costs) / revenue." />
                     {be !== null && (
                       <StatTile
-                        label="Break-even"
-                        value={`${formatNumber(be)} months`}
-                        info="How long it takes to cover fixed costs given your current plan."
+                        label="Margin of safety"
+                        value={beLabel}
+                        info={`How far planned sales can fall before costs are no longer covered.${beUnits != null ? ` Break-even is ${formatNumber(beUnits)} sales a month.` : ""}`}
                       />
                     )}
                     <StatTile
@@ -2617,8 +2634,8 @@ export default function ResultsPage({ embedded = false }) {
                         <>
                           {be !== null && (
                             <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                              <div className="text-slate-600">Break-even</div>
-                              <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                              <div className="text-slate-600">Margin of safety</div>
+                              <div className="font-semibold text-slate-900">{beLabel}</div>
                             </div>
                           )}
                           <div className="flex items-center justify-between">
@@ -2943,8 +2960,8 @@ export default function ResultsPage({ embedded = false }) {
                     <>
                       {be !== null && (
                         <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
-                          <div className="text-slate-600">Break-even</div>
-                          <div className="font-semibold text-slate-900">{`${formatNumber(be)} months`}</div>
+                          <div className="text-slate-600">Margin of safety</div>
+                          <div className="font-semibold text-slate-900">{beLabel}</div>
                         </div>
                       )}
                       <div className="flex items-center justify-between">

@@ -1,3 +1,4 @@
+import { confirmDialog } from "../../lib/dialog";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { saveSourcingDraft } from "../../lib/sourcing";
@@ -288,8 +289,8 @@ export default function SupplierSourcing({ onSaved }) {
           {supplier && <p className="text-sm">Selected supplier: {quoteMatches?.find((match) => match.slug === supplier)?.name || matches?.find((match) => match.slug === supplier)?.name || supplier}</p>}
           {kind === "RFQ" && supplier && <button type="button" className="rounded-lg border border-brand-600 px-3 py-2 text-sm font-semibold text-brand-600 disabled:opacity-50"
             disabled={Boolean(busy) || !supplier.trim()}
-            onClick={() => {
-              if (!window.confirm("Send this saved quote request to " + supplier.trim() + "?")) return;
+            onClick={async () => {
+              if (!await confirmDialog("Send this saved quote request to " + supplier.trim() + "?")) return;
               run("send", async () => {
                 await apiRequest("/proposals/sourcing/drafts/" + requestId + "/send-rfq" + scope, "POST", { supplier_slug: supplier.trim() });
                 setSent(true);

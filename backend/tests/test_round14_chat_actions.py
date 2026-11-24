@@ -103,7 +103,7 @@ def test_a_document_attached_in_the_chat_is_kept_with_the_evidence(world, monkey
     res = client.post("/businesses/A/agent/chat/attach", files={"file": ("prices.txt", b"Interior detailing 25000 per car. 40 cars a month.", "text/plain")})
     assert res.status_code == 200, res.text      # a plain text file is one evidence takes
     out = res.json()
-    assert out["evidence_id"] and "saved prices.txt with your business evidence" in out["message"]
+    assert out["evidence_id"] and "saved prices.txt" in out["message"] and "summarise" in out["message"]
 
 
 def test_the_words_in_a_text_document_are_read():

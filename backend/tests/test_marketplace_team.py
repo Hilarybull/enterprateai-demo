@@ -40,7 +40,7 @@ def test_only_the_administrator_keeps_the_team_and_every_change_is_recorded():
     run(s.add_team_member(ADMIN, TEAM.upper()))      # already on it, whatever the case
     assert len(run(s.team(ADMIN))["members"]) == 1
     left = run(s.remove_team_member(ADMIN, TEAM))
-    assert left["members"] == [] and [h["action"] for h in left["history"]] == ["removed", "added"] and left["history"][0]["by"] == d.ADMIN_EMAIL
+    assert left["members"] == [] and [h["action"] for h in left["history"]] == ["removed", "invite_resent", "added"] and left["history"][0]["by"] == d.ADMIN_EMAIL
     with pytest.raises(NotFound):
         run(s.remove_team_member(ADMIN, TEAM))
 

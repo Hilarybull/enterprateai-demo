@@ -25,6 +25,7 @@ def world(monkeypatch):
         return True
     s._send_invitation = send
     monkeypatch.setattr(d.DirectoryService, "_invites_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr(d.DirectoryService, "_reminders_enabled", staticmethod(lambda: True))
     return env, s
 
 
@@ -37,14 +38,14 @@ def test_a_business_is_told_when_it_is_listed_with_a_way_to_stop(world):
     index(env)
     assert [m["reason"] for m in s.sent] == ["listed"]
     m = s.sent[0]
-    assert m["to"] == NORTHWIND["contact_email"] and "/marketplace/claim/" in m["link"] and "/opt-out" in m["opt_out"]
+    assert m["to"] == NORTHWIND["contact_email"] and m["link"].startswith("/marketplace/claim-link?token=") and "/opt-out" in m["opt_out"]      # one click claims it (14 Nov)
 
 
-def test_not_told_when_it_isnt_public_or_has_no_email(world):
+def test_an_invitation_only_profile_gets_its_first_claim_email(world):
     env, s = world
     run(s.set_visibility(ADMIN, "admin_only"))
     index(env)
-    assert s.sent == []
+    assert [message["reason"] for message in s.sent] == ["listed"]
 
 
 def test_every_monday_at_7_uk_time_once_until_claimed(world):
@@ -132,7 +133,12 @@ def test_a_failed_send_is_tried_again_and_doesnt_stop_the_listing(world):
         return True
     s._send_invitation = send
     at(s, MONDAY_7)
-    assert run(s.send_claim_reminders()) == 1
+    assert run(s.send_claim_reminders()) == 0
+    assert s.sent == []
+    profile = run(s._profile(SLUG))
+    assert run(s._ensure_first_claim_invite(profile)) is True
+    assert [message["reason"] for message in s.sent] == ["listed"]
+    assert run(s._ensure_first_claim_invite(profile)) is False
 
 
 def test_automatic_emails_dont_use_up_the_teams_own_invitation(world):
@@ -176,7 +182,7 @@ def test_the_emails_read_properly_and_are_safe(monkeypatch, reason):
     assert run(d._email_invitation({"to": "a@b.test", "business_name": "<b>Acme</b>", "reason": reason, "link": "/marketplace/claim/acme?invite=t", "opt_out": "/marketplace/invitations/t/opt-out", "requests": 2, "key": "k"})) is True
     assert "2 requests are waiting" in sent["text_content"] and "Next step:" in sent["text_content"] and "opt-out" in sent["text_content"]
     assert "<b>Acme" not in sent["html_content"] and sent["idempotency_key"] == "k"
-    assert 'text-align:center' in sent["html_content"] and "background:#4f46e5" in sent["html_content"]      # a centred button, not a bare link
+    assert 'text-align:center' not in sent["html_content"] and "background:#4f46e5" in sent["html_content"]
     for dash in ("\u2013", "\u2014"):
         assert dash not in sent["text_content"] and dash not in sent["subject"]
 

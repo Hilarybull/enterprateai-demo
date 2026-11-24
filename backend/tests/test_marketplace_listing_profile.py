@@ -24,7 +24,7 @@ def listing(env, business="A"):
 
 def ready(env, s, business="A", user=OWNER):
     run(s.update_profile(U(user), business, dict(READY)))
-    run(s.update_preferences(U(user), business, {"enquiries": {"enabled": True}}))
+    run(s.update_preferences(U(user), business, {"enquiries": {"enabled": True}, "rfqs": {"enabled": False}}))
     return run(s.activate(U(user), business))
 
 

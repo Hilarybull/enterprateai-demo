@@ -17,7 +17,7 @@ def test_a_new_account_is_welcomed_once_without_marketing_permission():
     w.user(status="unknown")
     w.tick()
     w.at(hours=1).tick()
-    assert subjects(w) == ["Welcome to EnterprateAI"]
+    assert subjects(w) == [rules.LIFECYCLE["w1"]["subject"]]
     m = w.outbox[0]
     assert m["marketing"] is False and "nsubscribe" not in m["text"] and "nsubscribe" not in json.dumps(m["headers"])
 
@@ -53,7 +53,7 @@ def test_an_unsubscribed_person_is_still_told_about_their_account_but_gets_no_fo
     u = w.user(status="unsubscribed")
     w.store.subs[u] = {"plan_key": "starter_insight", "status": "trial", "current_period_end": (w.now + timedelta(days=6)).isoformat()}
     w.tick()
-    assert "Welcome to EnterprateAI" in subjects(w) and any("plan ends" in s for s in subjects(w))
+    assert rules.LIFECYCLE["w1"]["subject"] in subjects(w) and any("plan ends" in s for s in subjects(w))
     w.at(days=20).tick()
     assert not any(r["journey_key"] == "D" for r in w.store.ledger_rows.values())
 
@@ -63,7 +63,7 @@ def test_the_welcome_doesnt_hold_up_the_getting_started_email():
     w.user()
     w.tick()
     w.at(minutes=15).tick()
-    assert subjects(w) == ["Welcome to EnterprateAI", rules.TEMPLATES["a1"]["subject"]]
+    assert subjects(w) == [rules.LIFECYCLE["w1"]["subject"], rules.TEMPLATES["a1"]["subject"]]
 
 
 def ending(w, days, **over):

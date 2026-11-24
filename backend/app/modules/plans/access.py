@@ -43,16 +43,16 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
     lapsed = None
     if sub and sub.get("status") in ("past_due", "unpaid") and sub.get("plan_key") not in (None, "", "explorer"):
         lapsed = {"lapsed_plan_key": sub.get("plan_key"), "lapsed_at": sub.get("current_period_end")}      # Stripe said the payment failed: said too
-    if sub and sub.get("status") in ("active", "trial") and _lapsed(sub):
+    if sub and sub.get("status") in ("active", "trial", "trialing") and _lapsed(sub):
         # The paid period ended and no renewal came (the owner, 31 Oct: two months on without payment, no expiry, no notice):
         # Explorer until it is renewed, and said so; their records and work are kept
         lapsed = {"lapsed_plan_key": sub.get("plan_key"), "lapsed_at": sub.get("current_period_end")}
         sub = None
-    if sub and sub.get("status") in ("active", "trial"):
+    if sub and sub.get("status") in ("active", "trial", "trialing"):
         return SubscriptionOut(
             plan_key=sub["plan_key"],
             billing_period=sub.get("billing_period") or "monthly",
-            status=sub["status"],
+            status="trial" if sub["status"] == "trialing" else sub["status"],
             current_period_start=sub.get("current_period_start"),
             current_period_end=sub.get("current_period_end"),
             trial_started_at=sub.get("trial_started_at"),
@@ -79,14 +79,9 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
     return SubscriptionOut(plan_key="explorer", billing_period="monthly", status="active", **(lapsed or {}))
 
 
-# Days after the paid period ends before the plan lapses: time for a late renewal (or its webhook) to arrive
-LAPSE_GRACE_DAYS = 3
-
-
 def _lapsed(sub: dict, now: datetime | None = None) -> bool:
-    """A paid subscription whose period ended more than the grace days ago with no renewal recorded. A row with no period
-    end (set up by hand, a grant) never lapses here."""
-    from datetime import timedelta
+    """A paid subscription whose period has ended with no renewal recorded.
+    A row with no period end (set up by hand, a grant) never lapses here."""
     end = str(sub.get("current_period_end") or "").strip()
     if not end or not sub.get("plan_key") or sub.get("plan_key") == "explorer":
         return False
@@ -96,7 +91,7 @@ def _lapsed(sub: dict, now: datetime | None = None) -> bool:
         return False
     if ends.tzinfo is None:
         ends = ends.replace(tzinfo=timezone.utc)
-    return (now or datetime.now(timezone.utc)) > ends + timedelta(days=LAPSE_GRACE_DAYS)
+    return (now or datetime.now(timezone.utc)) >= ends
 
 
 async def has_paid_access(user_id: str) -> bool:

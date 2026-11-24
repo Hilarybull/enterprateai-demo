@@ -633,6 +633,7 @@ async def submit_rfq(
     customer_company: str | None = None,
     needed_by: str | None = None,
     listing: str | None = None,
+    sourced_request_id: str | None = None,
 ) -> dict:
     ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
     if not ws:
@@ -654,10 +655,14 @@ async def submit_rfq(
                   and str(r.get("created_at") or "") >= recent
                   and str(r.get("customer_email") or "").strip().lower() == str(customer_email or "").strip().lower()
                   and r.get("items") == items and (r.get("message") or "") == (message or "")), None)
+    if sourced_request_id:
+        again = next((r for r in rfq_requests if r.get("id") == sourced_request_id), None)
     if again:
+        if sourced_request_id and again.get("sender_workspace_id") != sender_workspace_id:
+            raise HTTPException(409, "Request identifier already in use.")
         await _hand_rfq_to_agent(workspace_id, again["id"])      # safe to repeat: still one task
         return again
-    rfq_id = str(uuid4())
+    rfq_id = sourced_request_id or str(uuid4())
     rfq = {
         "id": rfq_id,
         "workspace_id": workspace_id,
@@ -675,7 +680,12 @@ async def submit_rfq(
     }
     rfq_requests.append(rfq)
     merged = {**data, "financials": {**financials, "rfq_requests": rfq_requests}}
-    await sb_update("workspaces", filters=[("id", "eq", workspace_id)], payload={"data": merged, "updated_at": now})
+    filters = [("id", "eq", workspace_id)]
+    if sourced_request_id:
+        filters.append(("updated_at", "eq", ws["updated_at"]))
+    updated = await sb_update("workspaces", filters=filters, payload={"data": merged, "updated_at": now})
+    if sourced_request_id and not updated:
+        raise HTTPException(409, "Supplier records changed. Retry sending this draft.")
 
     # Record the outbound RFQ in the sender's workspace for tracking
     if sender_user_id and sender_workspace_id and sender_workspace_id != workspace_id:
@@ -1112,15 +1122,27 @@ async def record_profile_view(
     return {"recorded": True}
 
 
-async def get_profile_views(*, user_id: str, workspace_id: str | None = None) -> dict:
-    ws = await _load_workspace(user_id, workspace_id)
+async def get_profile_views(*, user_id: str, workspace_id: str | None = None, user_email: str | None = None) -> dict:
+    from app.modules.marketplace.directory import DirectoryService
+
+    is_superadmin = DirectoryService.is_superadmin({"email": user_email})
+    if is_superadmin and workspace_id:
+        ws = await sb_select("workspaces", filters=[("id", "eq", workspace_id)], single=True)
+    else:
+        ws = await _load_workspace(user_id, workspace_id)
     if not ws:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    if _ws_owner(ws) != str(user_id) and not is_superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Profile views are available only to the profile owner and superadmin.")
     _, data = _ws_fields(ws)
     marketplace = data.get("marketplace") or {}
     views = list(marketplace.get("profile_views") or [])
     recent = list(reversed(views[-100:]))
-    return {"views": recent, "total": len(views)}
+    try:
+        baseline = max(0, int(marketplace.get("profile_views_baseline") or 0))
+    except (TypeError, ValueError):
+        baseline = 0
+    return {"views": recent, "total": baseline + len(views)}
 
 
 _MAX_QUESTIONS_PER_QUOTE = 10

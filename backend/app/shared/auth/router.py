@@ -155,6 +155,8 @@ async def _mark_verified(user_id: str) -> None:
         await sb_update("users", filters=[("id", "eq", user_id)], payload={"verified_at": datetime.now(timezone.utc).isoformat()})
     except Exception as exc:      # noqa: BLE001
         logger.warning("verified_at could not be saved for %s: %s", user_id, exc)
+    from app.modules.activation.router import queue_welcome
+    await queue_welcome(user_id)
 
 
 def _verify_url(token: str) -> str:
@@ -231,6 +233,7 @@ async def accept_marketplace_team_invite(payload: dict, request: Request) -> dic
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invitation link is invalid or has expired.") from exc
 
     user = await sb_select("users", filters=[("id", "eq", email)], single=True)
+    new_account = user is None
     if not user:
         user = {"id": email, "email": email, "name": email.split("@", 1)[0], "password_hash": None,
                 "auth_provider": "email_invitation", "email_verified": True, "email_verification_token": None,
@@ -247,6 +250,8 @@ async def accept_marketplace_team_invite(payload: dict, request: Request) -> dic
         await _mark_verified(email)
     if user.get("is_blocked"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is suspended. Contact support.")
+    if new_account:
+        await _mark_verified(email)
     return {"access_token": create_access_token(subject=email), "token_type": "bearer", "email": email}
 
 
@@ -562,6 +567,8 @@ async def google_auth(payload: GoogleAuthRequest) -> TokenResponse:
             filters=[("id", "eq", identity.email)],
             payload={"auth_provider": existing.get("auth_provider") or "google", "google_sub": identity.sub, "name": identity.name, "picture": identity.picture, "email_verified": True, "email_verification_token": None},
         )
+        if existing.get("email_verified") is False:
+            await _mark_verified(identity.email)
 
     if is_new_user:
         await _resolve_referral_attribution(identity.email, payload.ref_click_id, payload.ref_code)

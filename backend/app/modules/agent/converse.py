@@ -92,15 +92,17 @@ ASKS_OPTIONS = re.compile(r"\b(?:funding options?|which (?:loans?|grants?|invest
                           r"(?:loans?|grants?|lenders?|investors?|programmes?|programs?|schemes?) (?:i|we) can (?:apply|get|go)|options? (?:fit|for) my)\b", re.I)
 
 
-def options_found(data: dict) -> dict | None:
+def options_found(data: dict, case_id: str | None = None, answers: dict | None = None) -> dict | None:
     """The funding options the latest research found, each with its source: {"at", "options"}; None when there is no recent
     research to answer from."""
     from app.modules.agent import research
-    state = research.research_state(data, "need_funding")
+    state = research.research_state(data, "need_funding", case_id=case_id, answers=answers)
     if state.get("state") not in ("review", "adopted"):
         return None
     run = (research._runs(data) or {}).get(state["run_id"]) or {}
-    answers = ((data.get("quick_check_answers") or {}).get("need_funding") or {}).get("answers") or {}
+    if case_id and str(run.get("case_id") or "") != str(case_id):
+        return None
+    answers = answers if answers is not None else run.get("answers") or ((data.get("quick_check_answers") or {}).get("need_funding") or {}).get("answers") or {}
     options = [o for o in research.funding_options(answers, run.get("items") or [], limit=5) if (o.get("source") or {}).get("url")]
     return {"at": state.get("at"), "options": options} if options else None
 
@@ -154,6 +156,7 @@ class OutOfCredits(Exception):
         self.needed, self.have = needed, have
 
 
+_REPLY_CHARGED = __import__("contextvars").ContextVar("reply_charged", default=False)
 
 
 async def paid_reply(orch, user: dict, call):
@@ -162,11 +165,15 @@ async def paid_reply(orch, user: dict, call):
     charge is never said in the reply (the sidebar balance and the Credits page show it)."""
     import secrets
     from app.modules.agent.services import InsufficientCredits
-    if getattr(getattr(orch, "rt", None), "meter", None) is None:
-        return await call()      # no meter here (a stand-in in tests): the reply as it is
+    if getattr(getattr(orch, "rt", None), "meter", None) is None or _REPLY_CHARGED.get():
+        return await call()      # no meter here (a stand-in in tests), or this reply is already charged: one reply, one charge
     try:
         async with orch.rt.meter.charge(user["id"], CHAT_FEATURE, key=f"chat:{secrets.token_hex(8)}"):
-            res = await call()
+            token = _REPLY_CHARGED.set(True)      # a module the reply calls on (the funding chat) never charges it again
+            try:
+                res = await call()
+            finally:
+                _REPLY_CHARGED.reset(token)
             if not str(getattr(res, "text", "") or "").strip():
                 raise RuntimeError("no reply written")      # released: nothing is charged for nothing
     except InsufficientCredits as e:
@@ -289,8 +296,7 @@ def need_in(text: str, data: dict | None = None) -> dict:
         return {}
     out: dict = {"target_amount": figures[-1]}
     from app.modules.agent import goals as _goals
-    said_when = re.search(r"\b(?:in|within)\s+\d+(?:\s*(?:to|-|–)\s*\d+)?\s+months?\b", t, re.I)
-    when_said = _goals.end_of_month(said_when.group(0), datetime.now(timezone.utc).date()) if said_when else None
+    when_said = _goals.end_of_month(t, datetime.now(timezone.utc).date())
     if when_said:
         out["receipt_date"] = when_said      # "within 3 months", "in 3 to 6 months", as every other reading of the need
     sign = re.search(r"[$£€₦]|\b(naira|pounds?|dollars?|euros?|ngn|gbp|usd|eur)\b", t, re.I)
@@ -358,7 +364,7 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     data = await orch.rt.business.load(business_id) or {}
     mine = ((data.get("agent_conversations") or {}).get(str(user["id"])) or {}) if in_conversation(data, user["id"], now) else {}
     turns = list(mine.get("turns") or [])[-MAX_TURNS:]
-    if not turns and history:      # an earlier conversation, opened again: what was said there
+    if history:      # The visible conversation is authoritative, including landing answers.
         turns = [{"role": "owner" if h.get("role") == "user" else "agent", "text": str(h.get("content") or "")[:500]} for h in history if h.get("content")][-MAX_TURNS:]
     if case:
         from app.modules.agent import research as _research
@@ -387,7 +393,8 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if case and ASKS_OPTIONS.search(str(text)):
         # Which loans, grants or investors fit: the researched ones, each with where it was found; else said that research is
         # needed, with its price (the owner, 28 Oct: "got generic advice")
-        found = None if re.search(r"\bresearch\b", str(text), re.I) else options_found(data)      # "Research …": always a new search
+        from app.modules.agent.goal_router import _case_answers
+        found = None if re.search(r"\bresearch\b", str(text), re.I) else options_found(data, case_id=str(case["id"]), answers=_case_answers(case.get("data") or {}))
         if not found:      # the loans, grants and investors that fit this case, searched for on their own (the owner, 28 Oct)
             return await _ask_do_all(orch, user, business_id, case, data, text, now, only=OPTIONS_ONLY)
         # One card each, never a block of scraped text with raw links (QA, 30 Oct): its name, what it is, how well it fits
@@ -467,6 +474,24 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     said = " ".join([str(text)] + [t.get("text") or "" for t in turns if t.get("role") == "owner"][-1:])      # this message and the one before
     wanted = clean_change(got.get("change"))
     change = grounded(wanted, said)
+    if "receipt_date" in wanted and "receipt_date" not in change and case:
+        # A date supplied with this exact funding need is still grounded after
+        # intervening confirmation turns. Do not borrow dates from other needs.
+        current = case.get("data") or {}
+        for turn in reversed(turns):
+            if turn.get("role") != "owner":
+                continue
+            earlier = turn.get("text") or ""
+            need = need_in(earlier)
+            if need.get("target_amount") is not None and _same(need["target_amount"], current.get("target_amount")) and str(need.get("purpose") or "").strip().lower() == str(current.get("purpose") or "").strip().lower():
+                answer = said_in_words(earlier, now.date()).get("receipt_date")
+                if answer and answer == wanted["receipt_date"]:
+                    change["receipt_date"] = answer
+                break
+    if change:
+        # Preserve explicitly supplied answers before asking replace/update.
+        # Its confirmation is a separate turn and contains no deadline to re-read.
+        change = {**said_in_words(text, now.date()), **change}
     dropped = [k for k in wanted if k not in change]
     if dropped and (not case or change or re.search(r"\b(?:new|another|different)\b", str(text), re.I)):
         # Never a change from words not said: what wasn't said is asked for instead
@@ -860,6 +885,7 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
     # "with 10 things to do": the first of them said, with Do all for me and the way to all of them (the owner, 30 Oct: "why
     # didn't it bring out the 10 things, with Do all for me?")
     say, actions = (opening, []) if undo else (f"Done. I've {word}.{line}", [])
+    whole = None
     try:
         from app.modules.readiness.service import service_for
         whole = await service_for(orch).get_subject(user["id"], business_id, rules.FUNDING, case["id"], user.get("email"))
@@ -868,7 +894,7 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         steps = []
     # One question at a time, as a person asks it (the owner's QA, 31 Oct: the checklist pasted as one run-on sentence): the kind
     # of funding, then when it's needed; once both are known, the next step in plain words
-    data_now = (whole or {}).get("data") if steps else {}
+    data_now = (whole or {}).get("data") or change
     if not (data_now or {}).get("route_preference") or (data_now or {}).get("route_preference") == "unsure":
         ask = "Are you thinking of a loan, a grant or investors?"
         actions = [{"label": w, "kind": "explain", "prompt": p} for w, p in (("A loan", "It's a loan"), ("A grant", "It's a grant"), ("Investors", "Investors"))]
@@ -878,7 +904,7 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
     else:
         ask = ""
     if steps:
-        cards = [*cards, {"type": "result", "case_id": str(case["id"])}]
+        cards = [*cards, {"type": "result", "case_id": str(case["id"]), "score": round(after) if isinstance(after, (int, float)) else None}]
     if ask:
         say = f"{say} {ask}"
         # the answer buttons, then only the two ways forward: done for them, or by hand (the owner, 1 Nov: "a fill all", "and option
@@ -997,7 +1023,8 @@ def cards_for(got: dict, first: bool, has_case: bool, case_id: str | None, befor
     if "adopted" in (got.get("_done") or []):
         want.append("next")      # drafts accepted: what to do next, as the mockups end
     # Approvals waiting show only when asked for (the owner, 29 Oct: an invoice to Malachy under the launch plan's next steps)
-    out =[{"type": k, "case_id": case_id} for k in dict.fromkeys(want) if k != "approvals" or approvals]
+    out =[{"type": k, "case_id": case_id, **({"score": round(after)} if k in {"result", "next"} and isinstance(after, (int, float)) else {})}
+          for k in dict.fromkeys(want) if k != "approvals" or approvals]
     if isinstance(after, (int, float)) and isinstance(before, (int, float)) and round(after) != round(before):
         out.append({"type": "score_change", "case_id": case_id, "before": round(before), "after": round(after)})
     return out

@@ -2,6 +2,7 @@
 field of the business's own record (with Undo), asks when the record says something else, and "this case only" leaves
 the record as it is. Forecasts never reach the actual records; Funding reuses what Launch accepted."""
 import copy
+from datetime import date
 
 from fastapi.testclient import TestClient
 
@@ -20,10 +21,10 @@ def test_a_proposed_value_is_never_reused_and_an_accepted_one_shows_its_basis_so
         "monthly_sales": {"value": 40, "state": "accepted", "basis": "forecast", "source": "From your launch review", "at": AT},
         "cost": {"value": 12, "state": "accepted", "basis": "estimate", "source": "From your launch review (an estimate you adopted)", "at": AT,
                  "sources": [{"url": "https://www.ons.gov.uk/a", "quote": "A checked quote."}]}}}
-    f = planned.figures(data)
+    f = planned.figures(data, date(2026, 10, 14))
     assert "price" not in f
     assert (f["monthly_sales"]["basis"], f["monthly_sales"]["source"], f["monthly_sales"]["at"]) == ("forecast", "From your launch review", "2026-10-13")
-    assert f["cost"]["basis"] == "estimate" and "estimate" in planned.monthly(data)["sources"]["cost"]
+    assert f["cost"]["basis"] == "estimate" and "estimate" in planned.monthly(data, date(2026, 10, 14))["sources"]["cost"]
 
 
 def _data(price=0):

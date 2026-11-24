@@ -75,7 +75,7 @@ def test_not_sure_is_stored_as_unknown_and_never_guessed():
     r, _ = turn("not sure really", {"intent": "not_sure", "extracted": [], "marked_unknown": ["customer"], "answer_to_user_question": None, "asks_for": "price", "reply": ""})
     assert r["values"] == {"customer": "unknown"} and r["unknown"] == ["customer"]
     r2, _ = turn("no idea", None, llm=Model(fail=RuntimeError("down")))
-    assert r2["values"] == {"customer": "unknown"}
+    assert r2["values"] == {} and r2["by"] == "unavailable"
 
 
 def test_a_correction_overwrites_and_is_marked():
@@ -121,24 +121,26 @@ def test_a_question_to_the_agent_is_answered_then_the_slot_is_asked_again():
 
 @pytest.mark.parametrize("model, why", [(Model(slow=True), "timeout"), (Model(fail=RuntimeError("provider down")), "error:RuntimeError"),
                                         (Model(reply="not json at all"), None)])
-def test_without_the_model_the_rules_carry_on_and_nothing_is_shown(model, why, caplog):
+def test_provider_failure_keeps_the_draft_and_does_not_blame_the_answer(model, why, caplog):
     if why is None:
         model.reply = None
         model.generate_text = lambda **_k: _plain("I can't do JSON today")      # noqa: E731
-    r, _ = turn(CUPCAKE, None, llm=model)
-    assert r["by"] == "rules" and r["fallback_used"] in (why, "unreadable_reply")
-    assert r["values"] == {"price": 30000.0, "cost": 12000.0, "monthly_sales": 40.0, "customer": "HR teams in Abuja"} and r["currency"] == "NGN"
-    assert r["next"] == "positioning" and "error" not in r["reply"].lower()
+    r, _ = turn(CUPCAKE, None, llm=model, seconds=0.05)
+    assert r["by"] == "unavailable" and r["fallback_used"] in (why, "unreadable_reply")
+    assert r["values"] == {} and r["currency"] is None
+    assert r["next"] == "customer" and "try that message again" in r["reply"]
+    assert "Pick the closest" not in r["reply"]
 
 
 async def _plain(text):
     return SimpleNamespace(text=text, model="m", total_tokens=0)
 
 
-def test_past_the_turn_cap_the_rules_answer_without_calling_the_model():
+def test_past_the_turn_cap_the_chat_explains_the_limit_without_claiming_to_read_it():
     llm = Model(CUPCAKE_REPLY)
     r, _ = turn(CUPCAKE, None, llm=llm, ai_turns=it.MAX_AI_TURNS)
-    assert r["fallback_used"] == "turn_cap" and llm.prompts == [] and r["values"]["price"] == 30000
+    assert r["fallback_used"] == "turn_cap" and llm.prompts == [] and r["values"] == {}
+    assert "message limit" in r["reply"]
 
 
 def test_figures_and_currencies_however_they_are_said():

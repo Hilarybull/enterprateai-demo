@@ -431,10 +431,12 @@ async def _contacts() -> list[dict]:
         rows = await sb_select("users", columns=CONTACT_COLUMNS, order="created_at", desc=True)
     except Exception:      # before migration 040: the name and email are still listed
         rows = await sb_select("users", columns="id,email,name,created_at", order="created_at", desc=True)
+    from app.modules.plans.access import _lapsed
+
     plans: dict[str, str] = {}
     try:
-        for sub in await sb_select("user_subscriptions", columns="user_id,plan_key,status") or []:
-            if str(sub.get("status") or "active") in ("active", "trialing"):
+        for sub in await sb_select("user_subscriptions", columns="user_id,plan_key,status,current_period_end") or []:
+            if str(sub.get("status") or "active") in ("active", "trial", "trialing") and not _lapsed(sub):
                 plans[str(sub.get("user_id"))] = sub.get("plan_key") or "explorer"
     except Exception:
         pass
@@ -1415,7 +1417,10 @@ async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> di
     except Exception:
         sub = None
     if sub:
-        return sub
+        from app.modules.plans.access import resolve_subscription
+
+        resolved = await resolve_subscription(user_id)
+        return {**sub, **resolved.model_dump()}
     # Fall back to deriving from account creation date
     user_row = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
     if not user_row:
@@ -1440,9 +1445,10 @@ async def get_user_subscription(user_id: str, user=Depends(require_admin)) -> di
 @router.get("/users/{user_id}/credits")
 async def get_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
     from app.modules.credits import service as credit_svc
-    wallet = await credit_svc.get_wallet(user_id)
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-    plan_code = (sub or {}).get("plan_key") or "explorer"
+    from app.modules.plans.access import resolve_subscription
+
+    wallet, sub = await asyncio.gather(credit_svc.get_wallet(user_id), resolve_subscription(user_id))
+    plan_code = sub.plan_key
     return {
         "available_credits": (wallet or {}).get("available_credits", 0),
         "held_credits": (wallet or {}).get("held_credits", 0),
@@ -1505,8 +1511,9 @@ async def admin_deduct_user_credits(user_id: str, payload: CreditDeductPayload, 
 async def admin_provision_user_credits(user_id: str, user=Depends(require_admin)) -> dict:
     """Re-issue the plan's full credit allocation for this user (admin-only renewal)."""
     from app.modules.credits import service as credit_svc
-    sub = await sb_select("user_subscriptions", filters=[("user_id", "eq", user_id)], single=True)
-    plan_code = (sub or {}).get("plan_key") or "explorer"
+    from app.modules.plans.access import resolve_subscription
+
+    plan_code = (await resolve_subscription(user_id)).plan_key
     result = await credit_svc.provision_plan_credits(
         user_id, plan_code,
         reason=f"Admin-initiated {plan_code} credit renewal",

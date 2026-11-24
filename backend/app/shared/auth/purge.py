@@ -60,6 +60,9 @@ async def purge_account(user_id: str, email: str | None = None) -> None:
         await purge_workspace(wid)
     for table in _BY_USER:
         await _drop(table, "user_id", user_id)
+    # Claim rows are keyed by the claimant's user id (not a workspace id). A deleted account may
+    # later be recreated with the same id/email, so leaving these rows would resurrect old setup prompts.
+    await _drop("marketplace_business_claims", "kind", user_id)
     if email:
         await _drop("mailing_list", "email", email.lower())
     try:      # the one reference that doesn't follow the account

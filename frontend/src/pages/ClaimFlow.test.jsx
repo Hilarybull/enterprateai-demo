@@ -114,7 +114,7 @@ describe("public profile (W02 and W12)", () => {
     expect(screen.getByRole("heading", { name: "Northwind Advisory Ltd" }).closest("section").textContent).toContain("NA");      // the initials mark
     // One badge, in the header; what it means is beside it on request, and in the trust card.
     expect(screen.getAllByText("Business profile not yet claimed").length).toBe(1);
-    expect(screen.getByRole("heading", { name: "About this badge" }).closest("section").textContent).toContain("This profile is based on public sources");
+    expect(screen.queryByRole("heading", { name: "About this badge" })).toBeNull();
     const info = screen.getByRole("button", { name: /Based on public sources · Companies House/ });
     expect(info.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(info);
@@ -139,14 +139,32 @@ describe("public profile (W02 and W12)", () => {
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     await screen.findByText("Profile visits");
     expect(document.querySelector("[data-visits-headline]").textContent).toBe("206 people may have viewed your profile");
-    expect(screen.getByText("Last 7 days").parentElement.textContent).toBe("Last 7 days12");
-    expect(screen.getByText("Last 30 days").parentElement.textContent).toBe("Last 30 days48");
-    expect(screen.getByText(/Last visit today\./).textContent).toContain("Only you and the EnterprateAI team see this.");
+    expect(screen.queryByText("Last 7 days")).toBeNull();
+    expect(screen.queryByText("Last 30 days")).toBeNull();
+    expect(screen.getByText("Only you can see this.")).toBeTruthy();
     cleanup();
     routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: claimed }) }, { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     await screen.findByText("Owner-verified");
     expect(screen.queryByText("Profile visits")).toBeNull();
+  });
+
+  it.each([claimed, unclaimed])("hides visits from non-owners even when the response contains counts ($claimed)", async (profile) => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...profile, owner_controls: false, views: { total: 233 } } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByRole("heading", { name: "Northwind Advisory Ltd" });
+    expect(screen.queryByText("Profile visits")).toBeNull();
+    expect(document.querySelector("[data-visits-headline]")).toBeNull();
+  });
+
+  it("shows visits to the superadmin without granting owner controls", async () => {
+    routes = [{ method: "GET", match: /businesses\/northwind-advisory-ltd-leeds$/, reply: () => ({ body: { ...unclaimed, owner_controls: false, can_view_profile_views: true, views: { total: 233 } } }) },
+      { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
+    mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
+    await screen.findByText("Profile visits");
+    expect(document.querySelector("[data-visits-headline]").textContent).toContain("233");
+    expect(screen.queryByRole("region", { name: "Your profile" })).toBeNull();
   });
 
   it("a claimed profile shows what the owner confirmed and only the actions they switched on", async () => {
@@ -171,7 +189,7 @@ describe("public profile (W02 and W12)", () => {
     const ways = screen.getByRole("heading", { name: "How to work with us" }).closest("section");
     expect([...ways.querySelectorAll("[data-ways] > li")].map((li) => within(li).getByRole("button").textContent)).toEqual(["Ask a question", "Send a proposal"]);
     expect(ways.textContent).toContain("Send a message and get a reply from the business.");
-    expect(screen.queryByText(/RFQs|Subcontracting|^Apply$/)).toBeNull();      // no jargon pills, no vague "Apply"
+    expect(within(ways).queryByText(/RFQs|Subcontracting|^Apply$/)).toBeNull();      // no jargon pills, no vague "Apply"
     expect(screen.getByRole("heading", { name: "Contact Northwind Advisory Ltd" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Claim this Business/ })).toBeNull();
     expect(document.querySelector("[data-owner-bar]")).toBeNull();          // owner controls only for the owner
@@ -194,7 +212,7 @@ describe("public profile (W02 and W12)", () => {
       { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: {} }) }];
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     const header = (await screen.findByRole("heading", { name: "Northwind Advisory Ltd" })).closest("section");
-    expect(header.querySelector("[data-meta]").textContent).toContain("On EnterprateAI since Oct 2026");
+    expect(header.querySelector("[data-meta]").textContent).not.toContain("On EnterprateAI since");
     expect(within(header).getByRole("button", { name: "Request a quote" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Get a quote from Northwind Advisory Ltd" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Request a quote: Pricing review" }));
@@ -210,22 +228,24 @@ describe("public profile (W02 and W12)", () => {
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     const bar = await screen.findByRole("region", { name: "Your profile" });
     expect(bar.textContent).toContain("You're viewing your public profile");
-    expect(within(bar).getAllByRole("button").map((x) => x.textContent)).toEqual(["Edit profile", "Opportunity settings", "Verify", "Unlist", "View as visitor", "Manage"]);
-    expect(within(bar).getByRole("button", { name: "Manage" }).parentElement.className).toContain("md:hidden");      // one menu on a phone
+    fireEvent.click(within(bar).getByRole("button", { name: "Profile options" }));
+    expect(within(bar).getAllByRole("menuitem").map((x) => x.textContent)).toEqual(["Edit profile", "Opportunity settings", "Verify", "Unlist", "View as visitor"]);      // one menu on a phone
     expect(screen.queryByText("You manage this profile")).toBeNull();        // no longer a card in the public sidebar
     // What is keeping it off the Marketplace, said to the owner only.
     expect(screen.getByText(/Only you can see this page/).closest("[role=alert]").textContent).toContain("Write a real description");
-    fireEvent.click(within(bar).getByRole("button", { name: "View as visitor" }));
+    fireEvent.click(within(bar).getByRole("menuitem", { name: "View as visitor" }));
     expect(screen.queryByText(/Only you can see this page/)).toBeNull();
     expect(screen.getByText("This is what a visitor sees")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Back to your view" }));
     // Unlist asks first.
     confirmDialog.mockResolvedValueOnce(false);
-    fireEvent.click(within(screen.getByRole("region", { name: "Your profile" })).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Profile options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unlist" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(confirmDialog.mock.calls[0][1]).toMatchObject({ title: "Unlist your business?", confirmLabel: "Unlist", danger: true });
     expect(sent("POST", /activate$/).length).toBe(0);
-    fireEvent.click(within(screen.getByRole("region", { name: "Your profile" })).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Profile options" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unlist" }));
     await waitFor(() => expect(sent("POST", /activate$/)[0].body).toEqual({ publish: false }));
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/marketplace/profile?business=ws9"));
   });
@@ -556,7 +576,7 @@ describe("QA round 2", () => {
     expect(screen.queryByRole("button", { name: "Unlist the profile" })).toBeNull();      // the report is about their own business's profile
     // The directory at a glance, as tiles.
     const tiles = screen.getByRole("region", { name: "Directory at a glance" });
-    expect(["Indexed", "Claims started", "Verified", "Published", "Suppressed", "Reports open"].every((label) => within(tiles).getByText(label))).toBe(true);
+    expect(["Indexed", "Requests waiting", "Claim attempts (all time)", "Ownership verified", "Published", "Suppressed", "Reports open"].every((label) => within(tiles).getByText(label))).toBe(true);
     expect(within(tiles).getByText("Reports open").parentElement.textContent).toBe("Reports open1");
     fireEvent.click(screen.getByRole("tab", { name: "Index & invites" }));
     fireEvent.click(screen.getByRole("button", { name: "Tidy stored locations" }));
@@ -597,7 +617,7 @@ describe("QA round 2", () => {
     mount("/marketplace", <Tabs />, "/marketplace");
     expect(screen.getByRole("tab", { name: "Business Directory" }).getAttribute("aria-selected")).toBe("true");
     await screen.findByText("Northwind Advisory Ltd");
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Business Directory", "Products & Services", "Proposal Requests"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Business Directory", "Products & Services", "Proposal Requests", "Public Tenders"]);
     expect(screen.queryByRole("button", { name: /Publish Now/ })).toBeNull();
     fireEvent.change(screen.getByLabelText("Search the Marketplace"), { target: { value: "north" } });
     await waitFor(() => expect(sent("GET", /q=north/).length).toBe(1));
@@ -965,7 +985,7 @@ describe("admin area", () => {
     mount("/", <FindToClaim defaultOpen />, "/");
     fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "r" } });
     fireEvent.change(screen.getByLabelText("Business name"), { target: { value: "red" } });
-    const list = await screen.findByRole("list", { name: "Matching businesses" }, { timeout: 2000 });
+    const list = await screen.findByRole("list", { name: "Matching businesses by name" }, { timeout: 2000 });
     expect(within(list).getByText("Redwood")).toBeTruthy();
     expect(within(list).getByText("Already claimed")).toBeTruthy();
     fireEvent.click(within(list).getByText("Red Ltd"));
@@ -1062,7 +1082,7 @@ describe("admin area", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Index & invites" }));
     expect(onSection).toHaveBeenCalledWith("index");
     const tiles = screen.getByRole("region", { name: "Directory at a glance" });
-    expect(within(tiles).getByText("Claims started").parentElement.textContent).toBe("Claims started3");
+    expect(within(tiles).getByText("Claim attempts (all time)").parentElement.textContent).toBe("Claim attempts (all time)3");
     expect(tiles.children.length).toBe(7);                                // its own seven tiles, and no others
   });
 
@@ -1347,6 +1367,8 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     expect(screen.queryByRole("menuitem", { name: "Send invitation" })).toBeNull();      // emails are off
     fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
     const form = screen.getByRole("form", { name: "Edit Northwind Advisory Ltd" });
+    fireEvent.change(within(form).getByLabelText(/About/), { target: { value: "Independent advisers helping small firms set prices." } });
+    fireEvent.change(within(form).getByLabelText(/Services/), { target: { value: "Strategy" } });
     expect(within(form).getByText(/kept in the profile's history/)).toBeTruthy();
     fireEvent.change(within(form).getByLabelText(/Town or region/), { target: { value: "14 Acacia Avenue, Leeds" } });
     fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
@@ -1355,7 +1377,7 @@ describe("marketplace admin: per-business visibility and adding businesses", () 
     fireEvent.change(within(form).getByLabelText("Reason for the change"), { target: { value: "Moved." } });
     fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
     await screen.findByText("Northwind Advisory Ltd saved: Ready · hidden (invite only).");
-    expect(sent("PATCH", /directory-profiles/)[1].body).toEqual({ changes: { location: "York" }, reason: "Moved." });      // only what changed
+    expect(sent("PATCH", /directory-profiles/)[1].body).toEqual({ changes: { location: "York", description: "Independent advisers helping small firms set prices.", service_tags: ["Strategy"] }, reason: "Moved." });      // only what changed
     fireEvent.click(screen.getByRole("button", { name: "Actions for Northwind Advisory Ltd" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
     const ask = screen.getByRole("form", { name: "Archive Northwind Advisory Ltd" });
@@ -1619,12 +1641,14 @@ describe("QA P3: the public profile", () => {
       { method: "POST", match: /\/view$/, reply: () => ({ status: 202, body: { ok: true } }) }];
     mount(`/marketplace/business/${base.slug}`, <DirectoryProfilePage />, "/marketplace/business/:slug");
     await screen.findByRole("heading", { name: "Northwind Advisory Ltd" });
-    const card = screen.getByRole("heading", { name: "About this badge" }).closest("section");
+    expect(screen.queryByRole("heading", { name: "About this badge" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Based on public sources/ }));
+    const card = screen.getByRole("note");
     const sentences = card.textContent.split(/(?<=\.)\s*/).filter(Boolean);
     expect(new Set(sentences).size).toBe(sentences.length);      // no sentence said twice
     // QA R9: one sentence about where it came from, not two saying the same thing in different words.
     expect((card.textContent.match(/public sources/g) || []).length).toBe(1);
-    expect(card.textContent).not.toMatch(/has not (yet )?confirmed it/i);
+    expect(card.textContent).toContain("has not been confirmed by the business");
     fireEvent.click(screen.getByRole("button", { name: "Request unlisting" }));
     expect(screen.getByRole("combobox").value).toBe("unlist");
     fireEvent.click(document.querySelector("[data-back-to-results]"));

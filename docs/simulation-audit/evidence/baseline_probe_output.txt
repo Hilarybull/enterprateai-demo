@@ -1,0 +1,16 @@
+=== E1: money owed TO the business turns a profitable business 'critical' ===
+With a 25,000 invoice owed to it  (month, profit, cash, label): [(1, 8000.0, 18000.0, 'stress'), (2, 8000.0, 6000.0, 'at risk'), (3, 8000.0, -6000.0, 'critical'), (4, 8000.0, -18000.0, 'critical'), (5, 8000.0, -30000.0, 'critical'), (6, 8000.0, -42000.0, 'critical')]
+Same business, nothing owed       (month, profit, cash, label): [(1, 8000.0, 38000.0, 'tight'), (2, 8000.0, 46000.0, 'tight'), (3, 8000.0, 54000.0, 'tight'), (4, 8000.0, 62000.0, 'tight'), (5, 8000.0, 70000.0, 'tight'), (6, 8000.0, 78000.0, 'stable')]
+With invoice owed, +10% price     (month, profit, cash, label): [(1, 10000.0, 18000.0, 'stress'), (2, 10000.0, 6000.0, 'at risk'), (3, 10000.0, -6000.0, 'critical'), (4, 10000.0, -18000.0, 'critical'), (5, 10000.0, -30000.0, 'critical'), (6, 10000.0, -42000.0, 'critical')]
+
+=== E2: price rise with no effect on sales volume ===
+Baseline: {'monthly_revenue': 20000.0, 'monthly_expenses': 8000.0, 'monthly_cost_of_sales': 4000.0, 'monthly_costs': 12000.0, 'net_profit': 8000.0, 'stability_score': 80.0}
++50% price: {'monthly_revenue': 30000.0, 'monthly_expenses': 8000.0, 'monthly_cost_of_sales': 4000.0, 'monthly_costs': 12000.0, 'net_profit': 18000.0, 'stability_score': 80.0}
+
+=== E3: multi-engine score changes are fixed table values, identical for very different businesses ===
+Strong business: viability {'score': 6}, survival {'survival_score': 8}, stability {'stability_score': 3}, growth {'growth_score': 4}, fragility {'fragility_index': -6}
+Weak business: viability {'score': 6}, survival {'survival_score': 8}, stability {'stability_score': 3}, growth {'growth_score': 4}, fragility {'fragility_index': -6}
+
+=== E4: 'break_even_months' is a units ratio, not a time ===
+Price 100, variable cost 40, fixed 2,000/month, selling 50 units/month (already profitable from month 1):
+  break_even_months = 0.6666666666666667

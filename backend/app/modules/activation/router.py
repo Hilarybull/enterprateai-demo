@@ -24,6 +24,7 @@ router = APIRouter(tags=["activation"])
 ADMIN_EMAIL = "tech.support@enterprateai.com"
 _service: ActivationService | None = None
 _task: asyncio.Task | None = None
+_wake: asyncio.Event | None = None
 
 
 def parse_emails(value) -> frozenset:
@@ -50,7 +51,7 @@ def read_config() -> Config:
     base = str(s.frontend_url or "").split(",")[0].strip().rstrip("/")
     start = rules.parse(s.activation_start_at) if s.activation_start_at else None
     return Config(
-        enabled=bool(s.activation_emails_enabled), dry_run=bool(s.activation_dry_run), cohort=str(s.activation_cohort or "internal").lower(),
+        enabled=bool(s.activation_emails_enabled), welcome_live=bool(s.welcome_emails_enabled), dry_run=bool(s.activation_dry_run), cohort=str(s.activation_cohort or "internal").lower(),
         internal_emails=parse_emails(s.activation_internal_emails),
         sample_percent=int(s.activation_sample_percent), holdout_percent=int(s.activation_holdout_percent), start_at=start, backlog_batch=int(s.activation_backlog_batch),
         base_url=base or "http://localhost:5173", api_base_url=str(s.activation_api_base_url or "").strip(), secret=str(s.jwt_secret_key or "dev-activation-secret"),
@@ -88,10 +89,29 @@ def require_admin(user=Depends(get_current_user)):
 
 # ── the scheduled job ─────────────────────────────────────────────────────────
 
+async def queue_welcome(user_id: str) -> None:
+    """Persist the welcome before waking the sender; email failures cannot fail signup/claim."""
+    config = read_config()
+    if not config.enabled and not config.welcome_live:
+        return
+    try:
+        async with asyncio.timeout(5):
+            queued = await get_service().welcome(user_id)
+        if queued and _wake is not None:
+            _wake.set()
+    except NotSetUp:
+        logger.warning("Welcome email could not be queued: run migration 033")
+    except Exception:
+        logger.exception("Welcome email could not be queued")
+
+
 async def _loop(interval_s: int) -> None:
+    global _wake
+    _wake = asyncio.Event()
     while True:
+        _wake.clear()
         try:
-            if read_config().enabled:
+            if read_config().enabled or read_config().welcome_live:
                 out = await get_service().tick()
                 logger.info("activation run: %d selected, %d handled", len(out["selected"]), len(out["delivered"]))
         except asyncio.CancelledError:
@@ -100,7 +120,10 @@ async def _loop(interval_s: int) -> None:
             logger.warning("activation emails are switched on but not set up: run migration 033")
         except Exception as e:      # noqa: BLE001 - one bad run never stops the next
             logger.warning("activation run failed: %s", e)
-        await asyncio.sleep(interval_s)
+        try:
+            await asyncio.wait_for(_wake.wait(), timeout=interval_s)
+        except asyncio.TimeoutError:
+            pass
 
 
 def start_scheduler(interval_s: int = 900) -> None:

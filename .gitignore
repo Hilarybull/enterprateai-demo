@@ -36,3 +36,4 @@ Thumbs.db
 frontend/e2e/out/
 frontend/test-results/
 frontend/playwright-report/
+backend/.runtime/

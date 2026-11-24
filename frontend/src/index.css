@@ -319,12 +319,17 @@
   }
 }
 
+.ea-agent-progress > span {
+  animation: ea-top-progress 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ea-skeleton {
     animation: none;
     background-image: none;
   }
-  .ea-top-progress > span {
+  .ea-top-progress > span,
+  .ea-agent-progress > span {
     animation: none;
     width: 100%;
     opacity: 0.6;

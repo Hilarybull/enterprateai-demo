@@ -286,10 +286,11 @@ def test_ac12_ac13_ac14_profile_settings_publish_catalogue_offerings_and_reuse_t
     view = run(s.business_profile(U(OWNER), "A"))
     assert view["directory"]["trust"]["state"] == "verified" and view["directory"]["sourced"]["name"] == "Northwind Advisory Ltd"
     assert [(o["name"], o["published"]) for o in view["offerings"]] == [("Strategy Workshop", True), ("Financial Review", True), ("Unpriced Service", True)]
-    assert view["activation"]["ready"] is False and [i["key"] for i in view["activation"]["items"] if not i["done"]] == ["description", "service_area", "opportunity"]
+    assert view["preferences"]["rfqs"]["enabled"] is True  # opportunities default on for claimed profiles
+    assert view["activation"]["ready"] is False and [i["key"] for i in view["activation"]["items"] if not i["done"]] == ["description", "service_area"]
     with pytest.raises(Invalid) as e:
         run(s.activate(U(OWNER), "A"))
-    assert set(e.value.errors) == {"description", "service_area", "opportunity"}
+    assert set(e.value.errors) == {"description", "service_area"}
     with pytest.raises(Invalid) as e:
         run(s.update_profile(U(OWNER), "A", {"colour": "blue", "website": "not a site"}))
     assert set(e.value.errors) == {"colour", "website"}

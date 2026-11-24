@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import GoalLauncher from "./GoalLauncher";
 import { useAuthStore } from "../store/auth";
 
@@ -28,8 +28,13 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); useAuthStore.setState({ token: null, email: null }); window.history.replaceState({}, "", "/"); });
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="handover-location">{location.pathname + location.search}</output>;
+}
+
 async function say() {
-  render(<MemoryRouter><GoalLauncher /></MemoryRouter>);
+  render(<MemoryRouter><GoalLauncher /><LocationProbe /></MemoryRouter>);
   fireEvent.change(screen.getByLabelText("What do you want EnterprateAI to do for your business?"), { target: { value: "I need funding: ₦10m for stock" } });
   await act(async () => { fireEvent.click(document.querySelector("[data-goal-launcher] form button[type='submit']")); });
   await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
@@ -63,7 +68,10 @@ it("funding is set up in the chat: currency kept, no page of its own", async () 
   });
   await say();
   await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
-  expect(calls.find((c) => /\/currency$/.test(c.path))?.body).toEqual({ choice: "keep" });
-  expect(calls.some((c) => /\/prepare$/.test(c.path))).toBe(true);
-  expect(calls.filter((c) => /\/prepare$/.test(c.path)).length).toBe(1);
+  const location = screen.getByTestId("handover-location").textContent;
+  expect(location.split("?")[0]).toBe("/agent");
+  const carried = new URLSearchParams(location.split("?")[1]).get("chat");
+  expect(carried).toContain("₦10m");
+  expect(carried).toContain("stock");
+  expect(calls.some((c) => /\/(currency|prepare)$/.test(c.path))).toBe(false); // the Agent receives the confirmed need directly
 });

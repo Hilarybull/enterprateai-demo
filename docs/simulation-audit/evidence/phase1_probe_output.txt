@@ -1,0 +1,35 @@
+=== F8: the baseline. Monthly history with November still in progress (17 Nov) ===
+Before (Phase 0 and earlier): latest month on record = 6400 a month (November so far)
+After: level 19,066.67 from the average of the last 3 complete months on record ['2026-08', '2026-09', '2026-10']; trend applied (statistically significant), damped (+982.86 a month, t = 27.69); seasonality not applied (24 complete months needed, 6 on record)
+Projected revenue, months 1-6: [21463.87, 22108.72, 22689.09, 23211.42, 23681.52, 24104.61]
+
+=== F6: +10% price (Phase 0: no customer response) ===
+  no response (Phase 0 behaviour)        month-6 revenue  22,000.00  profit 10,000.00  -> improved (profit +12,000.00, cash +10,000.00, net cash +10,000.00)
+  standard response (sensitivity 1)      month-6 revenue  20,000.00  profit  8,363.64  -> improved (profit +2,181.81, cash +2,181.81, net cash +2,181.81)
+  sensitive customers (sensitivity 2)    month-6 revenue  18,181.82  profit  6,876.03  -> worse (profit -6,743.80, cash -4,925.62, net cash -4,925.62)
+
+=== F10: hiring one person at 3,000 a month (Phase 0: pay only) ===
+  pay only (Phase 0 behaviour)           profit over 12 months   63,466.67 -> worse (profit -36,000.00, cash -36,000.00, net cash -36,000.00)
+  +15% on-costs, 2,500 recruitment       profit over 12 months   55,566.67 -> worse (profit -43,900.00, cash -43,900.00, net cash -43,900.00)
+  ... and 5,000 a month of new sales     profit over 12 months   99,566.67 -> worse (profit +100.00, cash -4,900.00, net cash -4,900.00)
+
+=== Financing: a 50,000 loan at 9% over 24 months, for a business that never runs short ===
+  Judged on cash alone this would look better; judged on net cash (after the debt): worse (profit -3,319.45, cash +24,873.39, net cash -3,319.45)
+  A 30,000 loan for a business losing 2,000 a month from 3,000 cash: mixed (profit -1,991.67, cash +14,924.04, net cash -1,991.67) - Cash goes below zero later (in month 10 instead of in month 2), but profit and/or net cash end materially lower: time bought at a cost, a trade-off to weigh.
+
+=== Tax, VAT and an existing loan (12 months) ===
+  cumulative_profit        without settings    99,466.67   with settings    79,683.10
+  closing_cash             without settings   109,466.67   with settings    91,389.98
+  closing_tax_owed         without settings         0.00   with settings     3,014.41
+  closing_sales_tax_owed   without settings         0.00   with settings     8,400.00
+  closing_loans            without settings         0.00   with settings    10,292.47
+  total_interest           without settings         0.00   with settings     1,092.47
+  checks: {'cash_reconciles': True, 'receivables_reconcile': True, 'balance_sheet_balances': True}
+
+=== The rest of this month and the 13-week view (17 Nov) ===
+  stub: {'days': 13, 'revenue': 8666.67, 'costs': 5858.67, 'profit': 2808.0, 'cash_in': 0.0, 'cash_out': 5720.0, 'closing_cash': 24280.0}
+  13 weeks: lowest cash 20,760.65 in week 6; reconciles: True
+    {'week': 1, 'start': '2026-11-18', 'end': '2026-11-24', 'opening_cash': 30000.0, 'cash_in': 0.0, 'cash_out': 3080.0, 'closing_cash': 26920.0}
+    {'week': 2, 'start': '2026-11-25', 'end': '2026-12-01', 'opening_cash': 26920.0, 'cash_in': 335.48, 'cash_out': 3965.81, 'closing_cash': 23289.68}
+    {'week': 3, 'start': '2026-12-02', 'end': '2026-12-08', 'opening_cash': 23289.68, 'cash_in': 2348.39, 'cash_out': 2980.65, 'closing_cash': 22657.42}
+    {'week': 4, 'start': '2026-12-09', 'end': '2026-12-15', 'opening_cash': 22657.42, 'cash_in': 2348.39, 'cash_out': 2980.65, 'closing_cash': 22025.16}

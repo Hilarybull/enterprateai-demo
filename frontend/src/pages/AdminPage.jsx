@@ -13,6 +13,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import AdminClaims from "../components/marketplace/AdminClaims";
 import TenderSyncAdmin from "../components/admin/TenderSyncAdmin";
 import ActivationAdmin from "../components/admin/ActivationAdmin";
+import SimulationAccuracyAdmin from "../components/admin/SimulationAccuracyAdmin";
 import EmailsAdmin from "../components/admin/EmailsAdmin";
 import DiscountsAdmin from "../components/admin/DiscountsAdmin";
 import AgentSpend from "../components/admin/AgentSpend";
@@ -1672,6 +1673,7 @@ const STAT_CONFIG = [
 
 // Title (one brand-coloured word) and subtitle for each section's header.
 const PAGE_TITLE = {
+  "simulation-accuracy": ["Simulation", "Accuracy", "Forecasts against actual results, confidence and model versions."],
   "tender-sync": ["Public tender", "sync", "Manage the Find a Tender import and automatic schedule."],
   overview: ["Platform", "Overview", "How the platform is doing, and what needs attention."],
   "ai-usage": ["AI", "Usage", "Calls, tokens and estimated cost."],
@@ -3505,6 +3507,7 @@ export default function AdminPage() {
 
         {tab === "tender-sync" && isAdmin && <TenderSyncAdmin />}
         {tab === "activation" && isAdmin && <ActivationAdmin />}
+        {tab === "simulation-accuracy" && isAdmin && <SimulationAccuracyAdmin />}
         {tab === "emails" && isAdmin && <EmailsAdmin onOpenTab={setTab} />}
         {tab === "discounts" && isAdmin && <DiscountsAdmin />}
 

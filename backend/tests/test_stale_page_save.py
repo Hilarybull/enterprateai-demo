@@ -81,3 +81,14 @@ def test_a_save_that_touches_neither_section_changes_nothing():
     assert preserve_server_fields(dict(profile_only), stored) == profile_only
     both = copy.deepcopy(stored)
     assert preserve_server_fields(copy.deepcopy(both), stored) == both      # an up-to-date copy is saved exactly as it is
+
+
+def test_employee_records_survive_other_master_record_saves_and_can_be_archived():
+    stored = {"catalogue": {"employees": [{"id": "e-1", "name": "Ada"}], "products": [{"id": "p-1", "name": "Service"}]}}
+    incoming = {"catalogue": {"products": [{"id": "p-1", "name": "Updated service"}]}}
+    preserve_server_fields(incoming, stored)
+    assert incoming["catalogue"]["employees"] == stored["catalogue"]["employees"]
+    archive = {"catalogue": {"employees": [{"id": "e-1", "name": "Ada", "archived": True}]}}
+    preserve_server_fields(archive, stored)
+    assert archive["catalogue"]["employees"][0]["archived"] is True
+    assert archive["catalogue"]["products"] == stored["catalogue"]["products"]

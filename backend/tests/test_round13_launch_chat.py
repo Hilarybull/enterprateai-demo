@@ -23,3 +23,7 @@ def test_an_agent_filled_profile_customer_from_another_offering_is_never_propose
     data["profile_provenance"]["target_customer"]["by"] = "owner"      # set by the owner on the form: theirs, proposed
     assert first_value.known_answers("launch", data)["customer"].startswith("Dog owners")
     assert first_value.known_answers("launch", {"workspace_profile": {"target_customer": "Landlords in Leeds"}})["customer"] == "Landlords in Leeds"
+
+
+import pytest as _pytest
+pytestmark = _pytest.mark.usefixtures("rules_only_intake")

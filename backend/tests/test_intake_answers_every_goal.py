@@ -33,7 +33,7 @@ def started(goal):
 @pytest.mark.parametrize("goal, asked, message, want, after, reply", RICH, ids=[r[0] for r in RICH])
 def test_a_rich_answer_fills_every_slot_it_gives(goal, asked, message, want, after, reply):
     store, s = started(goal)
-    s = asyncio.run(goals.add_inputs(store, s, {asked: message}, message=message, asked=asked))
+    s = asyncio.run(goals.add_inputs(store, s, {asked: message}, message=message, asked=asked, rules_only=True))
     assert {k: s["inputs"].get(k) for k in want} == want
     last = goals.public(s)["turns"][-1]
     assert last["next"] == after
@@ -51,7 +51,7 @@ QUESTION_GOALS = ("need_funding", "test_idea", "launch", "more_customers", "pric
 def test_a_question_to_the_agent_is_answered_and_the_same_question_asked_again(goal):
     store, s = started(goal)
     asked = goals._asking(s)["key"]
-    s = asyncio.run(goals.add_inputs(store, s, {asked: "why do you need to know that?"}, message="why do you need to know that?", asked=asked))
+    s = asyncio.run(goals.add_inputs(store, s, {asked: "why do you need to know that?"}, message="why do you need to know that?", asked=asked, rules_only=True))
     assert asked not in s["inputs"] and not s["inputs"]
     last = goals.public(s)["turns"][-1]
     label = next(q["label"] for q in goals.public(s)["questions"] if q["key"] == asked)
@@ -62,5 +62,5 @@ def test_a_question_to_the_agent_is_answered_and_the_same_question_asked_again(g
 def test_the_launch_answer_is_said_back_naturally():
     store, s = started("launch")
     m = "A dog walking service in Leeds next month, for busy professionals"
-    s = asyncio.run(goals.add_inputs(store, s, {"kind": m}, message=m, asked="kind"))
+    s = asyncio.run(goals.add_inputs(store, s, {"kind": m}, message=m, asked="kind", rules_only=True))
     assert goals.public(s)["turns"][-1]["content"].startswith("Dog walking service in Leeds for busy professionals, got it: a service, next month.")

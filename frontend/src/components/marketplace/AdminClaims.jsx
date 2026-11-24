@@ -1,3 +1,4 @@
+import Input from "../Input";
 import { useCallback, useEffect, useState } from "react";
 import { AdminTable, Chip, KpiTile } from "../admin/AdminUI";
 import AddBusinesses, { EditBusinessForm, VISIBILITY_OPTION } from "./AddBusiness";
@@ -299,6 +300,7 @@ function Reports({ queue, onChange, setProblem }) {
 
 const MODERATE = { suppress: ["Suppress", "Suppress profile", "It disappears from the directory, its page and outreach, for everyone."],
   archive: ["Archive", "Archive profile", "Put away: hidden everywhere, and can be restored."],
+  delete: ["Delete", "Delete profile", "Remove this unclaimed profile from the directory and the administration list. The reason is kept for the audit history."],
   restore: ["Restore", "Restore profile", "It goes back to the state it was in before."] };
 
 /** The requests kept for a business until it claims, in a popup over the list. */
@@ -341,7 +343,7 @@ function WaitingRequests({ data, onClose }) {
 }
 
 /** Every unclaimed profile, for moderators, whatever the visibility level, with what the public can see of each. */
-function Unclaimed({ onChange }) {
+function Unclaimed({ onChange, superadmin }) {
   const [list, setList] = useState(null);
   const [problem, setProblem] = useState(null);
   const [note, setNote] = useState(null);          // what just happened, in words
@@ -378,6 +380,9 @@ function Unclaimed({ onChange }) {
     try {
       const done = await moderateProfile(asking.profile.slug, asking.action, reason);
       setNote({ text: `${asking.profile.name}: ${done.public_state}.` });
+      if (asking.action === "delete") {
+        setSelected((keys) => new Set([...keys].filter((key) => key !== asking.profile.id)));
+      }
       setAsking(null); setReason("");
       await load(); onChange?.();
     } catch (e) { setProblem(directoryError(e).message); } finally { setBusy(false); }
@@ -493,7 +498,7 @@ function Unclaimed({ onChange }) {
               <input className={`mt-1 ${inputClass}`} value={writing.budget_range} maxLength={80} placeholder="5000 - 10000" onChange={(e) => setWriting({ ...writing, budget_range: e.target.value })} />
             </label>
             <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200">Deadline (optional)
-              <input type="date" className={`mt-1 ${inputClass}`} value={writing.deadline} onChange={(e) => setWriting({ ...writing, deadline: e.target.value })} />
+              <Input type="date" className={`mt-1 ${inputClass}`} value={writing.deadline} onChange={(e) => setWriting({ ...writing, deadline: e.target.value })} />
               {writing.errors?.deadline && <span role="alert" className="mt-1 block text-[12px] font-medium text-rose-600">{writing.errors.deadline}</span>}
             </label>
             <label className="block text-[12px] font-semibold text-slate-700 dark:text-slate-200 sm:col-span-2">Requirements (optional, one per line)
@@ -534,6 +539,7 @@ function Unclaimed({ onChange }) {
       )}
       {!list ? (!problem && <p role="status" className="text-sm text-slate-500">Loading…</p>) : (
         <AdminTable caption="Unclaimed profiles" minWidth={860} rows={list.items} emptyText="There are no unclaimed profiles." rowLabel={(p) => p.name}
+          searchValue={(p) => [p.name, p.slug, p.trading_name, p.company_number, p.category, p.location, p.website, p.contact_email, p.public_state]}
           selection={{ selected, onChange: setSelected }}
           rowActions={(p) => {
             const live = ["published", "noindex"].includes(p.publication);
@@ -548,6 +554,7 @@ function Unclaimed({ onChange }) {
               { label: "Edit", onClick: () => setEditing(p), disabled: gone },
               ...(gone ? [{ label: "Restore", onClick: () => ask(p, "restore") }] : [{ label: "Archive", onClick: () => ask(p, "archive") }, { label: "Suppress", danger: true, onClick: () => ask(p, "suppress") }]),
               { label: "View sources", onClick: () => showSources(p) },
+              ...(superadmin ? [{ label: "Delete", danger: true, onClick: () => ask(p, "delete") }] : []),
             ];
           }}
           columns={[
@@ -756,7 +763,7 @@ export default function AdminClaims({ section, onSection, superadmin = false, on
 
       {at === "queue" && <Queue queue={queue} onChange={load} />}
       {at === "decided" && <Decided onChange={load} />}
-      {at === "unclaimed" && <Unclaimed onChange={load} />}
+      {at === "unclaimed" && <Unclaimed onChange={load} superadmin={superadmin} />}
       {at === "reports" && <Reports queue={queue} onChange={load} setProblem={setProblem} />}
       {at === "visibility" && <Visibility readOnly={onTeam} />}
       {at === "index" && <IndexAndInvites onChange={load} onTeam={onTeam} />}

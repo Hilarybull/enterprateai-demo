@@ -1,0 +1,3 @@
+# Test tools (not needed in production). Verified with the integrated release gate, 24 Nov 2026.
+-r requirements.txt
+pytest==9.0.2

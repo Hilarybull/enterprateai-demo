@@ -1,3 +1,4 @@
+import Input from "../Input";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // The admin area's shared pieces, in the same design language as the Adaptive Dashboard:
@@ -68,6 +69,7 @@ export const ADMIN_NAV = [
   ] },
   { group: "Support", items: [{ key: "support", label: "Support messages", subtitle: "Messages from users", icon: "chat" }] },
   { group: null, items: [{ key: "ai-usage", label: "AI usage", subtitle: "Calls, tokens and cost", icon: "spark" },
+    { key: "simulation-accuracy", label: "Simulation accuracy", subtitle: "Forecasts against what happened", icon: "grid" },
     { key: "research-diagnostics", label: "Research diagnostics", subtitle: "Queries, sources and drops per run", icon: "beaker" }] },
 ];
 
@@ -324,10 +326,10 @@ export function AdminDateFilter({ start = "", end = "", onApply, label = "Date" 
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid min-w-0 gap-1 text-sm">Start Date
-              <input type="date" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
+              <Input type="date" value={draftStart} onChange={(e) => setDraftStart(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
             </label>
             <label className="grid min-w-0 gap-1 text-sm">End Date
-              <input type="date" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
+              <Input type="date" value={draftEnd} onChange={(e) => setDraftEnd(e.target.value)} className="w-full rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800" />
             </label>
           </div>
           {invalid && <p role="alert" className="mt-2 text-xs text-rose-600">End Date must be on or after Start Date.</p>}

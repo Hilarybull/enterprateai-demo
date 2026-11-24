@@ -101,6 +101,6 @@ it.each(["need_funding", "launch", "test_idea"])("%s goes to the chat even when 
 
 it("answers from the landing page still go to the chat, once", async () => {
   await open();
-  expect(calls.some((p) => /readiness-question/.test(p))).toBe(true);
+  expect(calls.some((p) => /readiness-question/.test(p))).toBe(false);
   expect(document.querySelector('[data-testid="where"]')?.textContent).toMatch(/^\/agent\?chat=/);
 });
