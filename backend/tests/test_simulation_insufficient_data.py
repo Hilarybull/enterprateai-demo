@@ -16,7 +16,7 @@ EMPTY = {"revenue_monthly": 0, "expenses_monthly": 0, "cost_of_sales_monthly": 0
 def _run(client, template="tmpl_revenue_drop", state=None, **params):
     return client.post("/v1/scenario-intelligence/scenario-runs", json={
         "tenant_id": "A", "business_id": "A", "state_version": "v1", "scenario_template_id": template, "scenario_mode": "manual",
-        "scenario_name": "Test", "parameters": {"timeline_months": 3, **params}, "state": state or EMPTY})
+        "scenario_name": "Test", "parameters": {"timeline_months": 3, **({"client_loss_pct": 10} if template == "tmpl_client_loss" else {"revenue_drop_pct": 10}), **params}, "state": state or EMPTY})
 
 
 @pytest.fixture
@@ -149,4 +149,4 @@ def test_a_month_s_status_follows_the_months_its_cash_covers_never_a_fixed_amoun
     assert svc._classify_health_status(net_profit=-10, cash_balance=-1, total_costs=22.83) == "critical"
     st = BusinessStateSnapshot(revenue_monthly=150, expenses_monthly=22.83, costs_monthly=22.83, starting_cash=381.5, top_client_share_pct=100, clients_count=1)
     tl, _m = svc._timeline(st, "client_loss", {"client_loss_pct": 100, "timeline_months": 6}, 6)
-    assert tl[0]["state_label"] == "stable" and {t["state_label"] for t in tl[1:]} == {"tight"}
+    assert {t["state_label"] for t in tl} == {"tight"}  # full client loss applies from month 1

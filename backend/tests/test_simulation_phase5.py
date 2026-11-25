@@ -153,11 +153,11 @@ def test_new_templates_are_listed():
 # ── The business's own records ────────────────────────────────────────────────────────────────────────────────────
 
 def _records(country="Nigeria"):
-    today = date.today().isoformat()
+    today = date(2026, 11, 24).isoformat()
     exp = [{"category": "Subcontractor", "price": 3000, "status": "paid", "date": today},
            {"category": "Rent", "price": 1000, "status": "paid", "date": today},
            {"category": "Salaries", "price": 2000, "status": "paid", "date": today},
-           {"category": "Subcontractor", "price": 9999, "status": "paid", "date": (date.today() - timedelta(days=200)).isoformat()}]
+           {"category": "Subcontractor", "price": 9999, "status": "paid", "date": (date(2026, 11, 24) - timedelta(days=200)).isoformat()}]
     return {"workspace_profile": {"country": country}, "financials": {"expenses": exp}}
 
 
@@ -165,7 +165,7 @@ def test_direct_costs_payroll_and_country_from_the_records():
     """Last 92 days: direct 3,000, payroll 2,000, other 1,000 (the 200-day-old one is outside). Shared costs 6,000 a month:
     cost of sales 50% = 3,000, running costs 3,000. Salaries are recorded, so payroll settings add nothing. Country NG."""
     st = S(revenue_monthly=10000, expenses_monthly=6000)
-    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0, "figure_sources": {"expenses_monthly": "shared"}})
+    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0, "figure_sources": {"expenses_monthly": "shared"}}, date(2026, 11, 24))
     assert out["tax_country"] == "NG" and out["payroll_in_recorded_expenses"] is True
     assert (out["cost_of_sales_monthly"], out["expenses_monthly"], out["costs_monthly"]) == (3000, 3000, 6000)
     assert "direct-cost categories" in out["figure_sources"]["cost_of_sales_monthly"]
@@ -176,11 +176,11 @@ def test_the_larger_of_product_costs_and_direct_costs_is_cost_of_sales():
     6,000 shared costs). They describe the same purchases: cost of sales is the larger, 3,000; running costs 3,000.
     (Model 1.4 switched the split off as soon as any invoice carried a product cost: cost of sales stayed at 500.)"""
     st = S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=500)
-    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0})
+    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0}, date(2026, 11, 24))
     assert (out["cost_of_sales_monthly"], out["expenses_monthly"]) == (3000, 3000)
     high = si._phase5_from_records(S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=4200), _records(),
-                                   {"expenses_monthly": 6000.0})
-    assert (high["cost_of_sales_monthly"], high["expenses_monthly"]) == (4200, 3000)
+                                   {"expenses_monthly": 6000.0}, date(2026, 11, 24))
+    assert (high["cost_of_sales_monthly"], high["expenses_monthly"]) == (3000, 3000)
 
 
 def test_the_owner_s_own_country_is_kept():

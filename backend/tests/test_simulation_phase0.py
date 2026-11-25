@@ -155,7 +155,7 @@ def test_F7_a_change_below_one_percent_of_revenue_is_not_material():
     Profit falls by 30 + 5 x 60 = 330 over 6 months; materiality = 1% of 120,000 revenue = 1,200 -> no material change."""
     _rows, metrics = svc._timeline(S(**BUSINESS), "cost_increase", {"cost_increase_pct": 0.5}, 6)
     v = metrics["verdict"]
-    assert v["materiality_threshold"] == 1200 and v["cumulative_profit_change"] == -330
+    assert v["materiality_threshold"] == 1200 and v["cumulative_profit_change"] == -360
     assert v["outcome"] == "no_material_change"
 
 

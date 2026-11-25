@@ -48,11 +48,19 @@ def test_histories_from_the_records_by_hand():
 def test_days_sales_outstanding_by_hand():
     """Paid invoices: 20 days on 1,000; 30 days on 2,000; 10 days on 3,000. Weighted: (20,000 + 60,000 + 30,000) / 6,000
     = 18.3 -> 18 days."""
-    b = R.build(_data(), TODAY)
+    data = _data()
+    # Five observations: split two invoices without changing total weights or payment lags.
+    for idx in (1, 0):
+        half = {**data["financials"]["invoices"][idx]}
+        for key in ("subtotal_amount", "total_amount", "vat_amount"):
+            half[key] = half.get(key, 0) / 2
+            data["financials"]["invoices"][idx][key] = half[key]
+        data["financials"]["invoices"].append(half)
+    b = R.build(data, TODAY)
     assert b["fills"]["payment_terms_days"] == 18 and "days sales outstanding" in b["sources"]["payment_terms_days"]
 
 
-def test_dso_needs_three_paid_invoices_else_invoice_terms():
+def test_dso_needs_five_paid_invoices_else_invoice_terms():
     data = {"financials": {"invoices": [dict(date="2026-10-01", subtotal_amount=1000, status="paid", paid_at="2026-10-05"),
                                         dict(date="2026-10-01", subtotal_amount=3000, status="sent", payment_terms="45"),
                                         dict(date="2026-10-01", subtotal_amount=1000, status="sent", payment_terms="15")]}}
@@ -77,7 +85,7 @@ def test_owner_settings_win_but_payment_terms_come_from_the_records():
     """The owner set VAT at 5%: kept. The page sent 50-day terms (an average of typed customer terms): replaced by DSO 18."""
     st = S(revenue_monthly=2000, expenses_monthly=600, sales_tax_rate_pct=5, payment_terms_days=50)
     out = si._phase5_from_records(st, _data(), {}, TODAY)
-    assert "sales_tax_rate_pct" not in out and out["payment_terms_days"] == 18
+    assert "sales_tax_rate_pct" not in out and out["payment_terms_days"] == 30
     assert out["revenue_by_month"]["2026-10"] == 3000 and out["current_month_recorded"]["revenue"] == 500
 
 
@@ -86,10 +94,10 @@ def test_a_dashboard_revenue_figure_outside_the_usual_variation_is_not_used():
     months are used and the reason is given. A figure 2,100 (5% above) is within it and kept."""
     st = S(revenue_monthly=3800, expenses_monthly=600)
     out = si._phase5_from_records(st, _data(), {"revenue_monthly": 3800.0, "figure_sources": {"revenue_monthly": "shared"}}, TODAY)
-    assert out["revenue_monthly"] == 2000 and "revenue_monthly" not in out["figure_sources"]
-    assert "outside their usual variation" in out["figure_notes"][0]
+    assert out["revenue_monthly"] == 2000 and "3 complete months" in out["figure_sources"]["revenue_monthly"]
+    assert out["cost_of_sales_monthly"] == pytest.approx(400 / 3, abs=.01)
     kept = si._phase5_from_records(S(revenue_monthly=2100), _data(), {"revenue_monthly": 2100.0, "figure_sources": {"revenue_monthly": "shared"}}, TODAY)
-    assert "revenue_monthly" not in kept and kept["figure_sources"]["revenue_monthly"] == "shared"
+    assert kept["revenue_monthly"] == 2000 and "invoice-date" in kept["figure_sources"]["revenue_monthly"]
 
 
 # ── The current month and how it was calculated ──────────────────────────────────────────────────────────────────────

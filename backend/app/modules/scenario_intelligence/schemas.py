@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 ScenarioType = Literal[
@@ -27,6 +27,7 @@ ScenarioMode = Literal["adaptive", "manual", "adaptive_or_manual"]
 
 
 class BusinessStateSnapshot(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     revenue_monthly: float = Field(default=0, ge=0)
     expenses_monthly: float = Field(default=0, ge=0)
     cost_of_sales_monthly: float = Field(default=0, ge=0)
@@ -73,7 +74,7 @@ class BusinessStateSnapshot(BaseModel):
     existing_loan_balance: float | None = Field(default=None, ge=0)
     existing_loan_annual_rate_pct: float | None = Field(default=None, ge=0, le=100)
     existing_loan_monthly_repayment: float | None = Field(default=None, ge=0)
-    cost_inflation_pct: float | None = Field(default=None, ge=-50, le=100)  # a year, applied to costs with no trend
+    cost_inflation_pct: float | None = Field(default=None, ge=0, le=100)  # a year, applied to costs with no trend
     # Simulation audit, Phase 5 (model 1.4): the further factors of a standard forecast. All optional; blank = not modelled.
     tax_country: str | None = Field(default=None, max_length=60)            # GB / NG / US (or a country name): payroll rules
     profit_tax_regime: Literal["flat", "uk_corporation_tax"] | None = None   # UK bands and marginal relief, or the flat rate
@@ -82,11 +83,11 @@ class BusinessStateSnapshot(BaseModel):
     owner_drawings_monthly: float | None = Field(default=None, ge=0)        # cash the owners take out each month (not a cost)
     dividends: List[Dict[str, Any]] = Field(default_factory=list)          # [{amount, month}] (cash out, not a cost)
     capital_purchases: List[Dict[str, Any]] = Field(default_factory=list)  # [{amount, month, life_months}] equipment
-    bad_debt_pct: float | None = Field(default=None, ge=0, le=50)          # share of sales never collected
+    bad_debt_pct: float | None = Field(default=None, ge=0, le=100)          # share of sales never collected
     payroll_staff_count: int | None = Field(default=None, ge=0, le=10000)
     payroll_gross_monthly_per_person: float | None = Field(default=None, ge=0)
     payroll_in_recorded_expenses: bool | None = None                        # True: salaries are already in the expenses
-    employer_pension_pct: float | None = Field(default=None, ge=0, le=50)   # overrides the country's minimum
+    employer_pension_pct: float | None = Field(default=None, ge=0, le=100)   # overrides the country's minimum
     # Phase 6 (model 1.5): from the business's records (records.py), set by the server
     current_month_recorded: Dict[str, Any] | None = None     # this month so far: {month, revenue, cost_of_sales, expenses, ...}
     figure_notes: List[str] = Field(default_factory=list)    # why a figure differs from the dashboard's, in words
@@ -161,6 +162,27 @@ class ScenarioRunRequest(BaseModel):
     state: BusinessStateSnapshot
 
 
+    @field_validator("parameters")
+    @classmethod
+    def checked_parameters(cls, value):
+        from app.modules.scenario_intelligence.validation import validate_parameters
+        return validate_parameters(value)
+
+    @model_validator(mode="after")
+    def required_inputs(self):
+        if self.scenario_mode == "manual":
+            from app.modules.scenario_intelligence.service import resolve_template
+            template = resolve_template(self.scenario_template_id)
+            for key in (template.required_inputs if template else []):
+                if key in ("employer_oncost_pct", "cost_classification"):  # optional country-rule override, disclosed by the engine
+                    continue
+                if self.parameters.get(key) in (None, ""):
+                    raise ValueError(f"{key.replace('_', ' ').capitalize()} is required before running this scenario.")
+        from app.modules.scenario_intelligence.validation import validate_settings
+        validate_settings(self.state, self.parameters.get("timeline_months", 6))
+        return self
+
+
 class ScenarioRunResponse(BaseModel):
     scenario_run_id: str
     status: Literal["pending", "completed", "failed"]
@@ -226,9 +248,15 @@ class DoNothingRequest(BaseModel):
     tenant_id: str
     business_id: str
     state_version: str
-    timeline_months: int = Field(default=3, ge=1, le=24)
+    timeline_months: int = Field(default=3, ge=3, le=24)
     state: BusinessStateSnapshot
     parameters: Dict[str, Any] = Field(default_factory=dict)      # {"use_estimate": True}: from the owner's own pricing answers (QA PF4)
+
+    @model_validator(mode="after")
+    def checked_settings(self):
+        from app.modules.scenario_intelligence.validation import validate_settings
+        validate_settings(self.state, self.timeline_months)
+        return self
 
 
 class DoNothingResponse(BaseModel):

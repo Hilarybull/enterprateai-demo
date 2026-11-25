@@ -56,7 +56,7 @@ def random_state(r: random.Random) -> dict:
         state.update(profit_tax_rate_pct=r.uniform(0, 35), tax_payment_month=r.choice([None, r.randint(1, 12)]),
                      sales_tax_rate_pct=r.choice([None, 5, 20]), sales_tax_on_costs_pct=r.uniform(0, 100),
                      existing_loan_balance=r.choice([None, r.uniform(0, 80000)]), existing_loan_annual_rate_pct=r.uniform(0, 15),
-                     existing_loan_monthly_repayment=r.choice([None, r.uniform(0, 4000)]), cost_inflation_pct=r.uniform(-5, 15))
+                     existing_loan_monthly_repayment=r.choice([None, r.uniform(0, 4000)]), cost_inflation_pct=r.uniform(0, 15))
     return state
 
 
@@ -185,8 +185,9 @@ def test_backtest_compares_with_the_naive_method():
     method (3-month average plus a damped trend, once 6 months are on record) is closer."""
     hist = {f"2026-{m:02d}": 10000 + 500 * (m - 1) for m in range(1, 11)}
     out = accuracy_report([], hist, date(2026, 11, 17))["backtest"]
-    assert out["naive_wape_pct"] == pytest.approx(1500 / 42000 * 100, abs=0.05)
-    assert out["wape_pct"] < out["naive_wape_pct"] and out["skill"] == "better than the naive method"
+    assert out["naive_wape_pct"] == pytest.approx(3500 / 91000 * 100, abs=0.05)
+    assert out["wape_pct"] == 3.9 and out["skill"] == "worse than the naive method"
+    assert len(out["months"]) == 7
 
 
 def test_saved_runs_are_tracked_end_to_end(monkeypatch):

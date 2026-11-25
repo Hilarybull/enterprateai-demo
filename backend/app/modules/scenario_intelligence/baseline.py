@@ -305,7 +305,7 @@ def value_in_month(series: Dict[str, Any], as_of: Optional[date], month_index: i
 # Phase 3: how well the baseline method would have forecast the business's own past (backtest)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 3, min_train: int = 3) -> Optional[Dict[str, Any]]:
+def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 12, min_train: int = 3) -> Optional[Dict[str, Any]]:
     """Rolling-origin backtest of the baseline method on one series: for each of the last `holdout` complete months, the
     method is fitted on the months before it only, and its forecast is compared with what actually happened.
 
@@ -333,7 +333,7 @@ def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 3, min_
         rows.append(dict(month=f"{y:04d}-{m:02d}", actual=round(actual, 2), forecast=round(forecast, 2), naive=round(naive, 2)))
     total_actual = sum(r["actual"] for r in rows)
     if total_actual <= 0:
-        return dict(months=rows, wape_pct=None, bias_pct=None, naive_wape_pct=None, skill=None,
+        return dict(months=rows, wape_pct=None, bias_pct=None, naive_wape_pct=None, skill=None, reliability="low" if len(rows) < 6 else "supported",
                     note="No actual revenue in the test months, so accuracy can't be measured.")
     wape = sum(abs(r["forecast"] - r["actual"]) for r in rows) / total_actual * 100
     bias = sum(r["forecast"] - r["actual"] for r in rows) / total_actual * 100
@@ -345,5 +345,6 @@ def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 3, min_
         naive_wape_pct=round(naive_wape, 1),
         skill=("better than the naive method" if wape < naive_wape - 0.05
                else "worse than the naive method" if wape > naive_wape + 0.05 else "same as the naive method"),
-        note=f"Each of the last {len(rows)} complete months forecast from the months before it only.",
+        reliability="low" if len(rows) < 6 else "supported",
+        note=f"Each of the last {len(rows)} complete months forecast from the months before it only." + (" Low reliability: fewer than 6 test months." if len(rows) < 6 else ""),
     )

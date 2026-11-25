@@ -1,3 +1,4 @@
+import { receivableTiming } from "./receivableTiming";
 import { pinnedRate } from "./fx";
 function toNumber(value) {
   const num = Number(value || 0);
@@ -269,18 +270,9 @@ export function buildFinancialIntelligence({ catalogue, financials, validation, 
   const salesContracts = signedContracts.filter((item) => normaliseStatus(item.contract_type, "sales") !== "purchase");
   const purchaseContracts = signedContracts.filter((item) => normaliseStatus(item.contract_type, "sales") === "purchase");
 
-  const pendingInvoiceWithinTerms = pendingInvoices.filter((item) => {
-    const customer = customerMap.get(item.customer_id);
-    return isPendingWithinTerms(item, customer?.payment_terms || item.payment_terms);
-  });
-  const pendingInvoiceApproachingDue = pendingInvoiceWithinTerms.filter((item) => {
-    const customer = customerMap.get(item.customer_id);
-    return isApproachingTermExpiry(item, customer?.payment_terms || item.payment_terms);
-  });
-  const overduePendingInvoices = pendingInvoices.filter((item) => {
-    const customer = customerMap.get(item.customer_id);
-    return !isPendingWithinTerms(item, customer?.payment_terms || item.payment_terms);
-  });
+  const pendingInvoiceWithinTerms = invoices.filter(item => ["approaching", "open_not_due"].includes(receivableTiming(item)));
+  const pendingInvoiceApproachingDue = invoices.filter(item => receivableTiming(item) === "approaching");
+  const overduePendingInvoices = invoices.filter(item => receivableTiming(item) === "overdue");
   const pendingExpenseWithinTerms = pendingExpenses.filter((item) => {
     const vendorTerms = item.payment_terms || 30;
     return isPendingWithinTerms(item, vendorTerms);

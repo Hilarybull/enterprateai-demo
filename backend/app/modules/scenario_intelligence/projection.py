@@ -36,7 +36,7 @@ from app.modules.scenario_intelligence import factors
 from app.modules.scenario_intelligence.baseline import add_months, build_baseline, value_in_month
 from app.modules.scenario_intelligence.schemas import BusinessStateSnapshot
 
-MODEL_VERSION = "projection-1.6"      # 1.0 Phase 0; 1.1 Phase 1; 1.2 Phases 2-3; 1.3 Phase 4; 1.4 Phase 5; 1.5-1.6 Phase 6 (docs/simulation-audit/MODEL.md, change log)
+MODEL_VERSION = "projection-1.7"      # 1.0 Phase 0; 1.1 Phase 1; 1.2 Phases 2-3; 1.3 Phase 4; 1.4 Phase 5; 1.5-1.6 Phase 6 (docs/simulation-audit/MODEL.md, change log)
 DAYS_PER_MONTH = 30.0
 DEFAULT_PAYMENT_TERMS_DAYS = 30
 MIN_MONTHS, MAX_MONTHS = 3, 24
@@ -226,20 +226,16 @@ def _monthly_projection_values(
     expenses = base_expenses
     cost_of_sales = base_cost_of_sales
 
-    sales_ramp_months = _month_span_from_days(state.sales_cycle_days, fallback=1, cap=3)
-    pricing_ramp_months = max(1, min(2, sales_ramp_months))
-    cost_ramp_months = 2
 
     if scenario_type == "client_loss":
-        sales_ramp_months = max(2, sales_ramp_months)
-        loss_pct = float(params.get("client_loss_pct") or state.top_client_share_pct or 0.0)
-        progress = min(1.0, month_index / float(sales_ramp_months))
+        loss_pct = float(params.get("client_loss_pct", state.top_client_share_pct) or 0.0)
+        progress = 1.0
         multiplier = max(0.0, 1.0 - ((loss_pct / 100.0) * progress))
         revenue *= multiplier
         cost_of_sales *= multiplier
     elif scenario_type == "revenue_drop":
         drop_pct = float(params.get("revenue_drop_pct") or 0.0)
-        progress = min(1.0, month_index / float(sales_ramp_months))
+        progress = 1.0
         multiplier = max(0.0, 1.0 - ((drop_pct / 100.0) * progress))
         revenue *= multiplier
         cost_of_sales *= multiplier
@@ -251,7 +247,7 @@ def _monthly_projection_values(
         effective_month = max(1, int(params.get("effective_month") or 1))
         selected_revenue = float(params.get("selected_product_revenue_monthly") or 0.0)
         if month_index >= effective_month and base_revenue > 0:
-            progress = min(1.0, ((month_index - effective_month) + 1) / float(pricing_ramp_months))
+            progress = 1.0
             price_factor = max(0.01, 1.0 + (change_pct / 100.0) * progress)
             volume_factor = price_factor ** elasticity
             share = min(1.0, selected_revenue / base_revenue) if selected_revenue > 0 else 1.0
@@ -259,7 +255,7 @@ def _monthly_projection_values(
             cost_of_sales = base_cost_of_sales * (1 - share) + base_cost_of_sales * share * volume_factor
     elif scenario_type == "cost_increase":
         inc_pct = float(params.get("cost_increase_pct") or 0.0)
-        progress = min(1.0, month_index / float(cost_ramp_months))
+        progress = 1.0
         multiplier = 1.0 + ((inc_pct / 100.0) * progress)
         expenses *= multiplier
         cost_of_sales *= multiplier
@@ -281,10 +277,13 @@ def _monthly_projection_values(
     elif scenario_type == "contractor_addition":
         add_cost = float(params.get("contractor_monthly_cost") or 0.0)
         contractor_count = max(1, int(params.get("employee_count") or 1))
-        cost_of_sales += add_cost * contractor_count
+        if params.get("cost_classification") == "direct":
+            cost_of_sales += add_cost * contractor_count
+        else:
+            expenses += add_cost * contractor_count
     elif scenario_type == "reduce_fixed_cost":
         red_pct = float(params.get("cost_reduction_pct") or 0.0)
-        progress = min(1.0, month_index / float(cost_ramp_months))
+        progress = 1.0
         multiplier = max(0.0, 1.0 - ((red_pct / 100.0) * progress))
         expenses *= multiplier
     elif scenario_type == "buy_equipment":
@@ -426,9 +425,9 @@ def assumptions_for(state: BusinessStateSnapshot, scenario_type: str, params: Di
     out = [
         "Month 1 is the first full month after today; the projection opens on today's cash.",
         (f"The rest of this month ({stub_days} days) is included at the normal monthly rate, so month 1's cash and "
-         "running profit include it. Changes in the scenario start from month 1." if stub_days else
+         "running profit include it. Scenario changes apply only to the full months ahead." if stub_days else
          "The rest of the current month is not modelled (no date was given)."),
-        (f"Customers pay after {int(terms)} days (your recorded terms)." if terms is not None
+        (f"Customers pay after {int(terms)} days ({state.figure_sources.get('payment_terms_days') or 'your recorded terms'})." if terms is not None
          else f"Customers pay after {DEFAULT_PAYMENT_TERMS_DAYS} days (assumed: no payment terms on record)."),
         "Money already owed to you is collected when it falls due; anything overdue is assumed collected straight away. "
         "No allowance is made for customers who never pay.",
@@ -471,6 +470,15 @@ def assumptions_for(state: BusinessStateSnapshot, scenario_type: str, params: Di
     out.append(f"Costs rise {infl:g}% a year with inflation, where their own trend doesn't already show it."
                if infl else "No cost inflation is applied (not set).")
 
+    if scenario_type in ("client_loss", "revenue_drop", "cost_increase", "reduce_fixed_cost", "price_change"):
+        key = {"client_loss": "client_loss_pct", "revenue_drop": "revenue_drop_pct", "cost_increase": "cost_increase_pct",
+               "reduce_fixed_cost": "cost_reduction_pct", "price_change": "price_change_pct"}[scenario_type]
+        value = params.get(key, state.top_client_share_pct if scenario_type == "client_loss" else 0)
+        out.append(f"{key.replace('_', ' ')}: {value or 0}%; applied in full from month {params.get('effective_month', 1) if scenario_type == 'price_change' else 1}, with no phase-in.")
+    if scenario_type == "contractor_addition":
+        out.append("Contractor fees are recorded as " + ("direct delivery costs (cost of sales)." if params.get("cost_classification") == "direct" else "operating expenses."))
+    if scenario_type == "delay_hiring":
+        out.append("The planned hire is cancelled for the whole forecast; the entered payroll cost is removed from month 1.")
     # The scenario's own assumptions
     if scenario_type == "price_change":
         e, given = price_elasticity(params)
@@ -480,7 +488,7 @@ def assumptions_for(state: BusinessStateSnapshot, scenario_type: str, params: Di
         out.append("Cost of sales follows the volume sold; capacity limits are not modelled.")
     if scenario_type in ("hire_staff", "delay_hiring"):
         count, pay, oncost = _hire_cost(params, state)
-        given = params.get("employer_oncost_pct") not in (None, "") and oncost * 100 != DEFAULT_ONCOST_PCT
+        given = params.get("employer_oncost_pct") not in (None, "")
         by_country = (not given and factors.country_code(getattr(state, "tax_country", None)) and pay > 0)
         out.append(f"Each person costs {_money(pay)} a month plus {oncost * 100:.4g}% employer on-costs"
                    + ("." if given else
@@ -507,7 +515,8 @@ def assumptions_for(state: BusinessStateSnapshot, scenario_type: str, params: Di
                    f"{_money(_num(params.get('cost_saving_monthly')))} running costs a month (as entered).")
     if scenario_type == "service_launch":
         out.append("The new service's sales carry cost of sales at your current ratio; extra overheads are the cost uplift "
-                   f"on operating expenses; launch cost {_money(_num(params.get('launch_cost')))} in month 1.")
+                   f"on operating expenses; launch cost {_money(_num(params.get('launch_cost')))} in month 1. "
+                   "Sales uplift and extra overheads phase in over three months: one third in month 1, two thirds in month 2, full from month 3.")
     if scenario_type == "take_loan":
         amount = _num(params.get("loan_amount"))
         out.append(f"A loan of {_money(amount)} at {_num(params.get('loan_annual_rate_pct')):g}% a year, received in month "
@@ -652,7 +661,7 @@ def project(
         if kind == "buy_equipment" and _num(sp.get("equipment_cost")) > 0:
             capex.append((_month(sp.get("purchase_month")), _num(sp.get("equipment_cost")),
                           max(1, int(_num(sp.get("useful_life_months"), 36)))))
-    bad_debt = min(0.5, max(0.0, _num(state.bad_debt_pct) / 100.0))
+    bad_debt = min(1.0, max(0.0, _num(state.bad_debt_pct) / 100.0))
     payroll_m, payroll_basis = 0.0, None
     staff, gross = int(state.payroll_staff_count or 0), _num(state.payroll_gross_monthly_per_person)
     if staff > 0 and gross > 0 and state.payroll_in_recorded_expenses is not True:
@@ -712,6 +721,8 @@ def project(
 
         # Financing (from month 1)
         interest = principal = loan_in = 0.0
+        if p == 0 and loan_e > 0:
+            interest += loan_e * loan_e_rate * weight
         if p >= 1:
             if loan_e > 0:
                 i_e = loan_e * loan_e_rate
@@ -866,6 +877,7 @@ def project(
         months=months,
         opening_cash=round(opening_cash, 2),
         closing_cash=round(cash, 2),
+        cash_after_vat_owed=round(round(cash, 2) - round(vat_payable, 2), 2),
         min_cash=round(min_cash, 2),
         min_cash_month=min_cash_month,
         first_negative_cash_month=first_negative,

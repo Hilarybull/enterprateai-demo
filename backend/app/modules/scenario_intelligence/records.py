@@ -12,7 +12,7 @@ Standards applied (each explained in MODEL.md, section 2a):
   larger in each month (the two describe the same purchases; taking both would double-count, taking the smaller would
   under-count). Running costs = the other expenses.
 * **Days sales outstanding (DSO)**, the standard measure of how fast customers pay: the amount-weighted average of
-  (payment date - invoice date) over paid invoices in the last 12 months, with at least 3 of them. Otherwise the
+  (payment date - invoice date) over paid invoices in the last 12 months, with at least 5 of them. Otherwise the
   amount-weighted terms on the invoices; otherwise none (the model then assumes 30 days and says so).
 * **VAT**: the amount-weighted rate on invoices in the last 12 months; the share of costs carrying VAT from the
   expenses. Used only when the owner has not set VAT.
@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 from app.modules.scenario_intelligence import factors
 
 NOT_SALES = {"draft", "cancelled", "canceled", "void", "voided", "rejected", "deleted"}
-MIN_PAID_FOR_DSO = 3
+MIN_PAID_FOR_DSO = 5
 
 
 def _day(v: Any) -> Optional[date]:
@@ -127,13 +127,27 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
         out["sources"]["histories"] = (f"{len(invoices)} invoices (by invoice date, excluding VAT) and {len(expenses)} expenses "
                                        "from your records")
     out["counts"] = {"invoices": len(invoices), "expenses": len(expenses)}
+    from app.modules.scenario_intelligence.baseline import complete_months, LEVEL_MONTHS
+    periods = complete_months(out["histories"].get("revenue_by_month"), today)[-LEVEL_MONTHS:]
+    if periods and any(revenue.get(f"{y:04d}-{m:02d}", 0) > 0 for (y, m), _ in periods):
+        keys = [f"{y:04d}-{m:02d}" for (y, m), _ in periods]
+        out["levels"] = {field: round(sum(out["histories"][history].get(k, 0) for k in keys) / len(keys), 2)
+                         for field, history in (("revenue_monthly", "revenue_by_month"),
+                                                ("cost_of_sales_monthly", "cost_of_sales_by_month"),
+                                                ("expenses_monthly", "expenses_by_month"))}
+        out["levels"]["costs_monthly"] = round(out["levels"]["cost_of_sales_monthly"] + out["levels"]["expenses_monthly"], 2)
+        for field in out["levels"]:
+            out["sources"][field] = f"invoice-date records excluding VAT, {keys[0]} to {keys[-1]} ({len(keys)} complete months)"
 
+
+    out["fills"]["payment_terms_days"] = 30
+    out["sources"]["payment_terms_days"] = "assumed 30 days: no usable invoice terms or five observed payments in the last 12 months"
     # Days sales outstanding: how fast customers actually pay
     year_ago = today - timedelta(days=365)
     paid = []
     for inv in invoices:
         d0, d1 = invoice_date(inv), _day(inv.get("paid_at"))
-        if d0 and d1 and d1 >= d0 and d1 >= year_ago:
+        if _status(inv) == "paid" and d0 and d1 and d1 >= d0 and year_ago <= d0 <= today and d1 <= today:
             paid.append(((d1 - d0).days, invoice_net(inv) or _num(inv.get("total_amount"))))
     weight = sum(w for _d, w in paid)
     if len(paid) >= MIN_PAID_FOR_DSO and weight > 0:
@@ -143,12 +157,12 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
                                                 f"12 months after {dso:.0f} days on average (weighted by amount)")
     else:
         terms = [(_num(i.get("payment_terms")), invoice_net(i)) for i in invoices
-                 if str(i.get("payment_terms") or "").strip() not in ("", "0") and _num(i.get("payment_terms")) > 0]
+                 if year_ago <= (invoice_date(i) or date.min) <= today and i.get("payment_terms") not in (None, "") and _num(i.get("payment_terms")) >= 0]
         tw = sum(w for _t, w in terms)
         if terms and tw > 0:
             t = sum(a * w for a, w in terms) / tw
             out["fills"]["payment_terms_days"] = int(round(t))
-            out["sources"]["payment_terms_days"] = f"the terms on your invoices: {t:.0f} days on average (weighted by amount)"
+            out["sources"]["payment_terms_days"] = f"the terms on your invoices in the last 12 months: {t:.0f} days on average (weighted by amount)"
 
     # VAT from the invoices and expenses of the last 12 months
     vat_inv = [(_num(i.get("vat_rate")), invoice_net(i)) for i in invoices if (invoice_date(i) or date.min) >= year_ago]
