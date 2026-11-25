@@ -535,7 +535,7 @@ def test_figures_match_the_engines_exactly():
     cash = bz.cash_position(env.businesses["A"]["data"], env.now.date())
     s = d["financial_summary"]
     assert s["cash"] == cash["cash"] and s["runway_months"] == cash["runway_months"]
-    assert s["receivables"] == 199 and s["overdue_count"] == 2 and s["overdue_total"] == 199      # disputed and draft excluded
+    assert s["receivables"] == 199 and s["overdue_count"] == 3 and s["overdue_total"] == 239      # disputed debt is overdue, although collection/reminders are held; draft excluded
 
 
 def test_free_credits_and_exhaustion_are_reported():

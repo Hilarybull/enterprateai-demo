@@ -78,8 +78,8 @@ describe("simulation audit, Phase 2: how sure the result is", () => {
     expect(confidenceText(null)).toBe("");
   });
 
-  it("reads the low, base and high net cash for the side shown", () => {
-    const u = { ranges: { cases: { low: { scenario: { net_cash: 1 } }, base: { scenario: { net_cash: 2 }, baseline: { net_cash: 5 } }, high: { scenario: { net_cash: 3 } } } } };
+  it("reads the low, base and high bank cash for the side shown", () => {
+    const u = { ranges: { cases: { low: { scenario: { closing_cash: 1 } }, base: { scenario: { closing_cash: 2 }, baseline: { closing_cash: 5 } }, high: { scenario: { closing_cash: 3 } } } } };
     expect(rangeOf(u, "scenario")).toEqual({ low: 1, base: 2, high: 3 });
     expect(rangeOf(u, "baseline").base).toBe(5);
     expect(rangeOf({}, "scenario")).toBeNull();

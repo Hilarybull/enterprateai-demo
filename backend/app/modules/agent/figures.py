@@ -46,11 +46,13 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
                            "top_share": None, "clients": 0, "invoices": 0, "overdue": None, "expenses_counted": 0, "expense_days": [], "expense_months": 0,
                            "customers": [], "sources": {}}
     try:
-        conc = bz.concentration(data, 40)
+        recent_data = {**data, "financials": {**fin, "invoices": [i for i in fin.get("invoices") or [] if today - timedelta(days=365) <= (bz.parse_day(i.get("issued_at") or i.get("date") or i.get("issue_date") or i.get("created_at") or i.get("paid_at")) or date.min) <= today]}}
+        out["clients"] = len(bz.revenue_by_customer(data))
+        conc = bz.concentration(recent_data, 40)
         if conc["customer_count"] >= 1 and conc["total_revenue"] > 0:
-            out.update({"top_customer": conc["top_customers"][0]["customer"], "top_share": float(conc["top1_share_pct"]), "clients": conc["customer_count"],
+            out.update({"top_customer": conc["top_customers"][0]["customer"], "top_share": float(conc["top1_share_pct"]), "clients": out["clients"],
                         "customers": [{"name": c["customer"], "share": float(c["share_pct"])} for c in conc["top_customers"]]})
-            out["sources"]["top_share"] = "your paid invoices"
+            out["sources"]["top_share"] = "your paid invoices in the last 12 months"
         # Money received on invoices, the reading the workspace card, the research and the funding check share
         from app.modules.agent import research
         paid = research.paid_invoices(data, today)
@@ -61,8 +63,7 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
             months = months_on_record(first, today)
             out["revenue_monthly"] = round(sum(recent) / months, 2)
             out["revenue_months"] = months
-            out["sources"]["revenue_monthly"] = ("money received on your invoices this month" if months == 1 else
-                                                 f"money received on your invoices over the last {months} months, a month on average")
+            out["sources"]["revenue_monthly"] = f"money received on your invoices in the last 92 days, averaged over {months} trading month(s)"
         invs = [i for i in fin.get("invoices") or [] if not i.get("archived")]
         out["invoices"] = len(invs)
         if invs:
@@ -76,7 +77,7 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
             days = sorted({_when(e) for e in spent if _when(e)})
             out["expense_days"] = [x.isoformat() for x in days]
             out["expense_months"] = len({(x.year, x.month) for x in days})
-            out["sources"]["costs_monthly"] = f"{len(spent)} expense{'s' if len(spent) != 1 else ''} recorded in the last 3 months"
+            out["sources"]["costs_monthly"] = f"{len(spent)} expense{'s' if len(spent) != 1 else ''} recorded in the last 92 days"
         cp = bz.cash_position(data, today)
         if cp.get("recorded"):
             out["cash"] = float(cp["cash"])
@@ -104,9 +105,18 @@ def of(data: dict | None, today: date | None = None) -> dict[str, Any]:
         out["costs_monthly"] = said["monthly_costs"]["value"]
         out["sources"]["costs_monthly"] = "your usual monthly costs, as you told me"
     # Spending from fewer than two months of records is too thin to judge (R-9): any runway from it is an estimate
-    out["costs_estimate"] = bool(out["costs_monthly"]) and out["sources"].get("costs_monthly", "").endswith("in the last 3 months") and out["expense_months"] < 2
+    out["costs_estimate"] = bool(out["costs_monthly"]) and out["sources"].get("costs_monthly", "").endswith("in the last 92 days") and out["expense_months"] < 2
     if out["cash"] is not None and out["costs_monthly"]:
         out["runway_months"] = round(max(0.0, out["cash"]) / out["costs_monthly"], 1)
+    from app.modules.scenario_intelligence.records import build
+    rec = build(data, today)
+    timing = bz.receivable_timing(data, today)
+    out["overdue"] = len(timing["overdue"])
+    out["approaching"] = len(timing["approaching"])
+    out["simulation_inputs"] = {**(rec.get("levels") or {}), **(rec.get("fills") or {}),
+                                "overdue_receivables_count": out["overdue"],
+                                "approaching_receivables_count": out["approaching"]}
+    out["simulation_sources"] = rec["sources"]
     return out
 
 

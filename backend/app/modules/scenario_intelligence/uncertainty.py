@@ -172,7 +172,7 @@ def _net_cash(s: Dict[str, Any]) -> float:
 
 
 def _brief(s: Dict[str, Any]) -> Dict[str, Any]:
-    return dict(closing_cash=s["closing_cash"], net_cash=_net_cash(s), cumulative_profit=s["cumulative_profit"],
+    return dict(closing_cash=s["closing_cash"], cash_after_vat_owed=round(s["closing_cash"] - float(s.get("closing_sales_tax_owed") or 0), 2), net_cash=_net_cash(s), cumulative_profit=s["cumulative_profit"],
                 min_cash=s["min_cash"], first_negative_cash_month=s["first_negative_cash_month"])
 
 

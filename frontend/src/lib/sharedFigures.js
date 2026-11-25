@@ -18,6 +18,8 @@ export function withSharedFigures(insights, shared, wanted = "") {
     next.expenses_monthly = shared.costs_monthly;
     next.costs_monthly = Number((shared.costs_monthly + (snapshot.cost_of_sales_monthly || 0)).toFixed(2));
   }
+  Object.assign(next, shared.simulation_inputs || {});
+  next.figure_sources = { ...(next.figure_sources || {}), ...(shared.simulation_sources || {}) };
   const customers = Array.isArray(shared.customers) ? shared.customers : [];
   const name = String(wanted || "").trim().toLowerCase();
   const pick = (name && customers.find((c) => String(c.name).toLowerCase() === name)) || customers[0] || null;

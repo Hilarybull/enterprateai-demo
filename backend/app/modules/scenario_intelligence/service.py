@@ -136,7 +136,7 @@ def _templates() -> List[ScenarioTemplate]:
             title="Add a Contractor",
             description="Simulate bringing on a contractor to add capacity without a permanent hire.",
             mode="manual",
-            required_inputs=["employee_count", "contractor_monthly_cost"],
+            required_inputs=["employee_count", "contractor_monthly_cost", "cost_classification"],
         ),
         ScenarioTemplate(
             scenario_template_id="tmpl_price_increase",
@@ -190,8 +190,8 @@ def _templates() -> List[ScenarioTemplate]:
         ScenarioTemplate(
             scenario_template_id="tmpl_delay_hiring",
             scenario_type="delay_hiring",
-            title="Delay a Hire",
-            description="Simulate cancelling or deferring a planned hire.",
+            title="Cancel a planned hire",
+            description="Remove the planned hire and its payroll cost throughout the forecast.",
             mode="manual",
             required_inputs=["employee_count", "employee_monthly_cost", "employer_oncost_pct"],
         ),
@@ -511,7 +511,7 @@ def _timeline(
     from app.modules.scenario_intelligence.uncertainty import analyse
     uncertainty = analyse(state, scenario_type, params, months, as_of, baseline_summary, base_rows, scenario_summary, rows)
     scenario_state = run_rate_snapshot(state, scenario_type, params, months, as_of=as_of)
-    base_state = run_rate_snapshot(state, "do_nothing_projection", {}, 1, as_of=as_of) if as_of else state
+    base_state = run_rate_snapshot(state, "do_nothing_projection", {}, months, as_of=as_of) if as_of else state
     return rows, dict(
         baseline_metrics=_snapshot_metrics(base_state),
         scenario_metrics=_snapshot_metrics(scenario_state, rows, state),
@@ -613,6 +613,8 @@ async def create_scenario_run(
     state: BusinessStateSnapshot,
     as_of: date | None = None,
 ) -> Dict[str, Any]:
+    from app.modules.scenario_intelligence.validation import validate_parameters
+    params = validate_parameters(params)
     run_id = str(uuid4())
     now = _now_iso()
     as_of = as_of or _today()
@@ -933,8 +935,9 @@ async def generate_scenario_interpretation(run_id: str, user_id: str) -> Dict[st
 Scenario run ID: {run_id}
 Scenario name: {run.get("scenario_name")}
 Scenario type: {run.get("scenario_type")}
-Baseline snapshot: {baseline}
-Scenario snapshot: {scenario}
+Baseline at the final month: {run.get("baseline_metrics")}
+Scenario at the same final month: {run.get("scenario_metrics")}
+Entered parameters: {run.get("parameters")}
 Final month output: {last_month}
 Verdict against doing nothing (same months): {(run.get("scenario_metrics") or {}).get("verdict")}
 Assumptions: {((run.get("scenario_metrics") or {}).get("projection") or {}).get("assumptions")}
@@ -949,6 +952,7 @@ Include:
 1. The likely impact in plain English.
 2. The most important risk or upside.
 3. One practical next step.
+Compare baseline and scenario for the same final month and state the percentage the user entered. Never compare today with a future scenario month.
 Only describe the engine output above: never add a figure, a cause or a risk that is not in it. Where a value is
 missing, unavailable or unbounded, say so instead of guessing. If the basis is an estimate, say it is an estimate.
 If there is not enough data for a point, say "not enough data" for it. State the confidence level, and if the verdict is

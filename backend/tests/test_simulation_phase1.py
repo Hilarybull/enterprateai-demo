@@ -413,7 +413,7 @@ def test_service_runs_from_today_with_the_rest_of_the_month(monkeypatch):
 def test_backtest_on_a_flat_business_is_exact():
     hist = {f"2026-{m:02d}": 10000 for m in range(1, 11)}
     bt = backtest(hist, date(2026, 11, 17))
-    assert bt["wape_pct"] == 0 and len(bt["months"]) == 3
+    assert bt["wape_pct"] == 0 and len(bt["months"]) == 7
 
 
 def test_price_sensitivity_is_the_page_form_of_elasticity():

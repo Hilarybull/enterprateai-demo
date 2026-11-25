@@ -525,8 +525,21 @@ def reminder_block_reason(inv: dict | None, today: date) -> str | None:
 
 
 def overdue_invoices(data: dict, today: date) -> list[dict]:
-    invs = (data.get("financials") or {}).get("invoices") or []
-    return [i for i in invs if reminder_block_reason(i, today) is None]
+    return receivable_timing(data, today)["overdue"]
+
+
+def receivable_timing(data: dict, today: date, window_days: int = 7) -> dict:
+    """Financial timing is independent of whether a reminder is allowed (holds, disputes)."""
+    groups = {"overdue": [], "approaching": [], "open_not_due": []}
+    excluded = {"draft", "cancelled", "canceled", "void", "voided", "written_off", "refunded", "reversed", "chargeback"}
+    for inv in (data.get("financials") or {}).get("invoices") or []:
+        if inv.get("archived") or status_of(inv) in excluded or invoice_outstanding(inv) <= 0:
+            continue
+        due = parse_day(inv.get("due_date"))
+        bucket = ("overdue" if due and due < today else
+                  "approaching" if due and 0 <= (due - today).days <= window_days else "open_not_due")
+        groups[bucket].append(inv)
+    return groups
 
 
 def currency_of(data: dict) -> str:

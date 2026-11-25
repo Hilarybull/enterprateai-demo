@@ -7,6 +7,11 @@ from typing import Any, Dict, List
 from app.modules.scenario_intelligence.projection import MODEL_VERSION
 
 CHANGES: List[Dict[str, Any]] = [
+    dict(version="projection-1.7", date="2026-11-25", summary=[
+        "One invoice-date basis for sales and costs; weighted payment terms from the last 12 months, using observed delays only with five paid invoices.",
+        "Percentage changes apply in full from their start month. Contractor costs can be operating expenses or direct delivery costs.",
+        "Existing-loan interest is included in the rest of this month; bank cash and cash after VAT are shown separately.",
+        "Inputs are checked before running. Backtests use up to 12 months, with low reliability flagged under six."]),
     dict(version="projection-1.6", date="2026-11-21", summary=[
         "A data check before each projection: gaps, unusual months, possible duplicates, uncategorised or undated records.",
         "Several changes can be simulated together (for example a price rise and a new hire).",

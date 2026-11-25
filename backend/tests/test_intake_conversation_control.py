@@ -73,6 +73,10 @@ def test_switch_cannot_invent_a_capability_or_write_task_values(monkeypatch):
 
 
 def test_failed_turn_can_be_retried_without_retyping_or_duplicating_history(monkeypatch):
+    from datetime import datetime, timezone
+    # Force the timestamp collision that occurs on fast retries on Windows.
+    fixed = datetime(2026, 11, 24, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(goals, "_now", lambda clock=None: fixed)
     store = goals.SessionStore()
     session = run(goals.start(store, text=None, key="need_funding", entry_mode="business_goal"))
     session["inputs"] = {"amount": 1000000}
@@ -98,6 +102,7 @@ def test_failed_turn_can_be_retried_without_retyping_or_duplicating_history(monk
     assert session["inputs"]["use"] == "food"
     assert sum(t["role"] == "user" and t["content"] == "food" for t in session["turns"]) == 1
     assert not goals.public(session)["agent_turn"].get("retry")
+    assert session["fallbacks"][0]["superseded"] is True
 
 
 def test_old_saved_timeout_gets_the_same_retry_control():

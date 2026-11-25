@@ -1191,7 +1191,7 @@ def retry_message(session: dict) -> dict | None:
     if session.get("pending_retry"):
         return session["pending_retry"]
     turns, failures = session.get("turns") or [], session.get("fallbacks") or []
-    if len(turns) >= 2 and failures and failures[-1].get("at") == turns[-1].get("at") and turns[-1].get("role") == "assistant" \
+    if len(turns) >= 2 and failures and not failures[-1].get("superseded") and failures[-1].get("at") == turns[-1].get("at") and turns[-1].get("role") == "assistant" \
             and turns[-2].get("role") == "user" and failures[-1].get("why") not in ("plain_answer", "turn_cap", "no_model"):
         return {"message": turns[-2]["content"], "asked": turns[-1].get("next")}
     return None
@@ -1743,6 +1743,11 @@ async def _take_turn(session: dict, answers: dict, message: str, asked: str | No
         # again, and keep the failure out of the model's conversational context.
         turns = session.get("turns") or []
         if len(turns) >= 2 and turns[-2].get("role") == "user" and turns[-2].get("content") == message and turns[-1].get("role") == "assistant":
+            # Keep the failed attempt for audit, but it no longer identifies the
+            # visible reply. Fast retries can have the same clock timestamp.
+            failures = session.get("fallbacks") or []
+            if failures and failures[-1].get("at") == turns[-1].get("at"):
+                failures[-1]["superseded"] = True
             session["turns"] = turns[:-2]
     session.pop("pending_retry", None)
     slots = _questions(session)

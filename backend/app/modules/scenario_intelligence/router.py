@@ -85,6 +85,7 @@ async def risk_detection_run(
     _user=Depends(get_current_user),
 ) -> RiskDetectionResponse:
     await _require_business(_user, payload.business_id)
+    payload.state = await shared_state(_user, payload.business_id, payload.state)
     signals = detect_risks(payload.state)
     saved = await save_risk_signals(payload.tenant_id, payload.business_id, payload.state_version, signals)
     return RiskDetectionResponse(
@@ -105,6 +106,7 @@ async def recommendations_generate(
     if not (await plan_meets(_user["id"], "starter_insight") or await has_grant(_user["id"], "simulation")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=await refusal(_user["id"], "starter_insight", "AI-Powered Decision Recommendations"))
     # In MVP, use current state to re-derive risk signals deterministically.
+    payload.state = await shared_state(_user, payload.business_id, payload.state)
     risk_signals = detect_risks(payload.state)
     recs = recommend_scenarios(risk_signals)
     return RecommendationGenerateResponse(business_id=payload.business_id, recommended_scenarios=recs)
@@ -205,7 +207,11 @@ async def shared_state(user: dict, business_id: str, state):
         f = figures.of(data)
     except Exception:      # noqa: BLE001 - Simulation's own figures then
         return state
-    update: dict = {}
+    from app.modules.agent.business import receivable_timing as timing
+    from datetime import datetime, timezone
+    due = timing(data, datetime.now(timezone.utc).date())
+    update: dict = {"overdue_receivables_count": len(due["overdue"]),
+                    "approaching_receivables_count": len(due["approaching"])}
     sources = dict(state.figure_sources or {})
     said = f.get("sources") or {}
     if f.get("revenue_monthly") is not None:
@@ -229,26 +235,18 @@ async def shared_state(user: dict, business_id: str, state):
 
 
 def _phase5_from_records(state, data: dict, update: dict, today=None) -> dict:
-    """What the business's own records say (Phases 5-6, models 1.4-1.5): the owner enters invoices, expenses, customers and
-    settings elsewhere in EnterprateAI, and the simulation reads them here, so nothing is entered twice (records.py).
-    * Histories of sales, cost of sales and running costs: built from the records, replacing the page's own copy.
-    * Owner settings always win. From the records, only blanks are filled: country, VAT, salaries already in expenses.
-    * Payment terms: how fast customers actually pay (days sales outstanding) replaces the plain average of the terms typed
-      on customer records that the page sends.
-    * Running costs: the direct-cost share is split out of the shared monthly costs figure (never added to it); cost of
-      sales is the larger of the invoices' product costs and the direct costs.
-    * Monthly revenue: the shared figure is checked against the complete months; outside the business's 90% forecast range,
-      the complete months are used and the reason is given.
-    * This month so far: passed on for the current-month row."""
+    """Fill settings from records and use one invoice-date window for revenue and both cost components.
+
+    Owner-entered optional settings win; payment timing comes from invoice evidence.
+    Current-month actuals, record checks and source descriptions travel with the snapshot.
+    """
     from datetime import date as _date, datetime, timedelta, timezone
     from app.modules.agent import business as bz
     from app.modules.agent import figures
     from app.modules.scenario_intelligence import factors, records
-    from app.modules.scenario_intelligence.baseline import LEVEL_MONTHS, complete_months
     today = today or datetime.now(timezone.utc).date()
     out: dict = {}
     sources = dict(update.get("figure_sources") or state.figure_sources or {})
-    notes: list = []
     try:
         rec = records.build(data, today)
     except Exception:      # noqa: BLE001 - the page's figures then
@@ -266,50 +264,22 @@ def _phase5_from_records(state, data: dict, update: dict, today=None) -> dict:
     if rec.get("checks"):
         out["record_checks"] = rec["checks"]
 
-    # Direct costs out of the shared costs figure (same 92 days as the figure)
-    try:
+    # A new business without complete sales months still needs the recorded payroll/direct-cost split.
+    if not rec.get("levels"):
         since = today - timedelta(days=figures.WINDOW_DAYS)
-        fin = (data.get("financials") or {}) if isinstance(data, dict) else {}
-        spent = [e for e in fin.get("expenses") or [] if isinstance(e, dict) and not e.get("archived")
-                 and bz.status_of(e) == "paid" and (figures._when(e) or since) >= since]
+        spent = [e for e in (data.get("financials") or {}).get("expenses") or []
+                 if not e.get("archived") and bz.status_of(e) == "paid" and since <= (records.expense_date(e) or _date.min) <= today]
         kinds = factors.classify_expenses(spent)
-    except Exception:      # noqa: BLE001
-        kinds = {"direct": 0.0, "total": 0.0, "payroll": 0.0}
-    if kinds.get("payroll", 0) > 0 and state.payroll_in_recorded_expenses is None:
-        out["payroll_in_recorded_expenses"] = True
-    shared_costs = update.get("expenses_monthly")
-    if kinds["direct"] > 0 and kinds["total"] > 0 and shared_costs:
-        share = kinds["direct"] / kinds["total"]
-        direct_level = shared_costs * share
-        product_level = float(state.cost_of_sales_monthly or 0)
-        out["cost_of_sales_monthly"] = round(max(direct_level, product_level), 2)
-        out["expenses_monthly"] = round(shared_costs * (1 - share), 2)
-        out["costs_monthly"] = round(out["expenses_monthly"] + out["cost_of_sales_monthly"], 2)
-        sources["cost_of_sales_monthly"] = (f"{share:.0%} of the shared monthly costs: expenses in direct-cost categories"
-                                            + (" (larger than the product costs on invoices)" if direct_level >= product_level and product_level else ""))
-        sources["expenses_monthly"] = (str(sources.get("expenses_monthly") or "the shared monthly costs")
-                                       + f", less the {share:.0%} that is direct costs")
-
-    # The shared revenue figure against the complete months
-    shared_rev = update.get("revenue_monthly")
-    hist = (out.get("revenue_by_month") or state.revenue_by_month or {})
-    series = complete_months(hist, today)
-    if shared_rev is not None and len(series) >= LEVEL_MONTHS:
-        recent = [v for _ym, v in series[-LEVEL_MONTHS:]]
-        avg = sum(recent) / len(recent)
-        if avg > 0:
-            from app.modules.scenario_intelligence.uncertainty import DEFAULT_REVENUE_SWING, forecast_swing
-            band, _ = forecast_swing(hist, today, 6, DEFAULT_REVENUE_SWING)
-            gap = (shared_rev - avg) / avg
-            if abs(gap) > band:
-                out["revenue_monthly"] = round(avg, 2)
-                sources.pop("revenue_monthly", None)
-                notes.append(f"The dashboard's monthly revenue ({shared_rev:,.2f}: money received over the last 92 days, including "
-                             f"this month so far) is {abs(gap):.0%} {'above' if gap > 0 else 'below'} your last {LEVEL_MONTHS} complete "
-                             f"months ({avg:,.2f} a month), outside their usual variation (±{band:.0%}); the projection uses the "
-                             "complete months.")
-    if notes:
-        out["figure_notes"] = notes
+        shared_costs = update.get("expenses_monthly")
+        if kinds.get("total", 0) > 0 and shared_costs is not None:
+            direct = round(float(shared_costs) * kinds["direct"] / kinds["total"], 2)
+            out.update(cost_of_sales_monthly=direct, expenses_monthly=round(float(shared_costs) - direct, 2), costs_monthly=float(shared_costs))
+            sources["cost_of_sales_monthly"] = "direct-cost categories in recorded expenses, last 92 days (no complete sales months)"
+    # The same invoice-date window supplies revenue and both cost components.
+    out.update(rec.get("levels") or {})
+    for key in rec.get("levels") or {}:
+        sources[key] = rec["sources"][key]
+    out["figure_notes"] = []
     out["figure_sources"] = sources
     return out
 

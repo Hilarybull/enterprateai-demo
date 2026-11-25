@@ -1,3 +1,4 @@
+import { validateSimulationInputs, validateSimulationSettings } from "../lib/simulationValidation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
@@ -154,6 +155,7 @@ export const SETTING_CHOICES = {
   tax_country: [["", "From my business profile"], ["GB", "United Kingdom"], ["NG", "Nigeria"], ["US", "United States"]],
   profit_tax_regime: [["", "Flat rate (above)"], ["uk_corporation_tax", "UK corporation tax bands"]],
   payroll_in_recorded_expenses: [["", "Work it out from my expenses"], ["true", "Yes, they are in my expenses"], ["false", "No, add them"]],
+  cost_classification: [["operating", "Operating expenses"], ["direct", "Direct delivery (cost of sales)"]],
   funding_type: [["equity", "Equity investment"], ["owner_capital", "Owner capital"], ["grant", "Grant"]],
 };
 
@@ -201,10 +203,10 @@ export function confidenceText(uncertainty) {
 }
 
 /** The low / base / high closing cash for one side ("scenario" or "baseline"), or null. */
-export function rangeOf(uncertainty, side = "scenario") {
+export function rangeOf(uncertainty, side = "scenario", field = "closing_cash") {
   const cases = uncertainty?.ranges?.cases;
   if (!cases?.base?.[side]) return null;
-  return { low: cases.low?.[side]?.net_cash, base: cases.base[side].net_cash, high: cases.high?.[side]?.net_cash };
+  return { low: cases.low?.[side]?.[field], base: cases.base[side][field], high: cases.high?.[side]?.[field] };
 }
 
 const KPI_LABELS = [
@@ -217,7 +219,7 @@ const KPI_LABELS = [
   ["break_even_revenue_monthly", "Break-even revenue a month", "money"],
   ["margin_of_safety_pct", "Margin of safety", "pct"],
   ["interest_cover", "Interest cover", "times"],
-  ["net_cash", "Net cash at the end", "money"],
+  ["net_cash", "Cash after loans, tax and VAT owed", "money"],
 ];
 
 // ── Simulation audit, Phase 3 (17 Nov 2026): accuracy against what actually happened ─────────────────────────────
@@ -234,6 +236,7 @@ export function accuracyText(report) {
   const b = report.backtest;
   if (b?.wape_pct != null) {
     out.push(`Tested on your own history, the method is off by ${b.wape_pct}% against ${b.naive_wape_pct}% for "next month = last month": ${b.skill}.`);
+    if (b.reliability === "low") out.push(b.note || "Low reliability: fewer than 6 completed test months.");
   } else if (b?.note) {
     out.push(b.note);
   }
@@ -677,6 +680,8 @@ export default function SimulationPage() {
     setDecisionNotice(null);
     try {
       const template = templates.find((t) => t.scenario_template_id === templateId);
+      validateSimulationInputs({ timeline_months: 6, ...params }, mode === "manual" ? (template?.required_inputs || []).filter(key => key !== "employer_oncost_pct") : []);
+      validateSimulationSettings(projectionSettings, params?.timeline_months ?? 6);
       const payload = {
         tenant_id: tenantId,
         business_id: businessId,
@@ -727,11 +732,13 @@ export default function SimulationPage() {
     }
     setError(null);
     try {
+      validateSimulationInputs({ timeline_months: monthsOverride ?? manualTimelineMonths });
+      validateSimulationSettings(projectionSettings, monthsOverride ?? manualTimelineMonths);
       const res = await apiRequest("/v1/scenario-intelligence/do-nothing/run", "POST", {
         tenant_id: tenantId,
         business_id: businessId,
         state_version: stateVersion,
-        timeline_months: Math.min(24, parseNumber(monthsOverride ?? manualTimelineMonths, 6)),
+        timeline_months: Number(monthsOverride ?? manualTimelineMonths),
         state: runState,
         parameters: useEstimate ? { use_estimate: true } : {}
       });
@@ -1466,7 +1473,7 @@ export default function SimulationPage() {
                                 {SETTING_CHOICES[key].map(([value, text]) => <option key={value} value={value}>{text}</option>)}
                               </select>
                             ) : (
-                              <NumberInput aria-label={def[1]} value={String(value)} onChange={(v) => updateProjectionSetting(key, v)} placeholder="Not set (optional)" />
+                              <NumberInput preserveInput aria-label={def[1]} value={String(value)} onChange={(v) => updateProjectionSetting(key, v)} placeholder="Not set (optional)" />
                             )}
                           </div>
                         );
@@ -1515,7 +1522,7 @@ export default function SimulationPage() {
                 </div>
                 <div>
                   <FieldLabel info="How many months to project: 3 to 24.">Timeline months</FieldLabel>
-                  <NumberInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
+                  <NumberInput preserveInput value={manualTimelineMonths} onChange={setManualTimelineMonths} placeholder="6" />
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600" data-projection-settings>
                   Business settings ({Object.keys(projectionSettingsForState(projectionSettings)).length} set) apply to every run.{" "}
@@ -1530,14 +1537,14 @@ export default function SimulationPage() {
                       <div key={key}>
                         <FieldLabel info={fieldHelp(key)}>{prettyLabel(key, manualTemplate?.scenario_type)}</FieldLabel>
                         {SETTING_CHOICES[key] ? (
-                          <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={String(manualParams[key] ?? "equity")}
+                          <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={String(manualParams[key] ?? (key === "cost_classification" ? "operating" : "equity"))}
                             onChange={(e) => setManualParams((p) => ({ ...p, [key]: e.target.value }))} aria-label={prettyLabel(key, manualTemplate?.scenario_type)}>
                             {SETTING_CHOICES[key].map(([value, text]) => <option key={value} value={value}>{text}</option>)}
                           </select>
                         ) : (
-                          <NumberInput
+                          <NumberInput preserveInput
                             value={String(manualParams[key] ?? "")}
-                            onChange={(v) => setManualParams((p) => ({ ...p, [key]: v === "" ? null : parseNumber(v, 0) }))}
+                            onChange={(v) => setManualParams((p) => ({ ...p, [key]: v }))}
                             placeholder={key === "employer_oncost_pct" ? "Country rules" : "0"}
                           />
                         )}
@@ -1612,7 +1619,7 @@ export default function SimulationPage() {
                         ...manualParams,
                         selected_product_revenue_monthly: Number(selectedProductRevenue.toFixed(2)),
                         selected_pending_receivable_amount: Number(selectedPendingReceivableAmount.toFixed(2)),
-                        timeline_months: parseNumber(manualTimelineMonths, 6)
+                        timeline_months: manualTimelineMonths
                       };
                       setCreditModal({
                         featureName: "Scenario Simulation",
@@ -1644,7 +1651,7 @@ export default function SimulationPage() {
                           ))}
                         </ol>
                         <Button className="mt-2" disabled={combo.length < 2 || actionLoading}
-                          onClick={() => runScenario("tmpl_combined", "manual", { steps: combo.map(({ scenario_type, params }) => ({ scenario_type, params })), timeline_months: parseNumber(manualTimelineMonths, 6) },
+                          onClick={() => runScenario("tmpl_combined", "manual", { steps: combo.map(({ scenario_type, params }) => ({ scenario_type, params })), timeline_months: manualTimelineMonths },
                             `Combined: ${combo.map((c) => c.title).join(" + ")}`)} data-run-combination>
                           Run these changes together
                         </Button>
@@ -1878,6 +1885,7 @@ function buildDefaultParams(template, stateSnapshot, largestClient) {
     employee_count: 1,
     employee_monthly_cost: 1500,
     contractor_monthly_cost: 1200,
+    cost_classification: "operating",
     delay_months: 1,
     revenue_uplift_pct: 10,
     cost_uplift_pct: 5,
@@ -1923,6 +1931,7 @@ function prettyLabel(key, scenarioType) {
     cost_reduction_pct: "Cost reduction (%)",
     revenue_uplift_pct: "Revenue uplift (%)",
     cost_uplift_pct: "Cost uplift (%)",
+    cost_classification: "Where contractor costs belong",
     employee_count: scenarioType === "delay_hiring" ? "Employees to cancel" : "Employees to add",
     employee_monthly_cost: "Monthly cost per employee",
     contractor_monthly_cost: "Monthly contractor cost",
@@ -1993,7 +2002,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_client_loss":
       return [
         `Client loss applied: ${Number(manualParams?.client_loss_pct ?? largestClient?.share ?? 0).toFixed(2)}%.`,
-        "Revenue ramps down over the first months, and cost of sales falls in the same proportion as revenue during that ramp.",
+        "Revenue and its cost of sales fall by the full entered percentage from month 1.",
       ];
     case "tmpl_price_increase":
       return [
@@ -2004,7 +2013,7 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_hire_staff":
       return [
         `New employees: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
-        `Monthly pay added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee, plus ${Number(manualParams?.employer_oncost_pct ?? 15)}% employer on-costs.`,
+        `Monthly pay added: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee, plus ${manualParams?.employer_oncost_pct != null ? `${manualParams.employer_oncost_pct}% employer on-costs` : "employer on-costs from country rules, with the applied rate shown in the result"}.`,
       ];
     case "tmpl_take_loan":
       return [
@@ -2036,11 +2045,11 @@ function scenarioAssumptions(templateId, largestClient, manualParams, months) {
     case "tmpl_reduce_fixed_cost":
       return [
         `Cost reduction applied: ${Number(manualParams?.cost_reduction_pct ?? 0).toFixed(2)}%.`,
-        "Overhead and fixed expenses fall over the first 2 months as savings are realised.",
+        "Overhead and fixed expenses fall by the full entered percentage from month 1.",
       ];
     case "tmpl_delay_hiring":
       return [
-        `Hires cancelled/deferred: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
+        `Planned hires cancelled: ${Math.max(1, Number(manualParams?.employee_count ?? 1))}.`,
         `Monthly payroll saved: ${Number(manualParams?.employee_monthly_cost ?? 0).toFixed(2)} per employee.`,
         "Revenue stays on the current baseline — this run shows the cost saving only.",
       ];
@@ -2092,159 +2101,15 @@ function buildScenarioExecutionBreakdown(
     return scenarioAssumptions(manualTemplateId, largestClient, manualParams, months);
   }
 
-  const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
-  const params = { ...(activeRun?.parameters || {}), ...(manualParams || {}) };
-  const baseline = activeRun?.baseline_snapshot || {};
-  const baselineRevenue = Number(
-    activeRun?.baseline_metrics?.monthly_revenue ?? baseline?.revenue_monthly ?? 0
-  );
-  const baselineExpenses = Number(
-    activeRun?.baseline_metrics?.monthly_expenses ?? baseline?.expenses_monthly ?? 0
-  );
-  const baselineCostOfSales = Number(
-    activeRun?.baseline_metrics?.monthly_cost_of_sales ?? baseline?.cost_of_sales_monthly ?? 0
-  );
-  const firstRow = Array.isArray(timeline) && timeline.length ? timeline[0] : null;
-  const secondRow = Array.isArray(timeline) && timeline.length > 1 ? timeline[1] : null;
-
-  if (scenarioType === "client_loss") {
-    const lossPct = Number(params?.client_loss_pct ?? baseline?.top_client_share_pct ?? largestClient?.share ?? 0);
-    const salesRampMonths = Math.max(
-      2,
-      monthSpanFromDays(baseline?.sales_cycle_days, 1, 3)
-    );
-    const monthOneProgress = Math.min(1, 1 / salesRampMonths);
-    const monthOneLossShare = lossPct * monthOneProgress;
-    const monthOneMultiplier = Math.max(0, 1 - monthOneLossShare / 100);
-    const fullMultiplier = Math.max(0, 1 - lossPct / 100);
-    const effectiveLargestClient = largestClient?.name || "largest client";
-
-    return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}.`,
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
-      `Largest client used in this run: ${effectiveLargestClient}. Client loss applied: ${formatPercentValue(lossPct)}.`,
-      `Ramp length: ${salesRampMonths} month${salesRampMonths === 1 ? "" : "s"}, based on your sales cycle.`,
-      `Month 1 applies ${formatPercentValue(monthOneLossShare, 3)} of loss, so the multiplier is ${monthOneMultiplier.toFixed(5)}.`,
-      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue * monthOneMultiplier, currency)} = ${formatCurrency(baselineRevenue, currency)} x ${monthOneMultiplier.toFixed(5)}.`,
-      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales * monthOneMultiplier, currency)} = ${formatCurrency(baselineCostOfSales, currency)} x ${monthOneMultiplier.toFixed(5)}.`,
-      `Month 2 onward applies the full ${formatPercentValue(lossPct)}, so the multiplier becomes ${fullMultiplier.toFixed(5)}.`,
-      `Month 2+ revenue: ${formatCurrency(secondRow?.revenue ?? baselineRevenue * fullMultiplier, currency)} = ${formatCurrency(baselineRevenue, currency)} x ${fullMultiplier.toFixed(5)}.`,
-      `Month 2+ cost of sales: ${formatCurrency(secondRow?.cost_of_sales ?? baselineCostOfSales * fullMultiplier, currency)} = ${formatCurrency(baselineCostOfSales, currency)} x ${fullMultiplier.toFixed(5)}.`,
-      "Projected cash balance increases only when revenue is collected and decreases only when costs are actually paid."
-    ];
-  }
-
-  if (scenarioType === "revenue_drop") {
-    const dropPct = Number(params?.revenue_drop_pct ?? 0);
-    const salesRampMonths = monthSpanFromDays(baseline?.sales_cycle_days, 1, 3);
-    const monthOneProgress = Math.min(1, 1 / salesRampMonths);
-    const monthOneMultiplier = Math.max(0, 1 - ((dropPct / 100) * monthOneProgress));
-    return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
-      `Revenue drop applied: ${formatPercentValue(dropPct)} over ${salesRampMonths} month${salesRampMonths === 1 ? "" : "s"}.`,
-      `Month 1 multiplier: ${monthOneMultiplier.toFixed(5)}.`,
-      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue * monthOneMultiplier, currency)}.`,
-      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales * monthOneMultiplier, currency)}.`,
-      "Cost of sales falls in the same proportion as revenue in this scenario."
-    ];
-  }
-
-  if (scenarioType === "price_change") {
-    const changePct = Number(params?.price_change_pct ?? 0);
-    const effectiveMonth = Math.max(1, Number(params?.effective_month ?? 1));
-    const selectedRevenue = Number(params?.selected_product_revenue_monthly ?? 0);
-    const selectedCount = Array.isArray(params?.selected_product_ids) ? params.selected_product_ids.length : 0;
-    return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Customers respond to the new price: sales volume moves the other way, by the price sensitivity shown in the assumptions, and cost of sales follows the volume.`,
-      `Price increase applied: ${formatPercentValue(changePct)} from month ${effectiveMonth}.`,
-      `Selected products/services: ${selectedCount || "all"}${selectedRevenue > 0 ? `, covering ${formatCurrency(selectedRevenue, currency)} of monthly revenue` : ""}.`,
-      `Month 1 revenue in the table is ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)} based on when the increase begins.`,
-      "Gross profit changes because the price and the volume sold both change; operating expenses stay on the current baseline."
-    ];
-  }
-
-  if (scenarioType === "cost_increase") {
-    const increasePct = Number(params?.cost_increase_pct ?? 0);
-    return [
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
-      `Cost increase applied: ${formatPercentValue(increasePct)} over the 2-month cost ramp.`,
-      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
-      "Both expenses and cost of sales move upward in this scenario, which is why net profit and projected cash balance tighten."
-    ];
-  }
-
-  if (scenarioType === "contractor_addition") {
-    const contractorCount = Math.max(1, Number(params?.employee_count ?? 1));
-    const contractorCost = Number(params?.contractor_monthly_cost ?? 0);
-    const totalCost = contractorCount * contractorCost;
-    return [
-      `Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
-      `Contractors added: ${contractorCount} x ${formatCurrency(contractorCost, currency)} = ${formatCurrency(totalCost, currency)} per month.`,
-      `Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales + totalCost, currency)}.`,
-      "Revenue stays on the current baseline — this run shows the direct delivery cost of adding contractor capacity."
-    ];
-  }
-
-  if (scenarioType === "hire_staff") {
-    const employeeCount = Math.max(1, Number(params?.employee_count ?? 1));
-    const employeeCost = Number(params?.employee_monthly_cost ?? 0);
-    return [
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
-      `New staff added: ${employeeCount} x ${formatCurrency(employeeCost, currency)} pay, plus ${Number(params?.employer_oncost_pct ?? 15)}% employer on-costs = ${formatCurrency(employeeCount * employeeCost * (1 + Number(params?.employer_oncost_pct ?? 15) / 100), currency)} per month.`,
-      `Month 1 expenses in the table are ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)} (recruitment costs fall in the start month).`,
-      Number(params?.revenue_per_hire_monthly ?? 0) > 0
-        ? `Each hire adds up to ${formatCurrency(Number(params.revenue_per_hire_monthly), currency)} of sales a month, reached over 3 months, with cost of sales at your current ratio.`
-        : "No extra sales from the hire are included, so the output shows whether today’s sales can absorb the extra payroll."
-    ];
-  }
-
-  if (scenarioType === "payment_delay") {
-    const delayMonths = Math.max(0, Number(params?.delay_months ?? 0));
-    const selectedPendingAmount = Number(params?.selected_pending_receivable_amount ?? 0);
-    const selectedPendingCount = Array.isArray(params?.selected_pending_ids) ? params.selected_pending_ids.length : 0;
-    return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline costs: ${formatCurrency(Number(activeRun?.baseline_metrics?.monthly_costs ?? baseline?.costs_monthly ?? 0), currency)}.`,
-      `Payment delay applied: ${delayMonths} month${delayMonths === 1 ? "" : "s"}.`,
-      `Selected pending items: ${selectedPendingCount || "all pending receivables"}${selectedPendingAmount > 0 ? `, worth ${formatCurrency(selectedPendingAmount, currency)}` : ""}.`,
-      `Month 1 projected cash balance is ${formatCurrency(firstRow?.cash_balance ?? 0, currency)} because collections are pushed back.`,
-      "Gross profit can stay unchanged while projected cash balance moves later in the timeline."
-    ];
-  }
-
-  if (scenarioType === "reduce_fixed_cost") {
-    const reductionPct = Number(params?.cost_reduction_pct ?? 0);
-    return [
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
-      `Cost reduction applied: ${formatPercentValue(reductionPct)} over the 2-month ramp.`,
-      `Month 1 expenses: ${formatCurrency(firstRow?.expenses ?? baselineExpenses, currency)}.`,
-      "Expenses fall gradually as the saving takes effect, improving both net profit and projected cash balance."
-    ];
-  }
-
-  if (scenarioType === "delay_hiring") {
-    const employeeCount = Math.max(1, Number(params?.employee_count ?? 1));
-    const employeeCost = Number(params?.employee_monthly_cost ?? 0);
-    const saving = employeeCount * employeeCost;
-    return [
-      `Baseline expenses: ${formatCurrency(baselineExpenses, currency)}.`,
-      `Planned hire cancelled: ${employeeCount} x ${formatCurrency(employeeCost, currency)} pay plus ${Number(params?.employer_oncost_pct ?? 15)}% on-costs = ${formatCurrency(saving * (1 + Number(params?.employer_oncost_pct ?? 15) / 100), currency)} per month.`,
-      `Month 1 expenses with saving: ${formatCurrency(firstRow?.expenses ?? Math.max(0, baselineExpenses - saving), currency)}.`,
-      "Revenue stays on the current baseline — this run shows the direct effect of removing the payroll commitment."
-    ];
-  }
-
-  if (scenarioType === "service_launch") {
-    const revenueUplift = Number(params?.revenue_uplift_pct ?? 0);
-    const costUplift = Number(params?.cost_uplift_pct ?? 0);
-    return [
-      `Baseline revenue: ${formatCurrency(baselineRevenue, currency)}. Baseline cost of sales: ${formatCurrency(baselineCostOfSales, currency)}.`,
-      `Revenue uplift applied: ${formatPercentValue(revenueUplift)}. Cost uplift applied: ${formatPercentValue(costUplift)}.`,
-      `Month 1 revenue: ${formatCurrency(firstRow?.revenue ?? baselineRevenue, currency)}. Month 1 cost of sales: ${formatCurrency(firstRow?.cost_of_sales ?? baselineCostOfSales, currency)}.`,
-      `The new sales carry cost of sales at your current ratio; the cost uplift applies to operating expenses${Number(params?.launch_cost ?? 0) > 0 ? `; the launch costs ${formatCurrency(Number(params.launch_cost), currency)} in month 1` : ""}. Both ramp up over the first 3 months.`
-    ];
-  }
-
-  return scenarioAssumptions(manualTemplateId, largestClient, manualParams, months);
+  const projection = activeRun?.scenario_metrics?.projection;
+  const baseline = activeRun?.baseline_metrics?.projection;
+  return [
+    ...(projection?.assumptions || []),
+    ...(projection && baseline ? [
+      `At the end of month ${projection.months}, scenario cash is ${formatCurrency(projection.closing_cash, currency)}; baseline cash for the same month is ${formatCurrency(baseline.closing_cash, currency)}.`,
+      `Profit over the same period: ${formatCurrency(projection.cumulative_profit, currency)} with the scenario; ${formatCurrency(baseline.cumulative_profit, currency)} with the baseline.`
+    ] : [])
+  ];
 }
 
 function fieldHelp(key) {
@@ -2317,71 +2182,13 @@ function MultiSelectChecklist({ label, info, items, selectedIds, onToggle, empty
 }
 
 function buildScenarioMeaning(activeRun, timeline, currency) {
-  const delta = activeRun?.deltas || {};
-  const scenarioType = String(activeRun?.scenario_type || "").toLowerCase();
-  const lastRow = Array.isArray(timeline) && timeline.length ? timeline[timeline.length - 1] : null;
-  const revenueDelta = Number(delta?.monthly_revenue || 0);
-  const profitDelta = Number(delta?.net_profit || 0);
-  const costsDelta = Number(delta?.monthly_costs || 0);
-  const scenarioCash = Number(lastRow?.cash_balance || 0);
-  const firstRow = Array.isArray(timeline) && timeline.length ? timeline[0] : null;
-  const cur = currency || "GBP";
-
-  const revenueText =
-    revenueDelta > 0
-      ? `your estimated monthly sales grow by ${formatCurrency(Math.abs(revenueDelta), cur)}`
-      : revenueDelta < 0
-        ? `your estimated monthly sales fall by ${formatCurrency(Math.abs(revenueDelta), cur)}`
-        : "your monthly sales volume stays about the same";
-
-  const profitText =
-    profitDelta > 0
-      ? `actual profit on paper improves by ${formatCurrency(Math.abs(profitDelta), cur)}`
-      : profitDelta < 0
-        ? `actual profit on paper falls by ${formatCurrency(Math.abs(profitDelta), cur)}`
-        : "profit on paper remains steady";
-
-  const costsText =
-    costsDelta > 0
-      ? `total bills and delivery costs rise by ${formatCurrency(Math.abs(costsDelta), cur)}`
-      : costsDelta < 0
-        ? `total bills and delivery costs fall by ${formatCurrency(Math.abs(costsDelta), cur)}`
-        : "your overhead and delivery costs stay flat";
-
-  let scenarioRule = "This simulation takes your current financial pace and projects it forward based on the changes you selected.";
-  if (scenarioType === "client_loss") {
-    scenarioRule = "This run shows what happens when a customer stops buying. Revenue and the costs to serve them both drop gradually over the first few months.";
-  } else if (scenarioType === "price_change") {
-    scenarioRule = "This run shows the effect of changing your prices. It assumes your delivery costs stay the same while your sales income increases.";
-  } else if (scenarioType === "cost_increase") {
-    scenarioRule = "This run shows what happens if your suppliers charge more or your bills go up, eating into your profit margin.";
-  } else if (scenarioType === "revenue_drop") {
-    scenarioRule = "This run shows a general slowdown in sales, allowing you to see how much of a cushion you have before profits turn into losses.";
-  } else if (scenarioType === "payment_delay") {
-    scenarioRule = "This is a timing test. It keeps your sales steady but assumes customers take longer to pay, showing you how much cash 'gets stuck' in unpaid invoices.";
-  } else if (scenarioType === "hire_staff") {
-    scenarioRule = "This run adds new salary costs to your monthly bills so you can see if your current sales can safely cover the extra payroll.";
-  } else if (scenarioType === "contractor_addition") {
-    scenarioRule = "This run adds immediate contractor costs. Since contractors can be stopped quickly, it's a good way to see if extra help pays for itself.";
-  } else if (scenarioType === "service_launch") {
-    scenarioRule = "This run models a new product or service. It balances the new income against the higher delivery costs and overhead needed to run it.";
-  } else if (scenarioType === "reduce_fixed_cost") {
-    scenarioRule = "This run models the impact of cutting overhead. It shows how saving on bills directly improves your profit margin and bank balance over time.";
-  } else if (scenarioType === "delay_hiring") {
-    scenarioRule = "This run shows the benefit of NOT hiring someone yet. By removing that planned cost, you can see how much more cash you keep in the business.";
-  }
-
-  const cashLine = lastRow
-    ? scenarioCash > 0
-      ? `Your bank balance is projected to end at ${formatCurrency(scenarioCash, cur)}. This is different from profit because it depends on exactly when money arrives or leaves your account.`
-      : "Your bank balance remains very tight in this scenario, suggesting you may need to find extra cash to cover bills."
-    : "The cash balance is the 'real' money you have left after paying all bills, once customer payments finally arrive.";
-  
-  const firstMonthLine = firstRow
-    ? `Starting next month, you'd be looking at ${formatCurrency(Number(firstRow.revenue || 0), cur)} in sales and ${formatCurrency(Number(firstRow.costs || 0), cur)} in total bills.`
-    : "";
-
-  return `${scenarioRule} Compared to your current state, ${revenueText}, ${costsText}, and ${profitText}. ${firstMonthLine} ${cashLine}`;
+  const projection = activeRun?.scenario_metrics?.projection || activeRun?.projection_summary;
+  const base = activeRun?.baseline_metrics?.projection;
+  if (!projection) return "The table shows the saved run's projected figures.";
+  const change = Object.entries(activeRun?.parameters || {}).filter(([k]) => k.endsWith("_pct"))
+    .map(([k, v]) => `${prettyLabel(k, activeRun.scenario_type).replace(" (%)", "")}: ${v}%`).join("; ");
+  const phase = (projection.assumptions || []).filter(line => /phase|reached over|no extra revenue/i.test(line)).join(" ");
+  return `${change ? change + "; " : ""}cash at the end of month ${projection.months}: ${formatCurrency(projection.closing_cash, currency)}${base ? ` compared with ${formatCurrency(base.closing_cash, currency)} doing nothing over the same period` : ""}. ${phase ? phase + " " : ""}Profit over the period: ${formatCurrency(projection.cumulative_profit, currency)}.${base ? ` Baseline profit over the same period: ${formatCurrency(base.cumulative_profit, currency)}.` : ""}`;
 }
 
 function CashOutlookChart({ rows, currency, monthLabel }) {
@@ -2447,6 +2254,7 @@ export function ScenarioOutput({
   const uncertainty = activeRun?.scenario_metrics?.uncertainty || projectionSummary?.uncertainty || null;
   const side = isProjection(activeRun) ? "baseline" : "scenario";
   const range = rangeOf(uncertainty, side);
+  const vatRange = rangeOf(uncertainty, side, "cash_after_vat_owed");
   function kpiValue(v, kind) {
     if (v == null) return kind === "months" ? "Not limited" : "—";
     if (kind === "pct") return `${Number(v).toFixed(1)}%`;
@@ -2577,7 +2385,8 @@ export function ScenarioOutput({
         {timelineRows.length ? (
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
-              ["Cash at the end", formatCurrency(timelineRows[timelineRows.length - 1]._cash, currency), "Money available after payments"],
+              ["Cash at the end", formatCurrency(timelineRows[timelineRows.length - 1]._cash, currency), "Bank cash before unpaid VAT, tax and loan balances"],
+              ["Cash after VAT owed", formatCurrency(projectionSummary?.cash_after_vat_owed ?? ((projectionSummary?.closing_cash || 0) - (projectionSummary?.closing_sales_tax_owed || 0)), currency), "Cash at the end less VAT still owed"],
               ["Profit over the period", formatCurrency(timelineRows[timelineRows.length - 1]._cumGross, currency), "Running profit after costs"],
               ["Months needing attention", String(atRisk(timeline).length), "Months marked at risk"],
             ].map(([label, value, hint]) => <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-white p-4"><div className="text-sm text-slate-600">{label}</div><div className="mt-2 break-words text-2xl font-semibold tracking-tight text-slate-900">{value}</div><div className="mt-1 text-xs text-slate-500">{hint}</div></div>)}
@@ -2640,7 +2449,7 @@ export function ScenarioOutput({
               <div className="mt-4" data-range>
                 <div className="font-medium text-slate-800">Possible cash at the end</div>
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {[["Lower estimate", range.low], ["Central estimate", range.base], ["Higher estimate", range.high]].map(([label, value]) => <div key={label} className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">{label}</div><div className="break-words text-lg font-semibold text-slate-900">{formatCurrency(value, currency)}</div></div>)}
+                  {[["Lower estimate", range.low], ["Central estimate", range.base], ["Higher estimate", range.high]].map(([label, value]) => <div key={label} className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-xs text-slate-500">{label}</div><div className="break-words text-lg font-semibold text-slate-900">{formatCurrency(value, currency)}</div><div className="mt-2 text-xs text-slate-500">Cash at the end</div><div className="mt-1 text-sm">Cash after VAT owed: {vatRange?.[label === "Lower estimate" ? "low" : label === "Central estimate" ? "base" : "high"] == null ? "Not recorded for this run" : formatCurrency(vatRange[label === "Lower estimate" ? "low" : label === "Central estimate" ? "base" : "high"], currency)}</div></div>)}
                 </div>
                 <p className="mt-2 text-xs leading-5">{uncertainty.ranges?.note}</p>
               </div>
@@ -2679,7 +2488,7 @@ export function ScenarioOutput({
                     <div key={key} title={uncertainty.kpis[side].definitions?.[key] || ""}>
                       {label}: <span className="font-semibold text-slate-800">{kpiValue(uncertainty.kpis[side][key], kind)}</span>
                       {side === "scenario" && uncertainty.kpis.baseline ? (
-                        <span className="text-slate-400"> (now {kpiValue(uncertainty.kpis.baseline[key], kind)})</span>
+                        <span className="text-slate-400"> (baseline, same period: {kpiValue(uncertainty.kpis.baseline[key], kind)})</span>
                       ) : null}
                     </div>
                   ))}
@@ -2794,13 +2603,13 @@ export function ScenarioOutput({
       {Object.keys(base).length ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricCard
-            title="Current trend"
+            title="Baseline · final month"
             metrics={base}
             currency={currency}
             info="Your current metrics without any change."
           />
           <MetricCard
-            title="With your change"
+            title="With your change · same month"
             metrics={scenario}
             currency={currency}
             info="Projected metrics after applying the scenario."

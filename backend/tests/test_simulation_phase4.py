@@ -149,7 +149,7 @@ def test_someone_without_access_gets_not_found_from_every_business_endpoint(worl
         client.post("/v1/scenario-intelligence/accuracy", json=body),
         client.post("/v1/scenario-intelligence/intelligence/run", json=body),
         client.post("/v1/scenario-intelligence/scenario-runs", json={**body, "scenario_template_id": "tmpl_revenue_drop",
-                                                                      "scenario_mode": "manual", "scenario_name": "x"}),
+                                                                      "scenario_mode": "manual", "scenario_name": "x", "parameters": {"revenue_drop_pct": 10}}),
         client.get("/v1/scenario-intelligence/history", params={"business_id": "A", "tenant_id": OUTSIDER}),
         client.delete("/v1/scenario-intelligence/history", params={"business_id": "A", "tenant_id": OUTSIDER}),
     ]
