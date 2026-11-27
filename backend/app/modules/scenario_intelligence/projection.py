@@ -36,7 +36,7 @@ from app.modules.scenario_intelligence import factors
 from app.modules.scenario_intelligence.baseline import add_months, build_baseline, value_in_month
 from app.modules.scenario_intelligence.schemas import BusinessStateSnapshot
 
-MODEL_VERSION = "projection-1.7"      # 1.0 Phase 0; 1.1 Phase 1; 1.2 Phases 2-3; 1.3 Phase 4; 1.4 Phase 5; 1.5-1.6 Phase 6 (docs/simulation-audit/MODEL.md, change log)
+MODEL_VERSION = "projection-1.8"
 DAYS_PER_MONTH = 30.0
 DEFAULT_PAYMENT_TERMS_DAYS = 30
 MIN_MONTHS, MAX_MONTHS = 3, 24
@@ -574,6 +574,8 @@ def project(
     months = clamp_months(months) if clamp else max(1, min(MAX_MONTHS, int(months)))
     baseline = build_baseline(state, as_of)
     stub_days, days_in_month = _stub(as_of)
+    if (state.current_month_recorded or {}).get("basis") == "actual":
+        stub_days = 0  # Recorded current-month activity is an anchor, never a projected period.
     stub_weight = stub_days / days_in_month if stub_days else 0.0
     first = 0 if stub_days else 1
     P = months + 1                                   # periods 0 (rest of this month) .. months
@@ -666,7 +668,7 @@ def project(
     staff, gross = int(state.payroll_staff_count or 0), _num(state.payroll_gross_monthly_per_person)
     if staff > 0 and gross > 0 and state.payroll_in_recorded_expenses is not True:
         per = factors.employer_cost_per_person(state.tax_country, gross, state.employer_pension_pct)
-        payroll_m, payroll_basis = staff * (gross + per["total"]), per["basis"]
+        payroll_m, payroll_basis = staff * (gross + per["total"]) + _num(state.employee_benefits_monthly), per["basis"]
     tax_regime = state.profit_tax_regime
     losses_bf = _num(state.tax_losses_brought_forward)
     fixed_assets = 0.0
@@ -926,14 +928,13 @@ def project(
     # What this run forecast for each calendar month, so it can be checked against what happens (Phase 3, accuracy.py)
     if as_of:
         summary["forecast_by_month"] = {
-            "%04d-%02d" % add_months(as_of.year, as_of.month, r["month_index"]): dict(revenue=r["revenue"], costs=r["costs"])
+            "%04d-%02d" % add_months(as_of.year, as_of.month, r["month_index"]): dict(revenue=r["revenue"], costs=r["costs"], expenses=r["expenses"], cost_of_sales=r["cost_of_sales"], profit=round(r["revenue"]-r["costs"],2), cash=r["cash_balance"])
             for r in rows}
     return rows, summary
 
 
 def current_month_view(state: BusinessStateSnapshot, as_of: date, opening_cash: float, stub: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Phase 6 (model 1.5): this calendar month as it stands: what the records show so far, plus the days left at the
-    business's normal monthly rate (period 0 of the projection), and the two together. Cash runs from today's balance."""
+    """This calendar month's recorded actuals, with no estimated remainder or month-end cash."""
     key = "%04d-%02d" % (as_of.year, as_of.month)
     rec = state.current_month_recorded if isinstance(state.current_month_recorded, dict) else None
     if rec and rec.get("month") == key:
@@ -947,17 +948,18 @@ def current_month_view(state: BusinessStateSnapshot, as_of: date, opening_cash: 
         source = "the monthly figures sent with the request"
     recorded = dict(revenue=round(revenue, 2), cost_of_sales=round(cos, 2), expenses=round(exp, 2), costs=round(cos + exp, 2),
                     profit=round(revenue - cos - exp, 2), source=source)
-    rest = dict(days=(stub or {}).get("days", 0), revenue=(stub or {}).get("revenue", 0.0), costs=(stub or {}).get("costs", 0.0),
-                profit=(stub or {}).get("profit", 0.0))
-    total = dict(revenue=round(recorded["revenue"] + rest["revenue"], 2), costs=round(recorded["costs"] + rest["costs"], 2),
-                 profit=round(recorded["profit"] + rest["profit"], 2))
+    recorded["receivables"] = _num((rec or {}).get("receivables"))
+    recorded["gross_profit"] = round(revenue - cos, 2)
+    recorded["gross_margin_pct"] = round((revenue - cos) / revenue * 100, 2) if revenue else None
+    # Legacy runs can carry a period-zero stub, but it is never included in actuals.
+    rest = dict(days=0, revenue=0.0, costs=0.0, profit=0.0)
+    total = dict(recorded)
+    actual_cash = (rec or {}).get("cash")
     return dict(month=key, label=as_of.strftime("%b %Y"), as_of=as_of.isoformat(), recorded_so_far=recorded,
-                rest_of_month=rest, month_total=total, cash_today=round(opening_cash, 2),
-                cash_at_month_end=round((stub or {}).get("closing_cash", opening_cash), 2),
-                explanation=(f"Recorded so far: what your records show dated 1-{as_of.day} {as_of.strftime('%B')}. Rest of the month: "
-                             f"the {rest['days']} days left at your normal monthly rate (the projection's starting level). The month's "
-                             "total is the two added together. Cash starts from today's balance; money owed to or by you that is due "
-                             "this month or overdue is collected or paid in the days left."))
+                rest_of_month=rest, month_total=total, cash_today=round(actual_cash if actual_cash is not None else opening_cash, 2),
+                cash_at_month_end=None, basis="actual",
+                explanation=(f"Actuals recorded in Business Operations through {as_of.isoformat()}. "
+                             "No remaining-day forecast is included. The current month is still in progress; forecasts start next month."))
 
 
 def thirteen_week_view(state: BusinessStateSnapshot, as_of: date, opening_cash: float,

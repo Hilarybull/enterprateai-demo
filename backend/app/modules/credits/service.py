@@ -115,14 +115,19 @@ async def ensure_wallet(user_id: str) -> dict:
             return wallet
         initial_credits, plan_code = await _initial_credits_for_user(user_id)
         reason = f"{plan_code} initial credit allocation"
+        reference = "welcome:initial"
+        subscription = await _get_subscription(user_id) if plan_code != "explorer" else None
+        if (subscription or {}).get("stripe_subscription_id"):
+            subscription_id = subscription["stripe_subscription_id"]
+            reference = "subscription:" + subscription_id
+            reason = f"{plan_code} subscription credit allocation [{subscription_id}]"
         given = await sb_select("credit_transactions", filters=[("user_id", "eq", user_id), ("description", "eq", reason)], columns="id", limit=1)
         if not given:
-            await _rpc("grant_credits", {
+            await _rpc("grant_stripe_credits_once", {
                 "p_user_id": user_id,
+                "p_reference": reference,
                 "p_amount": initial_credits,
-                "p_type": "allocation",
                 "p_reason": reason,
-                "p_next_reset_at": None,
             })
         wallet = await get_wallet(user_id)
     return wallet  # type: ignore[return-value]
@@ -231,15 +236,14 @@ async def _initial_credits_for_user(user_id: str) -> tuple[int, str]:
     sub = await _get_subscription(user_id)
     plan_code = normalise_plan_key((sub or {}).get("plan_key") or "explorer")
     plan_cfg = await _get_plan_config(plan_code)
-    credits = int((plan_cfg or {}).get("credits_per_period") or 50)
+    credits = WELCOME_CREDITS if plan_code == "explorer" else int((plan_cfg or {}).get("credits_per_period") or 0)
     return credits, plan_code
 
 
-# Explorer's 50 welcome AI credits never expire (the owner, 26 Oct: "it should not have expiration"): given once, and once
-# used up they are over, never topped up (monthly credits are only issued when a paid plan's invoice is paid).
-WELCOME_CREDITS = 50
-WELCOME_DAYS: int | None = None      # was 60 (19 Oct); no expiry since 26 Oct
-WELCOME_EXPIRED_REASON = "Welcome credits expired after 60 days"
+# One 200-credit allocation during the 14-day trial. Paid allocations never include unused trial credit.
+WELCOME_CREDITS = 200
+WELCOME_DAYS: int | None = 14
+WELCOME_EXPIRED_REASON = "Welcome credits expired after 14-day trial"
 
 
 def welcome_expires_at(wallet: dict | None) -> datetime | None:
@@ -253,26 +257,27 @@ def welcome_expires_at(wallet: dict | None) -> datetime | None:
 
 
 def welcome_left(wallet: dict | None) -> int:
-    """What is left of the 50 welcome credits: 50 less what has been used, never more than the balance."""
+    """Remaining trial credit, capped by the available wallet balance."""
     w = wallet or {}
     return max(0, min(int(w.get("available_credits") or 0), WELCOME_CREDITS - int(w.get("lifetime_credits_used") or 0)))
 
 
 async def expire_welcome_credits(user_id: str, wallet: dict | None, plan_code: str, now: datetime | None = None) -> dict | None:
-    """No expiry while WELCOME_DAYS is None (26 Oct): the wallet as it is. Kept for a set expiry: on Explorer, what is left
-    of the welcome credits then expires, once."""
+    """Expire the unused trial allocation atomically at the account's trial end."""
     now = now or datetime.now(timezone.utc)
-    ends = welcome_expires_at(wallet)
+    from app.modules.plans.access import resolve_subscription
+    subscription = await resolve_subscription(user_id)
+    ends = datetime.fromisoformat(subscription.current_period_end.replace("Z", "+00:00")) if subscription.status in ("trial", "expired") and subscription.current_period_end else None
+    if ends and ends.tzinfo is None:
+        ends = ends.replace(tzinfo=timezone.utc)
     left = welcome_left(wallet)
     if plan_code != "explorer" or not wallet or not ends or now < ends or left <= 0:
         return wallet
     try:
-        # The ledger keeps the reason in `description` (grant_credits / admin_deduct_credits write it there).
-        done = await sb_select("credit_transactions", filters=[("user_id", "eq", user_id), ("description", "eq", WELCOME_EXPIRED_REASON)], columns="id")
-        if done:
-            return wallet
-        await deduct_credits_admin(user_id, left, WELCOME_EXPIRED_REASON)
-        return {**wallet, "available_credits": int(wallet.get("available_credits") or 0) - left}
+        result = await _rpc("expire_trial_credits_once", {"p_user_id": user_id})
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise RuntimeError("Trial credit expiry could not be confirmed")
+        return {**wallet, "available_credits": int(result["balance"])}
     except Exception:      # noqa: BLE001 - the balance is shown as it stands; tried again on the next read
         logger.warning("welcome credits could not be expired for %s", user_id, exc_info=True)
         return wallet
@@ -296,10 +301,8 @@ async def get_balance(user_id: str) -> int:
         except Exception:      # noqa: BLE001 - the balance is then reported as it stands
             logger.warning("credit wallet could not be opened for %s", user_id, exc_info=True)
     if wallet and int(wallet.get("available_credits") or 0) > 0:
-        ends = welcome_expires_at(wallet)
-        if ends and datetime.now(timezone.utc) >= ends:
-            sub = await _get_subscription(user_id)
-            wallet = await expire_welcome_credits(user_id, wallet, normalise_plan_key((sub or {}).get("plan_key") or "explorer"))
+        sub = await _get_subscription(user_id)
+        wallet = await expire_welcome_credits(user_id, wallet, normalise_plan_key((sub or {}).get("plan_key") or "explorer"))
     return wallet["available_credits"] if wallet else 0
 
 
@@ -324,9 +327,11 @@ async def get_balance_info(user_id: str) -> dict:
     wallet = await expire_welcome_credits(user_id, wallet, plan_code)
     plan_cfg = await _get_plan_config(plan_code)
     monthly_allocation = int((plan_cfg or {}).get("credits_per_period") or 0)
-    ends = welcome_expires_at(wallet) if plan_code == "explorer" else None
+    from app.modules.plans.access import resolve_subscription
+    trial = await resolve_subscription(user_id)
+    ends = datetime.fromisoformat(trial.current_period_end.replace("Z", "+00:00")) if trial.status in ("trial", "expired") and trial.current_period_end else None
     return {
-        # Explorer: when what is left of the 50 welcome credits expires; None, as they don't (26 Oct).
+        # Trial dates use account signup time, independently of when the wallet was opened.
         "welcome_expires_at": ends.isoformat() if ends and ends > datetime.now(timezone.utc) and welcome_left(wallet) > 0 else None,
         "welcome_left": welcome_left(wallet) if plan_code == "explorer" else 0,
         "available_credits": wallet["available_credits"] if wallet else 0,
@@ -334,7 +339,9 @@ async def get_balance_info(user_id: str) -> dict:
         "lifetime_credits_issued": wallet["lifetime_credits_issued"] if wallet else 0,
         "lifetime_credits_used": wallet["lifetime_credits_used"] if wallet else 0,
         "next_reset_at": wallet.get("next_reset_at") if wallet else None,
-        "monthly_allocation": monthly_allocation,
+        "monthly_allocation": 0 if plan_code == "explorer" else monthly_allocation,
+        "trial_ends_at": ends.isoformat() if ends else None,
+        "trial_status": trial.status,
         "plan_code": plan_code,
         "plan": plan_code,
     }
@@ -405,6 +412,24 @@ async def update_feature_config(feature_code: str, updates: dict) -> dict | None
 # Atomic reserve / commit / release
 # ---------------------------------------------------------------------------
 
+async def _trial_credit_error(user_id: str, config: dict) -> dict | None:
+    from app.modules.plans.team import team_of
+    if await team_of(user_id):
+        return None  # Paid/team coverage is checked against its pool and allowance below.
+    from app.modules.plans.access import resolve_subscription, effective_access
+    sub = await resolve_subscription(user_id)
+    if sub.status not in ("trial", "expired"):
+        return None
+    access = await effective_access(user_id)
+    if access.get("full_access") or access.get("team_owner"):
+        return None
+    if sub.status == "expired":
+        return {"ok": False, "error": "TRIAL_EXPIRED", "upgrade": True, "message": "Your 14-day trial has ended. Upgrade to continue."}
+    if _is_credit_controlled(config) and await get_balance(user_id) <= 0:
+        return {"ok": False, "error": "INSUFFICIENT_CREDITS", "available": 0, "required": max(1, int(config.get("credit_cost") or 0)),
+                "upgrade": True, "message": "Your 200 trial AI credits are used up. Upgrade to keep using AI. Other tools remain available until your trial ends."}
+    return None
+
 async def reserve_credits(
     user_id: str,
     feature_code: str,
@@ -423,6 +448,9 @@ async def reserve_credits(
         return {"ok": False, "error": "FEATURE_NOT_FOUND"}
     if not config["enabled"]:
         return {"ok": False, "error": "FEATURE_DISABLED"}
+    trial_error = await _trial_credit_error(user_id, config)
+    if trial_error:
+        return trial_error
 
     credit_cost = int(config.get("credit_cost") or 0)
     plan_code = await entitled_plan(user_id)
@@ -618,6 +646,9 @@ async def check_credits(user_id: str, feature_code: str) -> dict:
     config = await get_feature_config(feature_code)
     if not config:
         return {"allowed": False, "can_afford": False, "reason": "FEATURE_NOT_FOUND"}
+    trial_error = await _trial_credit_error(user_id, config)
+    if trial_error:
+        return {**trial_error, "allowed": False, "can_afford": False, "reason": trial_error["error"]}
 
     balance = await get_balance(user_id)
     cost = int(config.get("credit_cost") or 0)

@@ -24,7 +24,8 @@ function announce(promise) {
 // Agent box, held in memory for this tab and sent with every message so a follow-up has its context; a reload reads it back
 // from the server. Never written to browser storage. It never crosses businesses: the business id is part of the key.
 const memoryConversations = new Map();
-onBrowserCleared(() => memoryConversations.clear());
+let conversationGeneration = 0;
+onBrowserCleared(() => { conversationGeneration += 1; memoryConversations.clear(); });
 function conversationKey(businessId) {
   let who = "me";
   try { who = useAuthStore.getState().email || "me"; } catch { /* signed-out or not loaded */ }
@@ -75,37 +76,83 @@ const replyKey = businessId => `ea:agent:pending-reply:${businessId}:${useAuthSt
 export function pendingAgentReply(businessId) {
   try { return JSON.parse(sessionStorage.getItem(replyKey(businessId)) || "null"); } catch { return null; }
 }
-function rememberReply(businessId, job) {
-  try { sessionStorage.setItem(replyKey(businessId), JSON.stringify(job)); } catch { /* polling still works without storage */ }
+function rememberReply(businessId, job, key = replyKey(businessId)) {
+  try { sessionStorage.setItem(key, JSON.stringify(job)); } catch { /* polling still works without storage */ }
 }
-function forgetReply(businessId, job) {
-  if (pendingAgentReply(businessId)?.job_id !== job.job_id) return;
-  try { sessionStorage.removeItem(replyKey(businessId)); } catch { /* ignore */ }
+function forgetReply(businessId, job, key = replyKey(businessId)) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+    if ((job.job_id && saved?.job_id === job.job_id) || (job.request_id && saved?.request_id === job.request_id)) sessionStorage.removeItem(key);
+  } catch { /* ignore */ }
 }
-export function resumeAgentReply(businessId, job = pendingAgentReply(businessId)) {
-  if (!job?.job_id) return Promise.reject(new Error("No pending reply was found."));
-  const key = `${businessId}:${job.job_id}`;
-  if (replyPolls.has(key)) return replyPolls.get(key);
+function replyOwner(businessId) {
+  const owner = conversationKey(businessId), generation = conversationGeneration;
+  return () => {
+    if (generation !== conversationGeneration || owner !== conversationKey(businessId)) {
+      const error = new Error("The signed-in account changed. Open your own conversation to continue.");
+      error.code = "AGENT_REPLY_CONTEXT_CHANGED";
+      throw error;
+    }
+  };
+}
+export function resumeAgentReply(businessId, job = pendingAgentReply(businessId), { withContext = false } = {}) {
+  if (!job?.job_id && !job?.request_id) return Promise.reject(new Error("No pending reply was found."));
+  const key = `${conversationGeneration}:${conversationKey(businessId)}:${job.job_id || job.request_id}`;
+  const storageKey = replyKey(businessId);
+  const checkOwner = replyOwner(businessId);
+  const consume = promise => withContext ? promise : promise.then(snapshot => snapshot.result);
+  if (replyPolls.has(key)) return consume(replyPolls.get(key));
   const poll = async () => {
     let errors = 0;
     let unavailableSince = null;
+    const deadline = Date.now() + 240000;
+    const pendingError = message => { const error = new Error(message); error.code = "AGENT_REPLY_PENDING"; return error; };
     for (;;) {
+      checkOwner();
+      if (Date.now() >= deadline) throw pendingError("Your request is still saved. Check again to pick up the reply.");
       let result;
-      try { result = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${encodeURIComponent(job.job_id)}`, "GET", undefined, { timeoutMs: 30000 }); errors = 0; unavailableSince = null; }
+      const lookup = job.job_id ? encodeURIComponent(job.job_id) : `by-request/${encodeURIComponent(job.request_id)}`;
+      try {
+        result = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${lookup}`, "GET", undefined, { timeoutMs: 30000 });
+        checkOwner();
+        errors = 0; unavailableSince = null;
+      }
       catch (e) {
-        if (e.status === 403 || e.status === 404) { forgetReply(businessId, job); throw e; }
+        checkOwner();
+        if (e.status === 404 && !job.job_id && job.request_id) {
+          const error = new Error("I couldn't confirm receipt of your request yet. Check again before sending it again.");
+          error.code = "AGENT_REPLY_PENDING";
+          throw error;
+        }
+        if (e.status === 403 || e.status === 404) { forgetReply(businessId, job, storageKey); throw e; }
         unavailableSince ??= Date.now();
         errors += 1;
         if (e.status === 401 || Date.now() - unavailableSince >= 240000) { const error = new Error(e.status === 401 ? "Please sign in again to pick up your saved reply." : "I couldn't reconnect to check the reply. Your request is still saved. Check again to pick it up."); error.code = "AGENT_REPLY_PENDING"; throw error; }
       }
-      if (result?.state === "complete") { forgetReply(businessId, job); return result.result; }
-      if (result?.state === "failed") { forgetReply(businessId, job); const error = new Error(result.message || "The reply couldn't finish. Please try again."); error.code = "AGENT_REPLY_FAILED"; throw error; }
+      if (!result && errors) { await new Promise(resolve => setTimeout(resolve, Math.min(10000, errors * 2000))); continue; }
+      if (!["pending", "complete", "failed"].includes(result?.state)
+        || (result.state === "complete" && (!result.result || typeof result.result !== "object" || Array.isArray(result.result) || !Object.keys(result.result).length))) {
+        throw pendingError("I couldn't read the saved reply just now. Check again to pick it up.");
+      }
+      if (result?.job_id && !job.job_id) {
+        job = { ...job, job_id: result.job_id };
+        rememberReply(businessId, { job_id: job.job_id, request_id: job.request_id }, storageKey);
+      }
+      if (result?.state === "complete") { forgetReply(businessId, job, storageKey); return result; }
+      if (result?.state === "failed") {
+        forgetReply(businessId, job, storageKey);
+        const error = new Error(result.message || "The reply couldn't finish. Please review your request before retrying.");
+        error.code = "AGENT_REPLY_FAILED";
+        error.userMessage = result.user_message;
+        error.chatId = result.chat_id;
+        throw error;
+      }
       await new Promise(resolve => setTimeout(resolve, errors ? Math.min(10000, errors * 2000) : 1500));
     }
   };
   const promise = poll().finally(() => replyPolls.delete(key));
   replyPolls.set(key, promise);
-  return promise;
+  return consume(promise);
 }
 
 export function submitAgentRequest({ businessId, text, capability, params, sourceChannel = "text", sourceReference, recommendationId, background = false, confirmed = false, page = null, caseId = null, chatId = null, history: priorHistory = null }) {
@@ -135,27 +182,45 @@ export function submitAgentRequest({ businessId, text, capability, params, sourc
     ...(page ? { page } : {}),
     ...(caseId ? { case_id: caseId } : {}),      // the case or plan the page is on: its answer is about that one (28 Oct)
   };
+  const checkOwner = replyOwner(businessId);
+  const storageKey = replyKey(businessId);
+  const recovery = { request_id: payload.client_request_id };
+  // Keep only the identifier before POST: the server may accept the request even
+  // when every acknowledgement is lost. Conversation text stays off browser storage.
+  if (payload.defer_reply) rememberReply(businessId, recovery, storageKey);
   const post = () => apiRequest("/agent/requests", "POST", payload, { timeoutMs: payload.defer_reply ? 30000 : 120000 });
   const acknowledge = async () => {
     for (let attempt = 0; ; attempt += 1) {
+      checkOwner();
       try { return await post(); } catch (error) {
+        checkOwner();
         // The identifier is stable: a transient failure after acceptance cannot
         // execute or charge for the turn twice when its acknowledgement is retried.
-        const transient = ["TIMEOUT", "NETWORK_ERROR", "service_unavailable"].includes(error?.code)
-          || [502, 503, 504].includes(error?.status);
-        if (!payload.defer_reply || !transient || attempt >= 2) throw error;
+        const transient = ["TIMEOUT", "NETWORK_ERROR", "service_unavailable", "server_error"].includes(error?.code)
+          || [408, 500, 502, 503, 504].includes(error?.status);
+        if (!payload.defer_reply || !transient) {
+          if (payload.defer_reply) forgetReply(businessId, recovery, storageKey);
+          throw error;
+        }
+        if (attempt >= 2) return { kind: "pending_reply", request_id: payload.client_request_id };
         await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
       }
     }
   };
   const sent = acknowledge().then(result => {
-    if (result?.kind !== "pending_reply") return result;
-    rememberReply(businessId, { job_id: result.job_id }); // Identifiers only; no conversation text in browser storage.
-    return resumeAgentReply(businessId, result);
+    checkOwner();
+    if (result?.kind !== "pending_reply") {
+      if (payload.defer_reply) forgetReply(businessId, recovery, storageKey);
+      return result;
+    }
+    const job = { ...recovery, ...(result.job_id ? { job_id: result.job_id } : {}) };
+    rememberReply(businessId, job, storageKey);
+    return resumeAgentReply(businessId, job);
   });
   if (typed) {
     // Both sides of the exchange are kept, so the next message carries them.
     sent.then((res) => {
+      try { checkOwner(); } catch { return; }
       const said = replyText(res).slice(0, 4000);
       setConversation(businessId, [...history, { role: "user", content: typed.slice(0, 4000) }, ...(said ? [{ role: "assistant", content: said }] : [])]);
     }, () => {});

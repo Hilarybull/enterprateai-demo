@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.supabase import sb_select
 from app.modules.credits.service import _plan_rank
@@ -9,6 +9,21 @@ from app.modules.plans.schemas import SubscriptionOut
 
 # Users created before this date are grandfathered — no plan-based access restrictions.
 GRANDFATHERED_BEFORE = datetime(2026, 5, 7, 0, 0, 0, tzinfo=timezone.utc)
+TRIAL_DAYS = 14
+
+
+def trial_subscription(created_at: str | None, now: datetime | None = None) -> SubscriptionOut | None:
+    if not created_at:
+        return None
+    try:
+        started = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    ends = started + timedelta(days=TRIAL_DAYS)
+    return SubscriptionOut(plan_key="explorer", status="trial" if (now or datetime.now(timezone.utc)) < ends else "expired",
+                           trial_started_at=started.isoformat(), current_period_start=started.isoformat(), current_period_end=ends.isoformat())
 
 
 # One page load asks for the same user's plan from several endpoints at once (the plan
@@ -48,7 +63,7 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
         # Explorer until it is renewed, and said so; their records and work are kept
         lapsed = {"lapsed_plan_key": sub.get("plan_key"), "lapsed_at": sub.get("current_period_end")}
         sub = None
-    if sub and sub.get("status") in ("active", "trial", "trialing"):
+    if sub and sub.get("status") in ("active", "trial", "trialing") and sub.get("plan_key") not in ("explorer", "free_trial"):
         return SubscriptionOut(
             plan_key=sub["plan_key"],
             billing_period=sub.get("billing_period") or "monthly",
@@ -76,6 +91,9 @@ async def _resolve_subscription(user_id: str) -> SubscriptionOut:
         except Exception:
             pass
 
+    trial = trial_subscription((sub or {}).get("trial_started_at") or created_at_str)
+    if trial:
+        return trial.model_copy(update=lapsed or {})
     return SubscriptionOut(plan_key="explorer", billing_period="monthly", status="active", **(lapsed or {}))
 
 
@@ -98,7 +116,7 @@ async def has_paid_access(user_id: str) -> bool:
     """True for grandfathered accounts and any active plan above Explorer.
     Mirrors hasPaidAccess() in frontend/src/lib/plans.js."""
     sub = await resolve_subscription(user_id)
-    if sub.status == "grandfathered":
+    if sub.status in ("grandfathered", "trial"):
         return True
     if sub.status == "active" and _plan_rank(sub.plan_key) >= _plan_rank("starter_insight"):
         return True
@@ -142,12 +160,12 @@ async def effective_access(user_id: str) -> dict:
     sub = await resolve_subscription(user_id)
     grants = await module_grants(user_id)
     full = is_full_access(grants)
-    subscribed = TOP_PLAN if sub.status == "grandfathered" else (normalise_plan_key(sub.plan_key) if sub.status == "active" else "explorer")
+    subscribed = TOP_PLAN if sub.status in ("grandfathered", "trial") else (normalise_plan_key(sub.plan_key) if sub.status == "active" else "explorer")
     plan = TOP_PLAN if full else subscribed
     # A member of a team on Decision Engine or above works under the team's plan (the pricing PDF, 19 Oct 2026).
     from app.modules.plans import team as team_mod
     t = await team_mod.team_of(user_id)
-    on_team = bool(t and _plan_rank(t["plan"]) > _plan_rank(plan))
+    on_team = bool(t and ((sub.status in ("trial", "expired") and not full) or _plan_rank(t["plan"]) > _plan_rank(plan)))
     if on_team:
         plan = t["plan"]
     paid = _plan_rank(plan) >= _plan_rank("starter_insight")
@@ -155,7 +173,7 @@ async def effective_access(user_id: str) -> dict:
         "subscription_plan": normalise_plan_key(sub.plan_key), "subscription_status": sub.status,
         "effective_plan": plan, "full_access": full,
         "team_owner": t["owner_id"] if on_team else None, "team_workspace": t["workspace_id"] if on_team else None,
-        "source": "your team's plan" if on_team else "admin full-access grant" if full and subscribed != TOP_PLAN else ("early-access account" if sub.status == "grandfathered" else "subscription"),
+        "source": "your team's plan" if on_team else "admin full-access grant" if full else ("early-access account" if sub.status == "grandfathered" else "14-day trial" if sub.status == "trial" else "subscription"),
         "agent_tasks": paid or "agent" in grants,
         "marketplace_rfqs": paid or "marketplace_rfq" in grants,
         "grants": sorted(grants),
@@ -190,6 +208,8 @@ async def effective_plan_key(user_id: str) -> str:
     own = await own_plan_key(user_id)
     from app.modules.plans import team as team_mod
     t = await team_mod.team_of(user_id)
+    if t and own == TOP_PLAN and (await resolve_subscription(user_id)).status in ("trial", "expired") and not is_full_access(await module_grants(user_id)):
+        return t["plan"]
     return t["plan"] if t and team_mod.rank(t["plan"]) > team_mod.rank(own) else own
 
 
@@ -198,7 +218,7 @@ async def own_plan_key(user_id: str) -> str:
     grant count as the top plan."""
     from app.modules.credits.service import normalise_plan_key
     sub = await resolve_subscription(user_id)
-    if sub.status == "grandfathered":
+    if sub.status in ("grandfathered", "trial"):
         return TOP_PLAN
     plan = normalise_plan_key(sub.plan_key) if sub.status == "active" else "explorer"
     if plan != TOP_PLAN and is_full_access(await module_grants(user_id)):

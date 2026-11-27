@@ -831,10 +831,11 @@ export default function Layout() {
     return null;
   }, [location.pathname]);
 
-  const isCurrentRoutePlanLocked = currentRouteModuleKey
+  const trialExpired = (subscription?.status === "expired" || (subscription?.access_source === "14-day trial" && creditInfo?.trial_status === "expired")) && !["/account", "/credits", "/pricing"].some(path => location.pathname.startsWith(path));
+  const isCurrentRoutePlanLocked = trialExpired || (currentRouteModuleKey
     ? !planHasModuleAccess(subscription?.plan_key ?? "free_trial", currentRouteModuleKey, subscription?.status ?? "trial")
     && !isPlatformModuleGranted(currentRouteModuleKey, platformGrants)
-    : false;
+    : false);
 
   const isCurrentRouteLocked =
     (currentRouteModuleKey && isPlatformModuleRestricted(currentRouteModuleKey, platformRestrictions)) ||
@@ -1621,6 +1622,10 @@ export default function Layout() {
           <div className="ea-scroll min-h-0 flex-1 overflow-auto overscroll-contain" data-tour="content-area">
             {/* Bottom padding keeps the last row of content clear of the floating chat button. */}
             <div className="mx-auto w-full max-w-7xl p-4 pb-24 md:p-6 md:pb-24">
+              {subscription?.access_source === "14-day trial" && !trialExpired && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm text-brand-900" role="status">
+                <span>{creditBalance === 0 ? "Your trial AI credits are used up. Other tools remain available until your trial ends." : "Your 14-day trial includes all features and 200 AI credits."} {creditInfo?.trial_ends_at ? `Ends ${new Date(creditInfo.trial_ends_at).toLocaleDateString("en-GB")}.` : ""}</span>
+                <button type="button" onClick={()=>navigate('/pricing')} className="min-h-11 rounded-lg bg-brand-600 px-4 py-2 font-semibold text-white">Upgrade</button>
+              </div>}
               {isCurrentRouteLocked ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                   <div className={
@@ -1637,10 +1642,9 @@ export default function Layout() {
                   </div>
                   {isCurrentRoutePlanLocked ? (
                     <>
-                      <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">Upgrade to unlock this module</h2>
+                      <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">{trialExpired ? "Your 14-day trial has ended" : "Upgrade to unlock this module"}</h2>
                       <p className="mt-2 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-                        This feature isn't included in your current plan (<strong>{accessLabel(subscription)}</strong>).
-                        Upgrade to access it.
+                        {trialExpired ? "Upgrade to continue using EnterprateAI. Your records are kept." : <>This feature isn't included in your current plan (<strong>{accessLabel(subscription)}</strong>). Upgrade to access it.</>}
                       </p>
                       <div className="mt-6 flex gap-3">
                         <button

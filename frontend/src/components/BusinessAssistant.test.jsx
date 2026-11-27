@@ -5,7 +5,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import BusinessAssistant from "./BusinessAssistant";
-import { clearConversation, getConversation, replyText } from "../lib/agent";
+import { clearConversation, getConversation, replyText, submitAgentRequest } from "../lib/agent";
 import { useWorkspaceStore } from "../store/workspace";
 import { useAuthStore } from "../store/auth";
 
@@ -89,6 +89,110 @@ it("retries a temporarily unavailable acknowledgement with the same message iden
     expect(requests).toHaveLength(3);
     expect(new Set(requests.map(request => request.body.client_request_id)).size).toBe(1);
   } finally { vi.useRealTimers(); }
+});
+
+it("recovers an accepted reply when every POST acknowledgement is lost", async () => {
+  vi.useFakeTimers();
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (String(url).endsWith("/agent/requests")) {
+      calls.push({ path: String(url), method: "POST", body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ code: "service_unavailable" }), { status: 503 });
+    }
+    if (/\/agent\/replies\/by-request\//.test(String(url))) {
+      return new Response(JSON.stringify({ state: "complete", job_id: "accepted-once", result: {
+        kind: "answer", message: "Your original funding request is ready."
+      } }), { status: 200 });
+    }
+    return normalFetch(url, init);
+  });
+  try {
+    await open();
+    await ask("Use the funding answers I already gave");
+    const stored = JSON.parse(sessionStorage.getItem("ea:agent:pending-reply:ws-2:ada@example.test"));
+    expect(stored.request_id).toBe(sent(/\/agent\/requests$/)[0].body.client_request_id);
+    expect(JSON.stringify(stored)).not.toContain("funding answers");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3500); });
+    expect(screen.getByText("Your original funding request is ready.")).toBeTruthy();
+    expect(sent(/\/agent\/requests$/)).toHaveLength(3);
+    expect(new Set(sent(/\/agent\/requests$/).map(r => r.body.client_request_id)).size).toBe(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("recovers after refresh using only the original request identifier", async () => {
+  sessionStorage.setItem("ea:agent:pending-reply:ws-2:ada@example.test", JSON.stringify({ request_id: "lost-post" }));
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => /\/agent\/replies\/by-request\/lost-post$/.test(String(url))
+    ? new Response(JSON.stringify({ state: "complete", job_id: "recovered", user_message: "Loan needed by March",
+      chat_id: "original-chat", result: { kind: "answer", message: "Your March deadline is retained." } }), { status: 200 })
+    : normalFetch(url, init));
+  await open();
+  expect(await screen.findByText("Your March deadline is retained.")).toBeTruthy();
+  expect(screen.getByText("Loan needed by March")).toBeTruthy();
+  expect(sent(/\/agent\/requests$/)).toHaveLength(0);
+});
+
+it("lets the owner review a failed saved message before choosing to send again", async () => {
+  sessionStorage.setItem("ea:agent:pending-reply:ws-2:ada@example.test", JSON.stringify({ job_id: "failed-job" }));
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => /\/agent\/replies\/failed-job$/.test(String(url))
+    ? new Response(JSON.stringify({ state: "failed", user_message: "Keep the March funding deadline", chat_id: "original-chat",
+      message: "The reply was interrupted." }), { status: 200 }) : normalFetch(url, init));
+  await open();
+  const retry = await screen.findByRole("button", { name: "Edit and retry" });
+  fireEvent.click(retry);
+  expect(screen.getByPlaceholderText(/Ask EnterprateAI anything/).value).toBe("Keep the March funding deadline");
+  expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Message" }));
+  expect(sent(/\/agent\/requests$/)).toHaveLength(0);
+});
+
+it("does not carry a late reply into another signed-in account", async () => {
+  let complete;
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (String(url).endsWith("/agent/requests")) return new Response(JSON.stringify({ kind: "pending_reply", job_id: "private-job" }), { status: 200 });
+    if (/\/agent\/replies\/private-job$/.test(String(url))) return new Promise(resolve => { complete = resolve; });
+    return normalFetch(url, init);
+  });
+  const pending = submitAgentRequest({ businessId: "ws-2", text: "Private funding details", background: true });
+  await waitFor(() => expect(complete).toBeTypeOf("function"));
+  useAuthStore.setState({ email: "another@example.test" });
+  complete(new Response(JSON.stringify({ state: "complete", result: { kind: "answer", message: "Private old reply" } }), { status: 200 }));
+  await expect(pending).rejects.toMatchObject({ code: "AGENT_REPLY_CONTEXT_CHANGED" });
+  expect(getConversation("ws-2")).toEqual([]);
+});
+
+it("stops an endlessly pending reply check without losing the saved request or resubmitting", async () => {
+  vi.useFakeTimers();
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => {
+    if (String(url).endsWith("/agent/requests")) {
+      calls.push({ path: String(url), method: "POST", body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ kind: "pending_reply", job_id: "long-running" }), { status: 200 });
+    }
+    if (/\/agent\/replies\/long-running$/.test(String(url))) return new Response(JSON.stringify({ state: "pending" }), { status: 200 });
+    return normalFetch(url, init);
+  });
+  try {
+    await open();
+    await ask("Check the saved funding work");
+    await act(async () => { await vi.advanceTimersByTimeAsync(241000); });
+    expect(screen.getByRole("button", { name: "Check reply" })).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(sent(/\/agent\/requests$/)).toHaveLength(1);
+    expect(JSON.parse(sessionStorage.getItem("ea:agent:pending-reply:ws-2:ada@example.test")).job_id).toBe("long-running");
+  } finally { vi.useRealTimers(); }
+});
+
+it.each([{}, { state: "complete", result: null }, { state: "complete", result: [] }, { state: "complete", result: {} }])("keeps recovery available when the saved reply response has an invalid shape: %j", async (invalid) => {
+  sessionStorage.setItem("ea:agent:pending-reply:ws-2:ada@example.test", JSON.stringify({ job_id: "invalid" }));
+  const normalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url, init = {}) => /\/agent\/replies\/invalid$/.test(String(url))
+    ? new Response(JSON.stringify(invalid), { status: 200 }) : normalFetch(url, init));
+  await open();
+  expect(await screen.findByRole("button", { name: "Check reply" })).toBeTruthy();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(sent(/\/agent\/requests$/)).toHaveLength(0);
 });
 
 it("automatically reconnects after more than three failed reply checks without resubmitting", async () => {

@@ -67,6 +67,10 @@ async def payer_for(user_id: str) -> tuple[str, dict | None]:
     team = await team_of(user_id)
     if team and rank(team["plan"]) > rank(await own_plan_key(user_id)):
         return team["owner_id"], team
+    if team:
+        from app.modules.plans.access import resolve_subscription, is_full_access, module_grants
+        if (await resolve_subscription(user_id)).status in ("trial", "expired") and not is_full_access(await module_grants(user_id)):
+            return team["owner_id"], team
     return user_id, None
 
 

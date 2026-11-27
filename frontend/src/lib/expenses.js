@@ -1,4 +1,4 @@
-export const EXPENSE_TYPES = [["staff_payments", "Staff payments"], ["operations", "Operations"], ["other", "Other"]];
+export const EXPENSE_TYPES = [["staff_payments", "Staff payments"], ["operations", "Operations"], ["cost_of_sales", "Cost of sales / supplier bill"], ["other", "Other"]];
 export function expenseType(expense) {
   if (EXPENSE_TYPES.some(([key]) => key === expense?.expense_type)) return expense.expense_type;
   const category = String(expense?.category || "").trim();
@@ -9,5 +9,5 @@ export function expenseParty(expense, employees = []) {
   return employees.find(e => e.id === expense?.employee_id)?.name || expense?.employee_name || expense?.vendor_name || expense?.party_name || expense?.counterparty_name || "—";
 }
 export function expenseCategory(type, other = "") {
-  return type === "staff_payments" ? "payroll" : type === "other" ? other.trim() : "operations";
+  return type === "staff_payments" ? "payroll" : type === "cost_of_sales" ? "cost_of_sales" : type === "other" ? other.trim() : "operations";
 }

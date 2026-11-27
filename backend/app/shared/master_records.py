@@ -3,6 +3,23 @@ from __future__ import annotations
 
 
 def prepare_employee_expenses(patch: dict, stored: dict) -> None:
+    from app.shared.supplier_costs import prepare_supplier_costs
+    prepare_supplier_costs(patch, stored)
+    import math
+    for employee in (patch.get("catalogue") or {}).get("employees") or []:
+        if not isinstance(employee, dict):
+            continue
+        for key in ("salary_amount", "benefits_monthly"):
+            value = employee.get(key)
+            if value not in (None, ""):
+                try:
+                    valid = math.isfinite(float(value)) and float(value) >= 0
+                except (ValueError, TypeError):
+                    valid = False
+                if not valid:
+                    raise ValueError("Employee salary and benefits must be non-negative amounts.")
+        if employee.get("salary_frequency") not in (None, "", "monthly", "weekly", "annual"):
+            raise ValueError("Choose monthly, weekly or annual salary.")
     financials = patch.get("financials")
     if not isinstance(financials, dict) or not isinstance(financials.get("expenses"), list):
         return

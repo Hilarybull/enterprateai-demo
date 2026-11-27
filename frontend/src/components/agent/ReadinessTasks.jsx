@@ -120,7 +120,7 @@ export default function ReadinessTasks({ item, businessId, busy, onSend, onUpdat
       <div className="flex flex-wrap gap-2">{!editor.review && <button type="button" disabled={locked || !Object.keys(editor.changes).length} onClick={save} className={primary}>{saving ? "Saving…" : "Save changes"}</button>}
         <button type="button" disabled={locked} onClick={() => setEditor(null)} className={button}>{editor.review ? "Close review" : "Cancel"}</button></div>
     </div>;
-  return <section aria-label={item.title} className="w-full max-w-2xl space-y-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm sm:p-5">
+  return <section data-readiness-tasks aria-label={item.title} className="w-full max-w-2xl space-y-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm sm:p-5">
     <h3 className="text-base font-semibold text-slate-900">{item.title}</h3>
     {problem && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-700">{problem}</p>}
     {note && <p role="status" className="text-emerald-700">{note}</p>}

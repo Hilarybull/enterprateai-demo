@@ -1,12 +1,17 @@
 """From the demo call: a brand-new account (verified with an email code on the homepage) asked for
-an invoice and was told "You're out of AI Credits". It had its 50 starting credits coming, but a
+an invoice and was told "You're out of AI Credits". It had its 200 starting credits coming, but a
 wallet was only ever opened when a page asked for the balance in full, and the task ran first."""
 import asyncio
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 from app.modules.credits import service
 
 
 def test_a_balance_asked_for_before_any_wallet_exists_opens_the_wallet_with_the_starting_credits(monkeypatch):
+    from app.modules.plans import access
+    monkeypatch.setattr(access, "resolve_subscription", AsyncMock(return_value=access.SubscriptionOut(plan_key="explorer",status="trial",current_period_end=(datetime.now(timezone.utc)+timedelta(days=14)).isoformat())))
+    monkeypatch.setattr(service,"_get_subscription",AsyncMock(return_value=None))
     wallets: dict[str, dict] = {}
     opened = []
 
@@ -15,14 +20,14 @@ def test_a_balance_asked_for_before_any_wallet_exists_opens_the_wallet_with_the_
 
     async def ensure_wallet(user_id):
         opened.append(user_id)
-        wallets[user_id] = {"available_credits": 50, "held_credits": 0}
+        wallets[user_id] = {"available_credits": 200, "held_credits": 0}
         return wallets[user_id]
     monkeypatch.setattr(service, "get_wallet", get_wallet)
     monkeypatch.setattr(service, "ensure_wallet", ensure_wallet)
-    assert asyncio.run(service.get_balance("brand.new@example.test")) == 50      # not 0: the first task is not turned away
+    assert asyncio.run(service.get_balance("brand.new@example.test")) == 200      # not 0: the first task is not turned away
     assert opened == ["brand.new@example.test"]
-    wallets["brand.new@example.test"]["available_credits"] = 46
-    assert asyncio.run(service.get_balance("brand.new@example.test")) == 46 and len(opened) == 1      # an existing wallet is read as it is
+    wallets["brand.new@example.test"]["available_credits"] = 196
+    assert asyncio.run(service.get_balance("brand.new@example.test")) == 196 and len(opened) == 1      # an existing wallet is read as it is
     wallets["spent@example.test"] = {"available_credits": 0, "held_credits": 0}
     assert asyncio.run(service.get_balance("spent@example.test")) == 0 and len(opened) == 1          # used up is still used up: nothing is topped up
 

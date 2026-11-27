@@ -244,7 +244,7 @@ def _phase5_from_records(state, data: dict, update: dict, today=None) -> dict:
     from app.modules.agent import business as bz
     from app.modules.agent import figures
     from app.modules.scenario_intelligence import factors, records
-    today = today or datetime.now(timezone.utc).date()
+    today = today or bz.local_now(data, datetime.now(timezone.utc)).date()
     out: dict = {}
     sources = dict(update.get("figure_sources") or state.figure_sources or {})
     try:
@@ -261,6 +261,10 @@ def _phase5_from_records(state, data: dict, update: dict, today=None) -> dict:
             sources[k] = rec["sources"].get(k, "your records")
     if rec.get("current_month"):
         out["current_month_recorded"] = rec["current_month"]
+        if rec["current_month"].get("cash") is not None:
+            out["starting_cash"] = rec["current_month"]["cash"]
+            sources["starting_cash"] = "recorded payments received less paid expenses and delivery costs in Business Operations"
+    out.update(rec.get("position") or {})
     if rec.get("checks"):
         out["record_checks"] = rec["checks"]
 
@@ -279,7 +283,7 @@ def _phase5_from_records(state, data: dict, update: dict, today=None) -> dict:
     out.update(rec.get("levels") or {})
     for key in rec.get("levels") or {}:
         sources[key] = rec["sources"][key]
-    out["figure_notes"] = []
+    out["figure_notes"] = rec.get("figure_notes") or []
     out["figure_sources"] = sources
     return out
 
@@ -442,6 +446,29 @@ async def do_nothing_run(
         params={"basis": "estimate", "estimate_basis": _estimate["basis"]} if _estimate else None,
     )
     return DoNothingResponse(**{**result, "starting_cash": float(state.starting_cash or 0)})
+
+
+@router.post("/forecast-snapshots")
+async def forecast_snapshot_create(payload: DoNothingRequest, _user=Depends(get_current_user)):
+    await _require_business(_user, payload.business_id)
+    from datetime import datetime, timezone
+    from app.modules.agent.router import get_orchestrator
+    from app.modules.scenario_intelligence.forecast_archive import save_snapshot
+    from app.modules.agent.business import local_now
+    state = await shared_state(_user, payload.business_id, payload.state)
+    data = await get_orchestrator().rt.business.load(payload.business_id)
+    return await save_snapshot(_user["id"], payload.business_id, state, payload.timeline_months, data or {}, local_now(data or {}, datetime.now(timezone.utc)).date())
+
+
+@router.get("/forecast-snapshots")
+async def forecast_snapshot_list(business_id: str, _user=Depends(get_current_user)):
+    await _require_business(_user, business_id)
+    from datetime import datetime, timezone
+    from app.modules.agent.router import get_orchestrator
+    from app.modules.scenario_intelligence.forecast_archive import list_snapshots
+    from app.modules.agent.business import local_now
+    data = await get_orchestrator().rt.business.load(business_id)
+    return {"items": await list_snapshots(business_id, data or {}, local_now(data or {}, datetime.now(timezone.utc)).date())}
 
 
 @router.post("/accuracy")
