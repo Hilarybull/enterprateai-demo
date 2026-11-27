@@ -1,3 +1,4 @@
+import SupplierBillLink from "../components/SupplierBillLink";
 import { EXPENSE_TYPES, expenseType, expenseCategory, expenseParty } from "../lib/expenses";
 import { linkSupplierCosts, vendorDueDate } from "../lib/supplierCosts";
 import { monthlyEmployeePay } from "../lib/payroll";
@@ -393,7 +394,7 @@ function SelectInput({ value, onChange, options }) {
   );
 }
 
-function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose, businessId = null, onSent = null }) {
+export function ShareModal({ record, type, receiptMode, workspaceName, customers, onClose, businessId = null, onSent = null }) {
   const effectiveType = receiptMode ? "receipt" : type;
   const typeLabel = effectiveType === "receipt" ? "Receipt" : effectiveType === "invoice" ? "Invoice" : effectiveType === "quote" ? "Quotation" : effectiveType === "expense" ? "Expense" : "Contract";
   const rawRef = record?.invoice_number || record?.reference || "";
@@ -412,6 +413,8 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [sendErr, setSendErr] = React.useState("");
+  const [receiptDelivery, setReceiptDelivery] = React.useState(null);
+  const [updatingStatus, setUpdatingStatus] = React.useState(false);
   const [shareToken, setShareToken] = React.useState(null);
   const [tokenLoading, setTokenLoading] = React.useState(true);
 
@@ -438,15 +441,33 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
       .finally(() => setTokenLoading(false));
   }, []);
 
-  function copyLink() {
-    if (navigator.clipboard) { navigator.clipboard.writeText(shareUrl).catch(() => {}); }
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2500);
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    } catch { setSendErr("The link could not be copied. Please select and copy it manually."); }
+  }
+
+  async function updateReceiptStatus(delivery) {
+    setUpdatingStatus(true);
+    try {
+      await recordManualReceipt(businessId, record.id, delivery.emails, delivery.messageId,
+        (shareData.current.payments || []).map(payment => payment.id).filter(Boolean));
+      setReceiptDelivery(null);
+      setSendErr("");
+      onSent?.();
+    } catch {
+      setReceiptDelivery(delivery);
+      setSendErr("The receipt was emailed, but its status could not be saved. Retry the status update below; this will not send another email.");
+    } finally { setUpdatingStatus(false); }
   }
 
   async function sendEmail() {
     const emails = toEmail.split(/[\s,;]+/).map(e => e.trim()).filter(Boolean);
     if (!emails.length || !emails[0].includes("@")) { setSendErr("Enter at least one valid email address."); return; }
+    if (effectiveType === "receipt" && !businessId) { setSendErr("The workspace is unavailable. Reopen this receipt before sending."); return; }
+    if (effectiveType === "receipt" && !(shareData.current.payments || []).some(payment => payment.id)) { setSendErr("Record a payment on this invoice before sending a receipt."); return; }
     setSending(true); setSendErr("");
     try {
       const res = await apiRequest("/integrations/share-invoice", "POST", {
@@ -454,11 +475,11 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
         party, amount_fmt: fmtAmt, workspace_name: workspaceName || "",
         document_type: effectiveType,
       });
+      if (res?.sent !== true) throw new Error("The email send could not be confirmed. Check before sending again.");
       setSent(true);
       // A receipt sent by hand is issued and marked sent, the same as one the Agent sends (the owner, 13 Nov).
       if (effectiveType === "receipt" && businessId && record?.id && (record.payments || []).length) {
-        try { await recordManualReceipt(businessId, record.id, emails, res?.message_id); onSent?.(); }
-        catch { setSendErr("The receipt was emailed, but its status couldn't be updated. Refresh the page to check."); }
+        await updateReceiptStatus({ emails, messageId: res?.message_id });
       }
     } catch (e) {
       setSendErr(e?.message || "Failed to send. Please try again.");
@@ -518,7 +539,6 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
                   Send
                 </button>
               </div>
-              {sendErr && <div className="text-xs text-rose-600">{sendErr}</div>}
               {customerEmail && toEmail !== customerEmail && (
                 <button type="button" onClick={() => setToEmail(customerEmail)}
                   className="text-xs text-indigo-500 hover:underline">
@@ -527,6 +547,12 @@ function ShareModal({ record, type, receiptMode, workspaceName, customers, onClo
               )}
             </div>
           )}
+          {sendErr && <div role="alert" className="text-xs text-rose-600">{sendErr}</div>}
+          {receiptDelivery && <button type="button" disabled={updatingStatus}
+            onClick={() => updateReceiptStatus(receiptDelivery)}
+            className="min-h-11 rounded-lg border border-indigo-200 px-3 py-2 text-sm text-indigo-700 disabled:opacity-50">
+            {updatingStatus ? "Updating receipt status…" : "Retry status update"}
+          </button>}
         </div>
         <div className="border-t border-slate-100 px-6 py-4 flex justify-end">
           <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Close</button>
@@ -841,7 +867,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-export function RecordModal({ mode, type, record, customers, vendors = [], employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
+export function RecordModal({ mode, type, record, customers, vendors = [], supplierBills = [], employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, businessId = null, onSent = null, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
@@ -897,7 +923,7 @@ export function RecordModal({ mode, type, record, customers, vendors = [], emplo
   const [showPaymentModal, setShowPaymentModal] = React.useState(false);
   const [validationError, setValidationError] = React.useState(saveError || null);
 
-  function set(k) { return v => setForm(f => ({ ...f, [k]: v, ...(k === "issued_at" ? {line_items:(f.line_items || []).map(line => line.vendor_id && !line.supplier_due_date_manual ? {...line,supplier_due_date:vendorDueDate(vendors.find(vendor=>vendor.id===line.vendor_id),v)} : line)} : {}) })); }
+  function set(k) { return v => setForm(f => ({ ...f, [k]: v, ...(k === "currency" && type === "expense" && f.employee_id ? {amount:""} : {}), ...(k === "issued_at" ? {line_items:(f.line_items || []).map(line => line.vendor_id && !line.supplier_due_date_manual ? {...line,supplier_due_date:vendorDueDate(vendors.find(vendor=>vendor.id===line.vendor_id),v)} : line)} : {}) })); }
 
   // Line item helpers
   const [cataloguePicker, setCataloguePicker] = useState(false);
@@ -917,10 +943,12 @@ export function RecordModal({ mode, type, record, customers, vendors = [], emplo
     setForm(f => ({ ...f, line_items: (f.line_items || []).map(i => i.id === id ? { ...i, [key]: val } : i) }));
   }
   const lineItems = form.line_items || [];
+  const employeeFx = useFxRates(foreignOf(employees, form.currency || wsIso), form.currency || wsIso);
   const liSubtotal = lineItems.reduce((s, i) => s + (Number(i.qty) || 1) * (Number(i.unit_price) || 0), 0);
   const liVatRate = Number(form.vat_rate) || 0;
   const liTotalVat = liSubtotal * (liVatRate / 100);
   const liGrandTotal = liSubtotal + liTotalVat;
+  const liGrossProfit = liSubtotal - lineItems.reduce((sum, item) => sum + (Number(item.qty) || 1) * Number(item.cost_of_sales || 0), 0);
 
   function fmtDisplayDate(val) {
     if (!val) return "—";
@@ -1337,18 +1365,9 @@ ${form.notes ? `<!-- NOTES -->
                         </div>
                       </div>
                       <div className="flex flex-wrap justify-end gap-2 text-[11px] text-slate-500">
-                        {type === "invoice" && <div className="w-full min-w-0 space-y-2 text-left">
-                          <label className="block text-xs font-medium text-slate-600">Vendor / supplier (optional)
-                            <select aria-label={`Supplier for line ${idx + 1}`} className="ea-input mt-1" value={item.vendor_id || ""} onChange={e => {
-                              const vendor = vendors.find(v => v.id === e.target.value);
-                              setForm(f => ({...f,line_items:f.line_items.map(line => line.id === item.id ? {...line,vendor_id:e.target.value,supplier_due_date:vendorDueDate(vendor,f.issued_at),supplier_due_date_manual:false} : line)}));
-                            }}><option value="">Cost estimate only</option>{vendors.filter(v => !v.archived).map(v => <option key={v.id} value={v.id}>{v.name || v.vendor_name}</option>)}</select>
-                          </label>
-                          {item.vendor_id && <label className="block text-xs font-medium text-slate-600">Supplier bill due date
-                            <UkDateInput value={item.supplier_due_date || ""} onChange={value => setForm(f=>({...f,line_items:f.line_items.map(line=>line.id===item.id?{...line,supplier_due_date:value,supplier_due_date_manual:true}:line)}))} className="ea-input mt-1" />
-                            <span className="block text-[11px] font-normal">From vendor payment terms; change if needed. The bill appears in Expenses when saved.</span>
-                          </label>}
-                        </div>}
+                        {type === "invoice" && <SupplierBillLink item={item} index={idx} vendors={vendors} bills={supplierBills}
+                          currency={form.currency || wsIso} issuedAt={form.issued_at}
+                          onChange={patch => setForm(f => ({...f,line_items:f.line_items.map(line => line.id === item.id ? {...line,...patch} : line)}))} />}
                         Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                       </div>
                     </div>
@@ -1409,6 +1428,7 @@ ${form.notes ? `<!-- NOTES -->
                 <div className="flex justify-between text-sm font-bold text-slate-800 dark:text-slate-100 border-t border-slate-100 dark:border-slate-800 pt-2">
                   <span>Total</span><span>{formatCurrency(liGrandTotal, form.currency || wsIso)}</span>
                 </div>
+                {type === "invoice" && <div className="mt-2 flex justify-between border-t border-slate-100 pt-2 text-sm font-semibold"><span>Gross profit</span><span>{formatCurrency(liGrossProfit, form.currency || wsIso)}</span></div>}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1660,7 +1680,7 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
             {form.expense_type === "other" && !isView ? <Field label="What type of expense?"><TextInput aria-label="Other expense type" value={form.expense_type_other} onChange={set("expense_type_other")} placeholder="For example, training or insurance" /></Field> : null}
             {form.expense_type === "staff_payments" ? <Field label="Employee">
-              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => { const employee = employees.find(emp => emp.id === e.target.value); const pay = monthlyEmployeePay(employee); setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employee?.name || "", ...(pay != null ? {amount:String(pay)} : {}) })); }}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
+              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => { const employee = employees.find(emp => emp.id === e.target.value); const pay = monthlyEmployeePay(employee, form.currency || wsIso, employeeFx.rates); setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employee?.name || "", amount: pay != null ? String(pay) : "" })); }}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">{form.employee_id && monthlyEmployeePay(employees.find(e => e.id === form.employee_id), form.currency || wsIso, employeeFx.rates) == null ? "No converted salary available yet. Enter the payment amount in the selected expense currency. " : ""}From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
             </Field> : <Field label="Vendor / Supplier">
               {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> : <TextInput aria-label="Vendor / Supplier" value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
             </Field>}
@@ -1777,6 +1797,8 @@ ${form.notes ? `<!-- NOTES -->
         workspaceName={workspaceName}
         customers={customers}
         onClose={() => setShowShareModal(false)}
+        businessId={businessId}
+        onSent={onSent}
       />
     )}
   </>, document.body);
@@ -3786,6 +3808,7 @@ export default function BusinessOperationsPage() {
           customers={customers}
           employees={employees}
           vendors={vendors}
+          supplierBills={expenses}
           catalogueProducts={catalogueProducts}
           allKnownCustomers={[...new Set([
             ...invoices.map(i => i.customer_name),
@@ -3793,6 +3816,8 @@ export default function BusinessOperationsPage() {
           ].filter(Boolean))]}
           workspaceName={workspaceName}
           wsCurrency={wsCurrency}
+          businessId={workspaceId}
+          onSent={refreshWorkspace}
           onSave={saveRecord}
           onRecordPayment={recordPayment}
           onClose={() => setRecordModal(null)}

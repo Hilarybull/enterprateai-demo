@@ -8,6 +8,7 @@ import {RecordModal} from '../pages/BusinessOperationsPage';
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 it('keeps supplier links optional and defaults a linked bill from vendor terms',()=>{
  const save=vi.fn();render(<RecordModal mode="edit" type="invoice" record={{id:'i',customer_name:'Client',currency:'GBP',issued_at:'2026-11-26',line_items:[{id:'l',description:'Training',qty:1,unit_price:500,cost_of_sales:300}]}} customers={[]} allKnownCustomers={[]} vendors={[{id:'v',name:'Training vendor',payment_terms:'30 days'}]} onSave={save} onClose={()=>{}}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Link supplier bill'}));
  fireEvent.change(screen.getByLabelText('Supplier for line 1'),{target:{value:'v'}});
  fireEvent.click(screen.getByText('Save Changes'));
  expect(save.mock.calls[0][0].line_items[0]).toMatchObject({vendor_id:'v',supplier_due_date:'2026-12-26',cost_of_sales:300});

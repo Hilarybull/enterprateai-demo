@@ -226,6 +226,9 @@ def _series_baseline(state: Any, name: str, hist_field: str, monthly_field: str,
     stated = float(getattr(state, monthly_field, 0.0) or 0.0)
     s_test = seasonality_test(history)
     seasonal = seasonal_indices(history) if (s_test and s_test["significant"]) else None
+    calendar_mean = str(sources.get(source_key) or "").startswith("three-calendar-month recorded mean")
+    if calendar_mean:
+        seasonal = None
 
     def deseason(ym_v):
         (_y, m), v = ym_v
@@ -247,6 +250,8 @@ def _series_baseline(state: Any, name: str, hist_field: str, monthly_field: str,
 
     tr = trend(adjusted[-TREND_WINDOW:])
     slope = tr["slope"] if tr["significant"] else 0.0
+    if calendar_mean:
+        slope = 0.0
     return dict(
         series=name,
         level=round(max(0.0, level), 2),
@@ -257,7 +262,7 @@ def _series_baseline(state: Any, name: str, hist_field: str, monthly_field: str,
         trend_pct_per_month=round(slope / level * 100, 2) if level > 0 and slope else 0.0,
         trend_t_stat=None if tr["t_stat"] is None else (round(tr["t_stat"], 2) if math.isfinite(tr["t_stat"]) else None),
         trend_applied=bool(slope),
-        trend_note=("not enough complete months (6 needed)" if tr["months"] < TREND_MIN_MONTHS
+        trend_note=("three-calendar-month mean selected" if calendar_mean else "not enough complete months (6 needed)" if tr["months"] < TREND_MIN_MONTHS
                     else "applied (statistically significant), damped" if slope
                     else "no significant trend"),
         seasonality_applied=seasonal is not None,

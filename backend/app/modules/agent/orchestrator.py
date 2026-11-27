@@ -2321,7 +2321,7 @@ class Orchestrator:
         return result
 
     async def record_manual_receipt(self, business_id: str, invoice_id: str, user_id: str, sent_to: list[str],
-                                    message_id: str | None = None, email: str | None = None) -> list[dict]:
+                                    message_id: str | None = None, email: str | None = None, *, payment_ids: list[str] | None = None) -> list[dict]:
         """The owner emailed a receipt themselves (Share Receipt): each payment on the invoice without a sent receipt
         gets its number from the same ledger the Agent uses, and is marked sent to those addresses (the owner, 13 Nov)."""
         actor, _policy = await self.actor_for(user_id, business_id, email)
@@ -2337,6 +2337,9 @@ class Orchestrator:
             raise Conflict("invoice_not_found", "That invoice no longer exists.")
         from app.modules.agent.tools import _currency
         waiting = [p for p in inv.get("payments") or [] if isinstance(p, dict) and p.get("id") and not (p.get("receipt") or {}).get("sent_at")]
+        if payment_ids is not None:
+            selected = set(payment_ids)
+            waiting = [p for p in waiting if str(p["id"]) in selected]
         issued: dict[str, dict] = {}
         for p in waiting:
             have = (p.get("receipt") or {}).get("number")

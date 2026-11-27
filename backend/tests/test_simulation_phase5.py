@@ -162,25 +162,29 @@ def _records(country="Nigeria"):
 
 
 def test_direct_costs_payroll_and_country_from_the_records():
-    """Last 92 days: direct 3,000, payroll 2,000, other 1,000 (the 200-day-old one is outside). Shared costs 6,000 a month:
-    cost of sales 50% = 3,000, running costs 3,000. Salaries are recorded, so payroll settings add nothing. Country NG."""
+    """Current-month costs remain actuals and do not replace the last three closed calendar months."""
     st = S(revenue_monthly=10000, expenses_monthly=6000)
-    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0, "figure_sources": {"expenses_monthly": "shared"}}, date(2026, 11, 24))
+    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0}, date(2026, 11, 24))
     assert out["tax_country"] == "NG" and out["payroll_in_recorded_expenses"] is True
-    assert (out["cost_of_sales_monthly"], out["expenses_monthly"], out["costs_monthly"]) == (3000, 3000, 6000)
-    assert "direct-cost categories" in out["figure_sources"]["cost_of_sales_monthly"]
+    assert (out["cost_of_sales_monthly"], out["expenses_monthly"], out["costs_monthly"]) == (0, 0, 0)
+    assert out["current_month_recorded"]["cost_of_sales"] == 3000
+    assert out["current_month_recorded"]["expenses"] == 3000
+    assert "2026-08 to 2026-10" in out["figure_sources"]["cost_of_sales_monthly"]
 
 
 def test_the_larger_of_product_costs_and_direct_costs_is_cost_of_sales():
-    """Model 1.5 (Phase 6): invoices carry product costs of 500 a month, the records show direct costs of 3,000 (50% of the
-    6,000 shared costs). They describe the same purchases: cost of sales is the larger, 3,000; running costs 3,000.
-    (Model 1.4 switched the split off as soon as any invoice carried a product cost: cost of sales stayed at 500.)"""
-    st = S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=500)
-    out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0}, date(2026, 11, 24))
-    assert (out["cost_of_sales_monthly"], out["expenses_monthly"]) == (3000, 3000)
-    high = si._phase5_from_records(S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=4200), _records(),
-                                   {"expenses_monthly": 6000.0}, date(2026, 11, 24))
-    assert (high["cost_of_sales_monthly"], high["expenses_monthly"]) == (3000, 3000)
+    """Recognise the larger cost once, then divide the closed-calendar window by three."""
+    data = _records()
+    for expense in data["financials"]["expenses"][:3]:
+        expense["date"] = "2026-10-24"
+    data["financials"]["invoices"] = [{"issued_at":"2026-10-24", "total_amount":9000, "cost_of_sales":1500}]
+    out = si._phase5_from_records(S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=500), data,
+                                 {"expenses_monthly":6000.0}, date(2026,11,24))
+    assert (out["cost_of_sales_monthly"], out["expenses_monthly"]) == (1000, 1000)
+    high = si._phase5_from_records(S(revenue_monthly=10000, expenses_monthly=6000, cost_of_sales_monthly=4200), data,
+                                   {"expenses_monthly":6000.0}, date(2026,11,24))
+    assert (high["cost_of_sales_monthly"], high["expenses_monthly"]) == (1000, 1000)
+
 
 
 def test_the_owner_s_own_country_is_kept():

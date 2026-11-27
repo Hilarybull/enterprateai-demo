@@ -47,3 +47,12 @@ def test_only_someone_with_access_and_a_real_address():
     with pytest.raises(Conflict):
         run(env.orch.record_manual_receipt("A", "missing", OWNER, ["x@y.test"], None, OWNER))
     assert "receipt" not in env.fin["invoices"][0]["payments"][0]
+
+
+def test_only_payments_in_the_shared_document_are_marked_sent():
+    env = Env()
+    _invoice(env, [{"id": "p1", "amount": 100}, {"id": "p2", "amount": 200}])
+    done = run(env.orch.record_manual_receipt("A", "inv1", OWNER, ["buyer@brighttech.test"], "msg-1", OWNER, payment_ids=["p1"]))
+    assert [row["payment_id"] for row in done] == ["p1"]
+    assert env.fin["invoices"][0]["payments"][0]["receipt"]["sent_at"]
+    assert "receipt" not in env.fin["invoices"][0]["payments"][1]

@@ -204,6 +204,8 @@ async def shared_state(user: dict, business_id: str, state):
         if not getattr(actor, "can_view", False):
             return state
         data = await orch.rt.business.load(business_id) or {}
+        from app.modules.agent import fx
+        await fx.ensure(orch, business_id, data)
         f = figures.of(data)
     except Exception:      # noqa: BLE001 - Simulation's own figures then
         return state

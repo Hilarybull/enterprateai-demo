@@ -2,6 +2,7 @@ import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import EmployeeRecords from "./EmployeeRecords";
+import { useWorkspaceStore } from "../store/workspace";
 afterEach(cleanup);
 it("saves a named employee with their role, then allows an existing record to be archived", async () => {
   const onSave = vi.fn().mockResolvedValue(undefined);
@@ -25,4 +26,17 @@ it("keeps typed answers when saving fails", async () => {
   fireEvent.click(screen.getByText("Add employee"));
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Please retry"));
   expect(screen.getByLabelText("Full name *").value).toBe("Ada");
+});
+it("defaults pay to workspace currency and preserves a chosen foreign currency on save", async () => {
+  useWorkspaceStore.setState({currency:"Nigerian Naira (NGN)"});
+  const save=vi.fn().mockResolvedValue(undefined);
+  render(<EmployeeRecords onSave={save} />);
+  expect(screen.getByLabelText("Pay currency").value).toBe("NGN");
+  fireEvent.change(screen.getByLabelText("Full name *"),{target:{value:"Ada"}});
+  fireEvent.change(screen.getByLabelText("Pay currency"),{target:{value:"GBP"}});
+  fireEvent.change(screen.getByLabelText("Gross salary"),{target:{value:"2000"}});
+  fireEvent.click(screen.getByRole("button",{name:"Add employee"}));
+  await waitFor(()=>expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][0][0]).toMatchObject({currency:"GBP",salary_amount:"2000"});
+  useWorkspaceStore.setState({currency:"GBP"});
 });
