@@ -958,8 +958,7 @@ def current_month_view(state: BusinessStateSnapshot, as_of: date, opening_cash: 
     return dict(month=key, label=as_of.strftime("%b %Y"), as_of=as_of.isoformat(), recorded_so_far=recorded,
                 rest_of_month=rest, month_total=total, cash_today=round(actual_cash if actual_cash is not None else opening_cash, 2),
                 cash_at_month_end=None, basis="actual",
-                explanation=(f"Actuals recorded in Business Operations through {as_of.isoformat()}. "
-                             "No remaining-day forecast is included. The current month is still in progress; forecasts start next month."))
+                explanation=f"Actuals recorded in Business Operations through {as_of.isoformat()}.")
 
 
 def thirteen_week_view(state: BusinessStateSnapshot, as_of: date, opening_cash: float,
