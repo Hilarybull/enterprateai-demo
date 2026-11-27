@@ -64,6 +64,7 @@ How to work:
 - Keep amounts and currencies tied to their source record. A funding case and trading records can use different currencies. Do not call that an error, recommend changing currency, or offer a currency-change quick action solely because those records differ. Ask which currency the buyer intends only when their request needs clarification.
 - Reply to the latest message. A greeting or small talk gets a friendly reply and an offer of help, never a task. Never start or pick up a task from earlier in the thread unless the latest message asks for it.
 - Answer questions yourself. Look things up with find_customer or read_catalogue instead of asking what the records already say.
+- Use the available lookup tools before asking the owner to supply information they can retrieve. Read current business records, including employees and receipt history; read uploaded documents when referenced; search the web for current public information and open relevant sources. Cite the returned source links for web facts. Do not claim you cannot browse, fetch records or convert currencies without first trying the matching tool. A failed tool call is a lookup failure, not proof that the fact or record does not exist. Explain that specific failure and offer a useful retry. Use convert_currency for exchange-rate calculations rather than inventing a rate from memory or a search snippet.
 - Invoices and quotations: you need who it's for and each item's name, quantity and price. Use the catalogue price when the \
 item is in it. Ask only for what is still missing, all in one short question. For an invoice the customer's email is \
 optional: if they say "later", "skip", "no email" or similar, leave it empty. A quotation needs the email. Never ask about \
@@ -77,7 +78,7 @@ Never invent figures, customers, prices or results. Never state a price for the 
 - If a tool says a price must be agreed first, tell them its price and ask; call it again with price_agreed true only after \
 they say yes.
 - Funding and launch readiness: use readiness_status to answer how ready they are, their score, what's left and what was found. For anything to do on a funding case or launch plan (change an amount or purpose, answer what's left, draft the rest, search for funding options, approve drafts, start one), call work_on_funding or work_on_launch with the owner's own words, exactly as they said them; a reply to what that module asked ("yes, start", "replace it") goes back to it the same way.
-- When selected_readiness_item is present, work on that exact item in its case. Forward the full request and issue details to its specialist. Never turn it into general research, drafting the rest, or listing all remaining tasks. A saved research run does not mean that this item was fixed. Ask for missing facts such as an explicit exchange rate before a conversion; never invent them or silently change the workspace currency.
+- When selected_readiness_item is present, work on that exact item in its case. Forward the full request and issue details to its specialist. Never turn it into general research, drafting the rest, or listing all remaining tasks. A saved research run does not mean that this item was fixed. For currency conversion use convert_currency to fetch a verified rate and date, show the converted amount and ask before saving it. Do not ask the owner to calculate it or provide a rate before trying the shared converter. Never invent a rate or silently change the workspace currency.
 - Route buyer sourcing, supplier matching, RFQ/RFP drafting and proposal evaluation through work_on_procurement. Use IDs only when supplied by the workspace.
 - Contracts, receipts, payments and other areas you have no tool for: call hand_over with the module, at once.
 - Recommend a concrete next step when it helps the owner act. A greeting, explanation or clarification can stand on its own; do not force a task or confirmation into every reply.
@@ -97,10 +98,12 @@ _ITEMS = {"type": "array", "items": {"type": "object", "additionalProperties": F
 from app.modules.agent.procurement import TOOL as PROCUREMENT_TOOL
 
 TOOLS: list[dict] = [
+    {"name":"convert_currency","description":"Read-only conversion through the existing shared dated exchange-rate service. Returns original amount, converted amount, rate, date and source. Does not save or change workspace currency. Use instead of asking the owner to calculate a conversion or supply a rate.",
+     "input_schema":{"type":"object","additionalProperties":False,"required":["amount","from_currency","to_currency"],"properties":{"amount":{"type":"number","minimum":0},"from_currency":{"type":"string"},"to_currency":{"type":"string"}}}},
     PROCUREMENT_TOOL,
-    {"name": "read_business_records", "description": "Read the active business's latest saved profile, financial summary, customers, products, vendors, invoices, expenses, quotes, receipts or contracts. Includes imported records. Paginated lists; use offset for more.",
+    {"name": "read_business_records", "description": "Read the active business's latest saved profile, financial summary, customers, products, vendors, employees, invoices, expenses, quotes, receipts or contracts. Includes imported records. Paginated lists; use offset for more.",
      "input_schema": {"type": "object", "additionalProperties": False, "required": ["section"], "properties": {
-         "section": {"type": "string", "enum": ["profile", "summary", "customers", "products", "vendors", "invoices", "expenses", "quotes", "receipts", "contracts"]},
+         "section": {"type": "string", "enum": ["profile", "summary", "customers", "products", "vendors", "employees", "invoices", "expenses", "quotes", "receipts", "contracts"]},
          "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 30}}}},
     {"name": "list_chat_documents", "description": "List uploaded documents and generated files available in this business.",
      "input_schema": {"type": "object", "additionalProperties": False, "properties": {}}},
@@ -310,6 +313,8 @@ async def readiness_status(orch, user: dict, business_id: str, kind: str) -> dic
 
 
 async def _readiness_turn(orch, user: dict, business_id: str, request: str, *, launch: bool, history=None, selected_item=None) -> dict | None:
+    if history is not None:
+        history = [item if isinstance(item,dict) else item.model_dump() for item in history]
     """The funding or launch conversation, with the owner's own words: its reply (cards, buttons, prices first) as it is."""
     from app.modules.agent import converse, converse_launch
     if selected_item:
@@ -406,6 +411,22 @@ async def turn(orch, user: dict, body, known: dict) -> dict | str | None:
     business_id = body.business_id
     turns = conductor._thread(known, user["id"])
     text = str(body.text or "").strip()[:2000]
+    # Resume a funding conversion directly, including a follow-up to the older rate question.
+    # A rate lookup or confirmation does not require another model-generated reply.
+    from app.modules.agent import converse
+    from datetime import datetime, timezone
+    mine = ((known.get("agent_conversations") or {}).get(str(user["id"])) or {})
+    history = getattr(body,"history",None)
+    if hasattr(body,"model_fields_set") and "history" not in body.model_fields_set:
+        history = None
+    lookup = bool(re.search(r"\b(?:convert|conversion|exchange rate|look up.*rate)\b",text,re.I)) and len(text) < 150 and not re.search(r"\b(?:invoices?|quotes?|quotations?|contracts?|vendors?|salar(?:y|ies))\b",text,re.I) and not converse.need_in(text,known)
+    confirms = bool(converse._APPLY.match(text) or converse._yes(text) or converse._YES_LEAD.match(text) or converse._CANCEL.match(text))
+    visible_funding = any(converse.wants_funding(item.get("content","") if isinstance(item,dict) else item.content)
+                          for item in history or [] if (item.get("role") if isinstance(item,dict) else item.role) == "user")
+    if history != [] and (converse.in_conversation(known,user["id"],datetime.now(timezone.utc)) or lookup and visible_funding) and ((mine.get("pending_fx") and confirms) or lookup):
+        result = await _readiness_turn(orch,user,business_id,text,launch=False,history=history)
+        if result:
+            return result
     last_agent_turn = next((str(t.get("text") or "") for t in reversed(turns) if t.get("role") == "agent"), "")
     social = social_reply(text, turns) if "?" in last_agent_turn else None
     if social:
@@ -521,6 +542,9 @@ async def _use(orch, user: dict, business_id: str, known: dict, body, name: str,
     """One tool: its result for the model, or {"final": ...} / {"pass": True} to end the reply there."""
     from app.modules.agent import conductor
     try:
+        if name == "convert_currency":
+            from app.modules.agent.currency_conversion import quote
+            return await quote(args.get("amount"),args.get("from_currency"),args.get("to_currency"))
         if name == "read_business_records":
             from app.modules.agent.chat_records import read_records
             return await read_records(orch, user, business_id, args)

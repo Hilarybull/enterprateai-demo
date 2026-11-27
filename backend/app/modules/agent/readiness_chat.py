@@ -31,6 +31,15 @@ async def work_on_item(orch, user, business_id, request, selected, history=None)
     facts = {"item": action, "case": subject.get("data") or {}, "fields_you_may_draft": fields,
              "records": converse.records_of(workspace), "history": history or [], "request": request,
              "existing_drafts": (subject.get("data") or {}).get("agent_drafts") or {}}
+    if re.search(r"currenc|exchange|convert",str(action)+str(request),re.I):
+        from app.modules.agent.currency_conversion import quote
+        from app.modules.agent import business as bz
+        target = str((subject.get("data") or {}).get("currency") or bz.currency_of(workspace)).upper()
+        codes = {bz.currency_of(workspace)}
+        for docs in (workspace.get("financials") or {}).values():
+            if isinstance(docs,list):
+                codes.update(bz.doc_currency(doc,bz.currency_of(workspace)) for doc in docs if isinstance(doc,dict))
+        facts["currency_quotes"] = [await quote(1,code,target) for code in sorted(codes-{target})[:5]]
     llm = research._default_llm(user["id"])
     if not llm:
         raise RuntimeError("The agent isn't available to work on this item right now. Please try again.")
@@ -39,7 +48,7 @@ async def work_on_item(orch, user, business_id, request, selected, history=None)
         "Use the actual item detail and case facts. Draft the selected fields where the evidence supports a useful proposal. "
         "Do not approve or change live answers. Do not claim an issue is fixed: drafts need review. "
         "If the issue is blocked on missing facts, ask one precise question and return empty drafts. "
-        "For a currency mismatch, identify the currencies and ask for an explicit conversion rate and date unless already supplied; "
+        "For a currency mismatch, use the verified currency_quotes and their rate dates when available, show the conversion for review, and never ask the owner to calculate it. If the rate service is unavailable, offer to retry or use an explicit rate supplied by the owner; "
         "do not invent exchange rates or change the business currency. A document or forecast conflict cannot be fixed by drafting unrelated profile fields. "
         "Never restart general research or just list all remaining items. Existing research is not proof this action is complete. "
         "Never expose internal IDs. Use plain conversational language. No HTML or action markup."

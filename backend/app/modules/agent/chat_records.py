@@ -18,8 +18,28 @@ async def read_records(orch, user, business_id, args):
     if section == "summary":
         from app.modules.agent import figures, business
         return {**result, "currency": business.currency_of(data), "summary": figures.of(data)}
-    if section in {"customers", "products", "vendors"}:
+    if section in {"customers", "products", "vendors", "employees"}:
         records = (data.get("catalogue") or {}).get(section) or []
+    elif section == "receipts":
+        from app.modules.agent import business
+        financials = data.get("financials") or {}
+        records = list(financials.get("receipts") or [])
+        seen = {r.get("number") or r.get("receipt_number") for r in records if isinstance(r,dict)}
+        for invoice in financials.get("invoices") or []:
+            if not isinstance(invoice,dict) or invoice.get("archived"):
+                continue
+            for payment in invoice.get("payments") or []:
+                if not isinstance(payment,dict):
+                    continue
+                receipt = payment.get("receipt") or {}
+                if not isinstance(receipt,dict):
+                    continue
+                if not receipt.get("number") or receipt["number"] in seen:
+                    continue
+                records.append({**receipt,"id":payment.get("id"),"invoice_id":invoice.get("id"),"customer_name":invoice.get("customer_name"),
+                                "amount":payment.get("amount"),"currency":business.doc_currency(invoice,business.currency_of(data)),
+                                "status":"issued","delivery_status":"sent" if receipt.get("sent_at") else "not_sent"})
+                seen.add(receipt["number"])
     elif section in {"invoices", "expenses", "quotes", "receipts", "contracts"}:
         records = (data.get("financials") or {}).get(section) or []
     else:

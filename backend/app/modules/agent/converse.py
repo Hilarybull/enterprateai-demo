@@ -369,6 +369,9 @@ async def turn(*, orch, user: dict, business_id: str, text: str, llm=None, now: 
     if case:
         from app.modules.agent import research as _research
         case = {**case, "research": _research.research_state(data, "need_funding")}
+    conversion_reply = await _conversion_followup(orch, user, business_id, case, cases, {**mine,"turns":turns} if history != [] else {}, text, now, data)
+    if conversion_reply is not None:
+        return conversion_reply
     asked = mine.get("pending_do_all")
     if case and _SEARCH_AGAIN.match(str(text).strip()):
         return await _ask_do_all(orch, user, business_id, case, data, text, now, only=OPTIONS_ONLY, go_now=True)      # the same search, never another offer
@@ -785,7 +788,63 @@ def said_in_words(text: str, today) -> dict:
     return out
 
 
-async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, change: dict, replace: bool, text: str, now: datetime, data: dict) -> dict:
+async def _offer_conversion(orch, user, business_id, case, change, replace, text, now, data, own):
+    from app.modules.agent.currency_conversion import quote
+    from app.modules.agent.research import money
+    result = await quote(change.get("target_amount"), change.get("currency"), own)
+    pending = {"case_id":str(case["id"]) if case else None,"change":change,"replace":replace,"quote":result}
+    keep = {"pending_fx":pending}
+    if not result["available"]:
+        return await _said(orch,user,business_id,text,
+            "I couldn't get the exchange rate just now. Your original amount is kept and nothing has changed. Shall I retry?",
+            [{"label":"Retry conversion","kind":"explain","prompt":"Retry conversion"},*_APPLY_BUTTONS[1:]],now,keep=keep)
+    return await _said(orch,user,business_id,text,
+        f"{money(result['original_amount'],result['from_currency'])} is approximately {money(result['converted_amount'],own)}. "
+        f"Rate: 1 {result['from_currency']} = {result['rate']:.8g} {own}, dated {result['date']} ({result.get('source')}). "
+        f"Use {money(result['converted_amount'],own)} for your funding case?",
+        [{"label":f"Use {money(result['converted_amount'],own)}","kind":"explain","prompt":"Apply"},*_APPLY_BUTTONS[1:]],now,keep=keep)
+
+
+async def _conversion_followup(orch,user,business_id,case,cases,mine,text,now,data):
+    pending = mine.get("pending_fx")
+    lookup = bool(re.search(r"\b(?:convert|conversion|exchange rate|look up.*rate)\b",str(text),re.I))
+    if pending and _CANCEL.match(str(text)):
+        return await _said(orch,user,business_id,text,"Cancelled. Nothing was changed.",[],now)
+    if pending and (_APPLY.match(str(text)) or _yes(text) or _YES_LEAD.match(str(text)) or lookup):
+        case_id = pending.get("case_id")
+        chosen = next((c for c in cases if str(c["id"]) == str(case_id)),None) if case_id else None
+        if case_id and not chosen:
+            return await _said(orch,user,business_id,text,"That funding case is no longer available. Please choose the case to update.",[],now)
+        if not case_id and case:
+            return await _said(orch,user,business_id,text,"A funding case was added since this conversion. Please tell me whether to update it or start another need.",[],now)
+        from app.modules.agent import business as bz
+        own = str(((chosen or {}).get("data") or {}).get("currency") or bz.currency_of(data)).upper()
+        quoted = pending.get("quote") or {}
+        if lookup or not quoted.get("available") or quoted.get("to_currency") != own:
+            return await _offer_conversion(orch,user,business_id,chosen,pending["change"],pending.get("replace",False),text,now,data,own)
+        named = need_in(text,data)
+        if named.get("target_amount") is not None and (abs(float(named["target_amount"])-float(quoted["converted_amount"])) > .01 or named.get("currency",own) != own):
+            from app.modules.agent.research import money
+            return await _said(orch,user,business_id,text,
+                f"You mentioned a different amount. The conversion is {money(quoted['converted_amount'],own)}. Use that conversion or cancel and enter the amount you want?",
+                [{"label":f"Use {money(quoted['converted_amount'],own)}","kind":"explain","prompt":"Apply"},*_APPLY_BUTTONS[1:]],now,keep={"pending_fx":pending})
+        from app.modules.readiness.service import service_for
+        change = {**pending["change"],"currency":own,"target_amount":quoted["converted_amount"]}
+        return await _applied(orch,service_for(orch),user,business_id,chosen,change,pending.get("replace",False),text,now,data,conversion={**quoted,"saved":True,"confirmed_at":now.isoformat()})
+    if lookup and len(str(text)) < 150:
+        from app.modules.agent import business as bz
+        own = str(((case or {}).get("data") or {}).get("currency") or bz.currency_of(data)).upper()
+        for turn in reversed(mine.get("turns") or []):
+            if turn.get("role") != "owner":
+                continue
+            change = need_in(turn.get("text") or "",data)
+            if change.get("target_amount") is not None and change.get("currency") and change["currency"] != own:
+                change = {**said_in_words(turn["text"],now.date()),**change}
+                return await _offer_conversion(orch,user,business_id,case,change,False,text,now,data,own)
+    return None
+
+
+async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, change: dict, replace: bool, text: str, now: datetime, data: dict, *, conversion: dict | None = None) -> dict:
     """The change the owner applied: made, checked, and said with the score when it moved."""
     from app.modules.agent import goals
     from app.modules.readiness import rules
@@ -799,10 +858,7 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
     own = str(((case or {}).get("data") or {}).get("currency") or _bz.currency_of(data) or "").upper()
     said_in = str(change.get("currency") or "").upper()
     if not replace and own and said_in and said_in != own and change.get("target_amount") is not None:
-        from app.modules.agent.research import money as _money
-        return await _said(orch, user, business_id, text,
-                           f"Your business works in {own}, and you said {_money(change['target_amount'], said_in)}. How much is that in {own}? Nothing has been changed yet.",
-                           [], now)
+        return await _offer_conversion(orch, user, business_id, case, change, replace, text, now, data, own)
     if case and not replace:
         held = (case.get("data") or {})
         olds = {**held, **(held.get("economics") or {})}
@@ -820,6 +876,10 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
             return await _said(orch, user, business_id, text, f"{said}.{score}" + (f" Next step: {nxt[:1].lower() + nxt[1:]}." if nxt else ""),
                                [], now, cards=[{"type": "result", "case_id": str(case["id"])}, {"type": "steps", "case_id": str(case["id"])}])
     stamp = {(f"economics.{p}" if p in _ECONOMICS else p): f"From you, {now.day} {now.strftime('%b')}" for p in change}
+    if conversion:
+        stamp["target_amount"] = (f"Converted from {conversion['original_amount']} {conversion['from_currency']} at "
+                                  f"{conversion['rate']} {conversion['to_currency']} per {conversion['from_currency']}, "
+                                  f"dated {conversion['date']} ({conversion.get('source')}); confirmed by you")
     done: list[str] = []
     before = ((case or {}).get("summary") or {}).get("score")
     undo, extra, econ, was = None, "", {}, {}
@@ -841,6 +901,8 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
                 done.append("replaced")
             else:
                 patch = {**change, **({"use_of_funds": lines} if lines else {})}
+                if conversion:
+                    patch["currency_conversion"] = conversion
                 if {"target_amount", "purpose", "route_preference"} & set(change) and goals.is_made_title(was.get("title"), was):
                     patch["title"] = goals.need_title({**was, **change})      # a title made from the need follows it
                 await svc.update_subject(user["id"], business_id, rules.FUNDING, case["id"], row["revision"], patch, user.get("email"), provenance=stamp)
@@ -854,7 +916,7 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
                 elif fixed_lines:
                     extra = " Working capital and reserve recalculated."
         else:
-            made = await svc.create_subject(user["id"], business_id, rules.FUNDING, {**change, "title": goals.need_title(change), "pinned": True},
+            made = await svc.create_subject(user["id"], business_id, rules.FUNDING, {**change, "title": goals.need_title(change), "pinned": True, **({"currency_conversion":conversion} if conversion else {})},
                                             user.get("email"), provenance=stamp)
             case = {"id": made["id"], "title": made.get("data", {}).get("title")}
             done.append("created")

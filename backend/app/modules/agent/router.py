@@ -1171,7 +1171,7 @@ async def submit_request(body: AgentRequestIn, user=Depends(get_current_user)):
             talk = {"funding": converse.turn, "launch": converse_launch.turn, "idea": converse_idea.turn,
                     **{k: converse_check.turn for k in converse_check.GOALS}}[topic]
             try:
-                talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier,
+                talked = await talk(orch=get_orchestrator(), user=user, business_id=body.business_id, text=body.text.strip(), history=earlier if "history" in body.model_fields_set else None,
                                     **({"plan_id": body.case_id} if topic == "launch" and body.page == "launch" and body.case_id else {}),
                                     **({"on_page": True} if topic == "launch" and body.page == "launch" else {}),
                                     **({"topic": topic} if topic in converse_check.GOALS else {}))

@@ -19,6 +19,19 @@ from test_agent import Env, OWNER
 run = asyncio.run
 USER = {"id": OWNER, "email": OWNER}
 
+def test_employee_and_receipt_lookups_read_the_actual_master_and_payment_records():
+    from app.modules.agent import chat_records
+    env=Env();data=env.businesses["A"]["data"]
+    data.setdefault("catalogue",{})["employees"]=[{"id":"e1","name":"Ada","currency":"NGN","salary_amount":200000}]
+    employees=run(chat_records.read_records(env.orch,USER,"A",{"section":"employees"}))
+    assert employees["records"][0]["name"] == "Ada" and employees["records"][0]["currency"] == "NGN"
+    data.setdefault("financials",{})["invoices"]=[{"id":"i1","customer_name":"Buyer","currency":"GBP","payments":[
+        {"id":"p1","amount":100,"receipt":{"number":"REC-1","sent_at":"2026-11-27T10:00:00Z"}}]}]
+    receipts=run(chat_records.read_records(env.orch,USER,"A",{"section":"receipts"}))
+    assert receipts["records"][0]["number"] == "REC-1"
+    assert receipts["records"][0]["status"] == "issued" and receipts["records"][0]["delivery_status"] == "sent"
+    assert receipts["records"][0]["amount"] == 100
+
 
 def test_general_chat_upload_is_readable_without_starting_a_funding_case(monkeypatch):
     env = Env()

@@ -31,6 +31,9 @@
 .brand-ai {
   color: var(--brand-red);
 }
+.brand-enterprate {
+  color: #6366ff;
+}
 
 /* Always-visible scrollbars on overflow elements */
 ::-webkit-scrollbar {
@@ -462,7 +465,8 @@
 /* The Agent Centre fits the window exactly (the owner, 27 Oct): no page scroll; only its chat, and its side panel when taller,
    scroll inside. The content area's wrapper becomes the area's own height, with an even margin all round. */
 [data-tour="content-area"]:has([data-agent-page], [data-fit-page]) { overflow: hidden; padding-bottom: 0; }
-[data-tour="content-area"]:has([data-agent-page], [data-fit-page]) > div { height: 100%; padding-bottom: 1rem; box-sizing: border-box; }
+[data-tour="content-area"]:has([data-agent-page], [data-fit-page]) > div { display: flex; flex-direction: column; height: 100%; min-height: 0; padding-bottom: 1rem; box-sizing: border-box; }
+[data-tour="content-area"] > div > :is([data-agent-page], [data-fit-page]) { flex: 1 1 0%; min-height: 0; height: auto; }
 @media (min-width: 768px) {
   [data-tour="content-area"]:has([data-agent-page], [data-fit-page]) > div { padding-bottom: 1.25rem; }
 }

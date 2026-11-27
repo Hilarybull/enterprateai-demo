@@ -28,12 +28,15 @@ from test_goal_onboarding import world, run  # noqa: E402,F401
 from test_round14_converse_funding import talk, _case  # noqa: E402,F401
 
 
-def test_an_amount_in_another_currency_is_asked_never_saved(talk):
+def test_an_amount_in_another_currency_is_asked_never_saved(talk,monkeypatch):
     # F2: "₦5m grant for stock" saved on a UK business's funding case
     env, ask, model, cid = talk
+    from app.shared import currency
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(currency,"get_rate_dated",AsyncMock(return_value={"rate":.0005,"date":"2026-11-27","source":"shared converter"}))
     model.replies.append({"say": "Done.", "change": {"target_amount": 5000000, "currency": "NGN"}})
     out = ask("Change my funding need to ₦5,000,000 for stock")
-    assert "Your business works in GBP" in out["message"] and "Nothing has been changed" in out["message"]
+    assert "£2,500" in out["message"] and "Use" in out["message"] and "2026-11-27" in out["message"]
     case = _case(env, cid)
     assert case.get("currency") in (None, "GBP") and float(case["target_amount"]) == 50000
 

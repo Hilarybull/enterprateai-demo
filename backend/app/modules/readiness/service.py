@@ -42,7 +42,7 @@ ITEM_FILLS = {"milestones": ("owner", "due_date", "baseline"), "use_of_funds": (
 CORE_FIELDS = {
     rules.FUNDING: ("title", "route", "route_preference", "jurisdiction", "business_model", "stage", "target_amount", "currency", "receipt_date", "timing_confirmed",
                     "purpose", "purpose_milestone_id", "milestones", "use_of_funds", "market", "traction", "economics", "team", "risks",
-                    "no_known_risks", "pinned", "owner", "funding_options", "agent_drafts", "rejected_drafts"),
+                    "no_known_risks", "pinned", "owner", "funding_options", "agent_drafts", "rejected_drafts", "currency_conversion"),
     rules.LAUNCH: ("name", "launch_type", "scope", "business_model", "offerings", "audience", "geography", "target_date", "planned_volume",
                    "customers", "offer", "economics", "delivery", "operations", "prerequisites", "no_prerequisites", "no_prerequisites_rationale",
                    "market", "control", "pinned", "owner", "previous_initiative_id", "agent_drafts", "rejected_drafts"),
