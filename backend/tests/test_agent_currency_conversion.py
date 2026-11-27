@@ -41,6 +41,15 @@ def test_cancel_does_not_change_the_case(talk):
     assert "Cancelled" in out["message"]
     assert float(_case(env,cid)["target_amount"]) == 50000
 
+def test_conversion_question_and_saved_reply_keep_the_exact_pence(talk,dated_rate):
+    env,ask,model,cid=talk
+    dated_rate.return_value={"rate":.00056627,"date":"2026-11-27","source":"shared converter"}
+    out=offer(talk)
+    assert "£566.27" in out["message"]
+    applied=ask("Apply",page="funding")
+    assert "£566.27" in applied["message"]
+    assert float(_case(env,cid)["target_amount"]) == 566.27
+
 def test_a_different_amount_in_the_confirmation_is_not_silently_overwritten(talk):
     env,ask,model,cid=talk
     offer(talk)

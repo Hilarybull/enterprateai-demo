@@ -222,7 +222,7 @@ async def invoice_details(ctx):
     if isinstance(given, dict) and float(given.get("value") or 0) > 0:
         extras["discount"] = {"type": "percent" if given.get("type") == "percent" else "amount", "value": float(given["value"])}
     # The form offers the default due date. It only overrides the customer's own terms when the owner changed it.
-    days = int(ctx.policy.get("default_payment_terms_days") or 14)
+    days = bz.payment_terms_days({}, ctx.policy)
     offered = (bz.local_now(data, ctx.now()).date() + timedelta(days=days)).isoformat()
     if str(ctx.answers.get("due_date") or "")[:10] not in ("", offered):
         extras["due_date"] = str(ctx.answers["due_date"])[:10]
@@ -247,7 +247,7 @@ async def _invoice_form(ctx, text: str, quotes: list[dict], data: dict) -> list[
     fields += await _customer_fields(ctx, customer, only_new)
     if not priced:
         cond = {"show_if": only_new} if only_new else {}
-        days = int(ctx.policy.get("default_payment_terms_days") or 14)
+        days = bz.payment_terms_days({}, ctx.policy)
         # Filled in from Agent settings, there to change: nothing here has to be typed.
         fields += [_items_field(suggested, products, vat, only_new),
                    {"key": "discount", "label": "Discount", "type": "discount", **cond},
@@ -575,7 +575,7 @@ async def add_customer_step(ctx):
                 c["updated_at"] = now
                 return "updated"
         customers.append({"id": new_id(), "name": name, "email": email, "phone_number": str(a.get("phone_number") or "").strip(), "address": "", "industry": "",
-                          "payment_terms": int(ctx.policy.get("default_payment_terms_days") or 14), "created_by_agent": True, "agent_run_id": ctx.run["id"], "created_at": now})
+                          "payment_terms": bz.payment_terms_days({}, ctx.policy), "created_by_agent": True, "agent_run_id": ctx.run["id"], "created_at": now})
         return "added"
     how = await ctx.rt.business.mutate(ctx.run["business_id"], _apply)
     return Done(f"Saved: {name} is {'up to date' if how == 'updated' else 'now a customer'}.", outcome={"customer": name, "links": [{"label": "Customers", "to": "/catalogue?tab=customers"}]})

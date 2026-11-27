@@ -1144,7 +1144,7 @@ class Orchestrator:
         reason = bz.followup_skip_reason(inv, policy, now)
         if reason:
             return reason
-        if len(inv.get("reminders") or []) >= int((policy.get("reminders") or {}).get("max_reminders") or 3):
+        if len(inv.get("reminders") or []) >= bz.reminder_limit(policy):
             return "reminders_exhausted"
         refused = {str(e).lower() for c in (data.get("catalogue") or {}).get("customers") or [] for e in c.get("refused_emails") or []}
         to = _customer_email(inv, data)

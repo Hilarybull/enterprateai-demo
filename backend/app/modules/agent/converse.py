@@ -790,7 +790,7 @@ def said_in_words(text: str, today) -> dict:
 
 async def _offer_conversion(orch, user, business_id, case, change, replace, text, now, data, own):
     from app.modules.agent.currency_conversion import quote
-    from app.modules.agent.research import money
+    from app.modules.agent.currency_conversion import display_money as money
     result = await quote(change.get("target_amount"), change.get("currency"), own)
     pending = {"case_id":str(case["id"]) if case else None,"change":change,"replace":replace,"quote":result}
     keep = {"pending_fx":pending}
@@ -824,7 +824,7 @@ async def _conversion_followup(orch,user,business_id,case,cases,mine,text,now,da
             return await _offer_conversion(orch,user,business_id,chosen,pending["change"],pending.get("replace",False),text,now,data,own)
         named = need_in(text,data)
         if named.get("target_amount") is not None and (abs(float(named["target_amount"])-float(quoted["converted_amount"])) > .01 or named.get("currency",own) != own):
-            from app.modules.agent.research import money
+            from app.modules.agent.currency_conversion import display_money as money
             return await _said(orch,user,business_id,text,
                 f"You mentioned a different amount. The conversion is {money(quoted['converted_amount'],own)}. Use that conversion or cancel and enter the amount you want?",
                 [{"label":f"Use {money(quoted['converted_amount'],own)}","kind":"explain","prompt":"Apply"},*_APPLY_BUTTONS[1:]],now,keep={"pending_fx":pending})
@@ -934,13 +934,18 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         # One short line on what changed, with Undo (the owner, 28 Oct: "Updated fixed costs: ₦40,000 → ₦60,000 a month")
         from app.modules.agent import business as bz
         currency = str(was.get("currency") or bz.currency_of(data) or "GBP")
+        def show(key,value):
+            if conversion and key == "target_amount":
+                from app.modules.agent.currency_conversion import display_money
+                return display_money(value,currency)
+            return _show(key,value,currency)
         flat = {**{k: v for k, v in change.items() if k != "economics"}, **econ}
         olds = {**was, **(was.get("economics") or {})}
         # A value given for the first time is said as given, never "Not set → A loan"; a changed one keeps its before and after
         # (the owner, 1 Nov: "what do you mean not set?... how will the user know the next steps")
-        said = "; ".join(f"{_LABEL.get(k, k).lower()}: {_show(k, olds.get(k), currency)} → {_show(k, v, currency)}" for k, v in flat.items()
+        said = "; ".join(f"{_LABEL.get(k, k).lower()}: {show(k, olds.get(k))} → {show(k, v)}" for k, v in flat.items()
                          if olds.get(k) not in (None, "", [], {}))
-        new = ", ".join(f"{_LABEL.get(k, k).lower()}: {_show(k, v, currency)}" for k, v in flat.items() if olds.get(k) in (None, "", [], {}))
+        new = ", ".join(f"{_LABEL.get(k, k).lower()}: {show(k, v)}" for k, v in flat.items() if olds.get(k) in (None, "", [], {}))
         opening = " ".join(x for x in ((f"Saved {new}." if new else ""), (f"Updated {said}." if said else "")) if x) + f"{extra}{line}"
     word = {"replaced": "replaced your funding need (the old one is in your history)", "updated": "updated your funding case",
             "created": "set up your funding case"}[done[0]]
