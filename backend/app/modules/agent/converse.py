@@ -141,7 +141,8 @@ def _figures(case: dict | None) -> dict:
             "score_out_of_100": summary.get("score"), "score_so_far": bool(summary.get("score_partial")), "classification": summary.get("classification"),
             "things_to_do": summary.get("open_actions"), "next": (summary.get("next_action") or {}).get("title"),
             # What they are, so "what are the 8 things?" is answered (the owner, 30 Oct: "I can't see the full list from here")
-            "to_do_list": open_steps(case)[:12],
+            "to_do_list": open_steps(case),
+            "recorded_traction": data.get("traction"),
             "blockers": [b.get("label") for b in summary.get("blockers") or []][:3], "research": case.get("research")}
 
 
@@ -978,11 +979,11 @@ async def _applied(orch, svc, user: dict, business_id: str, case: dict | None, c
         # to continue manually", "it's a lotta confusing options"); See all and Undo wait (typing "undo" still undoes)
         actions = [*actions, {"label": "Fill all for me", "kind": "explain", "prompt": "Do it all for me"},
                    {"label": "Continue manually", "to": f"/funding/{case['id']}?tab=answers"}]
+    elif steps:
+        say += " Your saved answers are included. Here are the pending items; I can help fill each one, or you can fill it yourself."
+        actions = []
     else:
         say = with_next_step(say, whole if steps else None, actions)
-        say, actions = offer_things_left(say, {}, actions)
-    if steps and not ask:
-        actions = [*actions, {"label": f"See all {len(steps)}" if len(steps) > 1 else "See it", "to": f"/funding/{case['id']}?tab=overview"}]
     if undo and not ask:      # a change keeps its Undo, after the next step
         actions = [*actions, {"label": "Undo", "kind": "explain", "prompt": "Undo"}]
     out = await _said(orch, user, business_id, text, say, actions, now, cards=cards, keep={"last_change": undo} if undo else None)
@@ -1170,11 +1171,17 @@ async def _said(orch, user: dict, business_id: str, text: str, say: str, actions
     """The reply, kept with the conversation (and what is waiting for a yes, if anything)."""
     from app.modules.agent.readiness_chat import conversation_actions, remaining_card
     cards = [{**card, "topic": topic} if card.get("type") == "progress" else card for card in cards or []]
-    if asks_gaps(text) or re.search(r"\b(?:review|approve|accept|reject|edit)\b.*\bdrafts?\b", text, re.I):
+    if not any(card.get("type") == "readiness_tasks" for card in cards) and (asks_gaps(text) or _THINGS_LEFT.search(say) or re.search(r"\b(?:review|approve|accept|reject|edit)\b.*\bdrafts?\b", text, re.I)):
         try:
             remaining = await remaining_card(orch, user, business_id, topic, actions, cards)
             if remaining:
                 cards = [*(cards or []), remaining]
+                if asks_gaps(text) and not pending and not keep and not re.search(r"\b(?:approve|accept|reject|edit|change|replace|draft|fill)\b", text, re.I):
+                    score = remaining.get("score")
+                    say = (f"Your {topic} readiness is {round(score)}/100{' so far' if remaining.get('score_partial') else ''}. "
+                           if isinstance(score, (int, float)) else "Here's what remains on your case. ")
+                    say += "Your saved answers, including those from the landing page, are already included. Below are the outstanding items; choose help from the Agent or fill an item yourself."
+                    actions = []
         except Exception:
             logger.info("readiness items unavailable for %s", business_id, exc_info=True)
     actions = conversation_actions(actions)

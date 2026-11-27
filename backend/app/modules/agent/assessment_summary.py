@@ -11,6 +11,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+def score_fields(result: dict) -> dict:
+    """The engine's full score, or points already earned while evidence is incomplete."""
+    from app.modules.readiness.engine import display_score
+    partial = result.get("score") is None and result.get("known_points") is not None
+    return {"score": display_score(result.get("known_points") if partial else result.get("score")), "score_partial": partial}
+
+
 logger = logging.getLogger(__name__)
 
 KIND_OF_GOAL = {"launch": "launch", "need_funding": "funding"}

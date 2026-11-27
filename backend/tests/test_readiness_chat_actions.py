@@ -110,3 +110,9 @@ def test_search_queries_follow_the_case_route(route, expected):
     topics, _, _ = research.plan_run("need_funding", {"criteria": [{"key": "materials", "label": "Funding options", "state": "missing"}]},
                                      {"route": route}, {"country": "Nigeria", "sector": "consulting", "amount": "NGN 5000000"})
     assert {topic["topic"] for topic in topics if topic["topic"].startswith("route_")} == expected
+
+
+@pytest.mark.parametrize("result,score,partial", [({"score": None, "known_points": 6}, 6, True), ({"score": None, "known_points": 0}, 0, True), ({"score": 72, "known_points": 60}, 72, False), ({}, None, False)])
+def test_handover_keeps_the_engine_points_from_saved_answers(result, score, partial):
+    from app.modules.agent.assessment_summary import score_fields
+    assert score_fields(result) == {"score": score, "score_partial": partial}

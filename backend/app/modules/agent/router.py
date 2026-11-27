@@ -411,6 +411,7 @@ def _card_kept(x: dict) -> dict:
     if x.get("type") == "download":
         out.update({k: short(x.get(k), 200) for k in ("file_id", "name", "format", "business_id")})
     if x.get("type") == "readiness_tasks":
+        out.update({k: x[k] for k in ("score", "score_partial") if k in x})
         out.update({"title": short(x.get("title")), "topic": short(x.get("topic")),
                     "items": [{"title": short(item.get("title"), 300), "detail": short(item.get("detail"), 600), "section": short(item.get("section"), 80),
                                "code": short(item.get("code"), 40) if item.get("code") else None, "review": item.get("review") if item.get("review") in ("documents", "attestation") else None}
@@ -533,6 +534,12 @@ async def chat_attach(business_id: str, file: UploadFile = File(...), user=Depen
         raise HTTPException(status_code=400, detail=message) from e
 
 
+@router.get("/businesses/{business_id}/agent/files")
+async def list_chat_files(business_id: str, user=Depends(get_current_user)):
+    from app.modules.agent.chat_files import list_documents
+    return await list_documents(get_orchestrator(), user, business_id)
+
+
 @router.get("/businesses/{business_id}/agent/files/{file_id}")
 async def download_chat_file(business_id: str, file_id: str, user=Depends(get_current_user)):
     from fastapi.responses import Response
@@ -570,6 +577,7 @@ async def readiness_items(business_id: str, topic: str, case_id: str, user=Depen
 
 @router.get("/businesses/{business_id}/agent/readiness-work/{topic}/{case_id}")
 async def readiness_work_status(business_id: str, topic: str, case_id: str, options: bool = False, user=Depends(get_current_user)):
+    from datetime import datetime, timezone
     if topic not in {"funding", "launch"}:
         raise HTTPException(404, "Check not found.")
     orch = get_orchestrator()
@@ -580,18 +588,24 @@ async def readiness_work_status(business_id: str, topic: str, case_id: str, opti
     if not actor.can_view:
         raise HTTPException(403, "You do not have access to this check.")
     data = await orch.rt.business.load(business_id) or {}
+    from app.modules.agent import research, assistant_context as ctx
     active = (data.get("agent_working") or {}).get(case_id)
-    if active and not active.get("failed"):
+    now = datetime.now(timezone.utc)
+    state = research.research_state(data, "need_funding" if topic == "funding" else topic, case_id=case_id)
+    if active and not active.get("failed") and ctx.working(data, case_id, now):
         return {"working": True}
-    if active and active.get("failed"):
-        return {"working": False, "problem": "The research could not finish. Your saved work is available for review."}
-    from app.modules.agent import research
-    if not research.research_state(data, "need_funding" if topic == "funding" else topic, case_id=case_id).get("run_id"):
-        return {"working": True}
-    from app.modules.agent.readiness_chat import remaining_card, funding_options_card
-    card = (await funding_options_card(orch, user, business_id, case_id) if options and topic == "funding"
-            else await remaining_card(orch, user, business_id, topic, [], [{"case_id": case_id}]))
-    return {"working": False, "card": card}
+    # A restart or an expired marker must never leave the conversation polling forever.
+    # Finished work takes priority over a stale marker: return it without another paid run.
+    if state.get("run_id"):
+        from app.modules.agent.readiness_chat import remaining_card, funding_options_card
+        card = (await funding_options_card(orch, user, business_id, case_id) if options and topic == "funding"
+                else await remaining_card(orch, user, business_id, topic, [], [{"case_id": case_id}]))
+        if card:
+            return {"working": False, "card": card}
+        return {"working": False, "problem": "The research ended without a result to show. Your saved work is still available for review."}
+    problem = ctx.failed(data, case_id) if active else None
+    return {"working": False, "problem": problem or "This task is no longer running. Your saved work is still available; review it before retrying."}
+
 
 
 class SignOffIn(BaseModel):

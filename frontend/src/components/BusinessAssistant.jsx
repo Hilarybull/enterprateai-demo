@@ -18,6 +18,7 @@ import { checkLines, linesFromText } from "./agent/AgentBits";
 import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValueCard";
 import { resultHome } from "../lib/resultHome";
 import ChatDownload from "./agent/ChatDownload";
+import ChatAttachments from "./agent/ChatAttachments";
 import { replyMarkup } from "../lib/replyMarkup";
 import { composerSuggestions } from "../lib/chatSuggestions";
 import "./agent/AgentChat.css";
@@ -177,13 +178,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const bizId = useWorkspaceStore((st) => st.workspaceId);
   const act = useMemo(() => chatActions(bizId), [bizId]);
   const [editing, setEditing] = useState(null);      // the draft the next message changes ("Edit", typed in the chat)
-  const fileRef = useRef(null);
   const inputRef = useRef(null);
-  useEffect(() => {
-    const upload = () => { if (!loading && bizId) fileRef.current?.click(); };
-    window.addEventListener("ea:chat-upload", upload);
-    return () => window.removeEventListener("ea:chat-upload", upload);
-  }, [loading, bizId]);
   const push = (...said) => setMessages((prev) => [...prev, ...said]);
   const mine = (content) => ({ role: "user", content, at: new Date().toISOString() });
   const startEdit = (item) => {
@@ -907,7 +902,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
   const bubble = "whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-[15px] leading-relaxed";
   const card = (c, key, siblings = []) => {
-    if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onReady={(result) => {
+    if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onRetry={() => void send(`Retry the ${c.options ? "funding options search" : "research"} for my current ${c.topic || "funding"} case. Reuse any saved work and show me the price before starting.`)} onReady={(result) => {
       setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id && Boolean(item.options) === Boolean(c.options) ? result : item) })));
       loadWaiting();
     }} />;
@@ -1053,10 +1048,8 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             </div>
         </div>}
         <form className="flex items-center gap-2 rounded-2xl border border-slate-200 py-2 pl-4 pr-2 dark:border-slate-700" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-          <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void attachFile(f); }} data-chat-file />
-          <button type="button" aria-label="Attach a document" onClick={() => fileRef.current?.click()} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800">
-            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.5l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.3-8.3" /></svg>
-          </button>
+          <ChatAttachments businessId={bizId} disabled={loading || working} onPick={attachFile}
+            onSaved={doc => void send(`Use my saved document “${doc.name || "Untitled file"}” in this conversation. Read its contents first.`)} />
           <label className="sr-only" htmlFor="agent-chat-input">Message</label>
           <input ref={inputRef} id="agent-chat-input" autoComplete="off" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
             className="min-w-0 flex-1 bg-transparent py-1.5 text-base text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />

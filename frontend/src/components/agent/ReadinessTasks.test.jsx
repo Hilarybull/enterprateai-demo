@@ -11,14 +11,13 @@ const subject = { revision: 7, data: { purpose: "Equipment", agent_drafts: {} },
 const item = { case_id: "case", topic: "funding", title: "Your remaining funding items", items: [{ title: "Confirm your funding purpose", section: "goal" }], drafts: [] };
 const click = async name => { await act(async () => { fireEvent.click(screen.getByRole("button", { name })); }); };
 
-test("Work on this offers manual fields and saves their values to the correct case", async () => {
+test("Each pending item offers manual fields and saves their values to the correct case", async () => {
   apiRequest.mockImplementation(async (path, method) => method === "PATCH" ? subject : /readiness-items/.test(path) ? { ...item, items: [] }
     : { ...subject, actions: [{ title: item.items[0].title, section: "goal" }] });
   const updated = vi.fn(), send = vi.fn();
   render(<ReadinessTasks item={{ ...item, items: [{ title: item.items[0].title }] }} businessId="business" onUpdated={updated} onSend={send} />);
-  await click("Work on this");
-  expect(screen.getByRole("button", { name: "Let the agent draft it" })).toBeTruthy();
-  await click("I’ll answer");
+  expect(screen.getByRole("button", { name: "Help me fill this" })).toBeTruthy();
+  await click("I’ll fill it myself");
   const input = screen.getByLabelText("What is the funding for?");
   expect(input.value).toBe("Equipment");
   fireEvent.change(input, { target: { value: "Staff salaries" } });
@@ -44,7 +43,7 @@ test("editing a draft saves it for review without approving it", async () => {
 test("agent drafting remains in chat and requests review before approval", async () => {
   const send = vi.fn();
   render(<ReadinessTasks item={item} businessId="business" onUpdated={vi.fn()} onSend={send} />);
-  await click("Work on this"); await click("Let the agent draft it");
+  await click("Help me fill this");
   expect(send.mock.calls[0][0]).toContain("Confirm your funding purpose");
   expect(send.mock.calls[0][0]).toContain("Show any proposed changes for review");
   expect(send.mock.calls[0][1].readinessItem.case_id).toBe("case");
@@ -55,11 +54,11 @@ test("agent work includes the actual conflict and stays visibly busy until the r
   const send = vi.fn(() => new Promise(resolve => { finish = resolve; }));
   const selected = { title: "Review the forecast", section: "documents", detail: "The forecast is in GBP and the case is in NGN." };
   render(<ReadinessTasks item={{ ...item, items: [selected] }} businessId="business" onUpdated={vi.fn()} onSend={send} />);
-  await click("Work on this"); await click("Let the agent draft it");
+  await click("Help me fill this");
   expect(send.mock.calls[0][0]).toContain(selected.detail);
   expect(send.mock.calls[0][1].readinessItem).toMatchObject({ case_id: "case", section: "documents", detail: selected.detail });
   expect(screen.getByText("Working on this item…")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Let the agent draft it" }).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Help me fill this" }).disabled).toBe(true);
   await act(async () => { finish(); });
   expect(screen.queryByText("Working on this item…")).toBeNull();
 });

@@ -281,6 +281,12 @@ async def attach(user: dict, business_id: str, name: str, content_type: str, con
     from app.modules.agent.chat_files import attach_upload
     item = await attach_upload(get_orchestrator(), user, business_id, name, content_type, content)
     words = text_of(name, content_type, content)
+    if content_type in {"image/png", "image/jpeg"}:
+        from app.modules.agent.chat_files import read_document
+        reading = await read_document(get_orchestrator(), user, business_id, item["id"])
+        visible = reading.get("text") or ""
+        return {"evidence_id": item["id"], "name": name,
+                "message": f"I've saved {name}. " + (f"{visible[:1800]} You can ask me about this image or use its information in a document. Review any amounts before saving them to records." if visible else " ".join(reading.get("notes") or ["I couldn't read its contents."]))}
     found = ""
     llm = research._default_llm(user["id"]) if words else None
     if llm:

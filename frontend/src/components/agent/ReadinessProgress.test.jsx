@@ -50,3 +50,17 @@ test("an options search preserves its mode through the completion poll", async (
   expect(apiRequest).toHaveBeenCalledWith("/businesses/business/agent/readiness-work/funding/case?options=true");
   expect(ready).toHaveBeenCalledWith(card);
 });
+
+test("an interrupted run offers saved work and a deliberate retry without starting a new job automatically", async () => {
+  vi.useFakeTimers();
+  const card={type:"readiness_tasks",items:[],drafts:[{label:"Saved",value:"Retained"}]};
+  apiRequest.mockResolvedValueOnce({problem:"The server restarted."}).mockResolvedValueOnce(card);
+  const ready=vi.fn(),retry=vi.fn();
+  render(<ReadinessProgress businessId="business" item={{case_id:"case",topic:"funding"}} onReady={ready} onRetry={retry}/>);
+  await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});
+  expect(screen.queryByRole("progressbar")).toBeNull();expect(retry).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"Retry research"}));expect(retry).toHaveBeenCalledOnce();
+  await act(async()=>{fireEvent.click(screen.getByRole("button",{name:"Review saved work"}));});
+  expect(ready).toHaveBeenCalledWith(card);
+  expect(apiRequest.mock.calls.every(call=>call.length===1)).toBe(true);
+});

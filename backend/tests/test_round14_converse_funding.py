@@ -416,7 +416,7 @@ def test_a_value_already_set_is_said_so_not_updated(talk):
     same = ask("I need £50,000 for funding")
     # Said in one line, with where the case stands and its next step (QA, 30 Oct: a list of fields alone)
     assert same["message"].startswith("Your funding case already has that: amount £50,000.") and "Next step:" in same["message"]
-    assert [c["type"] for c in same["cards"]] == ["result", "steps"]
+    assert [c["type"] for c in same["cards"]] == ["result", "steps", "readiness_tasks"]
 
 
 def test_a_new_need_is_held_while_asking_and_new_one_replaces_it(talk):
