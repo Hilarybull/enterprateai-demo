@@ -175,18 +175,18 @@ export function CapabilityTable({ capabilities, items = {} }) {
   );
 }
 
-function EventList({ events, items, onToggle, canEdit }) {
+function EventList({ events, items, onToggle, canEdit, autoStart = true }) {
   if (!events?.length) return null;
   return (
     <section aria-label="What the Agent does by itself" className="space-y-2">
       <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">What the Agent does by itself</h3>
       <p className="text-[12px] text-slate-500 dark:text-slate-400">Switch any of these off and the Agent will suggest it instead of doing it. Anything that goes to a customer still waits in Needs Approval. Payments, bank actions and legal filings are never automatic.</p>
-      <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+      <ul className="grid gap-4 xl:grid-cols-2">
         {events.map((e) => {
           const on = e.switchable ? (items?.[e.key] ?? e.on) : false;
-          const starts = !e.capability ? "nothing" : !e.available ? "upgrade" : on ? "automatic" : "suggested";
+          const starts = !e.capability ? "nothing" : !e.available ? "upgrade" : on && (e.key === "rfq_arrives" || autoStart) ? "automatic" : "suggested";
           return (
-            <li key={e.event} className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 px-3 py-2">
+            <li key={e.event} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">{e.event}{e.task ? ` → ${e.task}` : ""}</p>
                 <p className="text-[12px] text-slate-500 dark:text-slate-400">{e.approval}{e.minimum_plan_label ? ` Needs the ${e.minimum_plan_label} plan.` : ""}{e.credits ? ` Cost: ${e.credits}.` : ""}</p>
@@ -247,7 +247,8 @@ function Memory({ businessId }) {
   );
 }
 
-function Settings({ businessId, onClose }) {
+export function Settings({ businessId, onClose }) {
+  const [section, setSection] = useState("documents");
   const [state, setState] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -294,36 +295,55 @@ function Settings({ businessId, onClose }) {
   }
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
-  const field = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+  const field = "w-full rounded-xl border border-slate-200 bg-white min-h-11 px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
   const label = "mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-300";
 
+  const panel = "min-w-0 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 dark:border-slate-700 dark:bg-slate-900";
+  const heading = "text-base font-bold text-slate-900 dark:text-slate-100";
+  const help = "mb-6 mt-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400";
   return (
-    <Modal title="Agent settings" onClose={() => onClose(false)}>
+
+    <Modal title="Agent settings" wide onClose={() => onClose(false)} footer={form ? (
+          <div className="flex items-center justify-end gap-3">
+            <button type="button" onClick={() => onClose(false)} className="rounded-xl border border-slate-200 min-h-11 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Close</button>
+            {state.can_edit && <button type="button" disabled={saving} onClick={save} className="rounded-xl bg-brand-600 min-h-11 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{saving ? "Saving…" : "Save settings"}</button>}
+          </div>
+    ) : null}>
       {!form ? (error ? <LoadError what="your Agent settings" detail={error} onRetry={() => setAttempt((n) => n + 1)} className="border-0 p-2" /> : <SettingsSkeleton />) : (
-        <div className="space-y-4">
-          {!state.can_edit && <p className="rounded-xl bg-slate-50 px-3 py-2 text-[13px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">Only the workspace owner can change these.</p>}
-          <fieldset disabled={!state.can_edit || saving} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-6">
+          {!state.can_edit && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">Only the workspace owner can change these.</p>}
+          <nav aria-label="Settings sections" className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5 lg:grid-cols-4 dark:bg-slate-800">
+            {[["documents", "Documents & approvals"], ["reminders", "Payment reminders"], ["automation", "Automatic work"], ["memory", "Memory & capabilities"]].map(([key, text]) => (
+              <button key={key} type="button" aria-pressed={section === key} onClick={() => setSection(key)} className={`min-h-11 rounded-xl px-3 py-2 text-sm font-semibold transition ${section === key ? "bg-white text-brand-700 shadow-sm dark:bg-slate-900 dark:text-brand-300" : "text-slate-600 hover:bg-white/60 dark:text-slate-300"}`}>{text}</button>
+            ))}
+          </nav>
+          <fieldset disabled={!state.can_edit || saving} className="min-w-0">
+            {section === "documents" && <div className="grid items-start gap-6 lg:grid-cols-[1.4fr_1fr]">
+              <section className={panel}><h3 className={heading}>Document defaults</h3><p className={help}>Your starting choices for quotations and invoices.</p><div className="grid gap-5 sm:grid-cols-2">
               <div>
-                <label className={label}>After a quote is accepted</label>
-                <select className={field} value={form.contract_route} onChange={set("contract_route")}>
+                <label className={label} htmlFor="agent-setting-contract_route">After a quote is accepted</label>
+                <select id="agent-setting-contract_route" className={field} value={form.contract_route} onChange={set("contract_route")}>
                   <option value="ask">Ask me each time</option>
                   <option value="direct_invoice">Invoice directly</option>
                   <option value="contract_first">Contract first, then invoice</option>
                 </select>
               </div>
+
               <div>
-                <label className={label}>Default VAT rate (%)</label>
-                <input className={field} type="number" min="0" max="100" step="0.1" value={form.vat} onChange={set("vat")} placeholder="Ask me each time" />
+                <label className={label} htmlFor="agent-setting-vat">Default VAT rate (%)</label>
+                <input id="agent-setting-vat" className={field} type="number" min="0" max="100" step="0.1" value={form.vat} onChange={set("vat")} placeholder="Ask me each time" />
               </div>
+
               <div>
-                <label className={label}>Quotations valid for (days)</label>
-                <input className={field} type="number" min="1" max="365" value={form.quote_validity_days} onChange={set("quote_validity_days")} />
+                <label className={label} htmlFor="agent-setting-quote_validity_days">Quotations valid for (days)</label>
+                <input id="agent-setting-quote_validity_days" className={field} type="number" min="1" max="365" value={form.quote_validity_days} onChange={set("quote_validity_days")} />
               </div>
+
               <div>
-                <label className={label}>Default payment terms (days)</label>
-                <input className={field} type="number" min="0" max="365" value={form.default_payment_terms_days} onChange={set("default_payment_terms_days")} />
+                <label className={label} htmlFor="agent-setting-default_payment_terms_days">Default payment terms (days)</label>
+                <input id="agent-setting-default_payment_terms_days" className={field} type="number" min="0" max="365" value={form.default_payment_terms_days} onChange={set("default_payment_terms_days")} />
               </div>
+
               <div>
                 <label className={label} htmlFor="agent-timezone">Business time zone</label>
                 <select id="agent-timezone" className={field} value={form.timezone} onChange={set("timezone")}>
@@ -331,23 +351,29 @@ function Settings({ businessId, onClose }) {
                 </select>
                 <p className="mt-1 text-[11px] text-slate-400">Sets the date on invoices the Agent creates, and the day in their numbers.</p>
               </div>
-              <div>
-                <label className={label}>Send reminders at (days overdue)</label>
-                <input className={field} value={form.cadence} onChange={set("cadence")} placeholder="3, 10, 21" />
-              </div>
-              <div>
-                <label className={label}>Maximum reminders per invoice</label>
-                <input className={field} type="number" min="0" max="6" value={form.max_reminders} onChange={set("max_reminders")} />
-              </div>
-              <div>
-                <label className={label}>Concentration alert at (% of revenue)</label>
-                <input className={field} type="number" min="5" max="100" value={form.concentration_alert_pct} onChange={set("concentration_alert_pct")} />
-              </div>
-            </div>
+              </div></section>
+              <section className={panel}><h3 className={heading}>Team approvals</h3><p className={help}>Choose who can approve customer communications.</p>
             <label className="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
               <input type="checkbox" className="mt-0.5 accent-brand-600" checked={form.member_can_approve} onChange={set("member_can_approve")} />
               <span>Let team members with Business Operations access approve what the Agent sends.</span>
             </label>
+
+              <p className="mt-4 text-sm text-slate-500">Customer documents wait for approval before they are sent.</p></section>
+            </div>}
+            {section === "reminders" && <div className="grid items-start gap-6 lg:grid-cols-2">
+              <section className={panel}><h3 className={heading}>Reminder schedule</h3><p className={help}>Choose when to follow up on unpaid invoices.</p><div className="space-y-5">
+
+              <div>
+                <label className={label} htmlFor="agent-setting-cadence">Send reminders at (days overdue)</label>
+                <input id="agent-setting-cadence" className={field} value={form.cadence} onChange={set("cadence")} placeholder="3, 10, 21" />
+              </div>
+
+              <div>
+                <label className={label} htmlFor="agent-setting-max_reminders">Maximum reminders per invoice</label>
+                <input id="agent-setting-max_reminders" className={field} type="number" min="0" max="6" value={form.max_reminders} onChange={set("max_reminders")} />
+              </div>
+              <p className="text-sm text-slate-500">Use 0 maximum reminders to turn follow-ups off.</p></div></section>
+              <section className={panel}><h3 className={heading}>Sending reminders</h3><p className={help}>Keep control of what reaches your customers.</p>
             <label className={`flex items-start gap-2.5 text-sm ${state.auto_reminders_available ? "text-slate-700 dark:text-slate-300" : "text-slate-400"}`}>
               <input type="checkbox" className="mt-0.5 accent-brand-600" checked={form.reminders_auto_send} onChange={set("reminders_auto_send")} disabled={!state.auto_reminders_available} />
               <span>
@@ -355,7 +381,11 @@ function Settings({ businessId, onClose }) {
                 {!state.auto_reminders_available && <span className="block text-[12px]">Available on the Decision Engine plan.</span>}
               </span>
             </label>
-          </fieldset>
+
+              </section>
+            </div>}
+            {section === "automation" && <div className="space-y-6">
+              <div className="grid items-start gap-6 lg:grid-cols-2"><section className={panel}><h3 className={heading}>Automatic checks & budget</h3><p className={help}>Decide how much work your Agent can start itself.</p><div className="space-y-5">
           <label className="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
             <input type="checkbox" className="mt-0.5 accent-brand-600" checked={Boolean(form.auto_start)} onChange={set("auto_start")} disabled={!state.can_edit} data-auto-start />
             <span>Let the Agent run checks on its own (uses credits). It never goes past the monthly budget below.</span>
@@ -368,15 +398,23 @@ function Settings({ businessId, onClose }) {
               {state.automatic_budget?.paused ? " Paused: automatic work that costs credits waits until you raise this or the month ends." : " When it is used up, automatic work that costs credits pauses; free work carries on."}
             </p>
           </div>
-          <EventList events={state.events} items={form.items} canEdit={state.can_edit}
+
+              </div></section><section className={panel}><h3 className={heading}>Customer revenue alert</h3><p className={help}>Get a warning when too much revenue depends on one customer.</p>
+
+              <div>
+                <label className={label} htmlFor="agent-setting-concentration_alert_pct">Concentration alert at (% of revenue)</label>
+                <input id="agent-setting-concentration_alert_pct" className={field} type="number" min="5" max="100" value={form.concentration_alert_pct} onChange={set("concentration_alert_pct")} />
+              </div>
+              </section></div>
+              <section className={panel}>
+          <EventList events={state.events} items={form.items} autoStart={form.auto_start} canEdit={state.can_edit && !saving}
             onToggle={(key, on) => setForm((f) => ({ ...f, items: { ...f.items, [key]: on } }))} />
-          <CapabilityTable capabilities={state.capabilities} items={form.items} />
-          <Memory businessId={businessId} />
-          {error && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => onClose(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">Close</button>
-            {state.can_edit && <button type="button" disabled={saving} onClick={save} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{saving ? "Saving…" : "Save settings"}</button>}
-          </div>
+
+              </section>
+            </div>}
+          </fieldset>
+          {section === "memory" && <div className="space-y-6"><section className={panel}><Memory businessId={businessId} /></section><details className={panel}><summary className="cursor-pointer text-base font-semibold text-slate-900 dark:text-slate-100">Explore Agent capabilities</summary><div className="mt-5"><CapabilityTable capabilities={state.capabilities} items={form.items} /></div></details></div>}
+          {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</p>}
         </div>
       )}
     </Modal>

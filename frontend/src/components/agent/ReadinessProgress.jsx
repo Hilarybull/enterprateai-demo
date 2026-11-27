@@ -2,10 +2,19 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../../api/client";
 import ThinkingProgress from "./ThinkingProgress";
 
-export default function ReadinessProgress({ businessId, item, onReady }) {
+export default function ReadinessProgress({ businessId, item, onReady, onRetry }) {
   const [problem, setProblem] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [ready, setReady] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  async function review() {
+    setReviewing(true);
+    try {
+      const card = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/readiness-items/${encodeURIComponent(item.topic || "funding")}/${encodeURIComponent(item.case_id)}`);
+      setReady(true); onReady(card);
+    } catch { setProblem("I couldn't load your saved work. Check again to retry the status check."); }
+    finally { setReviewing(false); }
+  }
   useEffect(() => {
     setReady(false);
     setProblem("");
@@ -26,6 +35,10 @@ export default function ReadinessProgress({ businessId, item, onReady }) {
   if (ready) return null;
   return <div className="w-full max-w-xl rounded-xl border p-4 text-sm">
     {problem ? <p role="status">{problem}</p> : <ThinkingProgress detail={item.options ? "Searching for funding options that match your case. Results will appear here with their sources." : "Researching and preparing your drafts. They will appear here for review."} />}
-    {problem && <button type="button" className="ml-2 min-h-11 rounded-lg border px-3 py-2" onClick={() => { setProblem(""); setAttempt(n => n + 1); }}>Check again</button>}
+    {problem && <div className="mt-3 flex flex-wrap gap-2">
+      <button type="button" disabled={reviewing} className="min-h-11 rounded-lg border px-3 py-2" onClick={review}>{reviewing ? "Loading saved work…" : "Review saved work"}</button>
+      {onRetry && <button type="button" disabled={reviewing} className="min-h-11 rounded-lg bg-brand-600 px-3 py-2 font-semibold text-white" onClick={onRetry}>Retry research</button>}
+      <button type="button" disabled={reviewing} className="min-h-11 rounded-lg border px-3 py-2" onClick={() => { setProblem(""); setAttempt(n => n + 1); }}>Check again</button>
+    </div>}
   </div>;
 }

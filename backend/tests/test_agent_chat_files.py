@@ -137,3 +137,110 @@ def test_agent_tools_can_create_a_file_in_the_existing_conversation():
     assert result["final"]["cards"][0]["type"] == "download"
     names = {tool["name"] for tool in chat_agent.TOOLS}
     assert {"list_chat_documents", "read_chat_document", "search_web", "read_web_page", "create_chat_file"} <= names
+
+
+def test_attachment_menu_lists_saved_files_with_workspace_access(monkeypatch):
+    env = Env()
+    monkeypatch.setattr("app.modules.agent.router.get_orchestrator", lambda: env.orch)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = lambda: USER
+    file = run(chat_files.attach_upload(env.orch, USER, "A", "notes.txt", "text/plain", b"Business notes"))
+    with TestClient(app) as client:
+        response = client.get("/businesses/A/agent/files")
+        assert response.status_code == 200
+        assert response.json()["documents"] == [{"id": file["id"], "name": "notes.txt", "content_type": "text/plain", "kind": "upload"}]
+        denied = client.get("/businesses/B/agent/files")
+        assert denied.status_code in (403, 404)
+
+
+@pytest.mark.parametrize("provider", ["claude", "openai"])
+def test_images_reach_both_provider_adapters(provider):
+    from app.shared.llm import tool_chat
+    items = [{"role": "user", "text": "Read the invoice", "images": [{"media_type": "image/png", "data": "encoded-image"}]}]
+    converted = tool_chat.claude_messages(items) if provider == "claude" else tool_chat.openai_input("System", items)
+    blocks = converted[-1]["content"]
+    assert blocks[0]["type"] == ("image" if provider == "claude" else "input_image")
+    assert "encoded-image" in str(blocks[0])
+    assert blocks[1]["text"] == "Read the invoice"
+
+
+def test_image_is_read_once_and_its_reading_can_be_reused_without_another_charge(monkeypatch):
+    from app.shared.llm import tool_chat
+    env = Env()
+    provider = AsyncMock(return_value=tool_chat.Reply(text="Invoice: GBP 120.00. Due: 30 November 2026."))
+    monkeypatch.setattr(tool_chat, "chat", provider)
+    image = run(chat_files.attach_upload(env.orch, USER, "A", "invoice.png", "image/png", b"\x89PNG\r\n\x1a\nimage"))
+    before = env.meter.balances[OWNER]
+    first = run(chat_files.read_document(env.orch, USER, "A", image["id"]))
+    second = run(chat_files.read_document(env.orch, USER, "A", image["id"]))
+    assert first["text"] == second["text"] == "Invoice: GBP 120.00. Due: 30 November 2026."
+    assert first["content_is_untrusted_data"] is True
+    assert provider.await_count == 1 and env.meter.balances[OWNER] == before - 2
+    assert provider.call_args.kwargs["items"][0]["images"][0]["media_type"] == "image/png"
+
+
+@pytest.mark.parametrize("credits,refused", [(0, False), (10, True)])
+def test_image_failure_or_missing_credits_never_invents_content_or_charges(monkeypatch, credits, refused):
+    from app.shared.llm import tool_chat
+    env = Env(credits=credits)
+    provider = AsyncMock(return_value=tool_chat.Reply(text="I cannot read it", refused=refused))
+    monkeypatch.setattr(tool_chat, "chat", provider)
+    image = run(chat_files.attach_upload(env.orch, USER, "A", "invoice.png", "image/png", b"\x89PNG\r\n\x1a\nimage"))
+    result = run(chat_files.read_document(env.orch, USER, "A", image["id"]))
+    assert not result["text"] and result["notes"]
+    assert env.meter.balances[OWNER] == credits
+    if credits == 0:
+        provider.assert_not_awaited()
+
+
+@pytest.mark.parametrize("topic", ["funding", "launch"])
+@pytest.mark.parametrize("condition", ["restarted", "expired", "active", "saved"])
+def test_progress_recovery_never_spins_on_a_dead_run_or_restarts_paid_work(monkeypatch, topic, condition):
+    from datetime import datetime, timedelta, timezone
+    from app.modules.agent import router as api, assistant_context, readiness_chat
+    env = Env()
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(assistant_context, "STARTED", now - timedelta(hours=1))
+    at = now - timedelta(minutes=20 if condition == "expired" else 2)
+    if condition in ("restarted", "saved"):
+        at = now - timedelta(hours=2)
+    env.businesses["A"]["data"]["agent_working"] = {"case": {"at": at.isoformat(), "topic": topic}}
+    monkeypatch.setattr(api, "get_orchestrator", lambda: env.orch)
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"run_id": "finished"} if condition == "saved" else {})
+    card = {"type": "readiness_tasks", "items": [], "drafts": [{"label": "Saved draft", "value": "Retained"}]}
+    monkeypatch.setattr(readiness_chat, "remaining_card", AsyncMock(return_value=card))
+    result = run(api.readiness_work_status("A", topic, "case", user=USER))
+    if condition == "active":
+        assert result == {"working": True}
+    elif condition == "saved":
+        assert result == {"working": False, "card": card}
+    else:
+        assert result["working"] is False and result["problem"]
+        if condition == "restarted":
+            assert "restarted" in result["problem"]
+    assert not env.meter.charges and not env.comms.sent
+
+
+def test_finished_search_without_options_stops_the_spinner(monkeypatch):
+    from app.modules.agent import router as api, readiness_chat
+    env = Env()
+    monkeypatch.setattr(api, "get_orchestrator", lambda: env.orch)
+    monkeypatch.setattr(research, "research_state", lambda *a, **k: {"run_id": "finished"})
+    monkeypatch.setattr(readiness_chat, "funding_options_card", AsyncMock(return_value=None))
+    result = run(api.readiness_work_status("A", "funding", "case", options=True, user=USER))
+    assert result["working"] is False and result["problem"]
+    assert not env.meter.charges
+
+
+def test_interrupted_research_is_not_counted_as_active_in_task_history(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.modules.agent import assistant_context
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(assistant_context, "STARTED", now - timedelta(minutes=10))
+    data = {}
+    research._runs(data)["old"] = {"id": "old", "goal": "need_funding", "status": "researching", "created_at": (now - timedelta(hours=1)).isoformat(), "case_id": "case"}
+    row = research.history_rows(data)[0]
+    assert row["research_state"] == "Interrupted" and row["status"] == "failed"
+    research._runs(data)["old"]["created_at"] = now.isoformat()
+    assert research.history_rows(data)[0]["research_state"] == "Researching"

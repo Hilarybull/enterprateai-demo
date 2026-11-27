@@ -1212,9 +1212,10 @@ async def agent_edit_case(business_id: str, case_id: str, body: CaseEditIn, user
     checked = await svc.request_assessment(user["id"], business_id, rr.FUNDING, case_id, idempotency_key=f"agent-edit:{case_id}:{fresh['revision']}",
                                            email=user.get("email"))
     result = checked.get("result") or {}
-    after = result.get("score_display")
+    from app.modules.agent.assessment_summary import score_fields
+    after = score_fields(result)["score"]
     failed = [g for g in result.get("gates") or [] if g.get("state") == "failed"]
-    score = (f"Score {before.get('score') or 'not scored'} → {after or 'not scored'}." if after is not None or before.get("score")
+    score = (f"Score {before.get('score') if before.get('score') is not None else 'not scored'} → {after if after is not None else 'not scored'}." if after is not None or before.get("score")
              else f"Checked again: {str(result.get('headline') or 'not enough evidence for a score yet').rstrip('.')}.")
     said = (f" {len(failed)} blocker{'s' if len(failed) != 1 else ''}: {failed[0]['label']}." if failed else " No blockers.")
     to = f"/funding/{case_id}"

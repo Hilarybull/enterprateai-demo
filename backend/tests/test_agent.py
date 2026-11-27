@@ -5,6 +5,8 @@ services, so every test exercises the production code paths.
 """
 import asyncio
 import copy
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -37,6 +39,8 @@ def business_data():
 
 class Env:
     def __init__(self, plan="starter_insight", credits=100):
+        # Standalone live-provider probes also use Env; keep their telemetry out of the app's live queue.
+        os.environ.setdefault("TELEMETRY_OUTBOX_PATH", os.path.join(tempfile.gettempdir(), f"enterprate-agent-test-{os.getpid()}.sqlite3"))
         self.now = T0
         self.businesses = {
             "A": {"owner": OWNER, "data": business_data(),

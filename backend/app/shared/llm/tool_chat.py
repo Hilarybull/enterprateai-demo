@@ -82,7 +82,9 @@ def claude_messages(items: list[dict]) -> list[dict]:
     for it in items:
         role = it.get("role")
         if role == "user":
-            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], str):
+            if it.get("images"):
+                out.append({"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": image["media_type"], "data": image["data"]}} for image in it["images"]] + [{"type": "text", "text": it["text"]}]})
+            elif out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], str):
                 out[-1]["content"] += "\n" + it["text"]
             else:
                 out.append({"role": "user", "content": it["text"]})
@@ -132,7 +134,8 @@ def openai_input(system: str, items: list[dict]) -> list[dict]:
     for it in items:
         role = it.get("role")
         if role == "user":
-            out.append({"role": "user", "content": it["text"]})
+            content = ([{"type": "input_image", "image_url": f"data:{image['media_type']};base64,{image['data']}"} for image in it["images"]] + [{"type": "input_text", "text": it["text"]}]) if it.get("images") else it["text"]
+            out.append({"role": "user", "content": content})
         elif role == "assistant":
             if it.get("text"):
                 out.append({"role": "assistant", "content": it["text"]})

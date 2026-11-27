@@ -269,3 +269,17 @@ def test_a_task_that_needs_details_is_asked_by_the_agent_in_its_own_words(claude
     assert out["kind"] == "answer" and out["message"].startswith("Happy to. Who's it for")      # the Agent's words, not the form
     asked = seen[-1][-1]["results"][0]["content"]
     assert "Who will read it?" in asked and "Investors, to raise funding" in asked
+
+
+@pytest.mark.parametrize("kind", ["funding", "launch"])
+@pytest.mark.parametrize("score", [0, 6])
+def test_readiness_tool_uses_canonical_partial_score_and_saved_answers(monkeypatch, kind, score):
+    from app.modules.agent import router
+    async def subjects(*args):
+        return [{"title": "Current case", "data": {"purpose": "Hiring", "stage": "pre_revenue", "traction": {"summary": "No traction yet"}},
+                 "summary": {"score": score, "score_partial": True, "unfinished_areas": ["Funding goal", "Traction"]}}]
+    monkeypatch.setattr(router, "_subjects_with_summary", subjects)
+    result = run(chat_agent.readiness_status(Env().orch, USER, "A", kind))[kind][0]
+    assert result["score"] == score and result["score_partial"] is True
+    assert result["recorded_answers"]["purpose"] == "Hiring"
+    assert result["recorded_answers"]["traction"]["summary"] == "No traction yet"

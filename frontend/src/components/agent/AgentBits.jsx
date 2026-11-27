@@ -19,6 +19,12 @@ export function Icon({ name, className = "h-5 w-5" }) {
   switch (name) {
     case "sparkle":
       return <svg {...p} fill="currentColor" stroke="none"><path d="M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9L12 2zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z" /></svg>;
+    case "image":
+      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 16 5-5 4 4 3-3 6 6" /></svg>;
+    case "table":
+      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 9h18M3 15h18M9 9v12M15 9v12" /></svg>;
+    case "folder":
+      return <svg {...p}><path d="M3 7V5a2 2 0 0 1 2-2h5l3 4h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>;
     case "doc":
       return <svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg>;
     case "alert":
@@ -410,8 +416,21 @@ export function QuestionForm({ question, fields, onSubmit, submitting, submitLab
   );
 }
 
-export function Modal({ title, onClose, children, compact = false, fullPage = null }) {
+export function Modal({ title, onClose, children, compact = false, fullPage = null, wide = false, footer = null }) {
   const [leaving, close] = useExit(onClose);      // closing by the cross or the backdrop plays the way in, backwards
+  if (wide) {
+    return createPortal(
+      <div className={`m-backdrop fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/40 p-2 sm:p-6 ${leaving ? "m-leaving" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+        <div role="dialog" aria-modal="true" aria-label={title} data-sheet data-wide-dialog className="flex h-[calc(100dvh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:h-[calc(100dvh-3rem)] dark:border-slate-800 dark:bg-slate-900">
+          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-8 sm:py-5 dark:border-slate-800">
+            <div><h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{title}</h2><p className="mt-1 text-sm text-slate-500">Set how your Agent works with your business.</p></div>
+            <button type="button" onClick={close} aria-label="Close" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><Icon name="x" /></button>
+          </header>
+          <div data-settings-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-8">{children}</div>
+          {footer && <footer className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 pb-[max(.75rem,env(safe-area-inset-bottom))] sm:px-8 dark:border-slate-800 dark:bg-slate-900">{footer}</footer>}
+        </div>
+      </div>, document.body);
+  }
   const sheet = (
     // A bottom sheet on a phone (full width, rising from the bottom edge); a centred dialog from 640px.
     <div className={`m-backdrop fixed inset-0 z-[1000] flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4 ${leaving ? "m-leaving" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>

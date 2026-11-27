@@ -110,3 +110,44 @@ def test_missing_or_invalid_rates_never_return_the_original_amount_as_converted(
     dated_rate.return_value={"rate":bad,"date":"2026-11-27"}
     result=run(currency_conversion.quote(1000000,"NGN","GBP"))
     assert result["available"] is False and "converted_amount" not in result
+
+
+def test_landing_answers_score_and_pending_items_stay_consistent(talk, dated_rate):
+    from app.modules.agent import chat_agent
+    from app.modules.readiness.service import service_for
+    from app.modules.readiness import rules
+    env, ask, model, cid = talk
+    subject = run(service_for(env.orch).get_subject(OWNER, "A", rules.FUNDING, cid, OWNER))
+    expected = subject["summary"]["score"]
+    assert isinstance(expected, (int, float))
+    status = run(chat_agent.readiness_status(env.orch, {"id": OWNER, "email": OWNER}, "A", "funding"))["funding"][0]
+    assert status["score"] == expected
+    assert status["recorded_answers"]["target_amount"] == 50000
+    assert status["recorded_answers"]["traction"]["summary"] == "Paying customers"
+    model.replies.append({"say": "There is not enough evidence for a score yet."})
+    out = ask("List every remaining item on my funding case here")
+    assert f"{round(expected)}/100" in out["message"]
+    assert "saved answers" in out["message"]
+    listed = next(card for card in out["cards"] if card["type"] == "readiness_tasks")
+    assert [item["title"] for item in listed["items"]] == [action["title"] for action in subject["actions"] if action["status"] == "open"]
+    assert model.prompts
+
+
+def test_saved_conversion_immediately_lists_the_real_pending_items(talk, dated_rate):
+    offer(talk)
+    out = talk[1]("Apply", page="funding")
+    assert any(card["type"] == "readiness_tasks" and card["items"] for card in out["cards"])
+    assert "take them off your hands" not in out["message"]
+
+
+def test_landing_handover_keeps_the_same_partial_score_as_the_case(world):
+    from test_goal_onboarding import _funding
+    from app.modules.readiness.service import service_for
+    from app.modules.readiness import rules
+    env, store, client, who = world
+    who["user"] = OWNER
+    _, made = _funding(client)
+    subject = run(service_for(env.orch).get_subject(OWNER, "A", rules.FUNDING, made["handoff"]["subject_id"], OWNER))
+    assert made["handoff"]["score"] == subject["summary"]["score"]
+    assert made["handoff"]["score_partial"] == subject["summary"]["score_partial"]
+    assert made["handoff"]["score"] is not None

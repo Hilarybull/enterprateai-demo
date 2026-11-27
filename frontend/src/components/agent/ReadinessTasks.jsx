@@ -18,7 +18,6 @@ const draftPath = (subject, draft) => draft.path || (subject.profile_definition?
   .find(field => normalized(field.label) === normalized(draft.label) || normalized(field.key.split(".").at(-1)) === normalized(draft.label))?.key;
 
 export default function ReadinessTasks({ item, businessId, busy, onSend, onUpdated }) {
-  const [choice, setChoice] = useState(null);
   const [editor, setEditor] = useState(null);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState("");
@@ -31,7 +30,6 @@ export default function ReadinessTasks({ item, businessId, busy, onSend, onUpdat
     try {
       await onSend(`Help me resolve this ${item.topic} item: ${step.title}.${step.detail ? ` The issue is: ${step.detail}` : ""} Use my saved business data and existing research. Show any proposed changes for review. If information is missing, ask me for what you need.`,
         { readinessItem: { topic: item.topic, case_id: item.case_id, title: step.title, detail: step.detail || "", section: step.section || "" } });
-      setChoice(null);
     } catch (error) { setProblem(error.message || "I couldn't start work on this item. Try again."); }
     finally { setDrafting(null); }
   }
@@ -141,15 +139,12 @@ export default function ReadinessTasks({ item, businessId, busy, onSend, onUpdat
       <div className={headerStyle}><h4 className="break-words font-semibold text-slate-900">{i + 1}. {step.title}</h4></div>
       {step.detail && <p className={bodyStyle}>{step.detail}</p>}
       <div className={footerStyle}>
-        <button type="button" disabled={locked} onClick={() => { if (step.review) { void edit(step); return; } setChoice(choice === i ? null : i); setEditor(null); }} aria-expanded={choice === i || editor?.target === step} className={primary}>{step.review === "documents" ? "Review documents" : step.review === "attestation" ? "Review evidence" : "Work on this"}</button>
-      </div>
-      {choice === i && <div className="space-y-3 border-t border-slate-100 bg-slate-50 p-4">
-        <p className="font-medium">How would you like to complete this?</p><div className="flex flex-wrap gap-2">
-          <button type="button" disabled={locked} onClick={() => edit(step)} className={button}>I’ll answer</button>
-          <button type="button" disabled={locked} onClick={() => agentHelp(step, i)} className={primary}>Let the agent draft it</button>
-        </div>
+        {step.review ? <button type="button" disabled={locked} onClick={() => edit(step)} className={primary}>{step.review === "documents" ? "Review documents" : "Review evidence"}</button> : <>
+          <button type="button" disabled={locked} onClick={() => agentHelp(step, i)} className={primary}>Help me fill this</button>
+          <button type="button" disabled={locked} onClick={() => edit(step)} className={button}>I’ll fill it myself</button>
+        </>}
         {drafting === i && <ThinkingProgress label="Working on this item…" />}
-      </div>}
+      </div>
       {editor && !editor.draft && editor.target === step ? <div className="border-t border-slate-100 p-4">{editorPanel}</div> : null}
     </li>)}</ol>}
     {!item.items?.length && !item.drafts?.length && <p className="text-slate-500">No outstanding items on this check.</p>}

@@ -120,6 +120,7 @@ async def remaining_card(orch, user, business_id, topic, actions, cards):
                "source": str(draft.get("source") or "Draft for your review") if isinstance(draft, dict) else "Draft for your review"}
               for path, draft in service_for(orch).drafts_now(subject.get("data") or {}, workspace).items()]
     return {"type": "readiness_tasks", "case_id": subject_id, "topic": topic, "items": items, "drafts": drafts,
+            "score": (subject.get("summary") or {}).get("score"), "score_partial": bool((subject.get("summary") or {}).get("score_partial")),
             "title": "Your remaining funding items" if topic == "funding" else "Your remaining launch items"}
 
 

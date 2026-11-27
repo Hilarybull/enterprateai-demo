@@ -2255,13 +2255,17 @@ def history_rows(data: dict | None) -> list[dict]:
             to = f"/launch/{case}" if case else "/check/launch"
         else:
             to = pages[goal]
-        state = ("Researching" if r.get("status") == "researching" else "Didn't finish" if r.get("error")
+        from app.modules.agent import assistant_context as work_context
+        from app.modules.agent.business import _moment
+        started = _moment(r.get("created_at"))
+        interrupted = r.get("status") == "researching" and (not started or started < work_context.STARTED or (_now() - started).total_seconds() > work_context.WORKING_MINUTES * 60)
+        state = ("Interrupted" if interrupted else "Researching" if r.get("status") == "researching" else "Didn't finish" if r.get("error")
                  else "Replaced by a newer run" if str(r["created_at"]) < newest[(goal, case)]
                  else "Accepted" if r.get("status") == "adopted" else "Waiting for you to review" if r.get("status") == "review" else str(r.get("status") or ""))
         found, spent = int(r.get("findings") or 0), int(r.get("charged") or 0)
         said = [f"{found} finding{'s' if found != 1 else ''}", f"{spent} credit{'s' if spent != 1 else ''}" if spent else "Free", state]
         out.append({"id": f"research:{r['id']}", "kind": "research", "workflow_key": f"research_{goal}", "capability": r.get("capability"),
-                    "title": f"Do all for me: {CHECK_NAME[goal]}", "summary": " · ".join(said), "status": "succeeded", "display_status": "succeeded",
+                    "title": f"Do all for me: {CHECK_NAME[goal]}", "summary": " · ".join(said), "status": "failed" if interrupted or r.get("error") else "succeeded", "display_status": "failed" if interrupted or r.get("error") else "succeeded",
                     "bucket": "research", "created_at": r["created_at"], "updated_at": r.get("updated_at") or r["created_at"],
                     "completed_at": r.get("updated_at") or r["created_at"], "to": to, "credits_used": spent or None, "research_state": state})
     # The free checks too (the owner, 26 Oct: "other flows too, funding, launch readiness, business risk and so on"): each

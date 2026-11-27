@@ -2268,7 +2268,8 @@ async def edit_answers(store: SessionStore, session: dict, orch, user_id: str, c
             await svc.update_subject(user_id, session["business_id"], kind, sid, row["revision"], only, email, provenance=prov)
         try:
             checked = await svc.request_assessment(user_id, session["business_id"], kind, sid, idempotency_key=f"edit:{session['id']}:{now.isoformat()}"[:120], email=email)
-            session["handoff"] = {**session["handoff"], "assessment_id": checked.get("id"), "score": (checked.get("result") or {}).get("score_display"),
+            from app.modules.agent.assessment_summary import score_fields
+            session["handoff"] = {**session["handoff"], "assessment_id": checked.get("id"), **score_fields(checked.get("result") or {}),
                                   "classification": (checked.get("result") or {}).get("classification")}
         except Exception:      # noqa: BLE001 - the answers are saved; the check can be run from its page
             logger.warning("edit: the check did not run again for session %s", session["id"][:8], exc_info=True)
@@ -2843,7 +2844,8 @@ async def prepare(store: SessionStore, session: dict, orch, user_id: str, email:
                         actions = [x for x in await svc.store.list("actions", session["business_id"], subject_id=made["id"], limit=300)
                                    if x.get("status") in rules.UNRESOLVED_ACTION_STATES]
                         summary = {"headline": result.get("headline"), "open_actions": len(actions)}
-                        handoff.update({"to": f"{handoff['to']}?tab=results", "assessment_id": checked["id"], "score": result.get("score_display"),
+                        from app.modules.agent.assessment_summary import score_fields
+                        handoff.update({"to": f"{handoff['to']}?tab=results", "assessment_id": checked["id"], **score_fields(result),
                                         "classification": result.get("classification"),
                                         "message": handoff["message"].rsplit(". ", 1)[0] + ". " + _where_you_stand(summary)})
                 except Exception:      # noqa: BLE001 - the case is set up either way; the check can be run from its page
