@@ -1742,13 +1742,14 @@ async def set_invoice_state(business_id: str, invoice_id: str, body: InvoiceStat
 class ManualReceiptIn(BaseModel):
     sent_to: list[str] = Field(min_length=1, max_length=20)
     message_id: str | None = Field(default=None, max_length=200)
+    payment_ids: list[str] | None = Field(default=None, max_length=1000)
 
 
 @router.post("/businesses/{business_id}/invoices/{invoice_id}/receipt-sent")
 async def record_manual_receipt(business_id: str, invoice_id: str, body: ManualReceiptIn, user=Depends(get_current_user)):
     """A receipt the owner emailed themselves (Share Receipt): issued and marked sent, like one the Agent sends."""
     try:
-        done = await get_orchestrator().record_manual_receipt(business_id, invoice_id, user["id"], body.sent_to, body.message_id, user.get("email"))
+        done = await get_orchestrator().record_manual_receipt(business_id, invoice_id, user["id"], body.sent_to, body.message_id, user.get("email"), payment_ids=body.payment_ids)
     except AccessDenied as e:
         raise _denied(e)
     except Conflict as e:

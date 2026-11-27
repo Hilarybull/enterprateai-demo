@@ -86,7 +86,7 @@ def _in_business_currency(data, docs, notes):
     from app.modules.agent import business as bz
     base = bz.currency_of(data)
     converted = []
-    money_keys = ("price", "amount", "total_amount", "subtotal_amount", "vat_amount", "cost_of_sales", "unit_cost_of_sales", "paid_amount")
+    money_keys = ("price", "amount", "total_amount", "subtotal_amount", "vat_amount", "cost_of_sales", "unit_cost_of_sales", "paid_amount", "salary_amount", "benefits_monthly")
     for doc in docs:
         if bz.doc_currency(doc, base) == base:
             converted.append(doc)
@@ -157,17 +157,20 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
         out["sources"]["histories"] = (f"{len(invoices)} invoices (by invoice date, excluding VAT) and {len(expenses)} expenses "
                                        "from your records")
     out["counts"] = {"invoices": len(invoices), "expenses": len(expenses)}
-    from app.modules.scenario_intelligence.baseline import complete_months, LEVEL_MONTHS
-    periods = complete_months(out["histories"].get("revenue_by_month"), today)[-LEVEL_MONTHS:]
-    if periods and any(revenue.get(f"{y:04d}-{m:02d}", 0) > 0 for (y, m), _ in periods):
-        keys = [f"{y:04d}-{m:02d}" for (y, m), _ in periods]
+    from app.modules.scenario_intelligence.baseline import LEVEL_MONTHS
+    end = today.year * 12 + today.month - 1
+    keys = [f"{n // 12:04d}-{n % 12 + 1:02d}" for n in range(end - LEVEL_MONTHS, end)]
+    if months:
         out["levels"] = {field: round(sum(out["histories"][history].get(k, 0) for k in keys) / len(keys), 2)
                          for field, history in (("revenue_monthly", "revenue_by_month"),
                                                 ("cost_of_sales_monthly", "cost_of_sales_by_month"),
                                                 ("expenses_monthly", "expenses_by_month"))}
         out["levels"]["costs_monthly"] = round(out["levels"]["cost_of_sales_monthly"] + out["levels"]["expenses_monthly"], 2)
         for field in out["levels"]:
-            out["sources"][field] = f"invoice-date records excluding VAT, {keys[0]} to {keys[-1]} ({len(keys)} complete months)"
+            out["sources"][field] = f"three-calendar-month recorded mean of invoice-date records excluding VAT, {keys[0]} to {keys[-1]} ({LEVEL_MONTHS} complete months; divide by {LEVEL_MONTHS})"
+        missing = [k for k in keys if k not in months]
+        if missing:
+            out["figure_notes"].append(f"No records in {', '.join(missing)}: zero recorded activity is included in the three-month mean. Confirm these months are complete.")
 
 
     out["fills"]["payment_terms_days"] = 30
@@ -278,10 +281,12 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
         out["counts"]["employees"] = sum(1 for employee in employees if isinstance(employee, dict) and not employee.get("archived"))
         payroll = [e for e in employees if isinstance(e, dict) and not e.get("archived") and e.get("salary_amount") not in (None, "")
                    and (not _day(e.get("start_date")) or _day(e.get("start_date")) <= today)]
+        payroll = _in_business_currency(data, payroll, fx_notes)
         if payroll:
             gross = sum(max(0, _num(e.get("salary_amount"))) * {"weekly": 52 / 12, "annual": 1 / 12}.get(e.get("salary_frequency"), 1) for e in payroll)
             out["fills"].update(payroll_staff_count=len(payroll), payroll_gross_monthly_per_person=round(gross / len(payroll), 2),
                                  employee_benefits_monthly=round(sum(max(0, _num(e.get("benefits_monthly"))) for e in payroll), 2))
             for key in ("payroll_staff_count", "payroll_gross_monthly_per_person", "employee_benefits_monthly"):
                 out["sources"][key] = "active employee salary and benefits records in Master records"
+    out["figure_notes"] = list(dict.fromkeys([*out["figure_notes"], *fx_notes]))
     return out

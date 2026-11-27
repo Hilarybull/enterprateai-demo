@@ -6,6 +6,19 @@ def prepare_employee_expenses(patch: dict, stored: dict) -> None:
     from app.shared.supplier_costs import prepare_supplier_costs
     prepare_supplier_costs(patch, stored)
     import math
+    import re
+    from app.modules.agent import business as bz
+    for section in ("employees", "vendors"):
+        prior_records = {str(row.get("id")): row for row in (stored.get("catalogue") or {}).get(section) or [] if isinstance(row, dict)}
+        for record in (patch.get("catalogue") or {}).get(section) or []:
+            if not isinstance(record, dict):
+                continue
+            previous = prior_records.get(str(record.get("id")), {})
+            raw = str(record.get("currency") or previous.get("currency") or bz.currency_of(stored)).strip().upper()
+            match = re.fullmatch(r"([A-Z]{3})", raw) or re.search(r"\(([A-Z]{3})\)$", raw)
+            if not match:
+                raise ValueError("Choose a valid currency for employee pay and vendor prices.")
+            record["currency"] = match.group(1)
     for employee in (patch.get("catalogue") or {}).get("employees") or []:
         if not isinstance(employee, dict):
             continue

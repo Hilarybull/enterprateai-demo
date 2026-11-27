@@ -3,12 +3,16 @@ import Input from "./Input";
 import Button from "./Button";
 import SectionCard from "./SectionCard";
 import { CardIcon, ActionMenu } from "./MasterRecordUI";
+import { useWorkspaceStore } from "../store/workspace";
+import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
+import { isoOf } from "../lib/fx";
 
 const empty = { name: "", job_title: "", department: "", email: "", phone: "", start_date: "", salary_amount: "", salary_frequency: "monthly", benefits_monthly: "", benefits_notes: "" };
 function TeamIcon({ archived = false }) {
   return <CardIcon tone={archived ? "bg-slate-100 text-slate-600" : "bg-sky-50 text-sky-600"}><svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="8" r="3" /><path d="M5 21v-2a7 7 0 0 1 14 0v2M4 8a3 3 0 0 0 0 6M20 8a3 3 0 0 1 0 6" /></svg></CardIcon>;
 }
 export default function EmployeeRecords({ employees = [], onSave }) {
+  const workspaceCurrency = isoOf(useWorkspaceStore(s => s.currency)) || "GBP";
   const [draft, setDraft] = useState({ ...empty });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -36,10 +40,11 @@ export default function EmployeeRecords({ employees = [], onSave }) {
   return <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
     <SectionCard title={draft.id ? "Edit employee" : "Employees"} subtitle="Add your team members and their contact details." className="min-w-0 lg:col-span-2" icon={<TeamIcon />}>
       {error ? <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
-      <form className="grid grid-cols-1 gap-3" onSubmit={e => { e.preventDefault(); const record = { ...draft, name: draft.name.trim(), id: draft.id || crypto.randomUUID(), updated_at: new Date().toISOString() }; if (!record.name) return; save(draft.id ? employees.map(item => item.id === draft.id ? record : item) : [...employees, record], true); }}>
+      <form className="grid grid-cols-1 gap-3" onSubmit={e => { e.preventDefault(); const record = { ...draft, currency: isoOf(draft.currency) || workspaceCurrency, name: draft.name.trim(), id: draft.id || crypto.randomUUID(), updated_at: new Date().toISOString() }; if (!record.name) return; save(draft.id ? employees.map(item => item.id === draft.id ? record : item) : [...employees, record], true); }}>
         {[["name", "Full name", "text"], ["job_title", "Job title", "text"], ["department", "Department", "text"], ["email", "Work email", "email"], ["phone", "Phone", "tel"], ["start_date", "Start date", "date"]].map(([key, label, type]) => <label key={key} className="block"><span className="ea-label">{label}{key === "name" ? " *" : ""}</span><Input type={type} required={key === "name"} disabled={busy} value={draft[key] || ""} onChange={e => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
         <fieldset className="space-y-3 border-t border-slate-100 pt-3"><legend className="text-sm font-semibold">Pay and benefits (optional)</legend>
-          <p className="text-xs text-slate-500">Amounts use your business currency. Saving an employee does not record a payment.</p>
+          <p className="text-xs text-slate-500">Salary and benefits use the currency selected below. Saving an employee does not record a payment.</p>
+          <label className="block"><span className="ea-label">Pay currency</span><select aria-label="Pay currency" className="ea-input" value={isoOf(draft.currency) || workspaceCurrency} disabled={busy} onChange={e => setDraft({...draft,currency:e.target.value})}>{CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}</select></label>
           <label className="block"><span className="ea-label">Gross salary</span><Input type="number" min="0" step="0.01" value={draft.salary_amount ?? ""} disabled={busy} onChange={e => setDraft({...draft,salary_amount:e.target.value})} /></label>
           <label className="block"><span className="ea-label">Pay frequency</span><select aria-label="Pay frequency" className="ea-input" value={draft.salary_frequency || "monthly"} disabled={busy} onChange={e => setDraft({...draft,salary_frequency:e.target.value})}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="annual">Annual</option></select></label>
           <label className="block"><span className="ea-label">Other benefits per month</span><Input type="number" min="0" step="0.01" value={draft.benefits_monthly ?? ""} disabled={busy} onChange={e => setDraft({...draft,benefits_monthly:e.target.value})} /></label>

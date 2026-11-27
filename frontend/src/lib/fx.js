@@ -48,11 +48,11 @@ export function useFxRates(codes, ws) {
       const rates = {};
       const dates = {};
       all.forEach(({ from, rate, date }) => { if (rate != null) { rates[from] = rate; dates[from] = date; } });
-      setState({ rates, dates });
+      setState({ rates, dates, key });
     });
     return () => { live = false; };
   }, [key]);      // eslint-disable-line react-hooks/exhaustive-deps
-  return state;
+  return state.key === key ? state : { rates: {}, dates: {} };
 }
 
 export function _resetFxCache() { cache.clear(); }

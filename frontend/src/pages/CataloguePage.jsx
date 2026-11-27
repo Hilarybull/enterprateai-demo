@@ -12,6 +12,8 @@ import SectionCard from "../components/SectionCard";
 import SegmentedTabs from "../components/SegmentedTabs";
 import ReportTable, { StatusBadge } from "../components/ReportTable";
 import { formatCurrency } from "../lib/format";
+import { CURRENCY_CODES, currencyLabel } from "../lib/currencies";
+import { isoOf } from "../lib/fx";
 import WorkspacePrompt from "../components/WorkspacePrompt";
 import { CatalogueIllustration, IllustrationCard } from "../components/Illustrations";
 import { apiRequest, apiRequestCached, invalidateWorkspaceCache } from "../api/client";
@@ -494,6 +496,7 @@ ${employeeRows !== null ? section("Employees", "Active team members from Master 
         product_type: String(row.product_type || "product").trim() === "service" ? "service" : "product",
         product_name: String(productName).trim(),
         price: Number(price || 0),
+        currency: isoOf(row.currency) || isoOf(currency) || "GBP",
         archived: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -758,6 +761,7 @@ ${employeeRows !== null ? section("Employees", "Active team members from Master 
       product_type: vendorForm.product_type,
       product_name: vendorForm.product_name.trim(),
       price: Number(vendorForm.price || 0),
+      currency: isoOf(vendorForm.currency) || isoOf(currency) || "GBP",
       archived: false,
       updated_at: new Date().toISOString()
     };
@@ -1626,7 +1630,9 @@ ${employeeRows !== null ? section("Employees", "Active team members from Master 
               </div>
             </div>
             <div>
-              <div className="ea-label">Price *</div>
+              <label className="ea-label" htmlFor="vendor-currency">Price currency</label>
+              <select id="vendor-currency" className="ea-input mb-3" value={isoOf(vendorForm.currency) || isoOf(currency) || "GBP"} onChange={e => setVendorForm(v => ({...v,currency:e.target.value}))}>{CURRENCY_CODES.map(code => <option key={code} value={code}>{currencyLabel(code)}</option>)}</select>
+              <div className="ea-label">Price ({isoOf(vendorForm.currency) || isoOf(currency) || "GBP"}) *</div>
               <Input type="number" min="0" value={vendorForm.price} onChange={(e) => setVendorForm((v) => ({ ...v, price: e.target.value }))} />
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1681,12 +1687,12 @@ ${employeeRows !== null ? section("Employees", "Active team members from Master 
                             {importBadge(v)}
                           </div>
                           <div className="mt-0.5 text-xs text-slate-500">
-                            {v.product_name} · {formatCurrency(v.price, currency)} · {formatPaymentTerms(v.payment_terms)}
+                            {v.product_name} · {formatCurrency(v.price, isoOf(v.currency) || isoOf(currency) || "GBP")} · {formatPaymentTerms(v.payment_terms)}
                             {v.email ? ` · ${v.email}` : ""}{v.phone_number ? ` · ${v.phone_number}` : ""}
                           </div>
                         </div>
                         <ActionMenu items={[
-                          { label: "Edit", onClick: () => { const industryVal = v.industry || ""; setEditingVendorId(v.id); setVendorForm({ name: v.name, address: v.address || "", email: v.email || "", phone_number: v.phone_number || "", payment_terms: String(v.payment_terms || "14"), industry: industryVal, product_type: v.product_type || "product", product_name: v.product_name || "", price: String(v.price ?? "") }); setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); } },
+                          { label: "Edit", onClick: () => { const industryVal = v.industry || ""; setEditingVendorId(v.id); setVendorForm({ name: v.name, address: v.address || "", email: v.email || "", phone_number: v.phone_number || "", payment_terms: String(v.payment_terms || "14"), industry: industryVal, product_type: v.product_type || "product", product_name: v.product_name || "", price: String(v.price ?? ""), currency: isoOf(v.currency) || isoOf(currency) || "GBP" }); setVendorIndustryOther(Boolean(industryVal) && !INDUSTRY_OPTIONS.includes(industryVal)); } },
                           { label: "Archive", onClick: () => archiveEntity("vendors", v.id) },
                           { label: "Delete", onClick: () => deleteEntity("vendors", v.id), tone: "danger" },
                         ]} />

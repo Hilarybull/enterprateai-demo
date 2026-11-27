@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 def currencies_used(data: dict) -> set[str]:
     base = bz.currency_of(data)
     f = data.get("financials") if isinstance(data.get("financials"), dict) else {}
-    return {bz.doc_currency(d, base) for key in bz.DOCUMENT_LISTS for d in f.get(key) or [] if isinstance(d, dict)} - {base}
+    catalogue = data.get("catalogue") or {}
+    docs = [d for key in bz.DOCUMENT_LISTS for d in f.get(key) or [] if isinstance(d, dict)]
+    docs += [d for key in ("employees", "vendors", "products") for d in catalogue.get(key) or [] if isinstance(d, dict) and not d.get("archived")]
+    return {bz.doc_currency(d, base) for d in docs} - {base}
 
 
 def to_pin(data: dict, snap: dict) -> int:

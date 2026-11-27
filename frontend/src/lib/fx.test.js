@@ -1,7 +1,8 @@
 // One conversion service (the owner's QA, 21 Oct): each rate asked once and shared, into the workspace's own currency.
 import { afterEach, expect, it, vi } from "vitest";
 import * as client from "../api/client";
-import { _resetFxCache, foreignOf, isoOf, rateFor } from "./fx";
+import { _resetFxCache, foreignOf, isoOf, rateFor, useFxRates } from "./fx";
+import { renderHook, waitFor } from "@testing-library/react";
 
 afterEach(() => { vi.restoreAllMocks(); _resetFxCache(); });
 
@@ -27,4 +28,13 @@ it("asks again after a failed lookup", async () => {
   expect((await rateFor("GBP", "NGN")).rate).toBeNull();
   expect((await rateFor("GBP", "NGN")).rate).toBe(1775);
   expect(spy).toHaveBeenCalledTimes(2);
+});
+it("never reuses the previous target's rates while a new target is loading", async () => {
+  vi.spyOn(client,"apiRequest").mockResolvedValueOnce({rate:2000,date:"2026-11-27"})
+    .mockImplementationOnce(()=>new Promise(()=>{}));
+  const {result,rerender,unmount}=renderHook(({target})=>useFxRates(["GBP"],target),{initialProps:{target:"NGN"}});
+  await waitFor(()=>expect(result.current.rates.GBP).toBe(2000));
+  rerender({target:"USD"});
+  expect(result.current.rates).toEqual({});
+  unmount();
 });
