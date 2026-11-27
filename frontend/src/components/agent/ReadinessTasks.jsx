@@ -136,6 +136,7 @@ export default function ReadinessTasks({ item: initialItem, businessId, busy, on
   }
   function reviewPanel(target, draft, key) {
     if (panel?.key !== key) return null;
+    if (!draft && (!target.has_values || !target.values?.length)) return null;
     if (panel.mode === "choose") return <div className="space-y-3 border-t border-slate-100 bg-slate-50 p-4" aria-label="Choose how to edit">
       <p className="font-medium">How would you like to edit this?</p><div className="flex flex-wrap gap-2">
         <button type="button" disabled={locked} onClick={() => edit(target, draft)} className={button}>I’ll edit it myself</button>
