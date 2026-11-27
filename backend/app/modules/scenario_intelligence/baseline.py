@@ -3,7 +3,10 @@
 Simulation audit, Phase 1 (17 Nov 2026), finding F8: the baseline used to be the latest calendar month only, often a month
 still in progress. Pure calculation, no database or network calls.
 
-Rules (each one is reported back with the projection, under ``summary["baseline"]``):
+Recorded Operations snapshots use ``rolling_recorded_baseline``: each future month averages
+the immediately preceding three months, actuals first and earlier forecasts otherwise.
+The following historical rules remain for snapshots without recorded Operations actuals
+(each one is reported under ``summary["baseline"]``):
 
 * Only **complete** months count. The month containing ``as_of`` (today) and any later month are left out.
 * **Level** per series (revenue, cost of sales, operating expenses):
@@ -306,11 +309,53 @@ def value_in_month(series: Dict[str, Any], as_of: Optional[date], month_index: i
     return max(0.0, v)
 
 
+def rolling_recorded_baseline(state: Any, as_of: Optional[date], months: int) -> List[Dict[str, Any]] | None:
+    """For each future month, average its preceding three calendar months, actuals first.
+
+    The current month is its recorded actual-to-date, never a remaining-day estimate.
+    Earlier forecasts fill future slots only. Explicit zero actuals are authoritative.
+    These are baseline operating drivers: payroll and scenario changes are applied separately,
+    once per month, rather than being recursively added again through the moving average.
+    """
+    recorded = getattr(state, "current_month_recorded", None) or {}
+    if as_of is None or recorded.get("basis") != "actual":
+        return None
+    current = month_key(as_of)
+    actuals = {}
+    forecasts = {name: {} for name, *_ in SERIES}
+    for name, history_field, *_ in SERIES:
+        actuals[name] = {key: value for key, value in (getattr(state, history_field, None) or {}).items() if key <= current}
+        if recorded.get("month", current) == current and recorded.get(name) is not None:
+            actuals[name][current] = recorded[name]
+    rows = []
+    for p in range(1, months + 1):
+        y, m = add_months(as_of.year, as_of.month, p)
+        target = f"{y:04d}-{m:02d}"
+        keys = ["%04d-%02d" % add_months(y, m, -offset) for offset in (3, 2, 1)]
+        values, inputs = {}, {}
+        for name, *_ in SERIES:
+            inputs[name] = []
+            for key in keys:
+                if key in actuals[name]:
+                    raw, basis = actuals[name][key], "actual_to_date" if key == current else "actual"
+                elif key in forecasts[name]:
+                    raw, basis = forecasts[name][key], "forecast"
+                else:
+                    raw, basis = 0.0, "no_records"
+                value = float(raw or 0)
+                value = value if math.isfinite(value) else 0.0
+                inputs[name].append(dict(month=key, basis=basis, value=round(value, 2)))
+            values[name] = round(max(0.0, sum(v["value"] for v in inputs[name]) / LEVEL_MONTHS), 2)
+            forecasts[name][target] = values[name]
+        rows.append(dict(month_index=p, month=target, values=values, inputs=inputs))
+    return rows
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Phase 3: how well the baseline method would have forecast the business's own past (backtest)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 12, min_train: int = 3) -> Optional[Dict[str, Any]]:
+def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 12, min_train: int = 3, *, method: str = "historical_baseline") -> Optional[Dict[str, Any]]:
     """Rolling-origin backtest of the baseline method on one series: for each of the last `holdout` complete months, the
     method is fitted on the months before it only, and its forecast is compared with what actually happened.
 
@@ -334,6 +379,9 @@ def backtest(history: Dict[str, Any] | None, as_of: date, holdout: int = 12, min
         fitted = _series_baseline(_S, "revenue", "revenue_by_month", "revenue_monthly", "revenue_monthly", date(y, m, 1))
         # The test month is the month "today" falls in for this fit: projection index 0, as in a live run
         forecast = value_in_month(fitted, date(y, m, 1), 0)
+        if method == "rolling_three_month":
+            keys = ["%04d-%02d" % add_months(y, m, -offset) for offset in (3, 2, 1)]
+            forecast = round(sum(float(train.get(key, 0)) for key in keys) / LEVEL_MONTHS, 2)
         naive = series[k - 1][1]
         rows.append(dict(month=f"{y:04d}-{m:02d}", actual=round(actual, 2), forecast=round(forecast, 2), naive=round(naive, 2)))
     total_actual = sum(r["actual"] for r in rows)

@@ -51,6 +51,7 @@ def check(state: Any, as_of: Optional[date], months: int) -> Dict[str, Any]:
     issues: List[Dict[str, str]] = []
     rev_series = complete_months(state.revenue_by_month, as_of) if as_of else []
     n = len(rev_series)
+    rolling = (getattr(state, "current_month_recorded", None) or {}).get("basis") == "actual"
     has_revenue = float(state.revenue_monthly or 0) > 0 or any(v for _ym, v in rev_series)
     has_costs = ((float(state.expenses_monthly or 0) + float(state.cost_of_sales_monthly or 0) + float(state.costs_monthly or 0)) > 0
                  or any(float(v or 0) > 0 for v in (state.expenses_by_month or {}).values())
@@ -59,11 +60,11 @@ def check(state: Any, as_of: Optional[date], months: int) -> Dict[str, Any]:
     if as_of is not None:
         if n < 3:
             issues.append(_issue("serious", "short_history", f"Only {n} complete month{'s' if n != 1 else ''} of sales on record.",
-                                 "Trend, seasonality and the usual variation cannot be measured; the projection repeats today's level.",
+                                 "The rolling average has limited history. Current-month actuals are incomplete, and months without records count as zero recorded activity." if rolling else "Trend, seasonality and the usual variation cannot be measured; the projection repeats today's level.",
                                  "Record your past invoices (at least 3 months, ideally 12 or more) or connect your accounting software."))
         elif n < 12:
             issues.append(_issue("info", "limited_history", f"{n} complete months of sales on record.",
-                                 "Seasonal patterns need 24 months; the trend is less certain with under 12.",
+                                 "The forecast uses a rolling three-month average; limited history makes the range less reliable." if rolling else "Seasonal patterns need 24 months; the trend is less certain with under 12.",
                                  "Add older invoices if you have them."))
         gaps = [f"{y:04d}-{m:02d}" for (y, m), v in rev_series if v == 0]
         if gaps and n >= 3:

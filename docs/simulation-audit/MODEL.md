@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Model** | EnterprateAI scenario simulation: cash and profit projection, verdict, uncertainty, accuracy tracking |
-| **Version** | `projection-1.6` (stamped on every run as `summary.model_version`); engine `scenario_intel_v2.1` |
+| **Version** | `projection-1.9` (stamped on every run as `summary.model_version`); engine `scenario_intel_v2.1` |
 | **Code** | `backend/app/modules/scenario_intelligence/`: `records.py` (inputs from the records), `baseline.py`, `projection.py`, `factors.py` (country rules), `explain.py` (how each figure was calculated), `quality.py` (data check), `uncertainty.py`, `accuracy.py`, `monitoring.py` (accuracy across businesses), `standards.py` (register of standards), `model_info.py`, `service.py`, `router.py` |
 | **Tests** | `backend/tests/test_simulation_phase0.py` … `test_simulation_phase7.py` (1,114 tests, run by the release gate); frontend `SimulationFirstRun`, `SimulationPhase5`, `SimulationPhase6`, `SimulationAccuracyAdmin` tests |
 | **Status** | Specification of the code as of 21 November 2026 (Phase 7). A change to the model must change this document and pass the release gate (Section 10) |
@@ -326,3 +326,10 @@ Any change to a formula, default or rule must (the release gate checks 4 and 5):
 ### projection-1.7 — 25 November 2026
 
 See [the accuracy brief behaviour note](2026-11-24-accuracy-changes.md) and the corresponding synthetic before/after evidence. Revenue and both cost components use a common invoice-date period. Observed payment delays need five paid invoices; otherwise invoice-weighted terms are used. Percentage scenarios apply in full, contractors default to operating expenses with a direct-cost choice, and current-month existing-loan interest is included. Cash definitions, input checks and backtest disclosures are explicit. Registered earlier audit evidence is unchanged.
+
+
+### projection-1.9 — 27 November 2026
+
+For businesses with Operations actuals, each future month uses the mean of its immediately preceding three calendar months. Recorded actuals take priority, including current-month actual-to-date. A prior baseline forecast fills a future month without actuals. Explicit zero actuals are retained; months with no records contribute zero recorded activity and are identified. December uses September–November; January uses October–December; the window advances every month. The current-month row remains actuals only.
+
+Revenue, cost of sales and operating-expense drivers roll independently. Known payroll, employer costs, tax, funding, financing and scenario changes are applied separately once per month; those overlays are not recursively added again through the operating baseline. Each month reports its three source months, amounts and actual/forecast labels. A new run uses the latest actuals; saved forecasts remain unchanged. Legacy snapshots without Operations actuals retain their historical baseline method.

@@ -88,8 +88,8 @@ def test_actual_month_never_adds_a_remaining_days_forecast_to_future_cash():
     state=BusinessStateSnapshot(revenue_monthly=300,payment_terms_days=0,starting_cash=100,
                                current_month_recorded={'basis':'actual','month':'2026-11','revenue':50,'expenses':20,'cost_of_sales':0})
     rows,summary=project(state,'do_nothing_projection',{},3,as_of=date(2026,11,26))
-    assert rows[0]['revenue']==300
-    assert rows[0]['cash_balance']==400  # 100 actual cash + December sales; no estimated November receipts.
+    assert rows[0]['revenue']==16.67  # September 0 + October 0 + November actual 50, divided by three.
+    assert rows[0]['cash_balance']==110  # 100 actual cash + December sales 16.67 - expenses 6.67.
     assert summary['current_month']['month_total']['revenue']==50
 
 

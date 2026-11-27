@@ -5,7 +5,7 @@ from app.shared.master_records import prepare_employee_expenses
 
 TODAY = date(2026, 11, 27)
 
-def test_mean_includes_all_three_closed_calendar_months_and_excludes_today():
+def test_first_forecast_mean_uses_the_three_immediately_preceding_actual_months():
     data = {"financials": {"invoices": [
         {"issued_at": "2026-07-01", "total_amount": 9999},
         {"issued_at": "2026-09-01", "total_amount": 300},
@@ -13,15 +13,14 @@ def test_mean_includes_all_three_closed_calendar_months_and_excludes_today():
         {"issued_at": "2026-11-01", "total_amount": 9000},
     ]}}
     result = build(data, TODAY)
-    assert result["levels"]["revenue_monthly"] == 300
-    assert "2026-08 to 2026-10" in result["sources"]["revenue_monthly"]
-    assert any("No records in 2026-08" in note for note in result["figure_notes"])
+    assert result["levels"]["revenue_monthly"] == 3300
+    assert "2026-09 to 2026-11" in result["sources"]["revenue_monthly"]
     assert result["current_month"]["revenue"] == 9000
 
-def test_current_month_only_does_not_become_the_forecast_mean():
+def test_current_month_only_is_one_of_three_inputs_not_the_whole_forecast_mean():
     result = build({"financials": {"invoices": [{"issued_at": "2026-11-01", "total_amount": 9000}]}}, TODAY)
-    assert result["levels"]["revenue_monthly"] == 0
-    assert any("2026-08, 2026-09, 2026-10" in note for note in result["figure_notes"])
+    assert result["levels"]["revenue_monthly"] == 3000
+    assert any("2026-09, 2026-10" in note for note in result["figure_notes"])
 
 def test_foreign_salary_and_benefits_are_converted_before_payroll_aggregation():
     data = {"settings": {"currency": "GBP"}, "fx_rates": {"base": "GBP", "rates": {"NGN": .001}},

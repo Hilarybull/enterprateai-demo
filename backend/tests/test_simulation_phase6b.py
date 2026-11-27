@@ -178,5 +178,5 @@ def test_compare_and_reproduce_check_access(world, monkeypatch):  # noqa: F811
     assert client.get("/v1/scenario-intelligence/model").json()["version"] == P.MODEL_VERSION
 
 
-def test_runs_are_stamped_with_model_1_8():
-    assert P.MODEL_VERSION == "projection-1.8"
+def test_runs_are_stamped_with_model_1_9():
+    assert P.MODEL_VERSION == "projection-1.9"

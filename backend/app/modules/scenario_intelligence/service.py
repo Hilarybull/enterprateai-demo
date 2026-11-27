@@ -1060,7 +1060,8 @@ async def forecast_accuracy(tenant_id: str, business_id: str, state: BusinessSta
         decisions = [d for d in _MEM_DECISIONS.values() if d.get("tenant_id") == tenant_id and d.get("business_id") == business_id]
     status = {d.get("scenario_run_id"): d.get("decision_status") for d in decisions if d.get("scenario_run_id")}
     records = [run_record(r, status.get(r.get("scenario_run_id"))) for r in run_list]
-    return accuracy_report(records, state.revenue_by_month, as_of or _today())
+    return accuracy_report(records, state.revenue_by_month, as_of or _today(),
+                           method="rolling_three_month" if (state.current_month_recorded or {}).get("basis") == "actual" else "historical_baseline")
 
 
 async def clear_history(tenant_id: str, business_id: str) -> int:

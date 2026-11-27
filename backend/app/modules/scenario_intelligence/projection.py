@@ -33,10 +33,10 @@ from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.modules.scenario_intelligence import factors
-from app.modules.scenario_intelligence.baseline import add_months, build_baseline, value_in_month
+from app.modules.scenario_intelligence.baseline import add_months, build_baseline, value_in_month, rolling_recorded_baseline
 from app.modules.scenario_intelligence.schemas import BusinessStateSnapshot
 
-MODEL_VERSION = "projection-1.8"
+MODEL_VERSION = "projection-1.9"
 DAYS_PER_MONTH = 30.0
 DEFAULT_PAYMENT_TERMS_DAYS = 30
 MIN_MONTHS, MAX_MONTHS = 3, 24
@@ -539,11 +539,13 @@ def assumptions_for(state: BusinessStateSnapshot, scenario_type: str, params: Di
 # The projection
 # ---------------------------------------------------------------------------------------------------------------------
 
-def _base_values(baseline: Dict[str, Any], state: BusinessStateSnapshot, as_of: Optional[date], p: int) -> Tuple[float, float, float]:
+def _base_values(baseline: Dict[str, Any], state: BusinessStateSnapshot, as_of: Optional[date], p: int, rolling_values: Optional[Dict[str, float]] = None) -> Tuple[float, float, float]:
     """Baseline (revenue, operating expenses, cost of sales) in period p, with cost inflation where costs have no trend."""
     revenue = value_in_month(baseline["revenue"], as_of, p)
     expenses = value_in_month(baseline["expenses"], as_of, p)
     cost_of_sales = value_in_month(baseline["cost_of_sales"], as_of, p)
+    if rolling_values is not None:
+        revenue, expenses, cost_of_sales = (rolling_values[name] for name in ("revenue", "expenses", "cost_of_sales"))
     infl = _num(state.cost_inflation_pct)
     if infl and p > 0:
         factor = (1 + infl / 100.0) ** (p / 12.0)
@@ -573,6 +575,14 @@ def project(
     adjust = adjust or {}
     months = clamp_months(months) if clamp else max(1, min(MAX_MONTHS, int(months)))
     baseline = build_baseline(state, as_of)
+    rolling = rolling_recorded_baseline(state, as_of, months)
+    if rolling:
+        for name, series in baseline.items():
+            series.update(level=rolling[0]["values"][name], method="rolling_three_month",
+                          source="rolling three-month mean: actuals first, earlier baseline forecasts where actuals are unavailable",
+                          months_used=[item["month"] for item in rolling[0]["inputs"][name]],
+                          trend_per_month=0.0, trend_applied=False, trend_t_stat=None,
+                          trend_note="rolling three-month mean selected", seasonality_applied=False, seasonal_indices=None)
     stub_days, days_in_month = _stub(as_of)
     if (state.current_month_recorded or {}).get("basis") == "actual":
         stub_days = 0  # Recorded current-month activity is an anchor, never a projected period.
@@ -693,7 +703,8 @@ def project(
 
     for p in range(P):
         weight = stub_weight if p == 0 else 1.0
-        base = _base_values(baseline, state, as_of, p)
+        rolling_month = rolling[p - 1] if rolling and p > 0 else None
+        base = _base_values(baseline, state, as_of, p, rolling_month["values"] if rolling_month else None)
         if adjust:
             base = (base[0] * adjust.get("revenue", 1.0), base[1] * adjust.get("expenses", 1.0),
                     base[2] * adjust.get("cost_of_sales", adjust.get("revenue", 1.0)))
@@ -830,6 +841,8 @@ def project(
             continue
 
         detail.append(dict(month_index=p, operating_expenses=round(expenses, 2), interest=round(interest, 2),
+                           rolling_inputs=rolling_month["inputs"] if rolling_month else None,
+                           rolling_values=rolling_month["values"] if rolling_month else None,
                            tax_set_aside=round(tax_charge, 2), tax_paid=round(tax_paid, 2), vat_paid=round(vat_due, 2),
                            loan_received=round(loan_in, 2), loan_repaid=round(principal, 2),
                            collected_from_customers=round(collected, 2), bills_paid=round(owed_out[p], 2),
@@ -913,6 +926,7 @@ def project(
         total_cash_out=round(totals["cash_out"], 2),
         stub=stub,
         baseline=baseline,
+        forecast_method="rolling_three_month" if rolling else "historical_baseline",
         monthly_detail=detail,
         checks=dict(cash_reconciles=bool(cash_ok), receivables_reconcile=bool(receivables_ok), balance_sheet_balances=bool(balance_ok)),
         assumptions=assumptions_for(state, scenario_type, params, baseline if as_of else None, stub_days),
@@ -1022,7 +1036,12 @@ def thirteen_week_view(state: BusinessStateSnapshot, as_of: date, opening_cash: 
 def run_rate_snapshot(state: BusinessStateSnapshot, scenario_type: str, params: Dict[str, Any] | None, month: int,
                       cash: float | None = None, as_of: Optional[date] = None) -> BusinessStateSnapshot:
     """The business's monthly figures in a given projection month (and, optionally, its cash then)."""
-    base = _base_values(build_baseline(state, as_of), state, as_of, month)
+    rolling = rolling_recorded_baseline(state, as_of, month)
+    baseline = build_baseline(state, as_of)
+    if rolling:
+        for series in baseline.values():
+            series["trend_applied"] = False
+    base = _base_values(baseline, state, as_of, month, rolling[-1]["values"] if rolling else None)
     revenue, expenses, cost_of_sales = _monthly_projection_values(state, scenario_type, params or {}, month, base=base)
     return state.model_copy(update=dict(
         revenue_monthly=revenue, expenses_monthly=expenses, cost_of_sales_monthly=cost_of_sales,

@@ -158,7 +158,7 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
                                        "from your records")
     out["counts"] = {"invoices": len(invoices), "expenses": len(expenses)}
     from app.modules.scenario_intelligence.baseline import LEVEL_MONTHS
-    end = today.year * 12 + today.month - 1
+    end = today.year * 12 + today.month
     keys = [f"{n // 12:04d}-{n % 12 + 1:02d}" for n in range(end - LEVEL_MONTHS, end)]
     if months:
         out["levels"] = {field: round(sum(out["histories"][history].get(k, 0) for k in keys) / len(keys), 2)
@@ -167,7 +167,7 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
                                                 ("expenses_monthly", "expenses_by_month"))}
         out["levels"]["costs_monthly"] = round(out["levels"]["cost_of_sales_monthly"] + out["levels"]["expenses_monthly"], 2)
         for field in out["levels"]:
-            out["sources"][field] = f"three-calendar-month recorded mean of invoice-date records excluding VAT, {keys[0]} to {keys[-1]} ({LEVEL_MONTHS} complete months; divide by {LEVEL_MONTHS})"
+            out["sources"][field] = f"three-calendar-month recorded mean of invoice-date records excluding VAT, {keys[0]} to {keys[-1]} (divide by {LEVEL_MONTHS}; current month actual-to-date). Each later month rolls forward using actuals first, then earlier forecasts."
         missing = [k for k in keys if k not in months]
         if missing:
             out["figure_notes"].append(f"No records in {', '.join(missing)}: zero recorded activity is included in the three-month mean. Confirm these months are complete.")

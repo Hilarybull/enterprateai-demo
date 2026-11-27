@@ -7,6 +7,9 @@ from typing import Any, Dict, List
 from app.modules.scenario_intelligence.projection import MODEL_VERSION
 
 CHANGES: List[Dict[str, Any]] = [
+    dict(version="projection-1.9", date="2026-11-27", summary=[
+        "Each future month uses a fresh average of its previous three calendar months, with actuals taking priority over earlier forecasts.",
+        "The current month remains actual-to-date. The calculation lists the three input months and amounts for each forecast month."]),
     dict(version="projection-1.8", date="2026-11-27", summary=[
         "The current month shows Operations actuals only, separately from future forecasts based on completed months.",
         "Operations expense dates, monthly receivables, linked supplier bills and employee pay feed the simulation.",
