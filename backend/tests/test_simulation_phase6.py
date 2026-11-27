@@ -91,14 +91,14 @@ def test_owner_settings_win_but_payment_terms_come_from_the_records():
 
 
 def test_a_dashboard_revenue_figure_outside_the_usual_variation_is_not_used():
-    """Complete months Aug-Oct average 2,000; the dashboard's figure 3,800 is 90% above, outside the range: the complete
-    months are used and the reason is given. A figure 2,100 (5% above) is within it and kept."""
+    """The first forecast uses September-November recorded activity, including November actual-to-date,
+    regardless of a stale dashboard figure. Revenue 5,500 / 3; cost of sales 700 / 3."""
     st = S(revenue_monthly=3800, expenses_monthly=600)
     out = si._phase5_from_records(st, _data(), {"revenue_monthly": 3800.0, "figure_sources": {"revenue_monthly": "shared"}}, TODAY)
-    assert out["revenue_monthly"] == 2000 and "3 complete months" in out["figure_sources"]["revenue_monthly"]
-    assert out["cost_of_sales_monthly"] == pytest.approx(400 / 3, abs=.01)
+    assert out["revenue_monthly"] == pytest.approx(5500 / 3, abs=.01) and "2026-09 to 2026-11" in out["figure_sources"]["revenue_monthly"]
+    assert out["cost_of_sales_monthly"] == pytest.approx(700 / 3, abs=.01)
     kept = si._phase5_from_records(S(revenue_monthly=2100), _data(), {"revenue_monthly": 2100.0, "figure_sources": {"revenue_monthly": "shared"}}, TODAY)
-    assert kept["revenue_monthly"] == 2000 and "invoice-date" in kept["figure_sources"]["revenue_monthly"]
+    assert kept["revenue_monthly"] == pytest.approx(5500 / 3, abs=.01) and "invoice-date" in kept["figure_sources"]["revenue_monthly"]
 
 
 # ── The current month and how it was calculated ──────────────────────────────────────────────────────────────────────

@@ -70,7 +70,7 @@ def test_payment_terms_weighted_window_and_minimum_five_paid():
 
 
 def test_same_invoice_basis_for_revenue_and_cost_of_sales():
-    inv = [dict(date=f"2026-{m:02d}-01", subtotal_amount=10000, cost_of_sales=1200, status="sent") for m in (8, 9, 10)]
+    inv = [dict(date=f"2026-{m:02d}-01", subtotal_amount=10000, cost_of_sales=1200, status="sent") for m in (9, 10, 11)]
     data = {"financials": {"invoices": inv}}
     level = records.build(data, TODAY)["levels"]
     assert level["revenue_monthly"] == 10000 and level["cost_of_sales_monthly"] == 1200

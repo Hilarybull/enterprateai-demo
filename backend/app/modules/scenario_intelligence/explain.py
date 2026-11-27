@@ -92,6 +92,10 @@ def explain(state: Any, baseline: Dict[str, Any], rows: List[Dict[str, Any]], de
                        else ("." if terms is not None else " (assumed: none on record).")))
 
     rev = baseline.get("revenue") or {}
+    rolling = rev.get("method") == "rolling_three_month"
+    if rolling:
+        starting.append("Each forecast month averages its previous three calendar months. Actuals take priority; earlier forecasts fill months without actuals. The current month's input is actual-to-date.")
+        starting.append("Months without records are counted as zero recorded activity. Payroll, tax, financing and scenario adjustments are applied separately once per month.")
     by_detail = {d["month_index"]: d for d in detail or []}
     months: List[Dict[str, Any]] = []
     prev_cash = summary.get("cash_at_period_0_end")
@@ -113,6 +117,13 @@ def explain(state: Any, baseline: Dict[str, Any], rows: List[Dict[str, Any]], de
         if rev.get("seasonality_applied") and as_of and rev.get("seasonal_indices"):
             idx = (rev["seasonal_indices"].get(mo) or rev["seasonal_indices"].get(str(mo)) or 1.0)
             rev_text += f", x seasonal index {float(idx):.3f}"
+        rolling_inputs = d.get("rolling_inputs") or {}
+        if rolling_inputs:
+            labels = {"actual":"actual", "actual_to_date":"actual to date", "forecast":"forecast", "no_records":"no records"}
+            def mean_text(name):
+                items = rolling_inputs.get(name) or []
+                return "(" + " + ".join(f"{item['month']} {labels[item['basis']]} {_m(item['value'])}" for item in items) + ") / 3"
+            rev_text = f"{mean_text('revenue')} = {_m((d.get('rolling_values') or {}).get('revenue'))}"
         if scenario_type != "do_nothing_projection":
             rev_text += "; then the scenario's change"
         if not (rev.get("trend_applied") and abs(base_rev - float(r["revenue"])) < 0.01):
@@ -127,6 +138,8 @@ def explain(state: Any, baseline: Dict[str, Any], rows: List[Dict[str, Any]], de
             if float(d.get(k) or 0):
                 parts.append(f"{name} {_m(d.get(k))}")
         cost_text = f"cost of sales {_m(r['cost_of_sales'])} + {' + '.join(parts)} = total costs {_m(r['costs'])}; "
+        if rolling_inputs:
+            cost_text = f"Cost-of-sales average: {mean_text('cost_of_sales')}; operating-expense average: {mean_text('expenses')}. " + cost_text
         other = float(r.get("other_income") or 0)
         cost_text += (f"profit = revenue {_m(r['revenue'])} + other income {_m(other)} - costs = {_m(r['profit'])}" if other
                       else f"profit = revenue {_m(r['revenue'])} - costs = {_m(r['profit'])}")
@@ -146,4 +159,8 @@ def explain(state: Any, baseline: Dict[str, Any], rows: List[Dict[str, Any]], de
                      + " - " + " - ".join(f"{n} {_m(v)}" for n, v in outs) + f" = cash {_m(r['cash_balance'])}")
         months.append(dict(month_index=m, label=label, revenue=rev_text, costs=cost_text, cash=cash_text))
         prev_cash = r["cash_balance"]
-    return dict(starting_point=starting, months=months, methods=METHODS)
+    methods = METHODS
+    if rolling:
+        methods = [dict(name="Rolling three-month average", what="For every future month, average the previous three months, using actuals first and earlier baseline forecasts otherwise.", standard="Three-period moving average"),
+                   *[method for method in METHODS if method["name"] not in ("Your normal month (starting level)", "Growth or decline (trend)", "Seasonal pattern")]]
+    return dict(starting_point=starting, months=months, methods=methods)

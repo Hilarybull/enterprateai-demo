@@ -57,8 +57,8 @@ def tracked_accuracy(runs: List[Dict[str, Any]], revenue_history: Dict[str, Any]
                       "No earlier forecast has reached a completed month yet. Accuracy is tracked automatically as months complete."))
 
 
-def accuracy_report(runs: List[Dict[str, Any]], revenue_history: Dict[str, Any] | None, as_of: date) -> Dict[str, Any]:
-    bt = backtest(revenue_history, as_of)
+def accuracy_report(runs: List[Dict[str, Any]], revenue_history: Dict[str, Any] | None, as_of: date, *, method: str = "historical_baseline") -> Dict[str, Any]:
+    bt = backtest(revenue_history, as_of, method=method)
     return dict(
         as_of=as_of.isoformat(),
         tracked=tracked_accuracy(runs, revenue_history, as_of),

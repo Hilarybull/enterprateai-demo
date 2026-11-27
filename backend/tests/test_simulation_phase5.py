@@ -162,14 +162,14 @@ def _records(country="Nigeria"):
 
 
 def test_direct_costs_payroll_and_country_from_the_records():
-    """Current-month costs remain actuals and do not replace the last three closed calendar months."""
+    """Current-month costs remain actuals and are one input to the next rolling three-month mean."""
     st = S(revenue_monthly=10000, expenses_monthly=6000)
     out = si._phase5_from_records(st, _records(), {"expenses_monthly": 6000.0}, date(2026, 11, 24))
     assert out["tax_country"] == "NG" and out["payroll_in_recorded_expenses"] is True
-    assert (out["cost_of_sales_monthly"], out["expenses_monthly"], out["costs_monthly"]) == (0, 0, 0)
+    assert (out["cost_of_sales_monthly"], out["expenses_monthly"], out["costs_monthly"]) == (1000, 1000, 2000)
     assert out["current_month_recorded"]["cost_of_sales"] == 3000
     assert out["current_month_recorded"]["expenses"] == 3000
-    assert "2026-08 to 2026-10" in out["figure_sources"]["cost_of_sales_monthly"]
+    assert "2026-09 to 2026-11" in out["figure_sources"]["cost_of_sales_monthly"]
 
 
 def test_the_larger_of_product_costs_and_direct_costs_is_cost_of_sales():
