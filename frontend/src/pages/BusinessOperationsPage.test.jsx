@@ -198,7 +198,7 @@ describe("Business Operations stays current with the Agent", () => {
     await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: "Receipts" })[0]); });
   }
 
-  it("shows a receipt as sent once an Agent action completes", async () => {
+  it("marks a sent receipt Issued once an Agent action completes", async () => {
     await openReceipts(unpaid());
     expect(screen.getByText("Not issued")).toBeTruthy();
     served = receipted();
@@ -206,6 +206,8 @@ describe("Business Operations stays current with the Agent", () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(screen.getByText("REC-3031026")).toBeTruthy();
     expect(screen.queryByText("Not issued")).toBeNull();
+    expect(screen.getByText("Issued")).toBeTruthy();
+    expect(screen.getByText("Issued").closest("[title]").title).toContain("qa@buyer.test");
   });
 
   it("picks up background Agent work by checking every 30 seconds", async () => {

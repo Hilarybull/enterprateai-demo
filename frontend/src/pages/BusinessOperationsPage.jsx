@@ -3112,7 +3112,7 @@ export default function BusinessOperationsPage() {
                       "Invoice #": invoiceRefMap.get(inv.id) || "—",
                       Amount: <AmountCell value={Number(p.amount || 0)} currency={inv.currency} doc={inv} />,
                       "Date Paid": fmtDay(p.paid_at),
-                      Receipt: <StatusPill status={p.receipt?.sent_at ? "Sent" : p.receipt?.number ? "Issued" : "Not issued"} />,
+                      Receipt: <span title={p.receipt?.sent_at ? `Sent ${fmtDate(p.receipt.sent_at)}${p.receipt.sent_to ? ` to ${p.receipt.sent_to}` : ""}` : undefined}><StatusPill status={p.receipt?.number ? "Issued" : "Not issued"} /></span>,
                       Action: <ActionMenu items={[{ label: "View Receipt", onClick: () => openView("invoice", inv, { receiptMode: true }) }, { label: "View Invoice", onClick: () => openView("invoice", inv) }, ...agentInvoiceItems(inv), { label: "Share Receipt", onClick: () => setShareItem({ record: inv, type: "invoice", receiptMode: true }) }]} />,
                     }))}
                     emptyText="No payments received yet"
