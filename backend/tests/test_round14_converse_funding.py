@@ -16,6 +16,8 @@ def no_background_connections(monkeypatch):
     from unittest.mock import AsyncMock
     import app.main as main
     monkeypatch.setattr(main, "connect_to_mongo", AsyncMock())
+    from app.shared import currency
+    monkeypatch.setattr(currency,"get_rate_dated",AsyncMock(return_value=None))
     for name in ("start_agent_scheduler", "start_tender_scheduler", "start_activation_scheduler"):
         monkeypatch.setattr(main, name, lambda: None)
 

@@ -617,7 +617,7 @@ export default function AgentCentrePage() {
       <header className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-3" data-agent-header>
         <div className="min-w-0">
           <p className="text-[12px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">Agent Centre</p>
-          <h1 className="mt-1 text-[28px] font-extrabold leading-tight text-slate-950 dark:text-slate-50 sm:text-[34px]">Your Enterprate<span className="brand-ai">AI</span> Agent</h1>
+          <h1 className="mt-1 text-[28px] font-extrabold leading-tight text-slate-950 dark:text-slate-50 sm:text-[34px]">Your <span className="brand-enterprate">Enterprate</span><span className="brand-ai">AI</span> Agent</h1>
           <p className="mt-1 text-[16px] text-slate-600 dark:text-slate-400 max-sm:hidden">Tell me what you need. I work from your business data, and nothing is sent or saved without your go-ahead.</p>
         </div>
         {/* On a phone Tasks and Agent settings share the row (the owner, 28 Oct) */}

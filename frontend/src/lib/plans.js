@@ -239,7 +239,7 @@ export function planLabel(planKey, status) {
  */
 export function accessLabel(subscription) {
   const source = subscription?.access_source;
-  if (source === "14-day trial") return "14-day trial · all features";
+  if (source === "14-day trial") return "14 day trial · all features";
   if (source === "admin full-access grant") return "Full access (test grant)";
   if (source === "early-access account" || subscription?.status === "grandfathered") return "Early Access";
   if (source === "your team's plan") return `${planLabel(subscription?.plan_key, "active")} (team)`;      // a member works under the team's plan
