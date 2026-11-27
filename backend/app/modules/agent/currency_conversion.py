@@ -2,6 +2,13 @@
 import math
 import re
 
+def display_money(amount, currency):
+    from app.modules.agent.research import SIGNS
+    text = f"{float(amount):,.2f}"
+    if text.endswith(".00"):
+        text = text[:-3]
+    return f"{SIGNS.get(currency, str(currency) + ' ')}{text}"
+
 async def quote(amount, from_currency, to_currency):
     from app.shared.currency import get_rate_dated, convert
     source, target = str(from_currency or "").upper(), str(to_currency or "").upper()

@@ -494,7 +494,7 @@ def recipient_record(data: dict, customer: dict, tc: "ToolContext", doc_word: st
     now = tc.now()
     person = not _COMPANY_WORDS.search(name) and len(name.split()) <= 3
     rec = {"id": new_id(), "name": name, "email": email, "phone_number": "", "address": "", "industry": "Individual" if person else "",
-           "payment_terms": int(tc.policy.get("default_payment_terms_days") or 14), "created_by_agent": True, "agent_run_id": tc.run["id"],
+           "payment_terms": bz.payment_terms_days({}, tc.policy), "created_by_agent": True, "agent_run_id": tc.run["id"],
            "created_at": now.isoformat(), "provenance": f"Added by the Agent from your {doc_word}, {now.day} {now.strftime('%b')}"}
     customers.append(rec)
     return rec
@@ -519,7 +519,7 @@ async def create_customer_draft(tc: ToolContext, a: dict) -> dict:
         word = {"new_invoice": "invoice", "enquiry_to_quote": "quotation", "new_contract": "contract", "receipt_send": "receipt"}.get(tc.run.get("workflow_key"), "task")
         person = not _COMPANY_WORDS.search(name) and len(name.split()) <= 3
         customers.append({"id": cid, "name": name, "email": email, "phone_number": a.get("phone_number") or "",
-                          "address": "", "industry": "Individual" if person else "", "payment_terms": int(tc.policy.get("default_payment_terms_days") or 14),
+                          "address": "", "industry": "Individual" if person else "", "payment_terms": bz.payment_terms_days({}, tc.policy),
                           "created_by_agent": True, "agent_run_id": tc.run["id"], "created_at": now,
                           "provenance": f"Added by the Agent from your {word}, {when.day} {when.strftime('%b')}"})
         return {"customer_id": cid, "created": True}
@@ -905,11 +905,7 @@ async def create_invoice_draft(tc: ToolContext, a: dict) -> dict:
             return {"invoice_id": existing["id"], "reference": existing.get("reference"), "created": False}
         customer = next((c for c in _customers(data) if str(c.get("id")) == str(q.get("customer_id"))
                          or str(c.get("name") or "").strip().lower() == str(q.get("customer_name") or "").strip().lower()), {})
-        terms_days = customer.get("payment_terms") or tc.policy.get("default_payment_terms_days") or 14
-        try:
-            terms_days = int(terms_days)
-        except (TypeError, ValueError):
-            terms_days = int(tc.policy.get("default_payment_terms_days") or 14)
+        terms_days = bz.payment_terms_days(customer, tc.policy)
         amounts = _amounts(q)
         iid = new_id()
         ref = reserved
@@ -960,10 +956,7 @@ async def create_invoice(tc: ToolContext, a: dict) -> dict:
         invoices = bz.records(data, "invoices")
         on_file = recipient_record(data, customer, tc, "invoice")      # the recipient is a customer record, matched or added
         customer.update({k: v for k, v in (("id", on_file.get("id")), ("name", customer.get("name") or on_file.get("name"))) if v})
-        try:
-            terms_days = int(on_file.get("payment_terms") or tc.policy.get("default_payment_terms_days") or 14)
-        except (TypeError, ValueError):
-            terms_days = int(tc.policy.get("default_payment_terms_days") or 14)
+        terms_days = bz.payment_terms_days(on_file, tc.policy)
         rec = {
             "id": new_id(), "reference": reserved, "invoice_number": reserved,
             "customer_id": customer.get("id"), "customer_name": customer.get("name") or "", "recipient": customer.get("name") or "",
@@ -1013,7 +1006,7 @@ async def create_contract(tc: ToolContext, a: dict) -> dict:
             "id": new_id(), "reference": ref, "party_type": "customer", "party_name": customer.get("name") or "", "customer_name": customer.get("name") or "",
             "customer_id": customer.get("id"), "customer_email": str(customer.get("email") or on_file.get("email") or "").strip(),
             "description": str(a["description"]).strip(), "amount": amount, "total_amount": amount, "currency": _asked_currency(tc, data),
-            "payment_terms": f"Net {int(on_file.get('payment_terms') or tc.policy.get('default_payment_terms_days') or 14)} days",
+            "payment_terms": f"Net {bz.payment_terms_days(on_file, tc.policy)} days",
             "term": str(a.get("term") or "").strip(), "start_date": str(a.get("start_date") or "")[:10], "status": "draft", "source": "EnterprateAI Agent",
             **({"pricing": a["pricing"]} if isinstance(a.get("pricing"), dict) else {}),
             "agent_run_id": tc.run["id"], "issued_at": now.date().isoformat(), "created_at": now.isoformat(), "updated_at": now.isoformat(),

@@ -353,7 +353,7 @@ async def e2q_draft(ctx):
         items=ctx.state["items"], vat_rate=vat, enquiry_id=enquiry["id"],
         **({"rfq_id": ctx.state["rfq_id"]} if ctx.state.get("rfq_id") else {}),      # the draft answers this marketplace request
         validity_days=ctx.policy.get("quote_validity_days"),
-        payment_terms=f"Net {int(ctx.policy.get('default_payment_terms_days') or 14)} days",
+        payment_terms=f"Net {bz.payment_terms_days({}, ctx.policy)} days",
         payment_terms_source=TERMS_FROM_SETTINGS,
     )
     ctx.state["quote_id"] = draft["quote_id"]
@@ -541,7 +541,7 @@ async def q2c_monitor(ctx):
         return Stop(f"invoice_{ps['hold']['state']}", bz.hold_message(ps["hold"]))
     reason = ps["block_reason"]
     cadence = list((ctx.policy.get("reminders") or {}).get("cadence_days_overdue") or [3, 10, 21])
-    max_reminders = min(int((ctx.policy.get("reminders") or {}).get("max_reminders") or 3), len(cadence))
+    max_reminders = min(bz.reminder_limit(ctx.policy), len(cadence))
     info = await ctx.call("read_invoice_status", invoice_id=ctx.state["invoice_id"])
     sent = int(info["reminders_sent"])      # from the invoice record, not from memory
     tomorrow = ctx.now() + timedelta(days=1)
@@ -657,7 +657,7 @@ async def pf_check(ctx):
     if ps["block_reason"] and not (ps["block_reason"] == "invoice_not_overdue" and ctx.params.get("upcoming")):
         return _skipped(ctx, ps["block_reason"], info=info)
     reminders = ctx.policy.get("reminders") or {}
-    max_reminders = int(reminders.get("max_reminders") or 3)
+    max_reminders = bz.reminder_limit(ctx.policy)
     if info["reminders_sent"] >= max_reminders:
         return Stop("reminders_exhausted", f"{info['reminders_sent']} reminders have already been sent for this invoice. This needs your attention.")
     not_before = bz._moment(info.get("next_reminder_at"))

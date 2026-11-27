@@ -19,6 +19,7 @@ import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValu
 import { resultHome } from "../lib/resultHome";
 import ChatDownload from "./agent/ChatDownload";
 import { replyMarkup } from "../lib/replyMarkup";
+import { composerSuggestions } from "../lib/chatSuggestions";
 import "./agent/AgentChat.css";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
@@ -945,14 +946,11 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     return null;
   };
   const last = [...shown].reverse().find((m) => m.role === "assistant");
-  // A reply's buttons only while it is the last thing said and nothing is under way (the owner, 28 Oct: Start and Not now still
-  // showing beside "Working on it…"); otherwise the starters
+  // Reply options belong to the latest unanswered turn.
   const answered = shown.length > 0 && shown[shown.length - 1] !== last;
-  // ... and no starters while a task is under way: they come back with its result (the owner, 28 Oct)
-  const chips = loading || working ? []
-    : last?.failed && !answered ? []
-    : (last?.prompts || []).length && !answered ? last.prompts
-      : shown.some(m => m.role === "user") ? [] : STARTER_PROMPTS.map((q) => ({ label: q, prompt: q }));
+  // Filter against the draft and keep generic starters out of an active conversation.
+  const chips = composerSuggestions({last, answered, hasUser:shown.some(m => m.role === "user"), draft:input,
+    blocked:loading || working, starters:STARTER_PROMPTS.map(q => ({label:q,prompt:q}))});
   return (
     <section aria-label="Agent chat" data-agent-chat className="flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       {/* Earlier conversations and a fresh one, at the top right of the chat (the owner, 27 Oct: out of the suggestions row) */}
@@ -1049,7 +1047,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
       <div data-chat-composer className="shrink-0 border-t border-slate-100 px-3 pb-3 pt-3 dark:border-slate-800 sm:px-5">
         {!history && !loading && chips.length > 0 && <div className="flex items-center gap-2 pb-2.5">
             <div role="group" aria-label="Suggested actions" className="flex min-w-0 flex-1 flex-wrap gap-2" data-chat-chips data-quick-actions={last?.quick || undefined}>
-              {doesItFirst(chips).map((p) => <button key={p.label} type="button" onClick={() => void send(p.prompt)}
+              {(last?.answersQuestion ? chips : doesItFirst(chips)).map((p) => <button key={p.label} type="button" onClick={() => void send(p.prompt)}
                 data-does-it={DOES_IT.test(p.label) || undefined}
                 className="max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[13px] leading-snug text-slate-700 transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">{p.label}</button>)}
             </div>
@@ -1060,7 +1058,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.5l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.3-8.3" /></svg>
           </button>
           <label className="sr-only" htmlFor="agent-chat-input">Message</label>
-          <input ref={inputRef} id="agent-chat-input" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
+          <input ref={inputRef} id="agent-chat-input" autoComplete="off" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
             className="min-w-0 flex-1 bg-transparent py-1.5 text-base text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
           <button type="submit" aria-label="Send" disabled={sendDisabled} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white hover:bg-brand-700 disabled:bg-slate-200 disabled:text-slate-400 dark:disabled:bg-slate-800">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z" /></svg>

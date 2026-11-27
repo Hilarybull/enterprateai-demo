@@ -14,6 +14,22 @@ from typing import Any, Callable
 from app.modules.agent.models import Actor
 
 
+def reminder_limit(policy: dict) -> int:
+    value = (policy.get("reminders") or {}).get("max_reminders")
+    return max(0, int(3 if value is None else value))
+
+
+def payment_terms_days(record: dict, policy: dict) -> int:
+    """Explicit zero means payment is due immediately, including on customer records."""
+    default = policy.get("default_payment_terms_days")
+    default = 14 if default in (None, "") else int(default)
+    value = record.get("payment_terms")
+    try:
+        return max(0, int(default if value in (None, "") else value))
+    except (TypeError, ValueError):
+        return max(0, default)
+
+
 class BusinessAccessDenied(Exception):
     pass
 
