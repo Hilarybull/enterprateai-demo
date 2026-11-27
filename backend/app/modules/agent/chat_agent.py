@@ -77,6 +77,7 @@ Never invent figures, customers, prices or results. Never state a price for the 
 - A timeout notice in conversation history is not proof that background work failed or that nothing was saved. Check current task or case records before reporting its outcome. Keep labelled landing answers tied to their original question: traction, revenue and prior funding are different facts. Do not reinterpret an unspecified answer as one of them or merge a new funding request with unrelated existing cases.
 - If a tool says a price must be agreed first, tell them its price and ask; call it again with price_agreed true only after \
 they say yes.
+- Report research_status as recorded. completed means saved findings/drafts can be reviewed now; interrupted means it is no longer running. Never say "may still be running" or "when they arrive" without a running status. Read the saved drafts and results before answering a results request.
 - Saved landing-page answers already count toward readiness. A partial score is a real score from answers so far: say N/100 so far, never "no score yet" when score is numeric. Unfinished areas may contain answers already saved; distinguish missing details from an entirely unanswered area. Never ask users to reconfirm recorded answers without a conflict or a requested change.
 - Funding and launch readiness: use readiness_status to answer how ready they are, their score, what's left and what was found. For anything to do on a funding case or launch plan (change an amount or purpose, answer what's left, draft the rest, search for funding options, approve drafts, start one), call work_on_funding or work_on_launch with the owner's own words, exactly as they said them; a reply to what that module asked ("yes, start", "replace it") goes back to it the same way.
 - When selected_readiness_item is present, work on that exact item in its case. Forward the full request and issue details to its specialist. Never turn it into general research, drafting the rest, or listing all remaining tasks. A saved research run does not mean that this item was fixed. For currency conversion use convert_currency to fetch a verified rate and date, show the converted amount and ask before saving it. Do not ask the owner to calculate it or provide a rate before trying the shared converter. Never invent a rate or silently change the workspace currency.
@@ -306,7 +307,16 @@ async def readiness_status(orch, user: dict, business_id: str, kind: str) -> dic
     subjects = await _subjects_with_summary(user, business_id, kind)
     data = await orch.rt.business.load(business_id) or {}
     found = converse.option_cards(converse.options_found(data)) if kind == "funding" else []
-    out = [{"title": s.get("title"), "score": (s.get("summary") or {}).get("score"),
+    from app.modules.agent import research, assistant_context
+    def execution(subject):
+        cid = str(subject.get("id") or "")
+        state = research.research_state(data, "need_funding" if kind == "funding" else kind, case_id=cid)
+        running = assistant_context.working(data, cid, orch.rt.clock())
+        old_runs = [r for r in research._runs(data).values() if str(r.get("case_id") or "") == cid]
+        status = "running" if running else "completed" if state.get("run_id") else "interrupted" if any(r.get("status") == "researching" for r in old_runs) else "not_started"
+        return {"research_status": status, "research_credits_charged": sum(int(r.get("charged") or 0) for r in old_runs),
+                "draft_values_ready": list((subject.get("data") or {}).get("agent_drafts") or {})}
+    out = [{**execution(s), "title": s.get("title"), "score": (s.get("summary") or {}).get("score"),
             "score_partial": bool((s.get("summary") or {}).get("score_partial")),
             "recorded_answers": {key: (s.get("data") or {}).get(key) for key in ("target_amount", "currency", "purpose", "route_preference", "receipt_date", "stage", "traction", "economics") if (s.get("data") or {}).get(key) not in (None, "", {}, [])}, "how_ready": (s.get("summary") or {}).get("headline"),
             "blockers": (s.get("summary") or {}).get("blocker_count"), "unfinished": (s.get("summary") or {}).get("unfinished_areas") or [],

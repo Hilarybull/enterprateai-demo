@@ -283,3 +283,20 @@ def test_readiness_tool_uses_canonical_partial_score_and_saved_answers(monkeypat
     assert result["score"] == score and result["score_partial"] is True
     assert result["recorded_answers"]["purpose"] == "Hiring"
     assert result["recorded_answers"]["traction"]["summary"] == "No traction yet"
+
+
+def test_readiness_status_distinguishes_saved_results_from_interrupted_work(monkeypatch):
+    from datetime import datetime, timezone
+    from app.modules.agent import router, research
+    env=Env();data=env.businesses["A"]["data"]
+    record={"id":"r","case_id":"case","goal":"need_funding","status":"researching","created_at":datetime.now(timezone.utc).isoformat(),"charged":0,"items":[]}
+    research._runs(data)["r"]=record
+    async def subjects(*args):
+        return [{"id":"case","data":{"agent_drafts":{"purpose":{"value":"Hiring"}}},"summary":{"score":6,"score_partial":True}}]
+    monkeypatch.setattr(router,"_subjects_with_summary",subjects)
+    status=run(chat_agent.readiness_status(env.orch,USER,"A","funding"))["funding"][0]
+    assert status["research_status"]=="interrupted" and status["research_credits_charged"]==0
+    record.update(status="review",charged=60)
+    status=run(chat_agent.readiness_status(env.orch,USER,"A","funding"))["funding"][0]
+    assert status["research_status"]=="completed" and status["research_credits_charged"]==60
+    assert status["draft_values_ready"]==["purpose"]
