@@ -15,8 +15,8 @@ export const PLANS = [
     cta: "Get started free",
     ctaStyle: "solid",
     features: [
-      "50 welcome AI credits (one-off, no expiry)",
-      "AI Agent access (credit-based)",
+      "200 AI credits for your 14-day trial",
+      "All features for 14 days",
       "1 user seat",
       "Invoices, Quotes, Receipts & Contracts",
       "Expense, Customer & Product Records",
@@ -168,6 +168,8 @@ export const STARTER_ALLOWED_SCENARIOS = ["tmpl_client_loss", "tmpl_payment_dela
  * The baseline projection ("do_nothing_projection") is always allowed.
  */
 export function planAllowsScenario(planKey, scenarioTemplateId, status) {
+  if (status === "expired") return false;
+  if (status === "trial") return true;
   if (status === "grandfathered") return true;
   if (!scenarioTemplateId || scenarioTemplateId === "do_nothing_projection") return true;
   const normalised = normalisePlanKey(planKey);
@@ -187,6 +189,8 @@ export function planRank(planKey) {
  * Returns true if the user's plan grants access to this module.
  */
 export function planHasModuleAccess(planKey, moduleKey, status) {
+  if (status === "expired") return false;
+  if (status === "trial") return true;
   if (status === "grandfathered") return true;
   const normalised = normalisePlanKey(planKey);
   const effectivePlan = (normalised === "explorer" && status === "expired")
@@ -235,6 +239,7 @@ export function planLabel(planKey, status) {
  */
 export function accessLabel(subscription) {
   const source = subscription?.access_source;
+  if (source === "14-day trial") return "14-day trial · all features";
   if (source === "admin full-access grant") return "Full access (test grant)";
   if (source === "early-access account" || subscription?.status === "grandfathered") return "Early Access";
   if (source === "your team's plan") return `${planLabel(subscription?.plan_key, "active")} (team)`;      // a member works under the team's plan
@@ -244,6 +249,7 @@ export function accessLabel(subscription) {
 // Paid features (proposals, RFQ replies, multiple listings) need Starter or above.
 // Mirrors has_paid_access() in backend/app/modules/plans/access.py.
 export function hasPaidAccess(planKey, status) {
+  if (status === "trial") return true;
   if (status === "grandfathered") return true;
   if (status === "trial" || status === "expired") return false;
   return planRank(planKey) >= planRank("starter_insight");

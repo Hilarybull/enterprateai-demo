@@ -88,6 +88,7 @@ class BusinessStateSnapshot(BaseModel):
     payroll_gross_monthly_per_person: float | None = Field(default=None, ge=0)
     payroll_in_recorded_expenses: bool | None = None                        # True: salaries are already in the expenses
     employer_pension_pct: float | None = Field(default=None, ge=0, le=100)   # overrides the country's minimum
+    employee_benefits_monthly: float | None = Field(default=None, ge=0)
     # Phase 6 (model 1.5): from the business's records (records.py), set by the server
     current_month_recorded: Dict[str, Any] | None = None     # this month so far: {month, revenue, cost_of_sales, expenses, ...}
     figure_notes: List[str] = Field(default_factory=list)    # why a figure differs from the dashboard's, in words

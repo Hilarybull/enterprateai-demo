@@ -1,4 +1,5 @@
 import { validateSimulationInputs, validateSimulationSettings } from "../lib/simulationValidation";
+import ForecastArchive from "../components/ForecastArchive";
 import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
@@ -593,11 +594,15 @@ export default function SimulationPage() {
     }
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onFocus);
+    const refreshTimer = window.setInterval(onVisible, 30000);
+    window.addEventListener("ea:operations:changed", onFocus);
 
     return () => {
       alive = false;
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("ea:operations:changed", onFocus);
     };
   }, [workspaceId, workspaceDataRefreshTrigger]);
 
@@ -798,7 +803,7 @@ export default function SimulationPage() {
     }
   }
 
-  const snapshotHash = useMemo(() => JSON.stringify(stateSnapshot || {}), [stateSnapshot]);
+  const snapshotHash = useMemo(() => JSON.stringify({state:stateSnapshot,records:financialsData}), [stateSnapshot,financialsData]);
   const lastManualTemplateIdRef = useRef(null);
 
   useEffect(() => {
@@ -1241,6 +1246,7 @@ export default function SimulationPage() {
               }
               subtitle={autoProjectionLoading ? "Updating baseline projection." : undefined}
             >
+              <ForecastArchive key={businessId} businessId={businessId} tenantId={tenantId} state={runState} />
               <ScenarioOutput
                 activeRun={projectionRun}
                 timeline={projectionTimeline}
@@ -2682,10 +2688,10 @@ export function ScenarioOutput({
                 <div className="font-semibold text-slate-800">This month ({projectionSummary.current_month.label})</div>
                 <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-3">
                   <div><span className="text-slate-500">Recorded so far: </span>revenue {formatCurrency(projectionSummary.current_month.recorded_so_far.revenue, currency)} · costs {formatCurrency(projectionSummary.current_month.recorded_so_far.costs, currency)}</div>
-                  <div><span className="text-slate-500">Rest of month ({projectionSummary.current_month.rest_of_month.days} days): </span>revenue {formatCurrency(projectionSummary.current_month.rest_of_month.revenue, currency)} · costs {formatCurrency(projectionSummary.current_month.rest_of_month.costs, currency)}</div>
-                  <div><span className="text-slate-500">Month total: </span>revenue {formatCurrency(projectionSummary.current_month.month_total.revenue, currency)} · profit {formatCurrency(projectionSummary.current_month.month_total.profit, currency)}</div>
+                  <div><span className="text-slate-500">Actual profit so far: </span>{formatCurrency(projectionSummary.current_month.recorded_so_far.profit, currency)}</div>
+                  <div>Actuals only · forecasts start next month.</div>
                 </div>
-                <div className="mt-1"><span className="text-slate-500">Cash: </span>{formatCurrency(projectionSummary.current_month.cash_today, currency)} today → {formatCurrency(projectionSummary.current_month.cash_at_month_end, currency)} at the end of the month</div>
+                <div className="mt-1"><span className="text-slate-500">Recorded cash today: </span>{formatCurrency(projectionSummary.current_month.cash_today, currency)}</div>
                 <div className="mt-1 text-slate-500">{projectionSummary.current_month.recorded_so_far.source}. {projectionSummary.current_month.explanation}</div>
               </div>
             ) : null}
@@ -2766,18 +2772,13 @@ export function ScenarioOutput({
               <tbody>
                 {projectionSummary?.current_month ? (
                   <tr className="border-t border-slate-100 bg-slate-50/70" data-current-month-row
-                    title={`Recorded so far ${formatCurrency(projectionSummary.current_month.recorded_so_far.revenue, currency)} + rest of the month ${formatCurrency(projectionSummary.current_month.rest_of_month.revenue, currency)}`}>
-                    <td className="sticky left-0 z-10 bg-slate-50 px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{projectionSummary.current_month.label} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-1 text-[11px] text-indigo-700">Current month</span><div className="mt-1 text-[11px] font-normal text-slate-500">Recorded so far + rest of month</div></td>
-                    <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.revenue, currency)}</td>
-                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
-                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
-                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
-                    <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.costs, currency)}</td>
-                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
-                    <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">—</td>
-                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.month_total.profit, currency)}</td>
-                    <td className="px-3 py-2 text-right font-semibold whitespace-nowrap text-slate-700">{formatCurrency(projectionSummary.current_month.cash_at_month_end, currency)}</td>
-                    <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">This month</td>
+                    title="Recorded Business Operations actuals; no forecast for this month">
+                    <td className="sticky left-0 z-10 bg-slate-50 px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{projectionSummary.current_month.label} <span className="ml-1 rounded-full bg-indigo-100 px-2 py-1 text-[11px] text-indigo-700">Actual to date</span></td>
+                    {["revenue", "receivables", "expenses", "cost_of_sales", "costs", "gross_profit"].map(key => <td key={key} className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.recorded_so_far[key], currency)}</td>)}
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{projectionSummary.current_month.recorded_so_far.gross_margin_pct != null ? `${projectionSummary.current_month.recorded_so_far.gross_margin_pct}%` : "—"}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{formatCurrency(projectionSummary.current_month.recorded_so_far.profit, currency)}</td>
+                    <td className="px-3 py-2 text-right font-semibold whitespace-nowrap text-slate-700">{formatCurrency(projectionSummary.current_month.cash_today, currency)}</td>
+                    <td className="px-3 py-2 text-left text-slate-500 whitespace-nowrap">In progress</td>
                   </tr>
                 ) : null}
                 {timelineRows.map((row) => {

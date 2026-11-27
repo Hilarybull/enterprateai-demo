@@ -19,6 +19,7 @@ import FirstValueCard, { fetchFirstValue, rememberFirstValue } from "./FirstValu
 import { resultHome } from "../lib/resultHome";
 import ChatDownload from "./agent/ChatDownload";
 import { replyMarkup } from "../lib/replyMarkup";
+import "./agent/AgentChat.css";
 
 // The mockup's four (the owner, 27 Oct): each goes to its own page's conversation, or is answered here
 const STARTER_PROMPTS = ["I need funding", "Validate a new idea", "Am I ready to launch?", "Draft a quotation"];
@@ -176,6 +177,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const act = useMemo(() => chatActions(bizId), [bizId]);
   const [editing, setEditing] = useState(null);      // the draft the next message changes ("Edit", typed in the chat)
   const fileRef = useRef(null);
+  const inputRef = useRef(null);
   useEffect(() => {
     const upload = () => { if (!loading && bizId) fileRef.current?.click(); };
     window.addEventListener("ea:chat-upload", upload);
@@ -579,27 +581,33 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   const sendDisabled = !String(input || "").trim() || loading;
   const resumedReply = useRef(null);
   async function pickUpReply(businessId) {
+    const owner = useAuthStore.getState().email;
+    const stillHere = () => !gone.current && useWorkspaceStore.getState().workspaceId === businessId && useAuthStore.getState().email === owner;
+    const restoreRequest = (previous, text) => !text || [...previous].reverse().find(m => m.role === "user")?.content === text
+      ? previous : [...previous, { role: "user", content: text }];
     setLoading(true);
     try {
       const pending = pendingAgentReply(businessId);
-      if (pending?.job_id) {
-        const snapshot = await apiRequest(`/businesses/${encodeURIComponent(businessId)}/agent/replies/${encodeURIComponent(pending.job_id)}`);
-        if (gone.current || useWorkspaceStore.getState().workspaceId !== businessId) return;
-        if (snapshot.chat_id) setChatId(snapshot.chat_id);
-        if (snapshot.user_message) setMessages(previous => [...previous].reverse().find(m => m.role === "user")?.content === snapshot.user_message
-          ? previous : [...previous, { role: "user", content: snapshot.user_message }]);
-      }
-      const result = await resumeAgentReply(businessId);
-      if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) await deliver(result, businessId);
+      const snapshot = await resumeAgentReply(businessId, pending, { withContext: true });
+      if (!stillHere()) return;
+      if (snapshot.chat_id) setChatId(snapshot.chat_id);
+      setMessages(previous => restoreRequest(previous, snapshot.user_message));
+      await deliver(snapshot.result, businessId);
     }
-    catch (error) { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setMessages(prev => [...prev, { role: "assistant", content: error.message, recoverReply: error.code === "AGENT_REPLY_PENDING" }]); }
-    finally { if (!gone.current && useWorkspaceStore.getState().workspaceId === businessId) setLoading(false); }
+    catch (error) {
+      if (!stillHere() || error.code === "AGENT_REPLY_CONTEXT_CHANGED") return;
+      if (error.chatId) setChatId(error.chatId);
+      setMessages(previous => [...restoreRequest(previous, error.userMessage), { role: "assistant", content: error.message,
+        recoverReply: error.code === "AGENT_REPLY_PENDING", retryText: error.code === "AGENT_REPLY_FAILED" ? error.userMessage : null }]);
+    }
+    finally { if (stillHere()) setLoading(false); }
   }
   useEffect(() => {
     const pending = bizId && pendingAgentReply(bizId);
-    if (!pending || sent.current || resumedReply.current === pending.job_id || new URLSearchParams(window.location.search).has("chat")) return;
+    const pendingId = pending?.job_id || pending?.request_id;
+    if (!pendingId || sent.current || resumedReply.current === pendingId || new URLSearchParams(window.location.search).has("chat")) return;
     if (restoredFor !== bizId) { setLoading(true); return; }
-    resumedReply.current = pending.job_id;
+    resumedReply.current = pendingId;
     void pickUpReply(bizId);
   }, [bizId, restoredFor]); // Resume the saved job, never submit the funding request again.
   // Named for the conversation, never the business (the owner, 27 Oct: "why is the chat name E2E Car Wash Abuja")
@@ -843,8 +851,9 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: "smooth" });
       });
     } catch (error) {
-      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId) return;
-      setMessages((prev) => [...prev, { role: "assistant", content: error.code === "AGENT_REPLY_PENDING" || error.code === "AGENT_REPLY_FAILED" ? error.message : agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again."), recoverReply: error.code === "AGENT_REPLY_PENDING" }]);
+      if (gone.current || useWorkspaceStore.getState().workspaceId !== agentBusinessId || error.code === "AGENT_REPLY_CONTEXT_CHANGED") return;
+      setMessages((prev) => [...prev, { role: "assistant", content: error.code === "AGENT_REPLY_PENDING" || error.code === "AGENT_REPLY_FAILED" ? error.message : agentErrorMessage(error, "I couldn't do that right now. Nothing was changed; please try again."), recoverReply: error.code === "AGENT_REPLY_PENDING",
+        retryText: error.code === "AGENT_REPLY_FAILED" ? error.userMessage || question : null }]);
     } finally {
       if (!gone.current && useWorkspaceStore.getState().workspaceId === agentBusinessId) setLoading(false);
     }
@@ -895,7 +904,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
   // A conversation carried on is never greeted again (the owner, 1 Nov: "it already greeted me"): the greeting only opens a new one
   const greetedAlready = restored > 0 && said.slice(0, restored).some((m) => m.role === "assistant");
   const shown = !ready ? said : restored ? (greetedAlready ? said : inOrder([...said.slice(0, restored), ...opening, ...said.slice(restored)])) : [...opening, ...said];
-  const bubble = "whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-[1.5]";
+  const bubble = "whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-[15px] leading-relaxed";
   const card = (c, key, siblings = []) => {
     if (c.type === "progress" && c.case_id) return <ReadinessProgress key={key} businessId={bizId} item={c} onReady={(result) => {
       setMessages(previous => previous.map(message => ({ ...message, cards: message.cards?.map(item => item.type === "progress" && item.case_id === c.case_id && Boolean(item.options) === Boolean(c.options) ? result : item) })));
@@ -919,7 +928,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         <ul className="mt-2 grid gap-1 sm:grid-cols-2">{(ctx?.records || []).map((item) => <li key={item.key} className="flex justify-between gap-3 text-slate-600"><span>{item.label}</span><span className={item.available ? "text-emerald-700" : "text-slate-400"}>{item.detail}</span></li>)}</ul>
       </section>;
       if (readiness) return <section key={key} aria-label={c.type === "next" ? "Recommended next step" : "Readiness result"} data-readiness-card={c.type} className="max-w-xl rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-sm">
-        <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
+        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row"><div className="min-w-0"><p className="font-semibold text-slate-900">{readiness.title}{typeof readiness.score === "number" ? ` · ${readiness.score}/100` : ""}</p>
           <p className="mt-1 text-slate-700">{readiness.detail}</p></div>
           <button type="button" disabled={loading} onClick={() => send(`List every remaining item for ${readiness.title} here and help me work through them one at a time.`, { readinessList: { topic: readiness.kind === "launch" ? "launch" : "funding", caseId: c.case_id } })} className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-blue-700">See next steps</button></div>
       </section>;
@@ -948,6 +957,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
     <section aria-label="Agent chat" data-agent-chat className="flex h-full min-h-0 min-w-0 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       {/* Earlier conversations and a fresh one, at the top right of the chat (the owner, 27 Oct: out of the suggestions row) */}
       <div className="flex shrink-0 items-center justify-end gap-1 border-b border-slate-100 px-3 py-1.5 dark:border-slate-800" data-chat-header>
+        <span className="mr-auto flex min-w-0 items-center gap-2 px-1 text-sm font-semibold text-slate-700 dark:text-slate-200"><span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-brand-500" />Your conversation</span>
         {actions}
         <button type="button" onClick={openHistory} aria-pressed={Boolean(history)} data-chat-history-button aria-label="History" title="Earlier conversations"
           className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 dark:hover:bg-slate-800">
@@ -981,7 +991,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
           )}
         </div>
       )}
-      <div ref={listRef} data-conversation-panel className={`min-h-0 flex-1 space-y-4 overflow-auto px-4 py-5 sm:px-6 ${history ? "hidden" : ""}`}>
+      <div ref={listRef} data-conversation-panel aria-label="Conversation messages" className={`min-h-0 flex-1 space-y-5 overflow-auto overscroll-contain px-3 py-4 sm:px-6 sm:py-5 ${history ? "hidden" : ""}`}>
         {!ready && !loading && (
           <div className="space-y-3" aria-busy="true" aria-label="Checking your business" data-chat-skeleton>
             <div className="flex items-start gap-3"><span className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-slate-100 dark:bg-slate-800" />
@@ -991,17 +1001,18 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         )}
         {shown.map((message, index) => (message.role === "user" ? (
           <div key={`u-${index}`} className="flex flex-col items-end">
-            <p className={`${bubble} max-w-[80%] bg-blue-50 text-slate-900 dark:bg-brand-950/50 dark:text-slate-50`}>{message.content}</p>
+            <p className={`${bubble} max-w-[90%] bg-blue-50 text-slate-900 sm:max-w-[85%] dark:bg-brand-950/50 dark:text-slate-50`}>{message.content}</p>
             {message.at && <span className="mt-1 text-[12px] text-slate-500">{clock(message.at)}</span>}
           </div>
         ) : (
           <div key={`a-${index}`} className="flex flex-col gap-3">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-brand-950/40"><Spark /></span>
+            <div className="flex items-start gap-2 sm:gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-50 sm:h-10 sm:w-10 dark:bg-brand-950/40"><Spark /></span>
               <div className={`min-w-0 ${message.check ? "flex-1" : ""}`}>
                 {message.content && <p className={`${bubble} bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100`}><Rich text={message.content} /></p>}
                 {message.content ? <ReplyTools text={message.content} at={message.at} /> : message.at && <span className="mt-1 block text-[12px] text-slate-500">{clock(message.at)}</span>}
                 {message.recoverReply && <button type="button" disabled={loading} onClick={() => pickUpReply(bizId)} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-700 disabled:opacity-50">Check reply</button>}
+                {message.retryText && <button type="button" disabled={loading} onClick={() => { setInput(message.retryText); inputRef.current?.focus(); }} className="mt-2 min-h-11 rounded-lg border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-700 disabled:opacity-50">Edit and retry</button>}
                 {message.check && <button type="button" onClick={() => send(message.check.said || "Help me continue this check")} className="mt-2 min-h-11 rounded-lg border border-brand-200 px-3 py-2 text-sm font-semibold text-brand-700">Continue this check here</button>}
                 {message.link && (
                   <a href={message.link} onClick={() => noteCameFrom(chatId, message.link)} className="mt-2 inline-block rounded-lg border border-brand-600 px-3 py-1.5 text-[13px] font-semibold text-brand-700 hover:bg-brand-50">
@@ -1026,7 +1037,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
                 )}
               </div>
             </div>
-            {cardsToShow(shown, index).length > 0 && <div className="space-y-3">{cardsToShow(shown, index).map((c, j) => <div key={j} className="sm:pl-[3.25rem]">{card(c, j, shown[index].cards || [])}</div>)}</div>}
+            {cardsToShow(shown, index).length > 0 && <div className="space-y-3" data-chat-cards>{cardsToShow(shown, index).map((c, j) => <div key={j} className="min-w-0 sm:pl-[3.25rem]">{card(c, j, shown[index].cards || [])}</div>)}</div>}
           </div>
         )))}
         {loading || working ? (
@@ -1035,7 +1046,7 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         ) : null}
         {flow.element}
       </div>
-      <div className="shrink-0 border-t border-slate-100 px-4 pb-3 pt-2.5 dark:border-slate-800 sm:px-5">
+      <div data-chat-composer className="shrink-0 border-t border-slate-100 px-3 pb-3 pt-3 dark:border-slate-800 sm:px-5">
         {!history && !loading && chips.length > 0 && <div className="flex items-center gap-2 pb-2.5">
             <div role="group" aria-label="Suggested actions" className="flex min-w-0 flex-1 flex-wrap gap-2" data-chat-chips data-quick-actions={last?.quick || undefined}>
               {doesItFirst(chips).map((p) => <button key={p.label} type="button" onClick={() => void send(p.prompt)}
@@ -1045,13 +1056,13 @@ export default function BusinessAssistant({ actions = null, ctx = null, work = [
         </div>}
         <form className="flex items-center gap-2 rounded-2xl border border-slate-200 py-2 pl-4 pr-2 dark:border-slate-700" onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <input ref={fileRef} type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void attachFile(f); }} data-chat-file />
-          <button type="button" aria-label="Attach a document" onClick={() => fileRef.current?.click()} className="p-1 text-slate-500 hover:text-slate-800">
+          <button type="button" aria-label="Attach a document" onClick={() => fileRef.current?.click()} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.5l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.3-8.3" /></svg>
           </button>
           <label className="sr-only" htmlFor="agent-chat-input">Message</label>
-          <input id="agent-chat-input" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
-            className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
-          <button type="submit" aria-label="Send" disabled={sendDisabled} className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300">
+          <input ref={inputRef} id="agent-chat-input" value={input} onChange={(e) => setInput(e.target.value)} placeholder={editing ? `What should change in ${editing.title}?` : "Ask EnterprateAI anything…"} maxLength={4000}
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-base text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
+          <button type="submit" aria-label="Send" disabled={sendDisabled} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white hover:bg-brand-700 disabled:bg-slate-200 disabled:text-slate-400 dark:disabled:bg-slate-800">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z" /></svg>
           </button>
         </form>

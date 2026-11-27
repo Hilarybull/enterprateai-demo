@@ -119,6 +119,8 @@ def expense_kind(expense: Dict[str, Any]) -> str:
     """"direct", "payroll" or "other", from an expense's category and description."""
     if expense.get("expense_type") == "staff_payments":
         return "payroll"
+    if expense.get("expense_type") == "cost_of_sales" or expense.get("category") == "cost_of_sales":
+        return "direct"
     text = f"{expense.get('category') or ''} {expense.get('description') or ''}"
     if PAYROLL_RX.search(text):
         return "payroll"

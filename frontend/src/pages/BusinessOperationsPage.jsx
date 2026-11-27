@@ -1,4 +1,6 @@
 import { EXPENSE_TYPES, expenseType, expenseCategory, expenseParty } from "../lib/expenses";
+import { linkSupplierCosts, vendorDueDate } from "../lib/supplierCosts";
+import { monthlyEmployeePay } from "../lib/payroll";
 import UkDateInput from "../components/UkDateInput";
 import { pipelineCounts } from "../lib/pipelineCounts";
 import Pagination, { pageSlice, useUrlValue } from "../components/Pagination";
@@ -839,7 +841,7 @@ function RecordDeliveryModal({ invoice, onRecord, onClose }) {
   );
 }
 
-export function RecordModal({ mode, type, record, customers, employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
+export function RecordModal({ mode, type, record, customers, vendors = [], employees = [], catalogueProducts = [], allKnownCustomers, workspaceName, wsCurrency: givenCurrency = null, onSave, onClose, onRecordPayment, refLabel, nextRef, receiptMode, lockedPartyType, saveError }) {
   const isView = mode === "view";
   const title = isView ? "View " : (mode === "edit" ? "Edit " : "New ");
   const typeLabel = receiptMode ? "Receipt" : type === "invoice" ? "Invoice" : type === "quote" ? "Quotation" : type === "expense" ? "Expense" : "Contract";
@@ -882,10 +884,12 @@ export function RecordModal({ mode, type, record, customers, employees = [], cat
       vat_rate: record?.vat_rate != null ? String(record.vat_rate) : "0",
       line_items: (() => {
         if (Array.isArray(record?.line_items) && record.line_items.length > 0)
-          return record.line_items.map(i => ({ ...i, vat_rate: undefined }));
+          return record.line_items.map((i,index) => ({ ...i, id:i.id || `line-${index}`, vat_rate: undefined }));
+        if (Array.isArray(record?.items) && record.items.length > 0)
+          return record.items.map((i,index) => ({...i,id:i.id || `line-${index}`,description:i.description || i.product_name,qty:i.qty ?? i.quantity ?? 1,cost_of_sales:i.cost_of_sales ?? i.unit_cost_of_sales ?? 0}));
         const desc = Array.isArray(record?.product_names) ? record.product_names[0] || "" : (record?.product_name || record?.description || record?.title || record?.service_name || "");
         const unitPrice = record?.total_amount || record?.amount || record?.price || "";
-        return [{ id: Math.random().toString(36).slice(2), description: desc, qty: "1", unit_price: unitPrice ? String(unitPrice) : "", cost_of_sales: "" }];
+        return [{ id: Math.random().toString(36).slice(2), description: desc, qty: "1", unit_price: unitPrice ? String(unitPrice) : "", cost_of_sales: record?.cost_of_sales ?? "" }];
       })(),
     };
   });
@@ -893,7 +897,7 @@ export function RecordModal({ mode, type, record, customers, employees = [], cat
   const [showPaymentModal, setShowPaymentModal] = React.useState(false);
   const [validationError, setValidationError] = React.useState(saveError || null);
 
-  function set(k) { return v => setForm(f => ({ ...f, [k]: v })); }
+  function set(k) { return v => setForm(f => ({ ...f, [k]: v, ...(k === "issued_at" ? {line_items:(f.line_items || []).map(line => line.vendor_id && !line.supplier_due_date_manual ? {...line,supplier_due_date:vendorDueDate(vendors.find(vendor=>vendor.id===line.vendor_id),v)} : line)} : {}) })); }
 
   // Line item helpers
   const [cataloguePicker, setCataloguePicker] = useState(false);
@@ -1332,7 +1336,19 @@ ${form.notes ? `<!-- NOTES -->
                             className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
                         </div>
                       </div>
-                      <div className="flex justify-end text-[11px] text-slate-500">
+                      <div className="flex flex-wrap justify-end gap-2 text-[11px] text-slate-500">
+                        {type === "invoice" && <div className="w-full min-w-0 space-y-2 text-left">
+                          <label className="block text-xs font-medium text-slate-600">Vendor / supplier (optional)
+                            <select aria-label={`Supplier for line ${idx + 1}`} className="ea-input mt-1" value={item.vendor_id || ""} onChange={e => {
+                              const vendor = vendors.find(v => v.id === e.target.value);
+                              setForm(f => ({...f,line_items:f.line_items.map(line => line.id === item.id ? {...line,vendor_id:e.target.value,supplier_due_date:vendorDueDate(vendor,f.issued_at),supplier_due_date_manual:false} : line)}));
+                            }}><option value="">Cost estimate only</option>{vendors.filter(v => !v.archived).map(v => <option key={v.id} value={v.id}>{v.name || v.vendor_name}</option>)}</select>
+                          </label>
+                          {item.vendor_id && <label className="block text-xs font-medium text-slate-600">Supplier bill due date
+                            <UkDateInput value={item.supplier_due_date || ""} onChange={value => setForm(f=>({...f,line_items:f.line_items.map(line=>line.id===item.id?{...line,supplier_due_date:value,supplier_due_date_manual:true}:line)}))} className="ea-input mt-1" />
+                            <span className="block text-[11px] font-normal">From vendor payment terms; change if needed. The bill appears in Expenses when saved.</span>
+                          </label>}
+                        </div>}
                         Line total: <span className="ml-1 font-semibold text-slate-700">{formatCurrency(lineTotal, form.currency || wsIso)}</span>
                       </div>
                     </div>
@@ -1644,7 +1660,7 @@ ${form.notes ? `<!-- NOTES -->
             </Field>
             {form.expense_type === "other" && !isView ? <Field label="What type of expense?"><TextInput aria-label="Other expense type" value={form.expense_type_other} onChange={set("expense_type_other")} placeholder="For example, training or insurance" /></Field> : null}
             {form.expense_type === "staff_payments" ? <Field label="Employee">
-              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employees.find(emp => emp.id === e.target.value)?.name || "" }))}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
+              {isView ? <div className="text-sm font-medium text-slate-900">{expenseParty(form, employees)}</div> : <><select aria-label="Employee" className="ea-input" value={form.employee_id} onChange={e => { const employee = employees.find(emp => emp.id === e.target.value); const pay = monthlyEmployeePay(employee); setForm(f => ({ ...f, employee_id: e.target.value, employee_name: employee?.name || "", ...(pay != null ? {amount:String(pay)} : {}) })); }}><option value="">Select an employee</option>{employees.filter(e => !e.archived || e.id === form.employee_id).map(e => <option key={e.id} value={e.id}>{e.name}{e.archived ? " (archived)" : ""}</option>)}{form.employee_id && !employees.some(e => e.id === form.employee_id) ? <option value={form.employee_id}>{form.employee_name || "Former employee"}</option> : null}</select><p className="mt-1 text-xs text-slate-500">From <a href="/catalogue?tab=employees" className="text-indigo-600 underline">Employees in Master records</a>.</p></>}
             </Field> : <Field label="Vendor / Supplier">
               {isView ? <div className="text-sm font-medium text-slate-900">{form.vendor_name || "—"}</div> : <TextInput aria-label="Vendor / Supplier" value={form.vendor_name} onChange={set("vendor_name")} placeholder="Vendor name" />}
             </Field>}
@@ -1863,6 +1879,7 @@ export default function BusinessOperationsPage() {
   const [rfqAgent, setRfqAgent] = useState({});      // request id -> where the Agent has got to with it
   const [customers, setCustomers] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [vendors, setVendors] = useState([]);
   const [catalogueProducts, setCatalogueProducts] = useState([]);
   const [recordModal, setRecordModal] = useState(null);
 
@@ -1964,6 +1981,7 @@ export default function BusinessOperationsPage() {
     setSentRfqs(Array.isArray(fin.sent_rfqs) ? fin.sent_rfqs : []);
     setCustomers(Array.isArray(cat.customers) ? cat.customers : []);
     setEmployees(Array.isArray(cat.employees) ? cat.employees : []);
+    setVendors(Array.isArray(cat.vendors) ? cat.vendors : []);
     setCatalogueProducts(Array.isArray(cat.products) ? cat.products : []);
     setRecordsIn(true);
   }
@@ -2605,6 +2623,11 @@ export default function BusinessOperationsPage() {
     const type = recordModal?.type;
     let persistPayload = null;
     if (type === "invoice") {
+      try {
+        const linked = linkSupplierCosts(saved, expenses, vendors);
+        saved = linked.invoice;
+        persistPayload = {expenses:linked.expenses};
+      } catch(error) { setRecordModal({...recordModal,record:saved,saveError:error.message}); return; }
       const existing = invoices.find(i => i.id === saved.id);
       if (!existing && (!saved.reference || isUuidLike(saved.reference))) {
         saved.reference = "";
@@ -2613,7 +2636,9 @@ export default function BusinessOperationsPage() {
       }
       const next = existing ? invoices.map(i => i.id === saved.id ? saved : i) : [...invoices, { ...saved, created_at: new Date().toISOString() }];
       setInvoices(next);
-      persistPayload = { invoices: next, quotes, expenses, contracts };
+      const linkedExpenses = persistPayload.expenses;
+      setExpenses(linkedExpenses);
+      persistPayload = { invoices: next, quotes, expenses:linkedExpenses, contracts };
     } else if (type === "quote") {
       const existing = quotes.find(q => q.id === saved.id);
       if (!existing && (!saved.reference || isUuidLike(saved.reference))) {
@@ -2641,14 +2666,16 @@ export default function BusinessOperationsPage() {
     }
     const modal = recordModal;
     const before = invoices;
+    const beforeExpenses = expenses, beforeQuotes = quotes, beforeContracts = contracts;
     setRecordModal(null); // close immediately — persist happens in background
-    if (persistPayload) persist(persistPayload).catch((e) => {
+    if (persistPayload) persist(persistPayload).then(() => window.dispatchEvent(new CustomEvent("ea:operations:changed"))).catch((e) => {
       const detail = e?.data?.detail;
-      if (type === "invoice" && e?.status === 409 && detail?.code === "duplicate_invoice_number") {
+      if (e) {
         // The number is already used: nothing was saved. Put the list back and reopen the form
         // with what was entered, so the number can be changed.
         setInvoices(before);
-        setRecordModal({ ...modal, record: { ...saved, number_auto: undefined }, saveError: detail.message });
+        setExpenses(beforeExpenses); setQuotes(beforeQuotes); setContracts(beforeContracts);
+        setRecordModal({ ...modal, record: { ...saved, number_auto: undefined }, saveError: detail?.message || e.message || "Your changes could not be saved. Please try again." });
       }
     });
   }
@@ -3758,6 +3785,7 @@ export default function BusinessOperationsPage() {
           record={recordModal.record}
           customers={customers}
           employees={employees}
+          vendors={vendors}
           catalogueProducts={catalogueProducts}
           allKnownCustomers={[...new Set([
             ...invoices.map(i => i.customer_name),

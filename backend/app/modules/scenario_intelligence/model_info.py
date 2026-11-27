@@ -7,6 +7,10 @@ from typing import Any, Dict, List
 from app.modules.scenario_intelligence.projection import MODEL_VERSION
 
 CHANGES: List[Dict[str, Any]] = [
+    dict(version="projection-1.8", date="2026-11-27", summary=[
+        "The current month shows Operations actuals only, separately from future forecasts based on completed months.",
+        "Operations expense dates, monthly receivables, linked supplier bills and employee pay feed the simulation.",
+        "Baseline forecasts can be saved unchanged and compared with recorded actuals as their months arrive."]),
     dict(version="projection-1.7", date="2026-11-25", summary=[
         "One invoice-date basis for sales and costs; weighted payment terms from the last 12 months, using observed delays only with five paid invoices.",
         "Percentage changes apply in full from their start month. Contractor costs can be operating expenses or direct delivery costs.",

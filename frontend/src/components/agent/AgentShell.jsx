@@ -23,7 +23,7 @@ export function AgentIdentity({ subtitle, working = false, as: Title = "p", link
       <AgentAvatar size={32} working={working} />
       <div className="min-w-0">
         <Title className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-bold text-white">
-          EnterprateAI
+          <span>Enterprate<span className="brand-ai">AI</span></span>
           <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-300"><span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-400" />Online</span>
         </Title>
         {subtitle && <p className="mt-0.5 text-[13px] text-white/70" data-agent-subtitle>{subtitle}</p>}

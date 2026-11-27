@@ -551,6 +551,12 @@ async def agent_reply_status(business_id: str, job_id: str, user=Depends(get_cur
     return await reply_jobs.status(get_orchestrator(), user, business_id, job_id)
 
 
+@router.get("/businesses/{business_id}/agent/replies/by-request/{request_id}")
+async def agent_reply_by_request(business_id: str, request_id: str, user=Depends(get_current_user)):
+    from app.modules.agent import reply_jobs
+    return await reply_jobs.status_for_request(get_orchestrator(), user, business_id, request_id)
+
+
 @router.get("/businesses/{business_id}/agent/readiness-items/{topic}/{case_id}")
 async def readiness_items(business_id: str, topic: str, case_id: str, user=Depends(get_current_user)):
     if topic not in {"funding", "launch"}:

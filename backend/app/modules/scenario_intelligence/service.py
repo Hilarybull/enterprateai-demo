@@ -617,7 +617,7 @@ async def create_scenario_run(
     params = validate_parameters(params)
     run_id = str(uuid4())
     now = _now_iso()
-    as_of = as_of or _today()
+    as_of = as_of or (date.fromisoformat(state.current_month_recorded["as_of"]) if (state.current_month_recorded or {}).get("as_of") else _today())
     timeline_months = clamp_months(params.get("timeline_months") or 6)
     params = {**params, "timeline_months": timeline_months}
     timeline, metrics = _timeline(state, scenario_type, params, timeline_months, as_of=as_of)
@@ -1110,7 +1110,7 @@ async def do_nothing_projection(
     """The business as it is, projected forward on the same engine as every scenario (audit F1), with its range, inputs,
     confidence and KPIs (Phase 2). `params` carries only the estimate basis, when the run is from an estimate."""
     from app.modules.scenario_intelligence.uncertainty import analyse
-    as_of = as_of or _today()
+    as_of = as_of or (date.fromisoformat(state.current_month_recorded["as_of"]) if (state.current_month_recorded or {}).get("as_of") else _today())
     forecast, summary = project(state, "do_nothing_projection", {}, timeline_months, clamp=False, as_of=as_of)
     summary["uncertainty"] = analyse(state, "do_nothing_projection", params or {}, summary["months"], as_of, summary, forecast)
     return dict(

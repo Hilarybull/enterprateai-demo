@@ -755,14 +755,17 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
     f = data.get("financials") or {}
     invs = [i for i in f.get("invoices") or [] if not i.get("archived")]
     exps = [e for e in f.get("expenses") or [] if not e.get("archived")]
-    cash_in = sum(in_base(data, i, invoice_received(i)) or 0 for i in invs if status_of(i) == "paid")
+    cash_in = sum(in_base(data, i, invoice_received(i)) or 0 for i in invs if status_of(i) not in {"draft", "void", "voided", "cancelled", "canceled"})
     paid_exps = [e for e in exps if status_of(e) == "paid"]
-    cash_out = sum(money(e.get("price") or e.get("total_amount")) for e in paid_exps)
+    cash_out = sum(in_base(data, e, money(e.get("price") or e.get("amount") or e.get("total_amount")) if status_of(e) == "paid"
+                            else sum(money(p.get("amount")) for p in e.get("payments") or [])) or 0 for e in exps
+                   if status_of(e) not in {"draft", "void", "voided", "cancelled", "canceled"})
     cos = 0.0
     for i in invs:
-        if status_of(i) == "paid":
+        if invoice_received(i) > 0 and status_of(i) not in {"draft", "void", "voided", "cancelled", "canceled"}:
             total = invoice_total(i)
-            cos += (in_base(data, i, money(i.get("cost_of_sales"))) or 0) * (invoice_received(i) / total if total else 1)
+            linked_cost = sum(money(li.get("cost_of_sales")) * (float(li.get("qty") or 1)) for li in i.get("line_items") or [] if li.get("supplier_bill_id"))
+            cos += (in_base(data, i, max(0, money(i.get("cost_of_sales")) - linked_cost)) or 0) * (invoice_received(i) / total if total else 1)
     cash = money(cash_in - cash_out - cos)
     # Burn = average monthly paid expenses over the last 3 months with any activity.
     since = today - timedelta(days=92)
@@ -771,7 +774,7 @@ def cash_position(data: dict, today: date) -> dict[str, Any]:
     burn = money(sum(recent) / 3) if recent else 0.0
     runway = round(cash / burn, 1) if burn > 0 and cash > 0 else None
     # `recorded`: whether any money in or out is on record at all. Without it, 0 is not a cash position (QA P2-5).
-    paid_in = any(status_of(i) == "paid" for i in invs)
+    paid_in = any(invoice_received(i) > 0 for i in invs)
     return {"cash": cash, "monthly_burn": burn, "runway_months": runway, "recorded": bool(paid_in or paid_exps)}
 
 

@@ -80,8 +80,11 @@ it("keeps the outlook as a table with the current month before forecast months",
   const rows = table.querySelectorAll("tbody tr");
   expect(rows.length).toBe(2);
   expect(rows[0].textContent).toContain("Nov 2026");
-  expect(rows[0].textContent).toContain("Current month");
-  expect(rows[0].textContent).toContain("£6,068.67");
+  expect(rows[0].textContent).toContain("Actual to date");
+  expect(rows[0].textContent).toContain("£600.00");
+  expect(rows[0].textContent).toContain("£500.00");
+  expect(rows[0].textContent).not.toContain("£6,068.67");
+  expect(rows[0].textContent).not.toContain("£560.00");
   expect(rows[1].textContent).toContain("Dec 2026");
   expect(table.closest("details")).toBeNull();
   expect(container.querySelector("[data-mobile-timeline]")).toBeNull();

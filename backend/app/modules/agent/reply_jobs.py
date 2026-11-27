@@ -20,6 +20,10 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def job_id_for(business_id, user_id, request_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{business_id}:{user_id}:{request_id}"))
+
+
 async def drain() -> None:
     """Finish and persist accepted turns before a graceful restart closes their event loop."""
     tasks = list(_TASKS)
@@ -43,7 +47,7 @@ async def _access(orch, user, business_id):
 async def start(orch, user, body, handler):
     await _access(orch, user, body.business_id)
     request_id = body.client_request_id or str(uuid.uuid4())
-    job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{body.business_id}:{user['id']}:{request_id}"))
+    job_id = job_id_for(body.business_id, user["id"], request_id)
     worker_id = str(uuid.uuid4())
     stamp = _now().isoformat()
     fingerprint = hashlib.sha256(json.dumps(body.model_dump(exclude={"client_request_id"}), sort_keys=True, default=str).encode()).hexdigest()
@@ -83,6 +87,8 @@ async def start(orch, user, body, handler):
                 # rather than inheriting a cache that polling requests cannot use.
                 with read_cache():
                     result = await asyncio.wait_for(handler(body.model_copy(update={"defer_reply": False}), user), TURN_SECONDS)
+                if not isinstance(result, dict) or not result:
+                    raise RuntimeError("Agent returned no reply")
                 saved = {"state": "complete", "result": jsonable_encoder(result)}
             except asyncio.CancelledError:
                 saved = {"state": "failed", "message": "The reply was interrupted. Your message is saved; please try again."}
@@ -129,9 +135,14 @@ async def status(orch, user, business_id, job_id):
     job = (data.get("agent_reply_jobs") or {}).get(job_id)
     if not job or job.get("user_id") != user["id"]:
         raise HTTPException(404, "Reply not found.")
-    context = {"user_message": job.get("user_message"), "chat_id": job.get("chat_id")}
+    context = {"user_message": job.get("user_message"), "chat_id": job.get("chat_id"), "job_id": job_id}
     if job.get("state") == "complete":
         return {"state": "complete", "result": job["result"], **context}
     if job.get("state") == "failed" or (_now() - datetime.fromisoformat(job["created_at"])).total_seconds() > TURN_SECONDS + 30:
-        return {"state": "failed", "message": job.get("message") or "The reply was interrupted. Your message is saved; please try again."}
+        return {"state": "failed", "message": job.get("message") or "The reply was interrupted. Your message is saved; please try again.", **context}
     return {"state": "pending", **context}
+
+
+async def status_for_request(orch, user, business_id, request_id):
+    """Recover an accepted request even when its POST acknowledgement never reached the browser."""
+    return await status(orch, user, business_id, job_id_for(business_id, user["id"], request_id))

@@ -43,17 +43,25 @@ def test_an_extra_seat_brings_250_credits_once_per_payment(monkeypatch):
     assert granted == [250, 500]
 
 
-def test_the_welcome_credits_never_expire(monkeypatch):
-    """The owner, 26 Oct: "it should not have expiration": once used up they are over; until then they stay."""
+def test_unused_welcome_credits_expire_after_the_fourteen_day_trial(monkeypatch):
     now = datetime(2027, 6, 20, tzinfo=timezone.utc)
     wallet = {"created_at": (now - timedelta(days=400)).isoformat(), "available_credits": 30, "lifetime_credits_used": 20}
     taken = []
 
     async def deduct(user_id, amount, reason):
         taken.append((amount, reason))
-    monkeypatch.setattr(credits, "deduct_credits_admin", deduct)
-    assert asyncio.run(credits.expire_welcome_credits("u1", wallet, "explorer", now)) == wallet and taken == []
-    assert credits.welcome_expires_at(wallet) is None
+    async def expire(fn, args):
+        assert fn == "expire_trial_credits_once"
+        taken.append((30, credits.WELCOME_EXPIRED_REASON))
+        return {"ok": True, "balance": 0}
+    monkeypatch.setattr(credits, "_rpc", expire)
+    from app.modules.plans import access
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(access, "resolve_subscription", AsyncMock(return_value=access.SubscriptionOut(plan_key="explorer",status="expired",current_period_end=(now-timedelta(days=1)).isoformat())))
+    monkeypatch.setattr(credits, "sb_select", AsyncMock(return_value=[]))
+    assert asyncio.run(credits.expire_welcome_credits("u1", wallet, "explorer", now))["available_credits"] == 0
+    assert taken == [(30, credits.WELCOME_EXPIRED_REASON)]
+    assert credits.welcome_expires_at(wallet) == datetime.fromisoformat(wallet["created_at"]) + timedelta(days=14)
 
 
 # ── The team on Decision Engine: seats, the team's plan for members, pooled credits within an allowance ──

@@ -93,6 +93,7 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account suspended. Contact support at tech.support@enterprateai.com")
         if signed_out(payload, cached):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You were signed out on this device. Please sign in again.")
+        await _enforce_trial_access(request, cached)
         return cached
     user = await sb_select("users", filters=[("id", "eq", user_id)], single=True)
     if not user:
@@ -102,4 +103,22 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
     if signed_out(payload, user):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="You were signed out on this device. Please sign in again.")
     _cache_set(token, user)
+    await _enforce_trial_access(request, user)
     return user
+
+
+async def _enforce_trial_access(request: Request, user: dict) -> None:
+    """Expired trials retain sign-in, account management and the upgrade route, not product access."""
+    path = request.url.path
+    if path.startswith(("/auth/", "/plans/", "/credits/", "/admin/", "/account/", "/users/me")):
+        return
+    if user.get("is_admin") or user.get("email") == "tech.support@enterprateai.com":
+        return
+    from app.modules.plans.access import effective_access, resolve_subscription
+    sub = await resolve_subscription(user["id"])
+    if sub.status == "expired":
+        access = await effective_access(user["id"])
+        if access["effective_plan"] == "explorer":
+            raise HTTPException(403, detail={"error": "TRIAL_EXPIRED", "upgrade": True,
+                                "message": "Your 14-day trial has ended. Upgrade to continue. Your records are kept.",
+                                "trial_ends_at": sub.current_period_end})

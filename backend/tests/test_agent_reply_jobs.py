@@ -169,5 +169,56 @@ def test_http_handover_acknowledges_then_serves_one_saved_reply(monkeypatch):
             result = await client.get(f"/businesses/business/agent/replies/{first.json()['job_id']}")
             assert result.status_code == 200 and result.json()["state"] == "complete"
             assert result.json()["result"]["message"] == "Your loan request is ready."
+            recovered = await client.get("/businesses/business/agent/replies/by-request/handover")
+            assert recovered.status_code == 200 and recovered.json() == result.json()
             assert calls == [body["text"]]
+    asyncio.run(scenario())
+
+
+def test_reply_is_recoverable_by_request_id_when_post_acknowledgements_are_lost():
+    async def scenario():
+        orch, user = world()
+        calls = []
+        async def handler(*args):
+            calls.append(True)
+            return {"kind": "answer", "message": "Your original request is ready."}
+        body = AgentRequestIn(business_id="business", text="Food loan, March next year", chat_id="original-chat",
+                              client_request_id="lost-acknowledgement", defer_reply=True)
+        await reply_jobs.start(orch, user, body, handler)
+        await reply_jobs.drain()
+        recovered = await reply_jobs.status_for_request(orch, user, "business", body.client_request_id)
+        assert recovered["state"] == "complete" and recovered["chat_id"] == "original-chat"
+        assert recovered["user_message"] == body.text and calls == [True]
+        with pytest.raises(HTTPException) as error:
+            await reply_jobs.status_for_request(orch, {"id": "another-user"}, "business", body.client_request_id)
+        assert error.value.status_code == 404
+    asyncio.run(scenario())
+
+
+def test_failed_reply_retains_the_original_message_and_chat_for_review():
+    async def scenario():
+        orch, user = world()
+        async def handler(*args):
+            raise RuntimeError("provider interrupted")
+        body = AgentRequestIn(business_id="business", text="Use my existing answers", chat_id="saved-chat", defer_reply=True)
+        accepted = await reply_jobs.start(orch, user, body, handler)
+        await reply_jobs.drain()
+        result = await reply_jobs.status(orch, user, "business", accepted["job_id"])
+        assert result["state"] == "failed" and result["user_message"] == body.text
+        assert result["chat_id"] == "saved-chat" and result["job_id"] == accepted["job_id"]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("empty", [None, {}])
+def test_empty_handler_result_is_recoverable_failure_instead_of_a_silent_success(empty):
+    async def scenario():
+        orch, user = world()
+        async def handler(*args):
+            return empty
+        body = AgentRequestIn(business_id="business", text="Prepare my funding request", defer_reply=True)
+        accepted = await reply_jobs.start(orch, user, body, handler)
+        await reply_jobs.drain()
+        result = await reply_jobs.status(orch, user, "business", accepted["job_id"])
+        assert result["state"] == "failed" and result["user_message"] == body.text
+        assert "result" not in result
     asyncio.run(scenario())

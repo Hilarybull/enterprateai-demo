@@ -54,7 +54,7 @@ def invoice_date(inv: Dict[str, Any]) -> Optional[date]:
 
 
 def expense_date(exp: Dict[str, Any]) -> Optional[date]:
-    return _day(exp.get("date") or exp.get("expense_date") or exp.get("issued_at") or exp.get("paid_at") or exp.get("created_at"))
+    return _day(exp.get("incurred_at") or exp.get("date") or exp.get("expense_date") or exp.get("issued_at") or exp.get("created_at") or exp.get("paid_at"))
 
 
 def invoice_net(inv: Dict[str, Any]) -> float:
@@ -82,13 +82,41 @@ def _status(rec: Dict[str, Any]) -> str:
     return str(rec.get("status") or "").strip().lower()
 
 
+def _in_business_currency(data, docs, notes):
+    from app.modules.agent import business as bz
+    base = bz.currency_of(data)
+    converted = []
+    money_keys = ("price", "amount", "total_amount", "subtotal_amount", "vat_amount", "cost_of_sales", "unit_cost_of_sales", "paid_amount")
+    for doc in docs:
+        if bz.doc_currency(doc, base) == base:
+            converted.append(doc)
+            continue
+        if bz.in_base(data, doc, 100) is None:
+            notes.append(f"A {bz.doc_currency(doc, base)} record is excluded until a conversion to {base} is available.")
+            continue
+        row = dict(doc)
+        for key in money_keys:
+            if row.get(key) not in (None, ""):
+                row[key] = bz.in_base(data, doc, _num(row[key]))
+        for key in ("line_items", "items", "payments", "credit_notes"):
+            if isinstance(row.get(key), list):
+                row[key] = [{**item, **{field: bz.in_base(data, doc, _num(item[field])) for field in money_keys if item.get(field) not in (None, "")}} for item in row[key] if isinstance(item, dict)]
+        row.update(currency=base, fx={})
+        converted.append(row)
+    return converted
+
+
 def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
     """Everything the records say, with where each figure came from."""
     data = data or {}
     fin = data.get("financials") or {}
     invoices = [i for i in fin.get("invoices") or [] if isinstance(i, dict) and not i.get("archived") and _status(i) not in NOT_SALES]
     expenses = [e for e in fin.get("expenses") or [] if isinstance(e, dict) and not e.get("archived") and _status(e) not in NOT_SALES]
+    fx_notes = []
+    invoices = _in_business_currency(data, invoices, fx_notes)
+    expenses = _in_business_currency(data, expenses, fx_notes)
     out: Dict[str, Any] = {"histories": {}, "fills": {}, "sources": {}, "counts": {}}
+    out["figure_notes"] = list(dict.fromkeys(fx_notes))
 
     revenue: Dict[str, float] = {}
     product_cost: Dict[str, float] = {}
@@ -108,6 +136,8 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
         if not d or d > today:
             continue
         k, kind, amt = _key(d), factors.expense_kind(exp), expense_net(exp)
+        if exp.get("source_invoice_id") in {i.get("id") for i in invoices if i.get("id")}:
+            continue  # Linked delivery cost is already recognised on its invoice; bill supplies cash timing only.
         if kind == "direct":
             direct[k] = direct.get(k, 0.0) + amt
         else:
@@ -210,12 +240,48 @@ def build(data: Dict[str, Any] | None, today: date) -> Dict[str, Any]:
 
     # This month so far
     cm = _key(today)
-    out["current_month"] = dict(month=cm, revenue=round(revenue.get(cm, 0.0), 2),
+    out["current_month"] = dict(month=cm, basis="actual", as_of=today.isoformat(), revenue=round(revenue.get(cm, 0.0), 2),
                                 cost_of_sales=round(max(product_cost.get(cm, 0.0), direct.get(cm, 0.0)), 2),
                                 expenses=round(running.get(cm, 0.0), 2),
                                 invoices=sum(1 for i in invoices if (d := invoice_date(i)) and _key(d) == cm),
                                 expense_records=sum(1 for e in expenses if (d := expense_date(e)) and _key(d) == cm))
+    from app.modules.agent.business import invoice_outstanding
+    receivables = sum(invoice_outstanding(i) for i in invoices if (d := invoice_date(i)) and d <= today and _key(d) == cm)
+    out["current_month"]["receivables"] = round(receivables, 2)
+    from app.modules.agent import business as bz
+    position = bz.cash_position(data, today)
+    out["current_month"]["cash"] = position["cash"] if position["recorded"] else None
+    schedules = {"pending_receivables_schedule": [0.0] * 26, "pending_payables_schedule": [0.0] * 26}
+    weekly = {"pending_receivables_weekly": [0.0] * 13, "pending_payables_weekly": [0.0] * 13}
+    def add_schedule(key, doc, amount):
+        due = _day(doc.get("due_date")) or today
+        offset = max(0, (due.year - today.year) * 12 + due.month - today.month)
+        value = bz.in_base(data, doc, amount) or 0.0
+        schedules[key][min(offset, 25)] += value
+        week = max(0, ((due - today).days - 1) // 7)
+        if week < 13:
+            weekly[key.replace("_schedule", "_weekly")][week] += value
+    for inv in invoices:
+        if (invoice_date(inv) or date.max) <= today:
+            add_schedule("pending_receivables_schedule", inv, bz.invoice_outstanding(inv))
+    for exp in expenses:
+        if (expense_date(exp) or date.max) <= today and _status(exp) != "paid":
+            gross = _num(exp.get("price") or exp.get("amount") or exp.get("total_amount"))
+            received = sum(_num(p.get("amount")) for p in exp.get("payments") or [] if isinstance(p, dict)) or _num(exp.get("paid_amount"))
+            add_schedule("pending_payables_schedule", exp, max(0, gross - received))
+    out["position"] = {**{k: [round(v, 2) for v in values] for k, values in schedules.items()},
+                       **{k: [round(v, 2) for v in values] for k, values in weekly.items()},
+                       "opening_accrual_balance": round(sum(schedules["pending_receivables_schedule"]), 2),
+                       "accrued_revenue_total": round(sum(schedules["pending_receivables_schedule"]), 2)}
     employees = (data.get("catalogue") or {}).get("employees")
     if isinstance(employees, list):
         out["counts"]["employees"] = sum(1 for employee in employees if isinstance(employee, dict) and not employee.get("archived"))
+        payroll = [e for e in employees if isinstance(e, dict) and not e.get("archived") and e.get("salary_amount") not in (None, "")
+                   and (not _day(e.get("start_date")) or _day(e.get("start_date")) <= today)]
+        if payroll:
+            gross = sum(max(0, _num(e.get("salary_amount"))) * {"weekly": 52 / 12, "annual": 1 / 12}.get(e.get("salary_frequency"), 1) for e in payroll)
+            out["fills"].update(payroll_staff_count=len(payroll), payroll_gross_monthly_per_person=round(gross / len(payroll), 2),
+                                 employee_benefits_monthly=round(sum(max(0, _num(e.get("benefits_monthly"))) for e in payroll), 2))
+            for key in ("payroll_staff_count", "payroll_gross_monthly_per_person", "employee_benefits_monthly"):
+                out["sources"][key] = "active employee salary and benefits records in Master records"
     return out
