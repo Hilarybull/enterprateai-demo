@@ -411,10 +411,11 @@ def _card_kept(x: dict) -> dict:
     if x.get("type") == "download":
         out.update({k: short(x.get(k), 200) for k in ("file_id", "name", "format", "business_id")})
     if x.get("type") == "readiness_tasks":
-        out.update({k: x[k] for k in ("score", "score_partial") if k in x})
+        out.update({k: x[k] for k in ("score", "score_partial", "revision", "currency") if k in x})
         out.update({"title": short(x.get("title")), "topic": short(x.get("topic")),
                     "items": [{"title": short(item.get("title"), 300), "detail": short(item.get("detail"), 600), "section": short(item.get("section"), 80),
-                               "code": short(item.get("code"), 40) if item.get("code") else None, "review": item.get("review") if item.get("review") in ("documents", "attestation") else None}
+                               "code": short(item.get("code"), 40) if item.get("code") else None, "review": item.get("review") if item.get("review") in ("documents", "attestation", "forecast", "evidence") else None,
+                               "has_values": bool(item.get("has_values")), "values": [{"label": short(v.get("label"), 300), "value": short(v.get("value"), 12000), **({"path": short(v["path"], 120)} if "path" in v else {}), **{flag: bool(v[flag]) for flag in ("draft", "document", "evidence") if flag in v}} for v in item.get("values") or [] if isinstance(v, dict)]}
                               for item in x.get("items") or [] if isinstance(item, dict)],
                     "drafts": [{"label": short(d.get("label"), 300), "path": short(d.get("path"), 120), "value": short(d.get("value"), 12000), "source": short(d.get("source"), 300)}
                                for d in x.get("drafts") or [] if isinstance(d, dict)]})
@@ -573,6 +574,21 @@ async def readiness_items(business_id: str, topic: str, case_id: str, user=Depen
     # get_subject applies the workspace, record and feature access checks.
     with read_cache():
         return await remaining_card(get_orchestrator(), user, business_id, topic, [], [{"case_id": case_id}])
+
+
+class ReadinessDecisionIn(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    revision: int = Field(ge=1)
+    approve: bool
+
+
+@router.post("/businesses/{business_id}/agent/readiness-items/{topic}/{case_id}/decision")
+async def decide_readiness_item(business_id: str, topic: str, case_id: str, body: ReadinessDecisionIn, user=Depends(get_current_user)):
+    if topic not in {"funding", "launch"}:
+        raise HTTPException(404, "Check not found.")
+    from app.modules.agent.readiness_chat import decide_item
+    from app.modules.readiness.router import _run
+    return await _run(decide_item(get_orchestrator(), user, business_id, topic, case_id, body.code, body.revision, body.approve))
 
 
 @router.get("/businesses/{business_id}/agent/readiness-work/{topic}/{case_id}")
